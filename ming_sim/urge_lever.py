@@ -10,7 +10,6 @@
 """
 
 from __future__ import annotations
-from ming_sim.staged_commitment import normalize_commitment_stages
 
 from ming_sim.participant_roster import decode_durable_participant_roster
 
@@ -24,6 +23,7 @@ from ming_sim.staged_commitment import (
     ENTRY_KIND_RUSH_REMONSTRANCE,
     TODO_STATUS_CONSUMED,
     TODO_STATUS_PENDING,
+    load_commitment_stages,
     stages_to_json,
 )
 
@@ -257,7 +257,7 @@ def rush_staged_commitment_stage(
             item={"commitment_ref": int(commitment_ref), "status": row["status"]},
         )
 
-    stages = normalize_commitment_stages(row["stages_json"])
+    stages = load_commitment_stages(row["stages_json"])
     if not stages:
         raise PendingActionRefusal(
             f"承诺 issue#{int(commitment_ref)} 无分段，不能催办",

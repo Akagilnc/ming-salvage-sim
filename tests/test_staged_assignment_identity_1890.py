@@ -21,11 +21,16 @@ from __future__ import annotations
 
 from ming_sim.settlement.dossier import apply_dossier_verdicts
 import json
+import pytest
 
 from ming_sim.declaration_dispatch import dispatch_declaration
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import section
-from ming_sim.staged_commitment import normalize_commitment_stages
+from ming_sim.applier import StoredDocumentError
+from ming_sim.staged_commitment import (
+    load_commitment_stages,
+    write_due_staged_commitment_todos,
+)
 from tests.conftest import active_ming_character, open_hall_turn
 from tests.dossier_test_helpers import TYPED_COVERT_TASK
 
@@ -593,7 +598,7 @@ def test_assignment_prose_year_promise_lands_no_staged_commitment(game):
 
     assert dossier_id is not None, staged.commissions.rejected
     assert issue is not None, "交办顺颁没落 initiative"
-    assert normalize_commitment_stages(issue["stages_json"]) == []
+    assert load_commitment_stages(issue["stages_json"]) == []
     assert str(issue["commitment_kind"] or "") == ""
     assert int(issue["end_turn"] or 0) == 0
     # 段派生待办一个都不许有（到期判账面同样干净）。
@@ -602,13 +607,25 @@ def test_assignment_prose_year_promise_lands_no_staged_commitment(game):
         (int(issue["id"]),),
     ).fetchone()["c"] == 0
 
-def test_assignment_stages_prose_string_never_reaches_promulgation(game):
-    """``assignment.stages`` 给非 JSON 散文串：分派即 durable 坏形拒收。
+_BAD_STAGE_TEXTS = [
+    ("criterion_text", {"bad": "x"}), ("origin_context", ["n"]),
+    ("criterion", False), ("origin", 0),
+]
+_BAD_STAGE_VALUES = [
+    ("stage_idx", -1), ("stage_idx", 2**63),
+    ("criterion_text", "   "), ("origin_context", "   "),
+]
 
-    另一条路是字段本身就是 LLM 自由文本（「三年修渠五年通航」）。这里不盯拒收
-    措辞，只钉结构化契约面：该项落 ``invalid_shape`` 拒收、零暂存、零案卷——
-    散文段表没有任何路径能走到顺颁物化。
-    """
+
+@pytest.mark.parametrize("stages", [
+    "三年修渠五年通航",
+    *[
+        [{"due_turn": 46, "criterion_text": "修渠", "origin_context": "修渠之事", field: value}]
+        for field, value in _BAD_STAGE_TEXTS + _BAD_STAGE_VALUES
+    ],
+])
+def test_assignment_bad_stages_never_reach_promulgation(game, stages):
+    """坏 stages 在分派处拒收原值，不进入暂存或顺颁。"""
     db, state, content = game
     minister = active_ming_character(db, content)
     night_id, ctid = open_hall_turn(db, state, minister)
@@ -620,7 +637,7 @@ def test_assignment_stages_prose_string_never_reaches_promulgation(game):
             "assignment": {
                 "title": "修渠", "target_id": "修渠",
                 "assignee": minister,
-                "stages": "三年修渠五年通航",
+                "stages": stages,
             },
         }]},
         minister=minister, night_id=night_id, ctid=ctid,
@@ -628,6 +645,7 @@ def test_assignment_stages_prose_string_never_reaches_promulgation(game):
 
     assert result.commissions.applied == []
     assert [r.category for r in result.commissions.rejected] == ["invalid_shape"]
+    assert result.commissions.rejected[0].item["assignment"]["stages"] == stages
     # 库层零暂存、零案卷：拒收发生在成案之前，散文无处可生段表。
     assert db.conn.execute(
         "SELECT COUNT(*) c FROM pending_actions WHERE kind='directive'",
@@ -653,7 +671,18 @@ def test_assignment_structured_stages_land_through_full_chain(game):
     assert dossier_id is not None, staged.commissions.rejected
     assert issue is not None, "交办顺颁没落 initiative"
     assert str(issue["commitment_kind"] or "") == "until_stop"
-    assert [s["due_turn"] for s in normalize_commitment_stages(issue["stages_json"])] == [46, 70]
+    stages = load_commitment_stages(issue["stages_json"])
+    assert [s["due_turn"] for s in stages] == [46, 70]
+    write_due_staged_commitment_todos(_db, _state)
+    # Persistent corruption must fail loudly, even when the segment is not due yet.
+    stages[0]["stage_idx"] = -1
+    _db.conn.execute(
+        "UPDATE issues SET stages_json=? WHERE id=?",
+        (json.dumps(stages, ensure_ascii=False), int(issue["id"])),
+    )
+    _db.conn.commit()
+    with pytest.raises(StoredDocumentError):
+        write_due_staged_commitment_todos(_db, _state)
 
 def test_new_issues_prose_year_promise_does_not_become_commitment_stages(game):
     """邸报 / ``new_issues`` 接缝同样不从散文反推年诺（ADR 0142 全仓口径）。
@@ -687,31 +716,39 @@ def test_new_issues_prose_year_promise_does_not_become_commitment_stages(game):
         "SELECT COUNT(*) c FROM issues WHERE origin_ref=?", (origin_ref,),
     ).fetchone()["c"] == 0
 
-def test_new_issues_structured_stages_still_land(game):
-    """同一入口下显式结构化 ``stages`` 照常落段——删的是散文入口，不是能力。"""
+@pytest.mark.parametrize("field,bad_text,category", [
+    *[(field, value, "invalid_shape") for field, value in _BAD_STAGE_TEXTS],
+    *[(field, value, "invalid_enum") for field, value in _BAD_STAGE_VALUES],
+])
+def test_new_issues_structured_stages_reject_bad_peer_and_land(game, field, bad_text, category):
+    """坏分段正文拒整项，合法同批承诺照常落段。"""
     db, state, content = game
     origin_ref = _promulgated_policy_origin(db, state, token="structured-1890")
 
+    good_item = {
+        "origin_kind": "decree", "origin_ref": origin_ref, "kind": "initiative",
+        "title": "徐光启分段之诺", "stage_text": "在办", "commitment_kind": "until_stop",
+        "ongoing_effects": {"民心": 1},
+        "stages": [
+            {"stage_idx": 0, "due_turn": 46, "criterion_text": "火器见眉目"},
+            {"stage_idx": 1, "due_turn": 70, "criterion_text": "新历成"},
+        ],
+    }
+    bad_item = {**good_item, "stages": [{**good_item["stages"][0], field: bad_text}]}
     out = settle_delta(
         state, db,
-        {"new_issues": [{
-            "origin_kind": "decree",
-            "origin_ref": origin_ref,
-            "kind": "initiative",
-            "title": "徐光启分段之诺",
-            "stage_text": "在办",
-            "commitment_kind": "until_stop",
-            "ongoing_effects": {"民心": 1},
-            "stages": [
-                {"stage_idx": 0, "due_turn": 46, "criterion_text": "火器见眉目"},
-                {"stage_idx": 1, "due_turn": 70, "criterion_text": "新历成"},
-            ],
-        }]},
+        {"new_issues": [bad_item, good_item]},
         SettlementContext(content=content),
     )
 
+    rejected = section(out, "issue_summary").rejected
+    assert [item.category for item in rejected] == [category]
+    assert rejected[0].item == bad_item
+    assert len(out.issue.new_issues) == 1
     created = out.issue.new_issues[0]
-    stages = normalize_commitment_stages(db.conn.execute(
+    stages = load_commitment_stages(db.conn.execute(
         "SELECT stages_json FROM issues WHERE id=?", (int(created["issue_id"]),),
     ).fetchone()["stages_json"])
     assert [s["due_turn"] for s in stages] == [46, 70]
+    # 写口收下的合法段，到期扫描读口必须能读（#1897 D）。
+    write_due_staged_commitment_todos(db, state)

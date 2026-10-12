@@ -1248,10 +1248,18 @@ def test_step_4a_deferred_disclosure_sees_fresh_0058_progress(game, monkeypatch)
     assert chain.get("secret_orders_disclosures_done") is True
 
 
-def test_step_4a_incomplete_0058_report_fails_loud_and_retry_restarts(game, monkeypatch):
-    """步骤 4a：0058 完整性校验缺报响亮中止，重试废弃不完整产物重新调用 supply run。"""
+@pytest.mark.parametrize("field,bad_value", [
+    # 月链尺寸只留各异常来源代表例（#1897 E）：缺报 / 非字符串正文 / 未知编号。
+    ("missing", None),
+    ("memorial_text", {"bad": "text"}),
+    ("dossier_id", 999999),
+])
+def test_step_4a_incomplete_0058_report_fails_loud_and_retry_restarts(
+    game, monkeypatch, field, bad_value,
+):
+    """Invalid 0058 data aborts atomically; retry discards it and re-runs supply."""
     _forbid_extractor(monkeypatch)
-    from ming_sim.exceptions import SettlementAbort
+    from ming_sim.exceptions import DeclarationDataError, SettlementAbort
 
     db, state, content = game
     turn = int(state.turn)
@@ -1265,6 +1273,16 @@ def test_step_4a_incomplete_0058_report_fails_loud_and_retry_restarts(game, monk
     dossier_2 = int(db.dossiers.get_for_secret_order(order_2)["id"])
     db.conn.commit()
 
+    reports = [
+        {"dossier_id": dossier_1, "progress_band": "持平", "memorial_text": "密奏一"},
+        {"dossier_id": dossier_2, "progress_band": "持平", "memorial_text": "密奏二"},
+    ]
+    bad_reports = [dict(item) for item in reports]
+    if field == "missing":
+        bad_reports.pop()
+    else:
+        bad_reports[1][field] = bad_value
+
     call_count = 0
 
     def supply_run(*_a, **_k):
@@ -1272,25 +1290,8 @@ def test_step_4a_incomplete_0058_report_fails_loud_and_retry_restarts(game, monk
         if _k["tag"] == "gazette":
             return json.dumps({"title": "邸报", "report": "本月纪事。"})
         call_count += 1
-        if call_count == 1:
-            # First call: incomplete! Only reports dossier_1, missing dossier_2
-            return json.dumps({
-                "dossier_progress_reports": [{
-                    "dossier_id": dossier_1,
-                    "progress_band": "持平",
-                    "memorial_text": "密奏一",
-                }],
-                "covert_exec_selections": [
-                    {"order_id": order_1, "fidelity": "忠实"},
-                    {"order_id": order_2, "fidelity": "忠实"},
-                ],
-            }, ensure_ascii=False)
-        # Second call (after retry): complete!
         return json.dumps({
-            "dossier_progress_reports": [
-                {"dossier_id": dossier_1, "progress_band": "持平", "memorial_text": "密奏一"},
-                {"dossier_id": dossier_2, "progress_band": "持平", "memorial_text": "密奏二"},
-            ],
+            "dossier_progress_reports": bad_reports if call_count == 1 else reports,
             "covert_exec_selections": [
                 {"order_id": order_1, "fidelity": "忠实"},
                 {"order_id": order_2, "fidelity": "忠实"},
@@ -1304,17 +1305,19 @@ def test_step_4a_incomplete_0058_report_fails_loud_and_retry_restarts(game, monk
     session = make_light_session(db, state, content)
     session.llm_config = LLMConfig(api_key="sk-test", base_url="https://example.invalid", model="test")
 
-    # First attempt: incomplete report fails loud
+    # First attempt: invalid report fails loud without partial writes.
     with pytest.raises(SettlementAbort) as caught:
         session.resolve_turn(allow_empty_decree=True)
     assert caught.value.stage == "secret_orders_supply"
+    assert isinstance(caught.value.__cause__, DeclarationDataError)
     chain = _month_chain_of(db, turn)
     assert chain.get("secret_orders_supply_invalid") is True
+    assert chain.get("secret_orders_reports_done") is not True
     # Neither dossier received a progress report
     assert db.dossiers.list_dossier_progress(dossier_1) == []
     assert db.dossiers.list_dossier_progress(dossier_2) == []
 
-    # Retry: discards invalid product, re-calls supply run
+    # Retry discards the invalid product and calls supply again.
     result = session.resolve_turn(allow_empty_decree=True)
     assert result.stage == "advanced"
     assert call_count == 2

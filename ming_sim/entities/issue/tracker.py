@@ -469,7 +469,7 @@ def apply_issue_tracker_output(
                     need_stop_validate = False
                     stop_condition = ""
             except (TypeError, ValueError, OverflowError) as exc:
-                entity_rejections.append(RejectedItem(item=ni, reason=f"new_issue commitment 字段非法（origin_ref/ongoing_effects/stop_condition）：{exc}", category="invalid_enum", source=source))
+                entity_rejections.append(RejectedItem(item=ni, reason=f"new_issue commitment 字段非法（origin_ref/ongoing_effects/stop_condition）：{exc}", category="invalid_shape" if isinstance(exc, TypeError) else "invalid_enum", source=source))
                 continue
             try:
                 if stop_condition_raw not in (None, "", {}):

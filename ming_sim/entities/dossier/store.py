@@ -279,7 +279,7 @@ CREATE TABLE IF NOT EXISTS dossier_actual_progress (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 dossier_id INTEGER NOT NULL,
                 turn INTEGER NOT NULL,
-                units REAL NOT NULL,
+                units REAL, -- NULL: prose recorded, monthly actuals not yet accounted
                 fidelity_state TEXT NOT NULL,
                 floor_state TEXT NOT NULL,
                 note TEXT NOT NULL DEFAULT '',
@@ -657,8 +657,8 @@ class DossierStore:
                 int(commitment_ref),
                 int(stage_idx),
                 int(due_turn),
-                str(criterion_text or ""),
-                str(origin_context or ""),
+                criterion_text,
+                origin_context,
                 str(status or "pending") or "pending",
                 str(entry_kind or "staged_commitment") or "staged_commitment",
                 int(created_turn or 0),
@@ -1662,8 +1662,8 @@ class DossierStore:
 
         owns = connection_owns_transaction(self._conn)
         dossier = self.get(int(dossier_id))
-        band = str(progress_band or "")
-        text = str(memorial_text or "")
+        band = progress_band
+        text = memorial_text
         if dossier is None:
             raise ValueError("案卷不存在")
         # 终值旁路行只载定性 band，引擎不自造密奏（decree_vocabulary.terminal_report_facade）。
@@ -1866,9 +1866,9 @@ class DossierStore:
 
     def record_actual_progress(
         self, dossier_id: int, turn: int, *, units: float, fidelity_state: str,
-        floor_state: str, note: str = "", commit: bool = True,
+        floor_state: str, note: Optional[str] = "", commit: bool = True,
     ) -> dict[str, object]:
-        """#1504 实况轨月度进度（0073）。禁与 dossier_progress_json/sim_note 混写。"""
+        """Record monthly actuals; note=None preserves any separately recorded prose."""
         owns = connection_owns_transaction(self._conn)
         did = int(dossier_id)
         origin = f"dossier:{did}"
@@ -1881,7 +1881,7 @@ class DossierStore:
                 units=excluded.units,
                 fidelity_state=excluded.fidelity_state,
                 floor_state=excluded.floor_state,
-                note=excluded.note,
+                note=COALESCE(?, dossier_actual_progress.note),
                 origin_ref=excluded.origin_ref
             """,
             (
@@ -1890,8 +1890,9 @@ class DossierStore:
                 float(units),
                 str(fidelity_state),
                 str(floor_state),
-                str(note or ""),
+                note if note is not None else "",
                 origin,
+                note,
             ),
         )
         self._commit(commit, owns)
@@ -1905,7 +1906,7 @@ class DossierStore:
             "units": float(units),
             "fidelity_state": str(fidelity_state),
             "floor_state": str(floor_state),
-            "note": str(note or ""),
+            "note": note if note is not None else "",
             "origin_ref": origin,
         }
 
@@ -2244,11 +2245,11 @@ class DossierStore:
         )
 
     def set_actual_progress_note(self, dossier_id: int, turn: int, note: str) -> None:
-        """Set this month's original note without changing existing progress units."""
+        """Set original prose; absent actuals remain unaccounted, not a zero result."""
         self._conn.execute(
             "INSERT INTO dossier_actual_progress "
             "(dossier_id, turn, units, fidelity_state, floor_state, note, origin_ref) "
-            "VALUES (?, ?, 0, '', '', ?, ?) "
+            "VALUES (?, ?, NULL, '', '', ?, ?) "
             "ON CONFLICT(dossier_id, turn) DO UPDATE SET note=excluded.note",
             (int(dossier_id), int(turn), note, f"dossier:{int(dossier_id)}"),
         )

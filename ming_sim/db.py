@@ -6499,18 +6499,21 @@ class GameDB:
             raise DeclarationDataError("合资格长差案卷缺少本月密奏")
         supplied: Dict[int, Dict[str, object]] = {}
         for item in generated:
+            if not isinstance(item, dict):
+                raise DeclarationDataError("长差月报条目须为对象")
             try:
                 dossier_id = strict_int(item.get("dossier_id", 0))
                 if dossier_id <= 0:
                     raise ValueError("not positive")
             except (TypeError, ValueError) as exc:
-                raise ValueError("长差月报案卷编号无效") from exc
-            # 月报正文进入写口前禁 str()/or 洗白（#1897 J820-E1）。
-            band = item.get("progress_band")
-            text = item.get("memorial_text")
+                raise DeclarationDataError("长差月报案卷编号无效") from exc
             if dossier_id not in candidates or dossier_id in supplied:
-                raise ValueError("长差月报存在未知、重复或空白条目")
-            supplied[dossier_id] = {**item, "progress_band": band, "memorial_text": text}
+                raise DeclarationDataError("长差月报存在未知或重复条目")
+            for field in ("progress_band", "memorial_text"):
+                value = item.get(field)
+                if not isinstance(value, str) or not value.strip():
+                    raise DeclarationDataError(f"长差月报 {field} 须为非空字符串")
+            supplied[dossier_id] = item
         if set(supplied) != set(candidates):
             raise DeclarationDataError("合资格长差案卷月报未完整覆盖")
         return supplied
@@ -9958,9 +9961,8 @@ class GameDB:
                 row["participant_roster"] = decode_durable_participant_roster(
                     row["participant_roster"], require_tier=False,
                 )
-                row["stages_json"] = _load_durable_json(row["stages_json"], default='[]')
-                if not isinstance(row["stages_json"], list):
-                    raise TypeError(f"issues#{row['id']}.stages_json must be a list, got {row['stages_json']!r}")
+                from ming_sim.staged_commitment import load_commitment_stages
+                row["stages_json"] = load_commitment_stages(row["stages_json"])
                 for field in (
                     "ongoing_effects", "effect_on_resolve", "effect_on_fail",
                 ):

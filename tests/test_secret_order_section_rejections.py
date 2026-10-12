@@ -1,5 +1,6 @@
 from __future__ import annotations
 from functools import partial
+import json
 import pytest
 from tests.section_rejection_helpers import run_declaration as run_settle
 from tests.section_rejection_helpers import game, rejection_rows
@@ -26,9 +27,12 @@ _rejection_rows = partial(rejection_rows, columns="section, reason, category")
 
 
 
-def test_update_valid_active_order_applies_no_reject(game):
-    """正向守门（cmr r2 claude）：合法 active 密令 update 不被新 get_secret_order gate 误拒，
-    实况轨真写入、零拒收行。"""
+@pytest.mark.parametrize("field,bad_note", [
+    ("sim_note", {"bad": "x"}), ("result", ["a", 1]),
+    ("sim_note", False), ("sim_note", 0),
+])
+def test_update_active_order_rejects_bad_prose_and_applies_valid_peer(game, field, bad_note):
+    """Bad prose keeps its original value in rejection evidence; valid peers land."""
     db, state, content = game
     turn = state.turn
     oid = create_test_secret_order(db,
@@ -40,14 +44,19 @@ def test_update_valid_active_order_applies_no_reject(game):
         deadline_months=1,
     )
 
-    run_settle(db, state, content, {
-        "secret_order_updates": [{"order_id": oid, "sim_note": "推演副作用XYZ"}],
+    bad_item = {"order_id": oid, field: bad_note}
+    note = "推演副作用XYZ"
+    result = run_settle(db, state, content, {
+        "secret_order_updates": [bad_item, {"order_id": oid, "sim_note": note}],
     }, narrative="x", decree_text="y")
 
-    assert _rejection_rows(db, turn, "secret_order_updates") == []
+    assert [item["order_id"] for item in view(result.effects.applied[0], "secret_order_updates")] == [oid]
+    rows = rejection_rows(db, turn, "secret_order_updates", columns="category, item_json")
+    assert [row["category"] for row in rows] == ["invalid_shape"]
+    assert json.loads(rows[0]["item_json"]) == bad_item
     dossier = db.dossiers.get_for_secret_order(oid)
     notes = db.conn.execute("SELECT * FROM dossier_actual_progress WHERE dossier_id=? ORDER BY turn, id", (int(dossier["id"]),)).fetchall()
-    assert [(int(row["turn"]), row["note"]) for row in notes] == [(int(state.turn), "推演副作用XYZ")]
+    assert [(int(row["turn"]), row["note"]) for row in notes] == [(int(state.turn), note)]
 
 
 
