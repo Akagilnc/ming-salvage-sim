@@ -160,42 +160,61 @@ def test_close_preserves_execution_note_without_second_treasury_debit(game):
     assert db.reign.list_economy_moves_for_origin(f"dossier:{int(gid)}") == moves_before
 
 
-def test_underfunded_closed_grants_excluded_from_monthly_targets(game):
-    """A failed, closed grant with zero disbursement is absent from supply targets."""
+def test_same_turn_closed_grants_reconcile_only_disbursed_silver(game):
+    """Same-turn closes reconcile paid silver, including partial payments but not zero payments."""
     db, state, _content = game
-    state.metrics["内库"] = 0
-    db.conn.execute("UPDATE metrics SET value=0 WHERE key='内库'")
-    dossier_id = db.create_decree_dossier(
-        state,
-        action_type="grant_allocation",
-        decree_text="内帑无银",
-        target_kind="region",
-        target_id="shaanxi",
-        payload={
-            "account": "内库", "amount": 10,
-            "execution_surface": "in_transit",
-        },
-    )
-    apply_dossier_promulgation(db, state, dossier_id, "promulgated")
-    row = db.dossiers.get(dossier_id)
-    assert row["status"] == "closed"
-    targets = db.list_monthly_grant_reconciliation_targets()
-    assert dossier_id not in {int(t["dossier_id"]) for t in targets}
+    turn = int(state.turn)
+    expected = {}
+    grant_ids = []
+    for available, outcome in [
+        (0, "failed"), (7, "failed"), (ORDERED, "failed"), (ORDERED, "fulfilled"),
+    ]:
+        state.metrics["内库"] = available
+        db.conn.execute("UPDATE metrics SET value=? WHERE key='内库'", (available,))
+        dossier_id = db.create_decree_dossier(
+            state, action_type="grant_allocation", decree_text="拨银往陕西",
+            target_kind="region", target_id="shaanxi",
+            payload={"account": "内库", "amount": ORDERED, "execution_surface": "in_transit"},
+        )
+        grant_ids.append(dossier_id)
+        apply_dossier_promulgation(db, state, dossier_id, "promulgated")
+        if available == ORDERED:
+            db.dossiers.record_execution(dossier_id, outcome, "办理结果", turn, close=True)
+        closed = db.dossiers.get(dossier_id)
+        assert (closed["status"], closed["execution_outcome"]) == ("closed", outcome)
+        moves = db.reign.list_economy_moves_for_origin(f"dossier:{dossier_id}")
+        assert [move["delta"] for move in moves] == ([-available] if available else [])
+        if available:
+            expected[dossier_id] = available
+
+    reports = _record_recon(db, turn)
+    assert {row["dossier_id"]: row["ordered_amount"] for row in reports} == expected
+    for dossier_id in grant_ids:
+        assert db.dossiers.reconciliations(dossier_id) == [
+            row for row in reports if row["dossier_id"] == dossier_id
+        ]
 
 
-def test_full_chain_player_state_no_fake_awaiting(game, monkeypatch):
-    """全链 canned 结算入口——玩家态无假 awaiting。"""
-    from tests.test_month_chain_1843 import _prepare_player_month
+def test_full_chain_player_state_no_fake_awaiting(web_game, monkeypatch):
+    """A completed empty month exposes no phantom decisions, recovery or reconciliation rows."""
+    from tests.month_chain_helpers import canned_full_settlement
 
-    db, state, content = game
+    db, state = web_game.db, web_game.state
     turn0 = int(state.turn)
-    session = _prepare_player_month(db, state, content, monkeypatch)
-    result = session.advance_without_decree()
-    assert result is not None
+    canned_full_settlement(monkeypatch)
+    result = web_game.session.advance_without_decree()
+    assert result.advanced is True
     assert result.awaiting is False
     assert not (result.decisions or [])
-    assert int(state.turn) == turn0
+    assert int(state.turn) == turn0 + 1
     assert state.turn_phase != TurnPhase.AWAITING_DECISION.value
+    payload = web_game.state_payload()
+    assert payload["turn"]["turn"] == turn0 + 1
+    assert payload["turn"]["phase"] == state.turn_phase
+    assert payload["pending_decisions"] == []
+    assert payload["resume_phase2"] is False
+    assert payload["settlement_recovery"] is None
+    assert "rejection_reports" not in payload
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM decree_dossier_reconciliations"
     ).fetchone()["n"] == 0
