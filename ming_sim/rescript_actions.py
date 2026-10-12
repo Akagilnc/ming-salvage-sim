@@ -2,9 +2,15 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Mapping
 
 from ming_sim.decree import atomic_and_reload
+
+
+def choice_decision(choice: Mapping[str, Any] | None) -> str:
+    """Single decision value for triad and imperial-push answers."""
+    choice = choice or {}
+    return str(choice.get("dossier_decision") or choice.get("action") or "").strip()
 
 
 def canonical_choice(raw: object) -> dict:
@@ -39,7 +45,7 @@ def persist_answers(db: Any, state: Any, choices: list, *, content: Any = None) 
         if choice["decision_key"] not in open_keys:
             raise ValueError("原案当前不可批")
         event_id = str(row.get("event_id") or "")
-        action = choice.get("dossier_decision") or choice.get("action") or ""
+        action = choice_decision(choice)
         if event_id.startswith("dossier:"):
             legal = {o.get("dossier_decision") for o in row["options"]}
             if action not in legal:

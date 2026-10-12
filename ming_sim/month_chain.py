@@ -10,9 +10,11 @@
 """
 
 from __future__ import annotations
+import logging
 from ming_sim.applier import parse_engine_payload_json
 from ming_sim.applier import list_rejection_reports_for_turn
 
+from ming_sim.rescript_actions import choice_decision
 from ming_sim.settlement.dossier import apply_dossier_promulgation, apply_dossier_verdict_metadata
 import re
 from contextlib import nullcontext
@@ -21,6 +23,8 @@ from typing import Any, Dict, List, Mapping, Optional
 
 from ming_sim.applier import Provenance, atomic
 from ming_sim.models import _load_durable_json_list
+
+logger = logging.getLogger(__name__)
 
 _CHAIN_KEY = "month_chain"
 _WORLD_QUESTION_PREFIX = "world-question:"
@@ -856,14 +860,13 @@ def _abort_month_call(
     committed = _load_chain(db, turn)
     original = str(getattr(exc, "message", None) or exc)
     pack_path = ""
-    pack_exc: Optional[BaseException] = None
     try:
         pack_path = write_error_pack(
             db, state, exc=exc,
         )
-    except Exception as caught_pack:
+    except Exception:
         # 写包失败不得顶替原故障，也不得挡住已提交相位上的失败标记。
-        pack_exc = caught_pack
+        logger.warning("Failed to write month error pack", exc_info=True)
     failure: Dict[str, Any] = {
         "kind": kind,
         "step": step,
@@ -877,15 +880,11 @@ def _abort_month_call(
     chain.clear()
     chain.update(committed)
     _save_chain(db, turn, chain, decree_text=decree_text, source=source)
-    if pack_exc is not None:
-        raise SettlementAbort(
-            original, turn=turn, stage=step, error_pack_path=None, accounted=True,
-        ) from pack_exc
     raise SettlementAbort(
         original,
         turn=turn,
         stage=step,
-        error_pack_path=pack_path,
+        error_pack_path=pack_path or None,
         accounted=True,
     ) from exc
 
@@ -1842,19 +1841,14 @@ def _eligible_rescript_answers(
             dossier = db.dossiers.get(int(raw_id))
             if dossier is None or not dossier.get("rescript_pending"):
                 continue
-            decision = str(
-                (row.get("choice") or {}).get("dossier_decision")
-                or (row.get("choice") or {}).get("action")
-                or ""
-            ).strip()
-            if decision in {"force_promulgated", "withdrawn", "hold"}:
+            if choice_decision(row.get("choice")) in {"force_promulgated", "withdrawn", "hold"}:
                 eligible.append(row)
         elif event.startswith("deliberation:"):
             # Decided imperial push still stalled blocks month-tail (#1847 K2/K6).
             raw_id = event.partition(":")[2]
             if not raw_id.isdigit():
                 continue
-            if (row.get("choice") or {}).get("action") != "imperial_push":
+            if choice_decision(row.get("choice")) != "imperial_push":
                 continue
             original = db.dossiers.get(int(raw_id))
             if original is not None and (original.get("payload") or {}).get("deliberation_state") == "stalled":
@@ -1906,13 +1900,8 @@ def _consume_rescript_answers(
                     )
             elif event_id.startswith("dossier:"):
                 dossier_id = int(event_id.split(":", 1)[1])
-                decision = str(
-                    (row.get("choice") or {}).get("dossier_decision")
-                    or (row.get("choice") or {}).get("action")
-                    or ""
-                ).strip()
                 apply_dossier_promulgation(
-                    db, state, dossier_id, decision, content=session.content,
+                    db, state, dossier_id, choice_decision(row.get("choice")), content=session.content,
                 )
         # Same eligibility blocks month-tail; only model members enter prepare_answers.
         model_rows = [
@@ -1962,15 +1951,19 @@ def _consume_rescript_answers(
                     accounted_abort = exc
             finally:
                 del owner._rescript_jobs[(turn, row["decision_key"])]
-    # Re-raise this request's original accounted abort (cause chain intact) only if
-    # durable failure is still present (#1847 K5). If sibling recovery already cleared
-    # call_failure, proceed without raising so this request can resume the month tail.
+    # Preserve this request's cause chain only for the same durable failure.
+    # Sibling recovery may have cleared or replaced it (#1847 K5/K7).
     with owner._write_gate:
         chain.clear()
         chain.update(_load_chain(db, turn))
         failure = chain.get("call_failure")
         if failure is not None:
-            if accounted_abort is not None:
+            if (
+                accounted_abort is not None
+                and accounted_abort.message == failure.get("message")
+                and accounted_abort.stage == failure.get("step")
+                and accounted_abort.error_pack_path == failure.get("error_pack_path")
+            ):
                 raise accounted_abort
             raise SettlementAbort(
                 failure["message"], turn=turn, stage=failure["step"],
