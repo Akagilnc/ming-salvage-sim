@@ -58,7 +58,6 @@ export async function consumeSettleStream(
     }
     const fallback = `${httpErrorLabel}：HTTP ${response.status}`;
     const detail = normalizeApiError(body, fallback);
-    if (detail.status_code == null) detail.status_code = response.status;
     throw new ApiRequestError(detail, fallback);
   }
   if (!response.body) {

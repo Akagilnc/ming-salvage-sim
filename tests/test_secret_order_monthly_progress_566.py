@@ -240,8 +240,10 @@ def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write
     if entry == "web":
         kind, detail = invoke()
         assert kind == "error"
-        assert detail["status_code"] == 409
         assert isinstance(detail, dict)
+        assert detail["stage"] == "pre_settle"
+        assert detail["error_type"] == type(fiscal_fault).__name__
+        assert detail["error_pack_path"]
         assert detail.get("message") == str(fiscal_fault)
     else:
         from ming_sim.exceptions import SettlementAbort

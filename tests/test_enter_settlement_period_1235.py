@@ -159,11 +159,10 @@ def test_true_failure_pending_translation_exits_display(web_game, monkeypatch, t
             return await client.post("/api/decree/advance_without_edict/stream")
 
     resp = asyncio.run(go())
-    # #1842：转译单轮失败标 pending；过月耗尽 → SSE error（409 + typed stage）。
+    # #1842：转译单轮失败标 pending；过月耗尽 → SSE error（typed stage）。
     assert resp.status_code == 200, resp.text
     kind, detail = parse_sse_event_pairs(resp.text)[-1]
     assert kind == "error"
-    assert detail["status_code"] == 409
     assert detail.get("stage") == "audience_translation_exhausted", detail
     pack = detail.get("error_pack_path")
     assert pack, detail

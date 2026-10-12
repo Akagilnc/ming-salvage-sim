@@ -84,7 +84,7 @@ def test_success_clear_throw_still_ends_inflight(game, monkeypatch):
     assert response.status_code == 200
     kind, detail = parse_sse_event_pairs(response.text)[-1]
     assert kind == "error"
-    assert detail["status_code"] == 500
+    assert "status_code" not in detail
     assert detail["message"] == "clear boom"
     assert detail["error_type"] == "RuntimeError"
     assert detail["reason"] == "clear boom"
@@ -115,7 +115,6 @@ def test_failure_exit_throw_still_ends_inflight(game, monkeypatch):
     assert response.status_code == 200
     kind, detail = parse_sse_event_pairs(response.text)[-1]
     assert kind == "error"
-    assert detail["status_code"] == 500
     assert detail["message"] == "exit boom"
     assert detail["error_type"] == "RuntimeError"
     assert detail["reason"] == "exit boom"
@@ -152,7 +151,6 @@ def test_success_clear_throw_via_orphan_exits_display(game, monkeypatch):
     assert response.status_code == 200
     kind, detail = parse_sse_event_pairs(response.text)[-1]
     assert kind == "error"
-    assert detail["status_code"] == 500
     assert detail["message"] == "orphan clear boom"
     assert detail["error_type"] == "RuntimeError"
     assert detail["reason"] == "orphan clear boom"

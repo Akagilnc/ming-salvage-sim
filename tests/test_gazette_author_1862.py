@@ -125,7 +125,12 @@ def test_gazette_failure_retries_report_only(web_game, monkeypatch):
 
     first = asyncio.run(retreat())
     assert first[-1][0] == "error", first
-    assert first[-1][1]["status_code"] == 409
+    detail = first[-1][1]
+    assert detail["stage"] == "gazette"
+    assert detail["code"] == "llm_unavailable"
+    assert detail["status_code"] is None
+    assert detail["turn"] == turn
+    assert detail["error_pack_path"]
     assert int(state.turn) == turn
     assert web_game.state_payload()["turn"]["phase"] == "settling"
     charged = db.conn.execute(

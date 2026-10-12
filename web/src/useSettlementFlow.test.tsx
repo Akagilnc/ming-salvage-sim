@@ -347,13 +347,10 @@ describe("#1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 �
   });
 
   it("409 且服务端 turn>expected 时按已推进 reload，不设 error 条", async () => {
-    const fetchMock = vi.fn(async () => ({
-      ok: false,
-      status: 409,
-      statusText: "Conflict",
-      json: async () => ({
-        detail: { message: "月份已变更（当前第 6 月），与退朝令牌不符，请刷新后再试。", turn: 6 },
-      }),
+    const fetchMock = vi.fn(async () => sseErrorResponse({
+      message: "月份已变更（当前第 6 月），与退朝令牌不符，请刷新后再试。",
+      turn: 6,
+      status_code: 409,
     }));
     vi.stubGlobal("fetch", fetchMock);
     const reload = vi.fn();
@@ -377,13 +374,10 @@ describe("#1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 �
   });
 
   it("409 且服务端 turn<=expected 时仍报错条、不 reload", async () => {
-    const fetchMock = vi.fn(async () => ({
-      ok: false,
-      status: 409,
-      statusText: "Conflict",
-      json: async () => ({
-        detail: { message: "月末结算进行中，请待结算完成后再操作。" },
-      }),
+    const fetchMock = vi.fn(async () => sseErrorResponse({
+      message: "月份已变更，与退朝令牌不符。",
+      turn: 4,
+      status_code: 409,
     }));
     vi.stubGlobal("fetch", fetchMock);
     const reload = vi.fn();
@@ -408,15 +402,13 @@ describe("#1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 �
 
   it("#1808 B pending failure remains a loud phase-1 error without a recovery panel", async () => {
     const FAIL_MSG = "退朝失败：欠账未落库（替身）。";
-    vi.stubGlobal("fetch", vi.fn(async () => ({
-      ok: false,
-      status: 500,
-      statusText: "Error",
-      json: async () => ({
-        detail: {
-          message: FAIL_MSG,
-        },
-      }),
+    vi.stubGlobal("fetch", vi.fn(async () => sseErrorResponse({
+      message: FAIL_MSG,
+      reason: FAIL_MSG,
+      error_type: "RuntimeError",
+      stage: "pre_settle",
+      turn: 5,
+      error_pack_path: "/tmp/retreat-error-pack",
     })));
 
     const { host, hookRef, cleanup } = mountHarness({
@@ -428,7 +420,8 @@ describe("#1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 �
       await hookRef.current!.advanceWithoutEdict();
     });
 
-    expect(host.querySelector("[data-testid=error]")?.textContent).toBe(FAIL_MSG);
+    expect(host.querySelector("[data-testid=error]")?.textContent).toContain(FAIL_MSG);
+    expect(host.querySelector("[data-testid=error]")?.textContent).toContain("/tmp/retreat-error-pack");
     // #1888 J3：共享 error 已由 harness 渲染断言；settlementHudError 位不另读内部态
     // ——其玩家可见投影（hud-error 告警）由 appDurableWiring.test.tsx 的真实 App 用例证明。
     expect(host.querySelector('[data-testid="busy"]')?.textContent).toBe("");
@@ -487,21 +480,7 @@ function sseErrorResponse(payload: Record<string, unknown>): Response {
     "",
     "",
   ].join("\n");
-  return {
-    ok: true,
-    body: {
-      getReader() {
-        let done = false;
-        return {
-          read: async () => {
-            if (done) return { value: undefined, done: true };
-            done = true;
-            return { value: new TextEncoder().encode(body), done: false };
-          },
-        };
-      },
-    },
-  } as unknown as Response;
+  return new Response(body, { headers: { "Content-Type": "text/event-stream" } });
 }
 
 describe("#1277 useSettlementFlow — issueDecree 令牌与 409 幂等", () => {

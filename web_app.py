@@ -4770,8 +4770,8 @@ def _reject_stale_month_token(game, expected_turn: Optional[int], *, token_label
 
 # #1902：非流式 POST /api/decree/issue 退役——颁布只有流式一条入口
 # （/api/decree/issue/stream），两条同源入口把同一编排复制一份。此路由曾独有
-# 的 typed 失败面已补进 SSE 终态：SettlementAbort 带 status_code=409 + stage +
-# error_pack_path 与真实 LLM 原因统一经 _exception_detail。
+# 的 typed 失败面已补进 SSE 终态：SettlementAbort 的 stage、error_pack_path
+# 与真实 LLM 原因统一经 _exception_detail。
 
 @app.post("/api/decree/issue/stream")
 async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest()) -> StreamingResponse:
@@ -4792,8 +4792,6 @@ def _month_entry_stream_response(body: IssueDecreeRequest, *, retreat: bool = Fa
     ev_queue: "queue.Queue[tuple[str, Any]]" = queue.Queue()
 
     def worker() -> None:
-        from ming_sim.audience_night import AudienceNightError
-
         try:
             game = get_game()
             terminal: Optional[tuple[str, Any]] = None
@@ -4828,12 +4826,6 @@ def _month_entry_stream_response(body: IssueDecreeRequest, *, retreat: bool = Fa
                     ))
             if terminal is not None:
                 ev_queue.put(terminal)
-        except ValueError as e:
-            # exit/end 已由 _settlement_period_entry 在异常路径完成（若已 begin）。
-            payload = _exception_detail(e)
-            if retreat:
-                payload["status_code"] = 400
-            ev_queue.put(("__error__", payload))
         except HTTPException as e:
             detail = e.detail
             if isinstance(detail, dict):
@@ -4849,16 +4841,7 @@ def _month_entry_stream_response(body: IssueDecreeRequest, *, retreat: bool = Fa
             # #1235：真失败另形——helper 已 exit（含 AudienceNightError / SettlementAbort）。
             # #1465 ②：message 标量 + typed 键外层；与 resolve_decisions/stream 同真源。
             # #1853 J5：真异常经本口上抛；不以 failed 行另造 pending_action_failures。
-            payload = _exception_detail(e)
-            if retreat and payload.get("status_code") is None:
-                # Preserve the retired HTTP entry's failure codes in the SSE terminal.
-                if isinstance(e, (SettlementAbort, AudienceNightError, ExceptionGroup)):
-                    payload["status_code"] = 409
-                elif isinstance(e, LLMUnavailable):
-                    payload["status_code"] = 412
-                else:
-                    payload["status_code"] = 500
-            ev_queue.put(("__error__", payload))
+            ev_queue.put(("__error__", _exception_detail(e)))
 
     async def generate() -> AsyncIterator[str]:
         thread = threading.Thread(target=worker, daemon=True)

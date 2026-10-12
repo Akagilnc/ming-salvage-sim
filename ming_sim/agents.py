@@ -229,7 +229,8 @@ def run_agent_text(
     - 非流式赋值 run_response.content：agent/_response.py:965
     - RunCompletedEvent.content ← run_response.content：utils/events.py:145
     - yield_run_output=True 吐同一 run_response：agent/_run.py:1145-1146
-    故 chunk 只喂空转计时器；终文取 RunOutput/RunCompletedEvent，经 extract_agent_text。
+    chunk 喂空转计时器，并可经 on_text 交给正文观察口；终文仍取
+    RunOutput/RunCompletedEvent，经 extract_agent_text。
 
     API 可确证支持流式 → stream=True/stream_events=True/yield_run_output=True + transport
     空转预算；不支持 → 非流死角 + 每 attempt 硬超时（attempt_timeout_seconds 进配置）。
