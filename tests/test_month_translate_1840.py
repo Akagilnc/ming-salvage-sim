@@ -99,14 +99,17 @@ def test_world_segment_explicit_stock_transfers_share_actual_amount(
     assert all(row["origin_ref"] == origin for row in logs)
 
 
-@pytest.mark.parametrize("route", ["resolved", "failed"])
-@pytest.mark.parametrize("field,bad_value", [
-    ("cannon_transfer", value) for value in (None, True, -1.5, "bad")
+@pytest.mark.parametrize("route", ["resolved", "failed", "cancels"])
+@pytest.mark.parametrize("field,bad_value,level", [
+    ("cannon_transfer", value, "item") for value in (None, True, -1.5, "bad")
 ] + [
-    (field, value) for field in ("army_delta", "region_delta")
+    (field, value, "item") for field in ("army_delta", "region_delta")
     for value in (None, [], 5, 1.5, "bad", True)
+] + [
+    (field, value, "section") for field in ("army_delta", "region_delta")
+    for value in ([], 5, 1.5, "bad", True)
 ])
-def test_world_segment_nested_entity_effects_reject_bad_items(game, route, field, bad_value):
+def test_world_segment_nested_entity_effects_reject_bad_items(game, route, field, bad_value, level):
     from ming_sim.month_translate import dispatch_month_segment
     import json
 
@@ -122,11 +125,17 @@ def test_world_segment_nested_entity_effects_reject_bad_items(game, route, field
     bad_region, good_region = [row[0] for row in db.conn.execute("SELECT id FROM regions ORDER BY id LIMIT 2")]
     db.conn.execute("UPDATE regions SET unrest=10 WHERE id=?", (good_region,))
     bad_region_before = dict(db.regions.row(bad_region))
-    effect = {"army_delta": {winner: {"manpower": 1}}, "region_delta": {good_region: {"unrest": 1}}}
+    legal = {"army_delta": {winner: {"manpower": 1}}, "region_delta": {good_region: {"unrest": 1}}}
+    effect = dict(legal)
     if field == "cannon_transfer":
         bad_changes = {"随军大炮": bad_value, "cannon_transfer_to": winner}
-        effect["army_delta"][loser] = bad_changes
+        effect["army_delta"] = {**effect["army_delta"], loser: bad_changes}
         expected_rejections = [("invalid_enum", {"army_id": loser, "changes": bad_changes}, "system_simulation")]
+    elif level == "section":
+        effect[field] = bad_value
+        expected_rejections = [
+            ("invalid_shape", {"field": field, "raw_value": bad_value}, "system_simulation")
+        ]
     else:
         bad_id = loser if field == "army_delta" else bad_region
         bad_items = {bad_id: bad_value, "unregistered_entity": bad_value}
@@ -135,16 +144,32 @@ def test_world_segment_nested_entity_effects_reject_bad_items(game, route, field
             ("invalid_shape", {"field": field, "id": entity_id, "value": value}, "system_simulation")
             for entity_id, value in bad_items.items()
         ]
-    issue_id = db.insert_issue(
-        state, kind="situation", title="调炮", effect_on_fail=effect if route == "failed" else {},
-    )
-    result = dispatch_month_segment(
-        db, state, segment="调炮", translate_fn=lambda request, config: {"effects": {
+    # Close + section: seed same-named preset so rejected fresh section keeps preset work.
+    if route == "cancels":
+        issue_kwargs = {"cancellable": "decree"}
+    elif level == "section":
+        issue_kwargs = {
+            "effect_on_resolve": legal if route == "resolved" else {},
+            "effect_on_fail": legal if route == "failed" else {},
+        }
+    else:
+        issue_kwargs = {"effect_on_fail": effect if route == "failed" else {}}
+    issue_id = db.insert_issue(state, kind="situation", title="调炮", **issue_kwargs)
+    if route == "cancels":
+        declaration = {"effects": {
+            "cancels": [{"issue_id": issue_id, "narrative": "撤回", "applied_cost": effect}],
+        }}
+        expected_status = "dropped"
+    else:
+        declaration = {"effects": {
             "close_issues": [{
                 "issue_id": issue_id, "reason": route,
                 f"effect_on_{'resolve' if route == 'resolved' else 'fail'}": effect,
             }],
-        }},
+        }}
+        expected_status = route
+    result = dispatch_month_segment(
+        db, state, segment="调炮", translate_fn=lambda request, config: declaration,
     )
     rejected = section(result.effects.applied[0], "issue_summary").rejected
     assert [(item.category, item.item, item.source.value) for item in rejected] == expected_rejections
@@ -154,10 +179,12 @@ def test_world_segment_nested_entity_effects_reject_bad_items(game, route, field
         "SELECT id, cannon_equipment FROM armies WHERE id IN (?, ?) ORDER BY id", (loser, winner),
     )] == cannon_before
     assert db.conn.execute("SELECT COUNT(*) FROM army_logs WHERE field='cannon_equipment'").fetchone()[0] == logs_before
-    assert db.armies.row(winner)["manpower"] == manpower_before + 1
+    expect_manpower = manpower_before + (0 if level == "section" and field == "army_delta" and route == "cancels" else 1)
+    expect_unrest = 10 if level == "section" and field == "region_delta" and route == "cancels" else 11
+    assert db.armies.row(winner)["manpower"] == expect_manpower
     assert dict(db.regions.row(bad_region)) == bad_region_before
-    assert db.regions.row(good_region)["unrest"] == 11
-    assert db.issues.row(issue_id)["status"] == route
+    assert db.regions.row(good_region)["unrest"] == expect_unrest
+    assert db.issues.row(issue_id)["status"] == expected_status
 
 
 def test_world_segment_rejects_transfer_with_pay_arrears_claim(game):

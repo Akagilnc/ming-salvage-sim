@@ -751,7 +751,13 @@ def apply_issue_tracker_output(
             effect = loads_effect_dict(new_row["effect_on_fail"])
             cl_effect = cl.get("effect_on_fail")
         if isinstance(cl_effect, dict):
-            # 浅合并：metrics/economy/factions/buildings/legacy 等顶层段，现给覆盖预设
+            # 浅合并：metrics/economy/factions/buildings/legacy 等顶层段，现给覆盖预设。
+            # 新鲜非对象映射段先拒收留痕并剔除，同名预设段得以保留（整段 cl_effect
+            # 非对象时拒收现给、保留预设的同衔先例）。
+            cl_effect, section_rejections = issue_effects.admit_fresh_mapping_sections(
+                cl_effect, source=source,
+            )
+            entity_rejections.extend(section_rejections)
             effect = {**effect, **cl_effect}
         elif cl_effect is not None:
             entity_rejections.append(RejectedItem(
@@ -857,6 +863,11 @@ def apply_issue_tracker_output(
                 reason="撤回后果须为对象", category="invalid_shape", source=source,
             ))
             cost = {}
+        else:
+            cost, section_rejections = issue_effects.admit_fresh_mapping_sections(
+                cost, source=source,
+            )
+            entity_rejections.extend(section_rejections)
         parent_origin_ref = issue_records._canonical_issue_origin(db, row)
         entity_rejections.extend(issue_effects._apply_issue_entities(
             db, state, cost, f"局势#{issue_id}撤回", content=runtime_content,

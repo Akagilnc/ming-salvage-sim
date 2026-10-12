@@ -25,6 +25,33 @@ _ISSUE_ENTITY_FIELDS = {
 }
 
 
+def admit_fresh_mapping_sections(
+    effect: Dict[str, object],
+    *,
+    source: Provenance = Provenance.system_simulation,
+) -> tuple[Dict[str, object], List[RejectedItem]]:
+    """Strip non-object nested mapping sections from fresh LLM effect payloads.
+
+    Reuses the ``_ISSUE_ENTITY_FIELDS`` container refusal shape. Call only at
+    fresh close/cancel entries so durable ``_load_durable_json_object`` stays loud.
+    Dropping a bad key lets same-named presets survive a shallow merge.
+    """
+    cleaned = dict(effect)
+    rejected: List[RejectedItem] = []
+    for key, container in _ISSUE_ENTITY_FIELDS.items():
+        if container is not dict:
+            continue
+        if key in cleaned and cleaned[key] is not None and not isinstance(cleaned[key], container):
+            rejected.append(RejectedItem(
+                item={"field": key, "raw_value": cleaned[key]},
+                reason=f"局势效果 {key} 容器类型非法",
+                category="invalid_shape",
+                source=source,
+            ))
+            del cleaned[key]
+    return cleaned, rejected
+
+
 def _apply_issue_buildings(
     db: GameDB,
     state: GameState,
