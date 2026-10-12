@@ -5389,8 +5389,18 @@ async def api_set_llm_config(request: LLMConfigRequest) -> Dict[str, Any]:
 _PORTRAIT_EXT = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
 
 
+def _roster_character(name: str) -> Optional[Character]:
+    """只接受已存在的人物名 → 集合固定，杜绝路径穿越/任意读写。"""
+    return get_game().find_character(name)
+
+
 def _find_portrait_file(name: str) -> Optional[str]:
-    """找该人物已存在的自定义立绘文件（任一扩展名），无则 None。"""
+    """找该人物已存在的自定义立绘文件（任一扩展名），无则 None。
+
+    读/写共用 `_roster_character`：名册外一律当作没有自定义立绘。
+    """
+    if _roster_character(name) is None:
+        return None
     for ext in _PORTRAIT_EXT.values():
         path = os.path.join(UPLOAD_PORTRAIT_DIR, f"{name}.{ext}")
         if os.path.exists(path):
@@ -5400,10 +5410,8 @@ def _find_portrait_file(name: str) -> Optional[str]:
 
 @app.post("/api/consorts/{name}/portrait")
 async def api_upload_portrait(name: str, file: UploadFile = File(...)) -> Dict[str, Any]:
-    # 只接受已存在的人物名 → 集合固定，杜绝路径穿越/任意写。
     game = get_game()
-    character = game.find_character(name)
-    if character is None:
+    if _roster_character(name) is None:
         raise HTTPException(status_code=404, detail="未找到该人物")
     ext = _PORTRAIT_EXT.get(file.content_type or "")
     if ext is None:
