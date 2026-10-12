@@ -826,10 +826,9 @@ def _consume_call_failure_for_retry(
     _save_chain(db, turn, chain, decree_text=decree_text, source=source)
 
 
-def _settlement_abort_already_accounted(exc: Any, *args: Any, **kwargs: Any) -> bool:
-    """Single authority: accounted SettlementAbort must not be re-tagged or re-packed (#1847 K5)."""
-    target = args[-1] if args and not getattr(exc, "accounted", False) else exc
-    return bool(getattr(target, "accounted", False))
+def _settlement_abort_already_accounted(exc: SettlementAbort) -> bool:
+    """Single authority: accounted SettlementAbort must not be re-tagged or re-packed."""
+    return exc.accounted
 
 
 def _abort_month_call(
@@ -1870,8 +1869,8 @@ def _consume_rescript_answers(
 
     Each successful leg materializes new desk questions immediately. Failure is
     recorded through the original month-call boundary; siblings still get their
-    own commit chance. This request's original accounted abort is re-raised
-    (cause chain intact); a sibling without one reports durable failure only.
+    own commit chance. Only a still-present durable failure is reported, preferring
+    this request's original accounted abort to preserve its cause chain.
     """
     from concurrent.futures import as_completed
     from ming_sim.decree_forecast import _owner_for

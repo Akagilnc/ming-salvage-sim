@@ -2468,10 +2468,12 @@ class GameSession:
             with write_gate:
                 if int(self.state.turn) != before_turn or self.state.ended:
                     return
+                failure = month_chain_call_failure(self.db, before_turn)
+                if result is None and not failure:
+                    return  # Sibling recovery already owns the current phase.
                 self.state.turn_phase = (
-                    TurnPhase.SETTLING.value if month_chain_call_failure(self.db, before_turn)
-                    else TurnPhase.AWAITING_DECISION.value if (result is not None and result.awaiting) or result is None
-                    else TurnPhase.SETTLING.value
+                    TurnPhase.SETTLING.value if failure or not result.awaiting
+                    else TurnPhase.AWAITING_DECISION.value
                 )
                 self.db.reign.save_game_state(self.state)
 
