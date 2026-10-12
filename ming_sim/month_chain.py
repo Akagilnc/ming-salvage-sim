@@ -660,7 +660,12 @@ def run_player_month_chain(
                             error_pack_path=chain["call_failure"].get("error_pack_path"),
                         )
                     desk = _materialize_rescript_desk(db, state, chain)
-                    if desk or jobs:
+                    # Durable decided-but-unconsumed answers block the monthly tail
+                    # even before another request has claimed them into _rescript_jobs.
+                    unconsumed = _eligible_rescript_answers(
+                        SimpleNamespace(db=db, state=state), chain,
+                    )
+                    if desk or jobs or unconsumed:
                         if desk:
                             schedule_forecasts(session=owner, chain=chain, desk=desk)
                         return ResolveResult(awaiting=True, decisions=desk or [], advanced=False, stage="rescript")
@@ -1798,16 +1803,43 @@ def _world_question_ids(chain, turn):
     )}
 
 
+def _eligible_rescript_answers(
+    session: Any, chain: Dict[str, Any], *, decided: Optional[List[Dict[str, object]]] = None,
+) -> List[Dict[str, object]]:
+    """This-turn decided answers still waiting for a model-leg commit (durable)."""
+    db, state = session.db, session.state
+    turn = int(state.turn)
+    if decided is None:
+        rows = db.issues.list_pending_decisions(turn) + db.issues.list_rescript_drafts()
+        decided = [r for r in rows if r["status"] == "decided" and r["answered_turn"] == turn]
+    world_ids = _world_question_ids(chain, turn)
+    eligible: List[Dict[str, object]] = []
+    for row in decided:
+        event = str(row.get("event_id") or "")
+        if row["kind"] == "rescript_draft":
+            if row["decision_key"] not in chain.get("rescript_consumed", []):
+                eligible.append(row)
+        elif event in world_ids:
+            eligible.append(row)
+        elif event.startswith(_DECREE_QUESTION_PREFIX):
+            ref = event[len(_DECREE_QUESTION_PREFIX):].rpartition(":")[0]
+            if any(q["event_id"] == event for q in db.staged_declarations.questions_for(ref)):
+                eligible.append(row)
+    return eligible
+
+
 def _consume_rescript_answers(
     session: Any, chain: Dict[str, Any], *, source: Provenance,
 ) -> None:
     """Independent answer model legs; completion-order, short atomic live commits.
 
-    Failure is recorded immediately through the original month-call boundary, but
-    only re-raised after sibling jobs have had their own chance to commit.
+    Each successful leg materializes new desk questions immediately. Failure is
+    recorded through the original month-call boundary; siblings still get their
+    own commit chance, and only a still-present durable call_failure is re-raised.
     """
     from concurrent.futures import as_completed
     from ming_sim.decree_forecast import _owner_for
+    from ming_sim.exceptions import SettlementAbort
     from ming_sim.rescript_draft import consume_memorial_answer
     from ming_sim.rescript_forecast import prepare_answers
 
@@ -1838,23 +1870,10 @@ def _consume_rescript_answers(
                         )
             elif event_id.startswith("dossier:"):
                 _apply_decided_triad(db, state, row, row["choice"] or {}, content=session.content)
-        world_ids = _world_question_ids(chain, turn)
-        eligible = []
-        for row in decided:
-            event = str(row.get("event_id") or "")
-            if row["kind"] == "rescript_draft":
-                if row["decision_key"] not in chain.get("rescript_consumed", []):
-                    eligible.append(row)
-            elif event in world_ids:
-                eligible.append(row)
-            elif event.startswith(_DECREE_QUESTION_PREFIX):
-                ref = event[len(_DECREE_QUESTION_PREFIX):].rpartition(":")[0]
-                if any(q["event_id"] == event for q in db.staged_declarations.questions_for(ref)):
-                    eligible.append(row)
+        eligible = _eligible_rescript_answers(session, chain, decided=decided)
         jobs, launches = prepare_answers(session, chain, eligible, source=source)
     for launch in launches:
         launch()
-    failure = None
     for future in as_completed(jobs):
         row, kind, ref = jobs[future]
         with owner._write_gate:
@@ -1880,15 +1899,23 @@ def _consume_rescript_answers(
                     db, state, chain, decree_text="", source=source,
                     step="rescript-answer" if kind == "memorial" else f"{kind}_continue", operation=consume,
                 )
-            except Exception as exc:
-                failure = failure or exc
+                # Per-answer finality: new questions join the desk without waiting
+                # for sibling model legs (ticket #1847 / 2026-10-12 各道各自终局).
+                _materialize_rescript_desk(db, state, chain)
+            except Exception:
+                # Sibling legs still run; durable call_failure is what we re-raise.
+                pass
             finally:
                 del owner._rescript_jobs[(turn, row["decision_key"])]
     with owner._write_gate:
         chain.clear()
         chain.update(_load_chain(db, turn))
+        failure = chain.get("call_failure")
     if failure is not None:
-        raise failure
+        raise SettlementAbort(
+            failure["message"], turn=turn, stage=failure["step"],
+            error_pack_path=failure.get("error_pack_path"),
+        )
 
 
 def _apply_decided_triad(
