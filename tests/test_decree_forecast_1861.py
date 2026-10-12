@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import shutil
 import threading
+from contextvars import ContextVar
 from types import SimpleNamespace
 
 import pytest
@@ -18,17 +19,15 @@ from ming_sim.declaration_dispatch import (
 )
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.models import LLMConfig
-from ming_sim.session import GameSession
 from ming_sim.session_write_queue import get_session_write_queue
-from ming_sim.settlement.views import section
 from tests.conftest import (
-    note_queue_until_game_teardown,
     offline_empty_audience_translate,
     persist_and_schedule_scene,
     stub_audience_translate,
     stub_scene_agent,
 )
 from tests.test_session_write_queue_1353 import wait_pending_writes
+from tests.month_chain_helpers import empty_rescript_response, make_light_session
 
 # 两个时限各管一件事，量纲不同，不可合并：
 #
@@ -126,18 +125,11 @@ def _drain_legs(sess, in_flight: "ModelCallRendezvous") -> None:
     )
 
 def _sess(db, state, content, monkeypatch, translate_fn):
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-    sess.content = content
+    sess = make_light_session(db, state, content)
     sess.registry = None
     sess.llm_config = LLMConfig(
         api_key="test", base_url="https://example.invalid/v1", model="test-model",
     )
-    sess.agno_db = None
-    sess._write_gate = get_session_write_queue(sess).write_gate
-    # 断言失败时预推仍在跑；登记后夹具在关库前先排空，任务不越过清理边界。
-    note_queue_until_game_teardown(db, get_session_write_queue(sess))
     stub_audience_translate(monkeypatch, translate_fn)
     stub_scene_agent(monkeypatch, SimpleNamespace(
         run=lambda _message: SimpleNamespace(content="臣领旨。", tools=[]),
@@ -209,7 +201,7 @@ def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(
         judge_policies.append(kwargs.get("transport_policy"))
         dossier = json.loads(prompt)["dossiers"][0]
         judge_facts[dossier["mode"]] = dossier
-        if exhaust_first and dossier["decree_text"] == "甲旨":
+        if exhaust_first and dossier["id"] == first:
             raise LLMUnavailable("exhausted", code="http_429", status_code=429)
         return json.dumps({
             "verdicts": [{"dossier_id": dossier["id"], "decision": "promulgated"}],
@@ -234,15 +226,30 @@ def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(
 
     monkeypatch.setattr(forecast_mod.agents, "run_agent_text", simulate)
     translate_policies = []
+    translation_input = ContextVar("translation_input")
+    original_runner = month_translate._default_month_translate_runner
+
+    def capture_translation(request, llm_config):
+        assert request.this_decree is not None
+        translation_input.set(request.this_decree)
+        return original_runner(request, llm_config)
+
+    monkeypatch.setattr(month_translate, "_default_month_translate_runner", capture_translation)
 
     def translate_segment(_prompt, _llm_config, **kwargs):
         translate_policies.append(kwargs.get("policy"))
+        fact = translation_input.get()
+        amount = -2 if fact["mode"] == "ordinary" else -3
         return {"effects": {"economy_moves": [
+            {"origin_ref": fact["origin_ref"], "account": "国库", "delta": amount,
+             "category": "过月支出", "reason": fact["origin_ref"]},
             {"origin_ref": f"affair:{visible_affair.id}", "account": "国库", "delta": -1,
              "category": "过月支出", "reason": "可见事务"},
             {"origin_ref": f"affair:{future_affair_id}", "account": "国库", "delta": -1,
              "category": "过月支出", "reason": "预推后新开事务"},
-        ]}}
+        ], "dossier_executions": [{
+            "dossier_id": fact["id"], "outcome": "fulfilled", "note": fact["origin_ref"],
+        }]}}
 
     monkeypatch.setattr(month_translate, "run_declaration_translate_prompt", translate_segment)
     sess = _sess(db, state, content, monkeypatch, translate_fn)
@@ -298,14 +305,6 @@ def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(
         period=state.period, turn=state.turn,
     )
     assert hidden.id == future_affair_id
-    from ming_sim.declaration_dispatch import settle_staged_declarations_in_decree_order
-    settled = settle_staged_declarations_in_decree_order(
-        db, state, [pending_action_decree_ref(second, 1)],
-    )[pending_action_decree_ref(second, 1)]
-    assert int(state.metrics["国库"]) == treasury_before - 1
-    rejections = section(settled.effects.applied[0], "economy_moves").rejected
-    assert len(rejections) == 1
-    assert rejections[0].item["origin_ref"] == f"affair:{hidden.id}"
     # Background translation legitimately adds a conversation entry; forecast must not
     # publish an extra ledger entry of its own.
     assert db.conn.execute(
@@ -324,6 +323,39 @@ def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(
     }
     assert sources_after == sources_before
     assert int(night["id"]) > 0
+
+    monkeypatch.setattr("ming_sim.rescript_draft.run_rescript_text", empty_rescript_response)
+    monkeypatch.setattr("ming_sim.month_chain.run_world_segment_text", lambda *_a, **_k: "")
+    result = sess.resolve_turn(allow_empty_decree=True)
+    assert result.advanced is False
+    dossiers = {
+        int(row["pending_action_id"]): row for row in db.dossiers.list_dossiers()
+        if int(row["pending_action_id"]) in {first, second}
+    }
+    assert set(dossiers) == {first, second}
+    for action_id, amount in ((first, -2), (second, -3)):
+        dossier = dossiers[action_id]
+        origin = f"dossier:{dossier['id']}"
+        moves = list(db.conn.execute(
+            "SELECT delta FROM economy_ledger WHERE origin_ref=? ORDER BY id", (origin,),
+        ))
+        assert [int(row["delta"]) for row in moves] == [amount]
+        assert dossier["execution_outcome"] == "fulfilled"
+        assert db.staged_declarations.is_settled(pending_action_decree_ref(action_id, 1))
+    visible_moves = list(db.conn.execute(
+        "SELECT delta FROM economy_ledger WHERE origin_ref=?", (f"affair:{visible_affair.id}",),
+    ))
+    assert [int(row["delta"]) for row in visible_moves] == [-1, -1]
+    rejections = [
+        row for row in db.conn.execute("SELECT category, item_json FROM rejection_reports")
+        if json.loads(row["item_json"]).get("origin_ref") == f"affair:{hidden.id}"
+    ]
+    assert len(rejections) == (1 if exhaust_first else 2)
+    assert all(row["category"] == "invalid_enum" for row in rejections)
+    hidden_moves = list(db.conn.execute(
+        "SELECT delta FROM economy_ledger WHERE origin_ref=?", (f"affair:{hidden.id}",),
+    ))
+    assert [int(row["delta"]) for row in hidden_moves] == ([-1] if exhaust_first else [])
 
 def test_scene_chat_rejection_is_staged_for_later_rescript_not_shown_at_night(
     game, monkeypatch,

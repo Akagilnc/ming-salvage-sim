@@ -538,6 +538,7 @@ def _continue_decree_after_answers(
 ) -> None:
     from ming_sim.exceptions import LLMUnavailable
     from ming_sim.month_translate import dispatch_month_segment
+    from ming_sim.decree_forecast import dossier_for_decree_ref
 
     db, state = session.db, session.state
     turn = int(state.turn)
@@ -547,7 +548,7 @@ def _continue_decree_after_answers(
         return
     if session.llm_config is None:
         raise LLMUnavailable("旨意续推缺少模型配置", stage="decree-forecast-continue")
-    dossier = _dossier_for_decree_ref(db, decree_ref)
+    dossier = dossier_for_decree_ref(db, decree_ref)
     if dossier is None:
         return
     if chain is None:
@@ -580,6 +581,7 @@ def _continue_decree_after_answers(
     dispatch_month_segment(
         db, state, segment=prefix,
         decree_payload=payload,
+        decree_ref=decree_ref,
         llm_config=session.llm_config,
         source=source,
         alongside=consume,
@@ -1903,19 +1905,6 @@ def _run_world_continuation_text(
         )
     finally:
         release_material_tree(prepared.root)
-
-
-def _dossier_for_decree_ref(db: Any, decree_ref: str) -> Optional[Dict[str, Any]]:
-    from ming_sim.decree_forecast import decree_ref_for_dossier
-
-    for dossier in db.dossiers.list_dossiers():
-        if decree_ref_for_dossier(db, dossier) == decree_ref:
-            return dossier
-    if decree_ref.startswith("dossier:"):
-        raw = decree_ref.split(":", 1)[1]
-        if raw.isdigit():
-            return db.dossiers.get(int(raw))
-    return None
 
 
 def _advance_after_gazette(

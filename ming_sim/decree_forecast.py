@@ -111,6 +111,7 @@ def _this_decree_fact(
     )
     fact: Dict[str, object] = {
         "id": uncased_ref if uncased_ref is not None else candidate.get("id"),
+        "origin_ref": uncased_ref if uncased_ref is not None else held_dossier_decree_ref(candidate["id"]),
         "status": "promulgated",
         "decree_text": decree_text,
         "action_type": str(candidate.get("action_type") or ""),
@@ -335,6 +336,18 @@ def snapshot_for_existing_dossier(session: Any, dossier: Dict[str, Any]) -> Dict
     )
 
 
+def dossier_for_decree_ref(db: Any, decree_ref: str) -> Optional[Dict[str, Any]]:
+    """Resolve the staged identity through the dossier's saved pending_action_id."""
+    for dossier in db.dossiers.list_dossiers():
+        if decree_ref_for_dossier(db, dossier) == decree_ref:
+            return dossier
+    if decree_ref.startswith("dossier:"):
+        raw = decree_ref.split(":", 1)[1]
+        if raw.isdigit():
+            return db.dossiers.get(int(raw))
+    return None
+
+
 def produce_forecast_product(session: Any, snapshot: Dict[str, Any]) -> Dict[str, Any]:
     """判官、逐旨推演、过月段转译三步。只产出暂存物，不落账。"""
     try:
@@ -385,6 +398,7 @@ def produce_forecast_product(session: Any, snapshot: Dict[str, Any]) -> Dict[str
                     segment=prefix,
                     target_grounding=str(snapshot["target_grounding"]),
                     decree_payload=payload,
+                    this_decree=snapshot["this_decree"],
                     llm_config=session.llm_config,
                     continuing_dossiers=continuing_dossier_facts(
                         session.db, int(snapshot["turn"]),

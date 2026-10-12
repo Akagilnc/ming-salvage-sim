@@ -17,6 +17,7 @@ from ming_sim.audience_translate import (
 )
 from ming_sim.declaration_dispatch import (
     DeclarationDispatchResult,
+    bind_decree_effect_sources,
     dispatch_declaration,
 )
 
@@ -101,6 +102,7 @@ class MonthTranslationInput:
         default_factory=lambda: dict(_NO_CANDIDATES),
     )
     answered_verdicts: tuple[Mapping[str, object], ...] = ()
+    this_decree: Optional[Mapping[str, object]] = None
 
 
 MonthTranslateFn = Callable[[MonthTranslationInput, Any], Mapping[str, object]]
@@ -117,11 +119,14 @@ def build_month_segment_translate_prompt(request: MonthTranslationInput) -> str:
         f"形状：\n{build_c0_declaration_shape()}"
         "规则：\n"
         "- 只声明本段已发生或明确交代的内容，按原有先后顺序；不得补造事实或目标 id。\n"
+        "- 【本旨事实】给出本旨的 id 与 origin_ref。本旨引起的效果在来源槽原样使用 "
+        "origin_ref；dossier_id、target_dossier_id 槽原样使用 id。未成案时这两个值是"
+        "暂存身份，收夜成案后由引擎绑定真实案卷；其它案卷仍用材料中的真实 id。\n"
         "- 【在途办理案卷】给出 id 与目标身份。段文明确交代其中某案的办理结果时，"
         "在 effects.dossier_executions 按其 id 声明 dossier_id、outcome"
         "（fulfilled/degraded/failed/transformed）和原文依据 note。"
-        "段文只点到目标、未复述 id 时，只认该清单里的目标身份对应，不得另选或编造。"
-        "清单没有的案卷，或段文未明确结果的，留空，不得推断结案。\n"
+        "段文只点到目标、未复述 id 时，只认本旨事实或该清单里的目标身份对应，不得另选或编造。"
+        "本旨事实与清单均没有的案卷，或段文未明确结果的，留空，不得推断结案。\n"
         "- effects 可为一份效果对象，或按段文顺序排列的效果对象数组；同一人物或军队"
         "的多次交代须逐项排列，不合并为净增量。effects 只声明叙事推演产生、"
         "且未由下方旨意结构化载荷表示的效果；三饷亲裁结局按亲裁契约、候选事件战果按候选契约"
@@ -135,6 +140,7 @@ def build_month_segment_translate_prompt(request: MonthTranslationInput) -> str:
         f"{_candidate_contract_block(candidates)}"
         f"{_build_levy_verdict_rule(request)}"
         f"【旨的结构化载荷】\n{json.dumps(dict(request.decree_payload), ensure_ascii=False, indent=2)}\n"
+        f"【本旨事实】\n{json.dumps(request.this_decree, ensure_ascii=False)}\n"
         f"【在途办理案卷】\n{json.dumps(list(request.continuing_dossiers), ensure_ascii=False)}\n"
         f"{grounding_block}"
         f"【完整段文】\n{request.segment}"
@@ -217,6 +223,7 @@ def translate_month_segment(
     continuing_dossiers: tuple[Mapping[str, object], ...] | list[Mapping[str, object]] = (),
     candidates: Optional[Mapping[str, object]] = None,
     answered_verdicts: tuple[Mapping[str, object], ...] | list[Mapping[str, object]] = (),
+    this_decree: Optional[Mapping[str, object]] = None,
 ) -> dict[str, object]:
     """一次完整段转译为 C0 声明；调用失败原样上抛，不伪装成空声明。"""
     request = MonthTranslationInput(
@@ -226,6 +233,7 @@ def translate_month_segment(
         continuing_dossiers=tuple(continuing_dossiers),
         candidates=dict(candidates) if candidates is not None else dict(_NO_CANDIDATES),
         answered_verdicts=tuple(answered_verdicts),
+        this_decree=this_decree,
     )
     runner = translate_fn or _default_month_translate_runner
     declaration = runner(request, llm_config)
@@ -277,6 +285,7 @@ def _translate_month_segment_front(
     continuing_dossiers: tuple[Mapping[str, object], ...] | list[Mapping[str, object]] = (),
     candidates: Optional[Mapping[str, object]] = None,
     answered_verdicts: tuple[Mapping[str, object], ...] | list[Mapping[str, object]] = (),
+    this_decree: Optional[Mapping[str, object]] = None,
 ) -> tuple[dict[str, object], dict[str, list[int]]]:
     """过月段转译前半：冻结可见引用、拼 grounding、一次转出 C0 声明。"""
     refs = _visible_effect_refs(db, turn)
@@ -293,6 +302,7 @@ def _translate_month_segment_front(
         continuing_dossiers=continuing_dossiers,
         candidates=candidates,
         answered_verdicts=answered_verdicts,
+        this_decree=this_decree,
     )
     return declaration, refs
 
@@ -309,6 +319,7 @@ def dispatch_month_segment(
     source: Provenance = Provenance.system_simulation,
     alongside: Optional[Callable[[DeclarationDispatchResult], None]] = None,
     answered_verdicts: tuple[Mapping[str, object], ...] | list[Mapping[str, object]] = (),
+    decree_ref: Optional[str] = None,
 ) -> DeclarationDispatchResult:
     """世界段转译一次，整份声明沿 C0 唯一原子分派入口提交。
 
@@ -318,6 +329,13 @@ def dispatch_month_segment(
 
     payload = decree_payload or {}
     turn = int(state.turn)
+    this_decree = None
+    if decree_ref is not None:
+        from ming_sim.decree_forecast import _this_decree_fact, dossier_for_decree_ref
+
+        dossier = dossier_for_decree_ref(db, decree_ref)
+        if dossier is not None:
+            this_decree = _this_decree_fact(dossier, decree_text=dossier["decree_text"], db=db)
     # #1893：转译发生在世界段材料目录释放之后，故此刻按同一读侧硬门重取一次候选事实
     # 随请求送给转译器——写口仍会在落库时按同一硬门重验，此处只补事实供料。
     # 候选集与同一次世界段材料目录（prepare_world_materials 默认口径）和落库写口
@@ -329,7 +347,10 @@ def dispatch_month_segment(
         continuing_dossiers=continuing_dossier_facts(db, turn),
         candidates=candidate_supply(db, state),
         answered_verdicts=answered_verdicts,
+        this_decree=this_decree,
     )
+    if decree_ref is not None:
+        declaration, refs = bind_decree_effect_sources(db, decree_ref, declaration, refs)
     return dispatch_declaration(
         db, state, declaration,
         minister_name=minister_name,
