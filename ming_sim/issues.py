@@ -451,8 +451,8 @@ def petition_outcome_is_admissible(
 ) -> bool:
     """该事件是否可由本回合的亲裁答复置定结局（#1892 亲裁语义落账）。
 
-    资格只认本回合绑定原事件的已答请饷行，且终态仍空。
-    历史留中答复是世界材料，不是当次亲裁授权。
+    资格只认本回合绑定原事件且已选票拟的请饷答复，且终态仍空。
+    留中答复是世界材料，不是结局落账授权。
     """
     eid = str(event_id or "").strip()
     if not eid:
@@ -957,10 +957,10 @@ def _is_fiscal_levy_petition_event(ev: Event) -> bool:
     )
 
 def _fiscal_levy_answered_rows(db: GameDB, turn: int) -> List[Dict[str, object]]:
-    """本段已答的请饷／议停行：真实事件 id 与已落原批语。资格的唯一读口。
+    """本段已选票拟的请饷／议停答复：真实事件 id 与原批语。资格的唯一读口。
 
-    资格＝该回合批红页上已答（decided，含留中）且带请饷前缀的行。呈过而未答、
-    或上一段的旧留中行，不在此列。前缀真源 = month_chain；此处局部导入以免成环。
+    资格＝该回合已答、带请饷前缀且 label 非空的行；只批朱笔而未选票拟是留中。
+    不解析 note 的语义。前缀真源 = month_chain；此处局部导入以免成环。
     """
     from ming_sim.month_chain import _LEVY_PETITION_PREFIX
 
@@ -972,6 +972,8 @@ def _fiscal_levy_answered_rows(db: GameDB, turn: int) -> List[Dict[str, object]]
         choice = parse_engine_payload_json(
             row["choice_json"],
         )
+        if not choice.get("label"):
+            continue
         rows.append({
             "event_id": event_id[len(_LEVY_PETITION_PREFIX):],
             "rescript": choice,
@@ -979,7 +981,7 @@ def _fiscal_levy_answered_rows(db: GameDB, turn: int) -> List[Dict[str, object]]
     return rows
 
 def _fiscal_levy_answered_event_ids(db: GameDB, turn: int) -> set[str]:
-    """本段已答复的请饷／议停事件真实 id——结局声明的唯一资格门。
+    """本段已选票拟的请饷／议停事件真实 id——结局声明的唯一资格门。
 
     行来自 ``_fiscal_levy_answered_rows``。转译供料名单由同一行派生。
     """

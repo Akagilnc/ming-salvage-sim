@@ -38,8 +38,8 @@ def _visible_effect_refs(
 def petition_verdict_grounding(db: Any, state: Any) -> list[dict[str, object]]:
     """已呈皇帝、待亲裁落定结局的三饷事项及其封闭标签集（#1892 / ADR 0143 输入侧）。
 
-    只列事件账里已有请旨答复、终态仍空的事项。到期但尚未上疏的事项不在此列，
-    转译器不得把它们写成已批。不声明结局即留中，引擎不写终态。只供事实，不代模型判断。
+    只列本回合已选票拟、终态仍空的事项。未上疏、未答或留中不在此列；
+    留中事实仍供世界段，不授予转译结局的资格。只供事实，不代模型判断。
     """
     from ming_sim.entities.fiscal.levy import _fiscal_levy_event_by_id
     from ming_sim.issues import petition_outcome_is_admissible
@@ -237,7 +237,7 @@ def translate_month_segment(
 def _answered_levy_verdicts(
     db: Any, turn: int, *, answers: list[dict[str, object]],
 ) -> list[dict[str, object]]:
-    """本段待译的三饷请旨事件：已答行的事件身份、闭集，以及已存原批语（#1891）。
+    """本段待译的三饷请旨事件：已选票拟的事件身份、闭集与原批语（#1891）。
 
     已答行只读 ``_fiscal_levy_answered_rows``，从已交接的实际答复取本次供料。
     历史仍留账，不重标为新答复；不解析批语或在这里判准驳（ADR 0142 / P6）。

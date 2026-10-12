@@ -241,6 +241,7 @@ def test_commission_stays_staged_not_bypassing_promulgation(game):
     commission: dict = {"text": "任命洪承畴为陕西巡抚，调银三十万两赈灾"}
     if army_id:
         commission["grant"] = {
+            "grant_action": "协饷",
             "amount": 300000, "account": "国库", "purpose": "补饷",
             "target_kind": "army", "target_id": army_id,
         }
