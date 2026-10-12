@@ -66,11 +66,15 @@ def apply_army_delta_with_cannon_transfer(
     db: GameDB, state: GameState, pseudo_event: Event, army_id: str,
     raw_changes: Dict[str, object],
     source: Provenance = Provenance.system_simulation,
+    *,
+    origin_ref: str | None = None,
+    actor: str = "档房",
 ) -> Tuple[List[Dict[str, object]], List[RejectedItem]]:
     """Apply one extracted army item, including an explicit paired cannon transfer."""
     army_changes: List[Dict[str, object]] = []
     rejections: List[RejectedItem] = []
-    origin_ref = str(raw_changes.get("origin_ref") or "").strip()
+    if origin_ref is None:
+        origin_ref = str(raw_changes.get("origin_ref") or "").strip()
     payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
     if "cannon_transfer_to" in payload:
         target_id = payload.pop("cannon_transfer_to")
@@ -104,7 +108,7 @@ def apply_army_delta_with_cannon_transfer(
             transfer_changes: List[Dict[str, object]] = []
             for leg_id, leg_delta in ((army_id, -actual), (target_id, actual)):
                 leg_changes, leg_rejections = db.apply_army_deltas(
-                    state, pseudo_event, None, "档房",
+                    state, pseudo_event, None, actor,
                     {leg_id: {"随军大炮": leg_delta, "reason": raw_changes.get("reason")}},
                     commit=False, origin_ref=origin_ref, require_origin=True,
                 source=source,)
@@ -120,7 +124,7 @@ def apply_army_delta_with_cannon_transfer(
                     "delta": 0, "applied": False, "reason": raw_changes.get("reason"),
                 })
     landed, refused = db.apply_army_deltas(
-        state, pseudo_event, None, "档房", {army_id: payload}, commit=False, origin_ref=origin_ref, require_origin=True,
+        state, pseudo_event, None, actor, {army_id: payload}, commit=False, origin_ref=origin_ref, require_origin=True,
     source=source,)
     army_changes.extend(landed)
     rejections.extend(refused)

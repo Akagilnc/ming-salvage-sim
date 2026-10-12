@@ -13,6 +13,7 @@ from ming_sim.applier import Provenance, RejectedItem, SectionResult
 from ming_sim.db import GameDB
 from ming_sim.constants import REGION_SCORE_FIELDS, FISCAL_SCORE_FIELDS, REGION_FIELD_ALIASES, ARMY_SCORE_FIELDS, ARMY_FIELD_ALIASES
 from ming_sim.models import Event, GameState
+from ming_sim.entities.army.delta_section import apply_army_delta_with_cannon_transfer
 
 _ISSUE_PSEUDO_EVENT = Event(
     id="issue_resolution", title="局势结案", kind="月末", summary="",
@@ -217,10 +218,11 @@ def _apply_issue_entities(
     army_delta = _load_durable_json_object(effect.get("army_delta"), surface="issue_effect.army_delta")
     if army_delta:
         pseudo = type("E", (), {"id": "issue", "title": label})()
-        _collect_result(
-            db.apply_army_deltas(state, pseudo, None, label, army_delta, commit=False,
-                                 origin_ref=origin_ref, require_origin=True, source=source)
-        )
+        for army_id, raw_changes in army_delta.items():
+            _collect_result(apply_army_delta_with_cannon_transfer(
+                db, state, pseudo, army_id, raw_changes,
+                origin_ref=origin_ref, actor=label, source=source,
+            ))
     power_renames = effect.get("power_renames")
     if isinstance(power_renames, list):
         for item in power_renames:
@@ -502,14 +504,16 @@ def _apply_monthly_ongoing_entities(
         rejections.extend(region_changes_rejections)
 
     if army_delta:
-        army_changes, army_changes_rejections = db.apply_army_deltas(
-            state, _ISSUE_PSEUDO_EVENT, None, label, army_delta,
-            origin_ref=origin_ref, source=source, commit=False,
-        )
-        applied_army = army_changes
+        applied_army = []
+        for army_id, raw_changes in army_delta.items():
+            army_changes, army_changes_rejections = apply_army_delta_with_cannon_transfer(
+                db, state, _ISSUE_PSEUDO_EVENT, army_id, raw_changes,
+                origin_ref=origin_ref, actor=label, source=source,
+            )
+            applied_army.extend(army_changes)
+            rejections.extend(army_changes_rejections)
         if applied_army:
             applied.append({"army_delta": applied_army})
-        rejections.extend(army_changes_rejections)
 
     if power_updates:
         power_changes, power_changes_rejections = db.apply_power_deltas(state, power_updates, origin_ref=origin_ref, source=source, commit=False)

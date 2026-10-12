@@ -11,12 +11,13 @@ from tests.test_declaration_dispatch_1835 import _minister as _character_name
 
 
 
+@pytest.mark.parametrize("route", ["direct", "resolved", "failed", "ongoing"])
 @pytest.mark.parametrize("source_cannon,target_cannon,treasury,actual_cannon,source_latched,target_latched", [
     (1, 0, 10, 1, 0, 0), (5, 11, 10, 1, 0, 0), (0, 0, 0, 0, 0, 0),
     (5, 0, 10, 0, 1, 0), (5, 0, 10, 0, 0, 1),
 ])
 def test_world_segment_explicit_stock_transfers_share_actual_amount(
-    game, source_cannon, target_cannon, treasury, actual_cannon, source_latched, target_latched,
+    game, source_cannon, target_cannon, treasury, actual_cannon, source_latched, target_latched, route,
 ):
     from ming_sim.month_translate import dispatch_month_segment
 
@@ -39,9 +40,35 @@ def test_world_segment_explicit_stock_transfers_share_actual_amount(
             "cannon_transfer_to": winner, "reason": "缴获",
         }},
     }}
+    origin = "盘面自发"
+    if route != "direct":
+        dossier_id = db.create_decree_dossier(
+            state, action_type="policy", decree_text="调炮", target_kind="issue", target_id="test",
+        )
+        db.dossiers.record_dossier_decision(dossier_id, "promulgated")
+        origin = f"dossier:{dossier_id}"
+        army_effect = {"army_delta": declaration["effects"].pop("army_delta")}
+        # Nested consequences inherit the authorized parent, not a child claim.
+        army_effect["army_delta"][loser]["origin_ref"] = "fabricated:9"
+        issue_id = db.insert_issue(
+            state, kind="situation", title="调炮", origin_ref=origin,
+            ongoing_effects=army_effect if route == "ongoing" else {},
+            effect_on_fail=army_effect if route == "failed" else {},
+        )
+        if route != "ongoing":
+            declaration["effects"]["close_issues"] = [{
+                "issue_id": issue_id, "reason": route,
+                f"effect_on_{'resolve' if route == 'resolved' else 'fail'}": army_effect,
+            }]
     result = dispatch_month_segment(
         db, state, segment="调拨和缴获", translate_fn=lambda request, config: declaration,
     )
+    if route == "ongoing":
+        from ming_sim.situation_drift import apply_situation_monthly_drift
+        assert apply_situation_monthly_drift(db, state) == []
+    elif route != "direct":
+        assert db.issues.row(issue_id)["status"] == route
+    assert db.conn.execute("SELECT COUNT(*) FROM rejection_reports").fetchone()[0] == 0
     effects = result.effects.applied[0]
     assert [move["delta"] for move in view(effects, "economy_moves")] == [-treasury, treasury]
     assert (state.metrics["国库"], state.metrics["内库"]) == (0, treasury)
@@ -57,17 +84,19 @@ def test_world_segment_explicit_stock_transfers_share_actual_amount(
     assert {row["id"]: row["cannon_equipment"] for row in cannon} == {
         loser: source_cannon - actual_cannon, winner: target_cannon + actual_cannon,
     }
-    assert sorted(change["delta"] for change in view(effects, "army_changes")
-                  if change.get("field") == "cannon_equipment") == [
-                      -actual_cannon, actual_cannon,
-                  ]
+    if route == "direct":
+        assert sorted(change["delta"] for change in view(effects, "army_changes")
+                      if change.get("field") == "cannon_equipment") == [
+                          -actual_cannon, actual_cannon,
+                      ]
     logs = db.conn.execute(
-        "SELECT army_id, delta FROM army_logs WHERE field='cannon_equipment' AND army_id IN (?, ?)",
+        "SELECT army_id, delta, origin_ref FROM army_logs WHERE field='cannon_equipment' AND army_id IN (?, ?)",
         (loser, winner),
     ).fetchall()
     assert sorted(row["delta"] for row in logs) == (
         [-actual_cannon, actual_cannon] if actual_cannon else []
     )
+    assert all(row["origin_ref"] == origin for row in logs)
 
 
 def test_world_segment_rejects_transfer_with_pay_arrears_claim(game):
