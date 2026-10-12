@@ -582,6 +582,52 @@ def list_rejection_reports_for_turn(conn: Any, turn: int) -> List[Any]:
     )
 
 
+def list_unresolved_player_rejections(db: Any) -> List[dict]:
+    """Scene/translation read port: rejected parts persist until explicitly resolved."""
+    if db.conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='rejection_reports'",
+    ).fetchone() is None:
+        return []
+    rows = db.conn.execute(
+        "SELECT r.* FROM rejection_reports r LEFT JOIN rejection_resolutions s "
+        "ON s.rejection_id=r.id WHERE s.rejection_id IS NULL "
+        "AND r.source IN (?, ?) ORDER BY r.id",
+        (Provenance.player_decree.value, Provenance.hitl_decision.value),
+    ).fetchall()
+    return [{
+        "kind": "player_rejection", "rejection_id": int(row["id"]),
+        "turn": int(row["turn"]), "section": row["section"],
+        "item": load_stored_object(row["item_json"], label="rejection_reports.item_json"),
+        "reason": row["reason"], "category": row["category"], "source": row["source"],
+    } for row in rows]
+
+
+def require_player_rejection_ids(db: Any, raw: object) -> List[int]:
+    """Only explicit IDs from the unresolved player rejection ledger are admissible."""
+    from ming_sim.strict_types import strict_sqlite_id
+
+    if not isinstance(raw, list):
+        raise TypeError("resolves_rejection_ids 须为数组")
+    ids = [strict_sqlite_id(value) for value in raw]
+    if not ids:
+        return []
+    eligible = {row["rejection_id"] for row in list_unresolved_player_rejections(db)}
+    if any(rid not in eligible for rid in ids):
+        raise KeyError("拒收记录不存在、非玩家来源或已了结")
+    return list(dict.fromkeys(ids))
+
+
+def resolve_player_rejections(
+    db: Any, ids: List[int], *, decision: str, turn: int, pending_action_id: int = 0,
+) -> None:
+    """Record the declared result in the caller's transaction; never rewrite the rejection."""
+    db.conn.executemany(
+        "INSERT INTO rejection_resolutions (rejection_id, decision, turn, pending_action_id) "
+        "VALUES (?, ?, ?, ?) ON CONFLICT(rejection_id) DO NOTHING",
+        [(rid, decision, int(turn), int(pending_action_id)) for rid in ids],
+    )
+
+
 def register_runtime_outcome_callbacks(
     db: Any,
     *,

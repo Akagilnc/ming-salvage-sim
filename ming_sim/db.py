@@ -5275,6 +5275,7 @@ class GameDB:
         "relation_edge_events": "id",
         # 0054 案卷关联槽：本轮召对当场写下的安排。ADR 0038 撤回须逆转。
         "decree_dossier_links": "id",
+        "rejection_resolutions": "rejection_id",
     }
 
     def _row_dict(self, row: sqlite3.Row) -> Dict[str, Any]:
@@ -12154,6 +12155,8 @@ class GameDB:
             rows = self.textual_facts.snapshot_rows()
         elif table == "relation_edge_events":
             rows = self.person_logs.edge_snapshot_rows()
+        elif table == "rejection_resolutions":
+            rows = self.conn.execute("SELECT * FROM rejection_resolutions").fetchall()
         else:
             raise ValueError(f"不支持回滚表：{table}")
         snapshot = {str(row[pk]): self._row_dict(row) for row in rows}
@@ -12206,6 +12209,13 @@ class GameDB:
         if table == "textual_facts":
             self.textual_facts.restore_row(row)
             return
+        if table == "rejection_resolutions":
+            self.conn.execute(
+                "INSERT OR REPLACE INTO rejection_resolutions "
+                "(rejection_id, decision, turn, pending_action_id) VALUES (?, ?, ?, ?)",
+                (row["rejection_id"], row["decision"], row["turn"], row["pending_action_id"]),
+            )
+            return
         raise ValueError(f"不支持回滚表：{table}")
 
     def _delete_row_in_tx(self, table: str, target_id: str) -> None:
@@ -12244,5 +12254,8 @@ class GameDB:
             return
         if table == "textual_facts":
             self.textual_facts.delete(target_id)
+            return
+        if table == "rejection_resolutions":
+            self.conn.execute("DELETE FROM rejection_resolutions WHERE rejection_id=?", (target_id,))
             return
         raise ValueError(f"不支持回滚表：{table}")

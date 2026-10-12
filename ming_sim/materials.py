@@ -1959,6 +1959,9 @@ def _scene_pending_audience_facts(db: Any, state: Any) -> list[str]:
     for summon in list_unsettled_summons(db):
         facts = {key: summon[key] for key in ("person_name", "kind", "travel_tone") if key in summon}
         lines.append(json.dumps(facts, ensure_ascii=False, sort_keys=True))
+    from ming_sim.applier import list_unresolved_player_rejections
+    lines.extend(json.dumps(fact, ensure_ascii=False, sort_keys=True)
+                 for fact in list_unresolved_player_rejections(db))
     return lines
 
 

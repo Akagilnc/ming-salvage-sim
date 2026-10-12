@@ -545,6 +545,7 @@ def _continue_decree_after_answers(
     source: Provenance = Provenance.player_decree,
 ) -> None:
     from ming_sim.exceptions import LLMUnavailable
+    from ming_sim.declaration_dispatch import finish_rejection_correction
     from ming_sim.month_translate import dispatch_month_segment
     from ming_sim.decree_forecast import dossier_for_decree_ref
 
@@ -585,6 +586,7 @@ def _continue_decree_after_answers(
     if not prefix.strip():
         with atomic(db):
             consume()
+            finish_rejection_correction(db, state, decree_ref, rejected=False)
         return
     dispatch_month_segment(
         db, state, segment=prefix,

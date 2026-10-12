@@ -22,6 +22,13 @@ from ming_sim.entities.dossier.store import DOSSIER_SCHEMA_SQL
 
 
 CORE_SCHEMA_SQL = """
+    CREATE TABLE IF NOT EXISTS rejection_resolutions (
+        rejection_id INTEGER PRIMARY KEY,
+        decision TEXT NOT NULL CHECK (decision IN ('succeeded', 'withdrawn')),
+        turn INTEGER NOT NULL,
+        pending_action_id INTEGER NOT NULL DEFAULT 0
+    );
+
     -- game_state（朝局头）与 metrics（余额真源）的建表归
     -- ming_sim/entities/reign_state（#1889 按职责拆出）
     -- ；本文件不再持第二份定义。

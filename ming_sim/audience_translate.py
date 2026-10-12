@@ -19,28 +19,11 @@ import json
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 
 from ming_sim.decree_vocabulary import TARGET_KINDS
+from ming_sim.declaration_dispatch import _SECTION_FIELDS as _DECLARATION_KEYS
 
 TranslateFn = Callable[[str, Any], Mapping[str, object]]
 
-# C0 全 section + 主角；normalize 补齐这些键，未知顶层键原样保留给分派器。
-_DECLARATION_KEYS: tuple[str, ...] = (
-    "commissions",
-    "promises",
-    "endorsements",
-    "textual_facts",
-    "public_sayings",
-    "on_scene_facts",
-    "presence",
-    "scene_facts",
-    "edge_events",
-    "protagonist",
-    "registrations",
-    "effects",
-    # #1837 reopen：旧 agent 工具退役后的转译承接节。
-    "inquiries",
-    "rushes",
-    "travel_tones",
-)
+# normalize 与分派器共用 C0 section 真源；未知键仍原样交分派器。
 _ARRAY_SECTIONS = frozenset(
     k for k in _DECLARATION_KEYS if k not in {"protagonist", "effects"}
 )
@@ -232,6 +215,9 @@ def build_translation_target_grounding(db: Any, state: Any = None) -> str:
             if scene.get("kind") == "covert_levy_exposure" and not scene.get("decision"):
                 lines.append("scene\t" + json.dumps(scene, ensure_ascii=False, sort_keys=True))
     candidate_block = _person_candidate_grounding(db, state)
+    from ming_sim.applier import list_unresolved_player_rejections
+    for fact in list_unresolved_player_rejections(db):
+        lines.append("player_rejection\t" + json.dumps(fact, ensure_ascii=False, sort_keys=True))
     if not lines and not candidate_block:
         return ""
     parts: List[str] = []
@@ -272,6 +258,7 @@ def build_c0_declaration_shape() -> str:
         '  "commissions": [\n'
         "    {\n"
         '      "text": "交办正文（原样，不删改）", "mode": "ordinary|midzhi（中旨明示才填 midzhi）",\n'
+        '      "resolves_rejection_ids": [正整数 rejection_id（本旨明确修正的未了结拒收；无则省略）],\n'
         '      "target_dossier_id": "御笔强推已有案卷 id（不与 grant/appointment 同填）",\n'
         '      "appointment": {\n'
         '        "name": "人名", "office": "官职", "appoint_action": "任命|罢免",\n'
@@ -333,6 +320,7 @@ def build_c0_declaration_shape() -> str:
         '  "rushes": [{"target_kind": "commitment|secret_order", "target_id": 正整数, '
         '"stage_idx": 0, "deadline_months": 1, "reason": "催办缘由"}],\n'
         '  "travel_tones": [{"person_name": "人名", "tone": "常行|加急|星夜兼程"}],\n'
+        '  "rejection_withdrawals": [{"rejection_id": 正整数（皇帝明确说不做的那条未了结拒收 id）}],\n'
         '  "on_scene_facts": [\n'
         "    {\n"
         '      "name": "人名",\n'
@@ -427,6 +415,9 @@ def build_audience_translate_prompt(
         "- effects 是过月才核算的旨意办理效果；召对夜本轮留空，不得将尚未发生的效果写成当场实况。\n"
         "- 无对应事实的 section 输出空数组（protagonist 无则省略或 null），不要编造。\n"
         "- 承接不了的交办仍写入 commissions（由代码拒收），不要改写皇帝原话去猜。\n"
+        "- 皇帝明确修正某条未了结拒收 → 新 commissions 项带 resolves_rejection_ids；"
+        "只关联被拒收的部分，暂存/应允不等于下达成功。修正仍拒收则新旧拒收都未了结。"
+        "皇帝明确说不做 → rejection_withdrawals；闲谈、留中与未回应不算撤回。\n"
         "- 暗渠揭破场面呈上后皇帝禁摊派 → commissions 一项 dossier_action_type=prohibit_covert_levy，target_id 填当前场面案卷 dossier_id。\n"
         "- 大臣具名举荐某人任某差并附荐词 → commissions 任命 + recommendation（荐者/荐词原句）。\n"
         "- 皇帝交代近侍查某事 → inquiries；只有点名【权威目标目录】里某一条密令时才填该行精确 order_id，"
