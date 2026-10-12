@@ -1749,7 +1749,7 @@ class DossierStore:
 
         owns = self._owns()
         dossier = self.get(int(dossier_id))
-        band = str(progress_band or "")
+        band = progress_band
         text = memorial_text
         if dossier is None:
             raise ValueError("案卷不存在")

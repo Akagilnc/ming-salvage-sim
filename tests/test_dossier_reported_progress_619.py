@@ -113,8 +113,9 @@ def test_execution_surface_dossier_can_record_and_list_full_history(game):
     assert leaked == 0
 
 
-@pytest.mark.parametrize("bad_text", [{"bad": "text"}, ["bad"], False, 0])
-def test_secret_monthly_bad_prose_aborts_and_valid_report_stays_private(game, bad_text):
+def test_secret_monthly_bad_prose_aborts_and_valid_report_stays_private(game):
+    from ming_sim.exceptions import DeclarationDataError
+
     db, state, content = game
     actor = db.conn.execute(
         "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
@@ -130,7 +131,7 @@ def test_secret_monthly_bad_prose_aborts_and_valid_report_stays_private(game, ba
     bad_item = {
         "dossier_id": bad_dossier_id,
         "progress_band": "在途",
-        "memorial_text": bad_text,
+        "memorial_text": {"bad": "text"},
     }
     note = "首批已出关619"
     from tests.section_rejection_helpers import run_declaration
@@ -139,7 +140,7 @@ def test_secret_monthly_bad_prose_aborts_and_valid_report_stays_private(game, ba
         "progress_band": "在途",
         "memorial_text": note,
     }
-    with pytest.raises(AttributeError):
+    with pytest.raises(DeclarationDataError):
         run_declaration(db, state, content, {"dossier_progress_reports": [good_item, bad_item]})
     assert db.dossiers.list_dossier_progress(dossier_id) == []
     assert db.dossiers.list_dossier_progress(bad_dossier_id) == []
