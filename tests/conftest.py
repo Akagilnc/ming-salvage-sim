@@ -110,16 +110,22 @@ def wait_for_background_jobs(db):
 
 
 def own_session_until_game_teardown(db, owner) -> None:
-    """让 ``game`` fixture 在关闭 SQLite 前排空该 session 的已接纳工作。"""
+    """让 ``game`` fixture 在关闭 SQLite 前排空该 session 的已接纳工作。
+
+    Same write queue → one drain target. When a newer owner shares that queue
+    (light shell rebound as forecast owner), replace the prior entry so the
+    current weakref target stays strongly held until teardown.
+    """
     owners = getattr(db, "_test_session_owners", None)
     if owners is None:
         owners = []
         db._test_session_owners = owners
     queue = getattr(owner, "_write_queue", None)
-    for existing in owners:
+    for i, existing in enumerate(owners):
         if existing is owner:
             return
         if queue is not None and getattr(existing, "_write_queue", None) is queue:
+            owners[i] = owner
             return
     owners.append(owner)
 

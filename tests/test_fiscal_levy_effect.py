@@ -140,7 +140,6 @@ def test_liao_levy_rise_approved_by_emperor_updates_settle_before_fiscal_tick(ga
 def test_liao_levy_rise_approved_lands_on_no_edict_advance_before_fiscal_tick(game, monkeypatch):
     """#1274：无旨完整结算 pre_settle 内皇帝已裁的饷率事件仍在 fiscal tick 前生效。"""
     import ming_sim.month_chain as month_chain
-    from ming_sim.session import GameSession
 
     db, state, content = game
     issues.bind_content(content)
@@ -152,16 +151,11 @@ def test_liao_levy_rise_approved_lands_on_no_edict_advance_before_fiscal_tick(ga
     target_liao = seed_liao * 4.0 / 3.0
     event_terminal.apply_petition_event_outcome(state, db, "liao_levy_rise_1631", "已准")
 
-    from tests.month_chain_helpers import empty_rescript_response
+    from tests.month_chain_helpers import empty_rescript_response, make_light_session
     monkeypatch.setattr("ming_sim.rescript_draft.run_rescript_text", empty_rescript_response)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
 
-    sess = GameSession.__new__(GameSession)
-    sess.db, sess.state, sess.content = db, state, content
-    sess.registry = sess.llm_config = sess.agno_db = None
-    sess.deaths_this_turn, sess.debuts_this_turn = [], []
-    sess.last_decree = sess.last_report = ""
-    sess.auto_save = lambda *a, **k: None
+    sess = make_light_session(db, state, content)
     sess.advance_without_decree()
 
     row = db.conn.execute(

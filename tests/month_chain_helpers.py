@@ -24,19 +24,15 @@ class InlineExecutor:
 def make_light_session(db, state, content):
     """Minimal GameSession shell for advance_without_decree tracers.
 
-    Same db → one write queue (production invariant). The first light shell
-    is strongly owned until game teardown so ``decree_forecast`` weakref
-    ownership cannot be GC'd between calls; later calls reuse that owner.
+    Same db → one write queue (production invariant). Always returns a light
+    shell (``llm_config=None`` etc.); never hands back a previously bound real
+    GameSession or mutates that owner's fields. Shares the bound owner's queue
+    when present. The returned shell is strongly owned until game teardown so
+    ``decree_forecast`` weakref ownership cannot be GC'd between calls.
     """
     from ming_sim.decree_forecast import bind_forecast_owner, _owner_for
-    from ming_sim.session_write_queue import get_session_write_queue
+    from ming_sim.session_write_queue import SessionWriteQueue, get_session_write_queue
     from tests.conftest import own_session_until_game_teardown
-
-    existing = _owner_for(db)
-    if existing is not None and getattr(existing, "db", None) is db:
-        existing.state = state
-        existing.content = content
-        return existing
 
     session = GameSession.__new__(GameSession)
     session.db = db
@@ -48,7 +44,19 @@ def make_light_session(db, state, content):
     session.debuts_this_turn = []
     session.last_decree = ""
     session.auto_save = lambda *a, **k: None
-    session._write_gate = get_session_write_queue(session).write_gate
+
+    existing = _owner_for(db)
+    shared = getattr(existing, "_write_queue", None) if existing is not None else None
+    if (
+        existing is not None
+        and getattr(existing, "db", None) is db
+        and isinstance(shared, SessionWriteQueue)
+    ):
+        session._write_queue = shared
+        session._write_gate = shared.write_gate
+    else:
+        session._write_gate = get_session_write_queue(session).write_gate
+
     bind_forecast_owner(session)
     own_session_until_game_teardown(db, session)
     return session
