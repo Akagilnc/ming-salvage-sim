@@ -57,7 +57,6 @@ def test_presented_options_forecast_then_apply_only_selected(game, monkeypatch, 
     """Presentation → speculative calls → selection/retry → reopened DB, no unselected effects."""
     from concurrent.futures import ThreadPoolExecutor
     from threading import Event
-    from tests.month_chain_helpers import InlineExecutor
     from ming_sim.error_pack import error_packs_root
     from ming_sim.db import GameDB
 
@@ -119,8 +118,9 @@ def test_presented_options_forecast_then_apply_only_selected(game, monkeypatch, 
             "delta": outcome["delta"], "category": "候选办理", "reason": "实办"}]}}
 
     monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", translate)
-    pool = ThreadPoolExecutor(max_workers=2)
-    monkeypatch.setattr("ming_sim.rescript_forecast._executor", pool if mode == "running" else InlineExecutor())
+    pool = ThreadPoolExecutor(max_workers=2) if mode == "running" else None
+    if mode == "running":
+        monkeypatch.setattr("ming_sim.rescript_forecast._executor", pool)
     session = make_light_session(db, state, content)
     session.llm_config = object()
     try:
@@ -171,7 +171,8 @@ def test_presented_options_forecast_then_apply_only_selected(game, monkeypatch, 
                 assert "injected live failure" in errors
     finally:
         release.set()
-        pool.shutdown(wait=True)
+        if pool is not None:
+            pool.shutdown(wait=True)
 
 
 @pytest.mark.parametrize("kind", ["world", "decree"])
