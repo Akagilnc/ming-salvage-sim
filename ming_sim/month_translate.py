@@ -187,6 +187,8 @@ def build_month_segment_translate_prompt(request: MonthTranslationInput) -> str:
         "- 本旨载荷与在途案卷事实中的 _resolves_rejection_ids 是皇帝明确修正的拒收。"
         "由载荷本身物化的部分不重复声明；其余修正在 effects 有序数组对应项顶层声明"
         "resolves_rejection_ids（与 event_id 同形，核算前剥除），与普通效果同一链按段文先后排列。"
+        "世界段还须在同一项顶层声明 dossier_id＝【在途办理案卷】里拥有这些拒收的案卷 id；"
+        "不得用拒收 id 反推或串到别的在途案卷。本旨续推有本旨事实时按本旨身份承接，不必另写 dossier_id。"
         "无关效果不写 resolves_rejection_ids；同一效果只声明一次，不从分类或措辞猜对应关系。"
         "空效果或未实际落账的修正不得当作下达成功。\n"
         "- 过月只记已经发生之事：回奏、批红后的续推里对执行、点兵、核账的叙述，"

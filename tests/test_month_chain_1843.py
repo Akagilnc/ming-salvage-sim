@@ -221,7 +221,7 @@ def test_player_rejection_lifecycle_through_translation_and_month(game, monkeypa
     assert list_unresolved_player_rejections(db) == original
 
     def _effects_for(ids, account, unrelated_account="国库", *, empty_correction=False,
-                     ordered_transfer=False):
+                     ordered_transfer=False, metric_only=False, dual_envelopes=False):
         if ordered_transfer:
             return [
                 {"resolves_rejection_ids": ids,
@@ -234,6 +234,14 @@ def test_player_rejection_lifecycle_through_translation_and_month(game, monkeypa
                      "category": "后支", "reason": "后支",
                  }]},
             ]
+        if metric_only:
+            return [{"resolves_rejection_ids": ids, "metric_delta": {"不是指标": 1}}]
+        if dual_envelopes:
+            return [
+                {"resolves_rejection_ids": ids,
+                 "economy_moves": [{**bad, "account": account, "category": "好信封"}]},
+                {"resolves_rejection_ids": ids, "economy_moves": []},
+            ]
         correction_move = (
             {"economy_moves": []} if empty_correction
             else {"economy_moves": [{**bad, "account": account}]}
@@ -245,7 +253,7 @@ def test_player_rejection_lifecycle_through_translation_and_month(game, monkeypa
 
     def correction(ids, account, continuation_account, *, questions=True, grant=None, force=False,
                    unrelated_account="国库", empty_correction=False, ordered_transfer=False,
-                   continuation_ids=None):
+                   continuation_ids=None, metric_only=False, dual_envelopes=False):
         night = open_night(db, state, location="乾清宫", time_of_day="戌时")
         nid = int(night["id"])
         ctid = db.create_chat_turn(state, minister, "s", 0, night_id=nid, status="active")
@@ -276,6 +284,8 @@ def test_player_rejection_lifecycle_through_translation_and_month(game, monkeypa
                     ids, account, unrelated_account,
                     empty_correction=empty_correction,
                     ordered_transfer=ordered_transfer,
+                    metric_only=metric_only,
+                    dual_envelopes=dual_envelopes,
                 ),
             }, verdict=_rejected_verdict(db) if force else {"decision": "promulgated"},
             visible_refs={"affairs": [affair.id]},
@@ -334,6 +344,26 @@ def test_player_rejection_lifecycle_through_translation_and_month(game, monkeypa
     assert empty_id in {r["rejection_id"] for r in list_unresolved_player_rejections(db)}
     reopen_check("empty-correction.db")
 
+    # K5：字典指标拒收须按结构化落账结果认失败，不得靠声明内容/条目等值猜归属。
+    declaration_dispatch.dispatch_declaration(
+        db, state, {"effects": {"economy_moves": [bad]}}, source=Provenance.player_decree,
+        visible_refs={"affairs": [affair.id]},
+    )
+    metric_id = list_unresolved_player_rejections(db)[-1]["rejection_id"]
+    correction([metric_id], "国库", None, questions=False, metric_only=True)
+    assert metric_id in {r["rejection_id"] for r in list_unresolved_player_rejections(db)}
+    reopen_check("metric-rejected-correction.db")
+
+    # K5：同旨好坏两信封，一拒即失败；好信封不得用旧 payload 副本盖掉失败。
+    declaration_dispatch.dispatch_declaration(
+        db, state, {"effects": {"economy_moves": [bad]}}, source=Provenance.player_decree,
+        visible_refs={"affairs": [affair.id]},
+    )
+    dual_id = list_unresolved_player_rejections(db)[-1]["rejection_id"]
+    correction([dual_id], "国库", None, questions=False, dual_envelopes=True)
+    assert dual_id in {r["rejection_id"] for r in list_unresolved_player_rejections(db)}
+    reopen_check("dual-envelope-one-fail.db")
+
     # K4：同一段里修正转拨与普通支出按交代先后争库。
     state.metrics["国库"] = 0
     state.metrics["内库"] = 10
@@ -355,6 +385,7 @@ def test_player_rejection_lifecycle_through_translation_and_month(game, monkeypa
     assert any(row["category"] == "后支" and int(row["delta"]) == -10 for row in ledger)
     reopen_check("ordered-correction.db")
 
+    before_fail = {r["rejection_id"] for r in list_unresolved_player_rejections(db)}
     declaration_dispatch.dispatch_declaration(
         db, state, {"effects": {"economy_moves": [bad]}}, source=Provenance.player_decree,
         visible_refs={"affairs": [affair.id]},
@@ -363,16 +394,18 @@ def test_player_rejection_lifecycle_through_translation_and_month(game, monkeypa
     correction([repair_id], "不存在", "国库")
     unresolved = list_unresolved_player_rejections(db)
     unresolved_ids = {r["rejection_id"] for r in unresolved}
-    assert {repair_id, withdraw_id}.issubset(unresolved_ids)
-    assert len(unresolved) >= 3
+    new_reject_id = next(rid for rid in unresolved_ids if rid not in before_fail | {repair_id})
+    assert unresolved_ids == before_fail | {repair_id, new_reject_id}
+    assert [r["category"] for r in unresolved if r["rejection_id"] == new_reject_id] == ["invalid_enum"]
     reopen_check("failed-correction.db")
-    new_reject_id = next(
-        r["rejection_id"] for r in unresolved
-        if r["rejection_id"] not in {repair_id, withdraw_id, empty_id}
-    )
+    before_cont_fail = set(unresolved_ids)
     correction([repair_id, new_reject_id], "国库", "不存在")
     unresolved = list_unresolved_player_rejections(db)
-    assert {repair_id, new_reject_id}.issubset({r["rejection_id"] for r in unresolved})
+    unresolved_ids = {r["rejection_id"] for r in unresolved}
+    cont_new_id = next(rid for rid in unresolved_ids if rid not in before_cont_fail)
+    assert unresolved_ids == before_cont_fail | {cont_new_id}
+    assert repair_id in unresolved_ids and new_reject_id in unresolved_ids
+    assert [r["category"] for r in unresolved if r["rejection_id"] == cont_new_id] == ["invalid_enum"]
     reopen_check("failed-continuation.db")
 
     # K5：请旨前修正成功、续推关联部分被拒 → 新旧拒收都留供。
@@ -388,11 +421,11 @@ def test_player_rejection_lifecycle_through_translation_and_month(game, monkeypa
             questions=True, continuation_ids=[stale_id, 999999],
         )
         after = {r["rejection_id"] for r in list_unresolved_player_rejections(db)}
-        assert stale_id in after
-        assert len(after) >= len(before_cont) + 1
+        cont_reject_id = next(rid for rid in after if rid not in before_cont | {stale_id})
+        assert after == before_cont | {stale_id, cont_reject_id}
         reopen_check("continued-reject-keeps-old.db")
 
-    # K5：世界段落账的叙事修正能了结。
+    # K5：世界段落账的叙事修正能了结（按案卷身份，不靠全库拒收 id 反推）。
     if success_path == "without_questions":
         declaration_dispatch.dispatch_declaration(
             db, state, {"effects": {"economy_moves": [bad]}}, source=Provenance.player_decree,
@@ -404,30 +437,71 @@ def test_player_rejection_lifecycle_through_translation_and_month(game, monkeypa
         ctid = db.create_chat_turn(state, minister, "s", 0, night_id=nid, status="active")
         db.persist_minister_reply(minister, state.turn, "奉旨修正", ctid)
         result = apply_audience_round_translation(
-            db, state, {"commissions": [{"text": "叙事修正", "resolves_rejection_ids": [world_id]}]},
+            db, state, {"commissions": [
+                {"text": "叙事修正", "resolves_rejection_ids": [world_id]},
+                {"text": "无关在途诱饵"},
+            ]},
             night_id=nid, chat_turn_id=ctid, minister_name=minister,
         )
         pending_id = result.commissions.applied[0]["id"]
+        decoy_pending_id = result.commissions.applied[1]["id"]
         ctid = db.create_chat_turn(state, minister, "s", 0, night_id=nid, status="active")
         db.persist_minister_reply(minister, state.turn, "奉旨承办", ctid)
         apply_audience_round_translation(
-            db, state, {"promises": [{"action_id": pending_id, "decision": "应允"}]},
+            db, state, {"promises": [
+                {"action_id": pending_id, "decision": "应允"},
+                {"action_id": decoy_pending_id, "decision": "应允"},
+            ]},
             night_id=nid, chat_turn_id=ctid, minister_name=minister,
         )
         close_night(db, state, night_id=nid, content=content)
         ref = pending_action_decree_ref(pending_id, 1)
+        decoy_ref = pending_action_decree_ref(decoy_pending_id, 1)
         declaration_dispatch.stage_declaration(
             db, decree_ref=ref, turn=state.turn, declaration={"effects": {}},
+            verdict={"decision": "promulgated"}, visible_refs={"affairs": [affair.id]},
+        )
+        declaration_dispatch.stage_declaration(
+            db, decree_ref=decoy_ref, turn=state.turn, declaration={"effects": {}},
             verdict={"decision": "promulgated"}, visible_refs={"affairs": [affair.id]},
         )
         monkeypatch.setattr(month_translate, "translate_month_segment", lambda *a, **k: {})
         advance_month()
         assert world_id in {r["rejection_id"] for r in list_unresolved_player_rejections(db)}
         from ming_sim.materials import continuing_dossier_facts
+        from ming_sim.decree_forecast import dossier_for_decree_ref
         facts = continuing_dossier_facts(db, int(state.turn))
-        assert any(world_id in (f.get("_resolves_rejection_ids") or []) for f in facts)
+        world_dossier = dossier_for_decree_ref(db, ref)
+        world_dossier_id = int(world_dossier["id"])
+        decoy_dossier_id = int(dossier_for_decree_ref(db, decoy_ref)["id"])
+        assert decoy_dossier_id != world_dossier_id
+        assert any(
+            int(f["id"]) == world_dossier_id and world_id in (f.get("_resolves_rejection_ids") or [])
+            for f in facts
+        )
+        assert any(int(f["id"]) == decoy_dossier_id for f in facts)
+        # 无案卷身份：不得靠拒收 id 全库反推了结。
         monkeypatch.setattr(month_translate, "translate_month_segment", lambda *a, **k: {
             "effects": [{
+                "resolves_rejection_ids": [world_id],
+                "economy_moves": [{**bad, "account": "国库", "category": "世界段无身份"}],
+            }],
+        })
+        advance_month()
+        assert world_id in {r["rejection_id"] for r in list_unresolved_player_rejections(db)}
+        # 错案卷身份：可见诱饵案卷不拥有该拒收，不得连坐到正确案卷。
+        monkeypatch.setattr(month_translate, "translate_month_segment", lambda *a, **k: {
+            "effects": [{
+                "dossier_id": decoy_dossier_id,
+                "resolves_rejection_ids": [world_id],
+                "economy_moves": [{**bad, "account": "国库", "category": "世界段错身份"}],
+            }],
+        })
+        advance_month()
+        assert world_id in {r["rejection_id"] for r in list_unresolved_player_rejections(db)}
+        monkeypatch.setattr(month_translate, "translate_month_segment", lambda *a, **k: {
+            "effects": [{
+                "dossier_id": world_dossier_id,
                 "resolves_rejection_ids": [world_id],
                 "economy_moves": [{**bad, "account": "国库", "category": "世界段修正"}],
             }],

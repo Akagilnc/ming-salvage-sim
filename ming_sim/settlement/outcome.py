@@ -112,6 +112,10 @@ class SettlementOutcome:
     # 结局判定不是落库段，上浮编排器（ADR 0150 §4.3）。
     victory_status: Optional[Dict[str, object]] = None
 
+    # #1844/#1843：effect_sequence 逐笔落账时，每笔合并后的段结果（applied/rejected）。
+    # 与合并后的 sections() 不同——后者跨笔累加；修正了结须读本字段认「这一笔」。
+    effect_sequence_results: List[SectionResult] = field(default_factory=list)
+
     def sections(self) -> Dict[str, SectionResult]:
         """全部段落格的具名视图，供拒收报告集中投影与调试。
 

@@ -109,6 +109,8 @@ class SettlementRun:
 
     # 段交回的结果，按登记名存放。编排器不另持一份平行账。
     outcomes: Dict[str, SectionResult] = field(default_factory=dict)
+    # effect_sequence 逐笔：每笔各段 SectionResult 合并后的快照（#1843 修正了结读口）。
+    effect_sequence_results: List[SectionResult] = field(default_factory=list)
 
     # ── 段间共享工具（迁自旧单体入口的同名内联件） ──────────────────────
     def origin_ref_from_result_item(self, item: Optional[Mapping[str, object]]) -> str:
@@ -452,14 +454,24 @@ def _run_effect_sequence(run) -> None:
                 label = _event_outcome_label(step_extracted.get("事件结局") or {}, event_id)
                 if label:
                     apply_petition_event_outcome(run.state, run.db, event_id, label)
-        _capture(run, "metric", metric_section.apply(run))
-        _capture(run, "new_armies", army_section.apply_new_armies(
+        step_parts: List[SectionResult] = []
+
+        def _capture_step(name: str, result: SectionResult) -> None:
+            _capture(run, name, result)
+            step_parts.append(result)
+
+        _capture_step("metric", metric_section.apply(run))
+        _capture_step("new_armies", army_section.apply_new_armies(
             run, list(step_extracted.get("new_armies") or []),
         ))
-        _capture(run, "region_changes", region_section.apply(run))
-        _capture(run, "army_changes", army_section.apply_deltas(run))
+        _capture_step("region_changes", region_section.apply(run))
+        _capture_step("army_changes", army_section.apply_deltas(run))
         step_moves = list(step_extracted.get("economy_moves") or [])
-        _capture(run, "economy", economy_section.apply(run, step_moves))
+        _capture_step("economy", economy_section.apply(run, step_moves))
+        step_result = _empty()
+        for part in step_parts:
+            step_result = step_result.merge(part)
+        run.effect_sequence_results.append(step_result)
     run.current_extracted = run.extracted
     run.current_ordered = run.ordered_deltas
     run.current_event_ids = run.ordered_effect_event_ids
@@ -537,6 +549,7 @@ def _build_outcome(run) -> SettlementOutcome:
         secret_order=placed("secret_order"),
         credit_event=placed("credit_event"),
         relation_edge=placed("relation_edge"),
+        effect_sequence_results=list(run.effect_sequence_results),
     )
     run.state.clamp()
     victory = _resolve_victory(run)

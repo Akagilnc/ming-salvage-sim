@@ -449,44 +449,6 @@ def _persist_specialized_extraction(
                 collector.record("covert_exec_selections", item, int(turn))
 
 
-def _clean_has_effect_content(clean: Mapping[str, object]) -> bool:
-    """Whether a sanitized effect envelope declares any actual landable content."""
-    for key, value in clean.items():
-        if str(key).startswith("_"):
-            continue
-        if isinstance(value, list) and value:
-            return True
-        if isinstance(value, dict) and value:
-            return True
-        if value not in (None, "", [], {}):
-            return True
-    return False
-
-
-def _step_has_rejections(clean: Mapping[str, object], outcome: Any, envelope_rejected: Sequence[RejectedItem]) -> bool:
-    """Whether any declared item from this envelope was rejected in the shared settle."""
-    declared: List[object] = []
-    for value in clean.values():
-        if isinstance(value, list):
-            declared.extend(value)
-        elif isinstance(value, dict) and value:
-            declared.append(value)
-    if not declared:
-        return False
-    rejected_items = [item.item for item in envelope_rejected]
-    for section in outcome.sections().values():
-        rejected_items.extend(item.item for item in section.rejected)
-    rejected_items.extend(item.item for item in outcome.shape_rejections)
-    for declared_item in declared:
-        for rejected_item in rejected_items:
-            if rejected_item is declared_item or rejected_item == declared_item:
-                return True
-            if isinstance(rejected_item, Mapping) and isinstance(declared_item, Mapping):
-                if all(rejected_item.get(key) == declared_item.get(key) for key in declared_item):
-                    return True
-    return False
-
-
 def _attempted_rejection_ids(raw_ids: object) -> List[int]:
     if not isinstance(raw_ids, (list, tuple)):
         return []
@@ -500,9 +462,14 @@ def _attempted_rejection_ids(raw_ids: object) -> List[int]:
 
 
 def _correction_owner_for_ids(
-    db: Any, ids: Sequence[int], *, decree_ref: Optional[str],
+    db: Any,
+    ids: Sequence[int],
+    *,
+    decree_ref: Optional[str],
+    dossier_id: Optional[int] = None,
+    visible_refs: Optional[Mapping[str, object]] = None,
 ) -> Tuple[Optional[str], Any, int, dict, str]:
-    """Resolve the unique dossier that owns these rejection ids.
+    """Resolve correction ownership by decree/dossier identity (never reverse-scan by rejection id).
 
     Returns (decree_ref, dossier, pending_id, payload, error_category).
     error_category is empty on success.
@@ -518,34 +485,44 @@ def _correction_owner_for_ids(
             return decree_ref, dossier, pending_id, payload, "hallucinated_id"
         return decree_ref, dossier, pending_id, payload, ""
 
-    wanted = set(ids)
-    matches: List[Tuple[str, Any, int, dict]] = []
-    for dossier in db.dossiers.list_dossiers():
-        ref = decree_ref_for_dossier(db, dossier)
-        live_dossier, pending_id, payload = _correction_context(db, ref)
-        row = live_dossier or dossier
-        owned = set((payload or {}).get("_resolves_rejection_ids") or [])
-        if not owned & wanted:
-            continue
-        matches.append((ref, row, pending_id, payload))
-    if not matches:
+    if dossier_id is None:
         return None, None, 0, {}, "missing_ref"
-    if len(matches) > 1:
+    visible = {int(value) for value in (visible_refs or {}).get("dossiers", ())}
+    if int(dossier_id) not in visible:
         return None, None, 0, {}, "missing_ref"
-    ref, dossier, pending_id, payload = matches[0]
-    if not set(ids).issubset(set(payload.get("_resolves_rejection_ids") or [])):
-        return ref, dossier, pending_id, payload, "hallucinated_id"
-    return ref, dossier, pending_id, payload, ""
+    dossier = db.dossiers.get(int(dossier_id))
+    if not dossier:
+        return None, None, 0, {}, "missing_ref"
+    ref = decree_ref_for_dossier(db, dossier)
+    live_dossier, pending_id, payload = _correction_context(db, ref)
+    row = live_dossier or dossier
+    owned = set((payload or {}).get("_resolves_rejection_ids") or [])
+    if not set(ids).issubset(owned):
+        return ref, row, pending_id, payload, "hallucinated_id"
+    return ref, row, pending_id, payload, ""
 
 
 def _mark_correction_results(
-    db: Any, payload: dict, pending_id: int, ids: Sequence[int], *, succeeded: bool,
+    db: Any, pending_id: int, ids: Sequence[int], *, succeeded: bool,
 ) -> None:
+    """Record part success on a freshly read payload so prior False cannot be overwritten by stale copies."""
+    if pending_id <= 0:
+        return
+    row = db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?", (int(pending_id),),
+    ).fetchone()
+    if not row:
+        return
+    payload = parse_engine_payload_json(row["payload_json"])
     results = payload.setdefault("_rejection_correction_results", {})
     for rid in ids:
         results[str(rid)] = results.get(str(rid), True) and succeeded
-    if pending_id > 0:
-        db.dossiers.set_pending_payload(pending_id, json.dumps(payload, ensure_ascii=False))
+    db.dossiers.set_pending_payload(pending_id, json.dumps(payload, ensure_ascii=False))
+
+
+def _step_correction_succeeded(step_result: Any) -> bool:
+    """Success = this effect_sequence step actually applied something and had no structured rejection."""
+    return bool(getattr(step_result, "applied", None)) and not getattr(step_result, "rejected", None)
 
 
 def _dispatch_effects(
@@ -590,11 +567,14 @@ def _dispatch_effects(
         )])
 
     from ming_sim.settlement.preflight import preflight_declared_event_effects, sanitize_delta_shape
+    from ming_sim.strict_types import strict_sqlite_id
 
     shape_rejections = []
     rejected = []
     has_effect = False
     clean_items = []
+    refs = visible_refs or {}
+    envelope_attr_keys = {"event_id", "resolves_rejection_ids", "dossier_id"}
     for item in raw if isinstance(raw, list) else [raw]:
         if not isinstance(item, Mapping):
             rejected.append(RejectedItem(
@@ -605,8 +585,9 @@ def _dispatch_effects(
         # 归属/修正关联是效果 envelope 的声明，不属于 delta 的字段。
         event_id = str(item.get("event_id") or "").strip()
         raw_ids = item.get("resolves_rejection_ids")
+        raw_dossier_id = item.get("dossier_id") if "dossier_id" in item else None
         clean, invalid = sanitize_delta_shape(
-            {k: v for k, v in item.items() if k not in {"event_id", "resolves_rejection_ids"}},
+            {k: v for k, v in item.items() if k not in envelope_attr_keys},
             source=source,
         )
         shape_rejections.extend(invalid)
@@ -617,39 +598,51 @@ def _dispatch_effects(
                 ids = require_player_rejection_ids(db, raw_ids)
                 if not ids:
                     raise ValueError("修正效果缺少拒收 id")
-                owner_ref, dossier, pending_id, payload, err = _correction_owner_for_ids(
-                    db, ids, decree_ref=decree_ref,
+                envelope_dossier_id = None
+                if raw_dossier_id is not None:
+                    envelope_dossier_id = strict_sqlite_id(raw_dossier_id)
+                owner_ref, dossier, pending_id, payload, owner_err = _correction_owner_for_ids(
+                    db, ids, decree_ref=decree_ref, dossier_id=envelope_dossier_id,
+                    visible_refs=refs,
                 )
-                if err == "missing_ref" or not dossier:
-                    raise KeyError("修正效果须来自过月的关联旨意")
-                if err == "hallucinated_id":
-                    raise KeyError("修正效果未关联本旨")
-                if not _clean_has_effect_content(clean):
-                    raise ValueError("修正效果缺少实际落账内容")
+                if owner_err or not dossier:
+                    raise KeyError(owner_err or "missing_ref")
+                if invalid:
+                    raise ValueError("修正效果声明形状被拒")
             except (TypeError, ValueError, KeyError) as exc:
-                owner_ref, _dossier, pending_id, payload, _err = _correction_owner_for_ids(
+                mark_dossier_id = None
+                try:
+                    if raw_dossier_id is not None:
+                        mark_dossier_id = strict_sqlite_id(raw_dossier_id)
+                except (TypeError, ValueError):
+                    mark_dossier_id = None
+                mark_ref, _dossier, pending_id, payload, _err = _correction_owner_for_ids(
                     db, attempted, decree_ref=decree_ref,
+                    dossier_id=mark_dossier_id, visible_refs=refs,
                 )
-                if owner_ref and pending_id:
+                if mark_ref and pending_id:
                     owned_ids = [
                         rid for rid in attempted
                         if rid in set(payload.get("_resolves_rejection_ids") or [])
                     ]
                     if owned_ids:
                         _mark_correction_results(
-                            db, payload, pending_id, owned_ids, succeeded=False,
+                            db, pending_id, owned_ids, succeeded=False,
                         )
                         if correction_refs is not None:
-                            correction_refs.append(owner_ref)
-                category = "invalid_shape"
+                            correction_refs.append(mark_ref)
+                # 分类用结构化 token（KeyError args[0]），不解析中文措辞；勿用 str(exc)（自带引号）。
                 if isinstance(exc, KeyError):
-                    category = "missing_ref" if "须来自" in str(exc) else "hallucinated_id"
+                    token = exc.args[0] if exc.args else ""
+                    category = token if token in {"missing_ref", "hallucinated_id"} else "hallucinated_id"
+                else:
+                    category = "invalid_shape"
                 rejected.append(RejectedItem(
                     item=dict(item), reason=str(exc), category=category, source=source,
                 ))
                 continue
             annotation = {
-                "ids": ids, "decree_ref": owner_ref, "pending_id": pending_id, "payload": payload,
+                "ids": ids, "decree_ref": owner_ref, "pending_id": pending_id,
             }
             if correction_refs is not None and owner_ref:
                 correction_refs.append(owner_ref)
@@ -658,7 +651,6 @@ def _dispatch_effects(
     if not has_effect:
         return SectionResult(applied=[], rejected=rejected)
 
-    refs = visible_refs or {}
     rejected_events = preflight_declared_event_effects(
         db, state, [(event_id, clean) for _, event_id, clean, _ann in clean_items],
         open_affair_ids=set(refs.get("affairs", ())),
@@ -680,8 +672,7 @@ def _dispatch_effects(
             ))
             if annotation is not None:
                 _mark_correction_results(
-                    db, annotation["payload"], annotation["pending_id"],
-                    annotation["ids"], succeeded=False,
+                    db, annotation["pending_id"], annotation["ids"], succeeded=False,
                 )
             continue
         accepted_effect = True
@@ -736,22 +727,18 @@ def _dispatch_effects(
     # 不放进 effects.rejected：那条会再被记成声明段名 effects。
     for section_name, item in zip(outcome.shape_sections, outcome.shape_rejections):
         collector.record(section_name, item, turn)
-    # Record correction success from the shared ordered settle (no parallel bucket).
+    # Record correction success from effect_sequence step results (settlement source of truth).
     accepted_index = 0
     for index, (item, event_id, clean, annotation) in enumerate(clean_items):
         if index in rejected_events:
             continue
-        step_extraction = effect_sequence[accepted_index][0]
+        step_result = outcome.effect_sequence_results[accepted_index]
         accepted_index += 1
         if annotation is None:
             continue
-        succeeded = (
-            _clean_has_effect_content(clean)
-            and not _step_has_rejections(step_extraction, outcome, rejected)
-        )
+        succeeded = _step_correction_succeeded(step_result)
         _mark_correction_results(
-            db, annotation["payload"], annotation["pending_id"],
-            annotation["ids"], succeeded=succeeded,
+            db, annotation["pending_id"], annotation["ids"], succeeded=succeeded,
         )
     _persist_specialized_extraction(
         db, state, extraction, collector=collector, turn=turn, source=source,
