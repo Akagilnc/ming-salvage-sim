@@ -306,37 +306,142 @@ def test_ticketed_write_gate_rejects_none(web_game):
     with pytest.raises(RuntimeError):
         game._ticketed_write_gate(None)  # type: ignore[arg-type]
 
-def test_stream_post_reply_exception_preserves_phase_and_recovers_original_turn(web_game, monkeypatch):
-    from ming_sim.session import ChatTurnResult
-    from tests.web_audience_test_doubles import install_hall_admission
+@pytest.mark.parametrize("failure", [
+    "close", "stale_close", "call", "archived_call", "bad_format", "timeout",
+])
+def test_stream_post_reply_exception_preserves_phase_and_recovers_original_turn(
+    web_game, monkeypatch, failure,
+):
+    from types import SimpleNamespace
+    from tests.conftest import stub_scene_agent
+    from tests.test_web_audience_night_498 import _FakeAgent
+    from ming_sim.highlight_judge import run_highlight_judge
 
     game = web_game
-    minister = next(iter(game.content.characters))
-    install_hall_admission(game.session)
-    game.session.schedule_pending_scene_translation = lambda *_a, **_k: None
-    game._spawn_pending_write_thread = lambda *_a, **_k: None
-    calls = []
+    monkeypatch.setattr(web_app, "web_game", game)
+    reply = "臣请据实核账。"
+    night = an.open_night(game.db, game.state, location="乾清宫", time_of_day="夜")
+    night_id = int(night["id"])
+    agent = _FakeAgent(answer=reply)
+    scene_calls = []
+    real_run = agent.run
 
-    def scene_chat(message, **_kw):
-        calls.append(message)
-        return ChatTurnResult(answer="臣遵旨。", court_action="court_break")
+    def scene_run(*a, **kw):
+        scene_calls.append(1)
+        return real_run(*a, **kw)
 
-    game.session.scene_chat = scene_chat
-    game.session.close_night_after_chat_if_needed = lambda *_a, **_k: (_ for _ in ()).throw(
-        RuntimeError("close failed"))
-    events = list(game.chat_stream("殿上", "退朝"))
-    assert [ev["type"] for ev in events][-3:] == ["done", "error", "end"]
+    monkeypatch.setattr(agent, "run", scene_run)
+    stub_scene_agent(monkeypatch, agent)
+    stub_audience_translate(monkeypatch, lambda *_a, **_kw: {
+        "scene_facts": [{"body": reply, "role": "minister", "audibility": "殿上公开",
+                         "person_names": ["温体仁"]}],
+    })
+    release = threading.Event()
+    judge_calls = []
+    broken = True
+
+    def judge_run(*_a, **_kw):
+        judge_calls.append(1)
+        if broken and failure in {"call", "archived_call"}:
+            raise RuntimeError("highlight call failed")
+        if broken and failure == "bad_format":
+            return SimpleNamespace(content="{broken")
+        if broken and failure == "timeout":
+            release.wait()
+        return SimpleNamespace(content='{"highlights":["据实核账"]}')
+
+    monkeypatch.setattr("ming_sim.agents.create_highlight_judge_agent",
+                        lambda *_a, **_kw: SimpleNamespace(run=judge_run))
+    monkeypatch.setattr(web_app, "run_highlight_judge", lambda **kw: run_highlight_judge(
+        **{**kw, "timeout_s": 0.001 if failure == "timeout" else 1},
+    ))
+    close_calls = []
+    real_close_night = an.close_night
+
+    def close_night(*a, **kw):
+        close_calls.append(kw["night_id"])
+        if broken and failure in {"close", "stale_close"}:
+            raise RuntimeError("close failed")
+        return real_close_night(*a, **kw)
+
+    monkeypatch.setattr(an, "close_night", close_night)
+    question = "退朝" if failure in {"close", "stale_close"} else "问边饷"
+    try:
+        events = list(game.chat_stream("殿上", question))
+    finally:
+        release.set()
+    game._runtime_write_queue().wait_idle()
     chat_turn_id = int(next(ev for ev in events if ev["type"] == "accepted")["chat_turn_id"])
+    done = next(ev["payload"] for ev in events if ev["type"] == "done")
+    assert done["answer"] == ("" if question == "退朝" else reply)
+    assert done["court_action"] == ("court_break" if question == "退朝" else "")
     retries = game.reply_retries("殿上")
-    assert [(r["chat_turn_id"], r["recovery_phase"]) for r in retries] == [(chat_turn_id, "court_break")]
+    scroll = web_app.api_audience_scroll(night_id)
+    assert scroll["reply_retries"] == retries
+    if failure in {"bad_format", "timeout"}:
+        assert "error" not in [ev["type"] for ev in events]
+        assert "highlights" not in [ev["type"] for ev in events]
+        assert retries == []
+        assert all(not m["highlights"] for m in scroll["messages"])
+        assert len(scene_calls) == len(judge_calls) == 1
+        assert close_calls == []
+        assert an.get_night(game.db, night_id)["status"] == an.NIGHT_STATUS_OPEN
+        return
+
+    kinds = [ev["type"] for ev in events]
+    assert kinds.index("done") < kinds.index("error") < kinds.index("end")
+    phase = "court_break" if question == "退朝" else "after_reply"
+    assert [(r["chat_turn_id"], r["recovery_phase"]) for r in retries] == [(chat_turn_id, phase)]
     assert retries[0]["error_pack_path"]
-    game.session.close_night_after_chat_if_needed = lambda action, **_kw: calls.append(action)
-    game.retry_interrupted_reply("殿上", chat_turn_id)
-    assert calls == ["退朝", "court_break"]
+    if question != "退朝":
+        assert any(m.get("chat_turn_id") == chat_turn_id and m["content"] == reply
+                   for m in scroll["messages"])
+    else:
+        assert scene_calls == judge_calls == []
+    new_night_id = None
+    if failure in {"stale_close", "archived_call"}:
+        broken = False
+        closing = list(game.chat_stream("殿上", "退朝"))
+        game._runtime_write_queue().wait_idle()
+        assert [ev["type"] for ev in closing] == ["accepted", "done", "end"]
+        assert next(ev["payload"] for ev in closing if ev["type"] == "done")["answer"] == ""
+        assert an.get_night(game.db, night_id)["status"] == an.NIGHT_STATUS_CLOSED
+        assert web_app.api_audience_scroll(night_id)["reply_retries"] == retries
+
+    if failure in {"call", "stale_close", "archived_call"}:
+        broken = False
+        followup = list(game.chat_stream("殿上", "再问边饷"))
+        game._runtime_write_queue().wait_idle()
+        assert "done" in [ev["type"] for ev in followup]
+        assert "error" not in [ev["type"] for ev in followup]
+        if failure != "call":
+            new_night_id = int(an.get_open_night(game.db)["id"])
+            assert new_night_id != night_id
+
+    if phase == "after_reply":
+        broken = True
+        with pytest.raises(RuntimeError, match="highlight call failed"):
+            game.retry_interrupted_reply("殿上", chat_turn_id)
+        assert game.reply_retries("殿上") == retries
+        assert web_app.api_audience_scroll(night_id)["reply_retries"] == retries
+    broken = False
+    counts = (len(scene_calls), len(judge_calls), len(close_calls))
+    recovered = game.retry_interrupted_reply("殿上", chat_turn_id)
+    assert recovered["answer"] == done["answer"]
+    assert len(scene_calls) == counts[0]
+    if new_night_id is not None:
+        assert an.get_night(game.db, new_night_id)["status"] == an.NIGHT_STATUS_OPEN
+    assert len(judge_calls) == counts[1] + (phase == "after_reply")
+    assert len(close_calls) == counts[2] + (failure == "close")
     assert game.reply_retries("殿上") == []
-    assert [r["content"] for r in game.db.conn.execute(
-        "SELECT content FROM chat_messages WHERE role='minister' AND minister_name=?", ("殿上",)
-    )] == ["臣遵旨。"]
+    scroll = web_app.api_audience_scroll(night_id)
+    assert scroll["reply_retries"] == []
+    if phase == "after_reply":
+        assert any(m.get("chat_turn_id") == chat_turn_id and m["highlights"] == ["据实核账"]
+                   for m in scroll["messages"])
+    assert an.get_night(game.db, night_id)["status"] == (
+        an.NIGHT_STATUS_OPEN if failure == "call" else an.NIGHT_STATUS_CLOSED
+    )
 
 def test_dispatch_exception_after_persist_retains_reply_recovery(web_game, monkeypatch):
     """#1849 reopen：唯一入口 stream——旧「stream/nonstream」入口轴随非流式路退役

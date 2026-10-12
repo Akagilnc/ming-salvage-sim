@@ -911,6 +911,7 @@ class GameSession:
         *,
         write_gate: Any = None,
         barrier_ticket: Any = None,
+        night_id: Optional[int] = None,
     ) -> None:
         """#526：回话落库后由 Web epilogue 触发高置信收夜（收夜=封窗=提交）。
 
@@ -923,6 +924,7 @@ class GameSession:
 
         barrier_ticket：#1727 可选预领屏障票（done 前 claim_barrier，使 has_open_barrier
         对玩家写入口立刻可见）。传入则复用该票 wait→close→complete，不再另领。
+        night_id：恢复时锚定源夜；缺省仍取开夜，已收源夜不再提交。
         """
         from ming_sim.session_write_queue import get_session_write_queue
 
@@ -930,21 +932,22 @@ class GameSession:
         try:
             if str(court_action or "") != "court_break":
                 return
-            from ming_sim.audience_night import close_night, get_open_night
+            from ming_sim.audience_night import close_night, get_night, get_open_night, NIGHT_STATUS_CLOSED
 
             gate = write_gate if write_gate is not None else getattr(self, "_write_gate", None)
             # #1353 r7：入口探测开夜短持 gate（共享 conn 读；无 gate 时 CLI 单写者）。
-            if gate is not None:
-                with gate:
-                    open_n = get_open_night(self.db)
-            else:
-                open_n = get_open_night(self.db)
-            if open_n is None:
+            import contextlib
+            with gate if gate is not None else contextlib.nullcontext():
+                night = get_night(self.db, night_id) if night_id is not None else get_open_night(self.db)
+            if night is None and night_id is None:
+                return
+            if night is not None and night["status"] == NIGHT_STATUS_CLOSED:
                 return
 
             def _do_close() -> None:
                 close_night(
                     self.db, self.state,
+                    night_id=night_id if night_id is not None else int(night["id"]),
                     content=getattr(self, "content", None),
                     llm_config=getattr(self, "llm_config", None),
                     write_gate=gate,
@@ -1236,21 +1239,19 @@ class GameSession:
     def pending_post_reply_retries(
         self, *, night_id: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
-        """本夜殿上已落回话的尾随失败（#1902 L1）。
+        """殿上已落回话的尾随失败，收夜后仍可恢复（#1902 reopen）。
 
-        与 ``pending_audience_reply_retries`` 同形：共用 ``_hall_turn_ids_for_night``
-        夜域筛选；状态源仍是 ``get_post_reply_retries``，不与中断回话合并语义。
+        显式 night_id 共用 ``_hall_turn_ids_for_night`` 筛指定卷；缺省取所有
+        待恢复尾随，不因收夜或新开夜丢失。状态源仍是 ``get_post_reply_retries``。
         """
         from ming_sim.audience_night import SCENE_CHAT_SPEAKER
 
-        hall_ids = self._hall_turn_ids_for_night(night_id)
-        if not hall_ids:
-            return []
+        hall_ids = self._hall_turn_ids_for_night(night_id) if night_id else None
         return sorted(
             [
                 dict(row)
                 for row in self.db.reign.get_post_reply_retries(SCENE_CHAT_SPEAKER)
-                if int(row["chat_turn_id"]) in hall_ids
+                if hall_ids is None or int(row["chat_turn_id"]) in hall_ids
             ],
             key=lambda item: int(item["chat_turn_id"]),
         )
@@ -1258,10 +1259,9 @@ class GameSession:
     def pending_audience_recovery_retries(
         self, *, night_id: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
-        """中断回话 + 已落回话尾随失败，本夜共核合并取数（#1902 L1）。
+        """Web 恢复面板／scroll 的中断回话与尾随失败共核取数。
 
-        Web 恢复面板／scroll 读此；CLI「重试回话」仍只读 ``pending_audience_reply_retries``
-        （不新增 CLI 尾随玩法）。night_id 显式传入时筛该夜，缺省＝开夜。
+        显式 night_id 筛该卷；缺省取开夜中断回话与跨夜未恢复尾随。
         """
         return sorted(
             [
@@ -1344,7 +1344,7 @@ class GameSession:
     ) -> Dict[str, Any]:
         """已落回话尾随恢复共核（#1902 L1）：claim → 相位编排 → clear；失败 release。
 
-        ``court_break`` → ``close_night_after_chat_if_needed``。
+        ``court_break`` → 仅补源夜收夜。
         ``after_reply`` → 入口呈现钩（高亮等），共核不持呈现／票据。
         ``write_gate`` 为宿主短写闸；未传则无闸上下文。
         claim 未赢 → ``PostReplyRecoveryError(conflict)``，入口映射 409。
@@ -1361,10 +1361,12 @@ class GameSession:
                 )
         try:
             if phase == "court_break":
+                with gate_cm:
+                    source = self.db.reign.chat_turn_night_id(chat_turn_id)
                 self.close_night_after_chat_if_needed(
-                    "court_break", write_gate=write_gate,
+                    "court_break", write_gate=write_gate, night_id=int(source["night_id"]),
                 )
-            elif after_reply is not None:
+            if phase == "after_reply" and after_reply is not None:
                 after_reply(target)
             with gate_cm:
                 self.db.reign.clear_post_reply_failure(chat_turn_id)
@@ -1396,7 +1398,7 @@ class GameSession:
 
         账上 ``active`` 且已挂 ``minister_message_id`` = 回话已提交。此时：
         转译尚未派出且抽取未完成 → 既有 ``extract_status=pending`` 与 translation
-        错误包；否则既有 ``post_reply_recovery``（``court_break`` / ``after_reply``）。
+        错误包；否则既有 ``post_reply_recovery`` 记录收夜或高亮待补。
         ``replied`` 表示调用方已有回话对象。对象在、账上无回话（落库事务回滚）
         与对象尚未产生，都走未完成收口：记回滚差异，问话留下并标 interrupted。
         账上已有回话而调用方还没拿到 payload（调度在返回前抛）同样不得回滚。
