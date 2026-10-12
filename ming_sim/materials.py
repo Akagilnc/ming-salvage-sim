@@ -20,7 +20,6 @@ from pathlib import Path
 from typing import Any, List, Mapping, Optional, Sequence
 
 from ming_sim.exceptions import DeclarationDataError
-from ming_sim.applier import load_stored_list, load_stored_object
 
 _UNSAFE = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
 _INDEX_NAME = "INDEX.txt"

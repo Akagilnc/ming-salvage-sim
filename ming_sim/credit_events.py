@@ -24,7 +24,6 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from ming_sim.breach_plea import _extract_ref_ids
 from ming_sim.participant_roster import (
-    decode_durable_participant_roster,
     project_execution_liability_parties,
 )
 from ming_sim.relations import CREDIT_DIRECTION, CREDIT_EDGE_KINDS, EMPEROR_NODE

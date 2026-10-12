@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 from ming_sim.applier import Provenance, RejectedItem
 from ming_sim.db import GameDB

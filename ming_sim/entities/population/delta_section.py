@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from ming_sim.applier import RejectedItem
 
-from typing import Dict, List
+from typing import List
 
 from ming_sim.applier import SectionResult
 

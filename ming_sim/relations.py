@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from typing import List
-from ming_sim.exceptions import DeclarationDataError, DeclarationReferenceError
+from ming_sim.exceptions import DeclarationDataError
 
 from ming_sim.applier import RejectedItem, Provenance
 

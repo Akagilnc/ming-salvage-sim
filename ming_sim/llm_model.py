@@ -282,7 +282,6 @@ def extract_agent_text(run_output: object) -> str:
     # 成功正文不得按散文词表推断认证故障（ADR 0142 / #1891 A）。
     if _run_output_status_is_error(run_output):
         from ming_sim.llm_transport import (
-            ClassifiedFailure,
             take_remembered_code_fault,
             take_remembered_typed_failure,
             transport_failure_unavailable,

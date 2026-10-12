@@ -27,8 +27,6 @@ from ming_sim.constants import (
 from ming_sim.content import GameContent
 from ming_sim.db import (
     GameDB,
-    _load_durable_json,
-    POPULATION_UNIT_PERSONS,
     _LEVERAGE_FACTIONS,
 )
 from ming_sim.exceptions import SettlementAbort

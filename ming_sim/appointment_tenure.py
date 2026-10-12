@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Mapping, Sequence
-
 from ming_sim.exceptions import DeclarationDataError
 
 APPOINTMENT_TENURES = frozenset({"真除", "署理", "兼署", "加衔"})

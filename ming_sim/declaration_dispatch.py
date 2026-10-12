@@ -55,11 +55,10 @@ from __future__ import annotations
 from ming_sim.db import GameDB
 from ming_sim.exceptions import DeclarationDataError, DeclarationReferenceError
 
-import contextlib
 import hashlib
 import json
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from ming_sim.action_materialize import (
     DecreeMaterializationValidationError,
@@ -507,8 +506,6 @@ def _dispatch_effects(
     accepted_effect = False
     accepted_event_ids: list[str] = []
     from ming_sim.issues import (
-        FISCAL_LEVY_EVENT_CATEGORY,
-        _event_outcome_label,
         _merge_first_event_outcome,
     )
     for index, (item, event_id, clean) in enumerate(clean_items):

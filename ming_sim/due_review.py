@@ -26,7 +26,6 @@ from ming_sim.staged_commitment import (
     ENTRY_KIND_STAGED,
     TODO_STATUS_CONSUMED,
     TODO_STATUS_PENDING,
-    normalize_commitment_stages,
 )
 
 # next_audience_todos.entry_kind 单一分派（#623+#624 合成，禁第二份谓词）：

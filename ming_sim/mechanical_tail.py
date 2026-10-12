@@ -12,7 +12,6 @@ from types import SimpleNamespace
 from typing import Any, Dict, Optional
 
 from ming_sim.applier import Provenance
-from ming_sim.db import GameDB
 from ming_sim.models import _load_durable_json_object
 from ming_sim.relation_brew import MonthEndRelationBrewLeg
 from ming_sim.session_write_queue import get_session_write_queue

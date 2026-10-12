@@ -8,7 +8,7 @@ from __future__ import annotations
 from ming_sim.applier import parse_engine_payload_json
 from ming_sim.entities.reign_state.store import POPULATION_UNIT_PERSONS
 from typing import Sequence
-from ming_sim.exceptions import DeclarationDataError, DeclarationReferenceError
+from ming_sim.exceptions import DeclarationDataError
 
 from ming_sim.applier import RejectedItem, Provenance
 from ming_sim.entities.person_log.store import PersonLogStore
@@ -22,9 +22,9 @@ import sqlite3
 from typing import Any, Dict, Iterable, List, Mapping, NamedTuple, Optional, Set, Tuple
 
 from ming_sim.applier import (
-    StoredDocumentError, atomic, connection_owns_transaction,
+    atomic, connection_owns_transaction,
     coerce_beyond_intent_flag,
-    durable_float, durable_int, load_stored_json, load_stored_list, load_stored_object, safe_json_dumps,
+    safe_json_dumps,
 )
 from ming_sim.appointment_tenure import appointment_tenure_from
 from ming_sim.assets import format_money, format_money_delta, format_wanliang_amount
@@ -47,9 +47,7 @@ from ming_sim.exceptions import (
     OfficeAppointmentRejection,
     PendingActionRefusal,
     RevokeOriginUnresolved,
-    RosterInputError,
 )
-from ming_sim.intelligence import OFFICE_SLOTS
 from ming_sim.entities.dossier import (
     DossierStore,
     DOSSIER_REPORT_ORIGIN_NS,
@@ -64,8 +62,7 @@ from ming_sim.entities.dossier import (
 from ming_sim.schema import ensure_core_schema
 from ming_sim.models import (
     FRONT_HALF_DONE_PHASES, Character, Event, GameState, is_vassal_prince,
-    loads_effect_dict, _load_durable_json_list, _load_durable_json_object,
-    require_persistent_string_list,
+    loads_effect_dict, _load_durable_json_object,
     monthly_amount, period_label, reign_period_label,
 )
 from ming_sim.participant_roster import (
@@ -97,8 +94,7 @@ from ming_sim.relations import (
     validate_edge_kind,
 )
 from ming_sim.strict_types import (
-    _parse_sqlite_id, strict_sqlite_id, strict_int, validate_affected_parties,
-    validate_rejection_verdict, validate_verdict_affected_parties,
+    strict_sqlite_id, strict_int, validate_affected_parties,
 )
 from ming_sim.token_stats import tlog
 
