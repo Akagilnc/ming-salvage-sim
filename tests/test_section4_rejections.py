@@ -414,8 +414,6 @@ def test_inertia_natural_resolution_tolerated_rejection_no_crash(game):
     """inertia 自然推到 100 结案的 issue,其 effect 含容忍类脏项(army 非法字段)
     → 不得崩(tlog 留痕路在 issues.py 没 import 即 NameError 崩月,
     cmr S2 r3 claude P1)。好字段照落。"""
-    import ming_sim.entities.issue.effects as I
-
     db, state, content = game
     aid = db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()[0]
     before = db.conn.execute("SELECT morale FROM armies WHERE id=?", (aid,)).fetchone()[0]
