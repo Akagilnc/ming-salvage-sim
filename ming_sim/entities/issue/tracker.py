@@ -604,10 +604,10 @@ def apply_issue_tracker_output(
         )
         # 段派生 end_turn（max stage due）不落 DB；落库会在末段到期 + ongoing 时误走 mechanical expire（#620）。
         # issue+affair 成对写由 GameDB 拥有（ADR 0150-D3）；本段不自包事务生命周期。
-        resolve_eff, resolve_rejections = issue_effects.admit_fresh_mapping_sections(
+        resolve_eff, resolve_rejections = issue_effects.admit_issue_effect_sections(
             resolve_eff, source=source,
         )
-        fail_eff, fail_rejections = issue_effects.admit_fresh_mapping_sections(
+        fail_eff, fail_rejections = issue_effects.admit_issue_effect_sections(
             fail_eff, source=source,
         )
         entity_rejections.extend(resolve_rejections)
@@ -760,9 +760,9 @@ def apply_issue_tracker_output(
             cl_effect = cl.get("effect_on_fail")
         if isinstance(cl_effect, dict):
             # 浅合并：metrics/economy/factions/buildings/legacy 等顶层段，现给覆盖预设。
-            # 新鲜非对象映射段先拒收留痕并剔除，同名预设段得以保留（整段 cl_effect
+            # 新鲜非法容器段（含 null）先拒收留痕并剔除，同名预设段得以保留（整段 cl_effect
             # 非对象时拒收现给、保留预设的同衔先例）。
-            cl_effect, section_rejections = issue_effects.admit_fresh_mapping_sections(
+            cl_effect, section_rejections = issue_effects.admit_issue_effect_sections(
                 cl_effect, source=source,
             )
             entity_rejections.extend(section_rejections)
@@ -877,7 +877,7 @@ def apply_issue_tracker_output(
             ))
             cost = {}
         else:
-            cost, section_rejections = issue_effects.admit_fresh_mapping_sections(
+            cost, section_rejections = issue_effects.admit_issue_effect_sections(
                 cost, source=source,
             )
             entity_rejections.extend(section_rejections)
