@@ -514,6 +514,8 @@ def test_night_approved_directive_closes_into_month_end_without_second_review(
     def maybe_fail(at, target):
         if at == stage and target == "needs-forecast":
             calls.append(phase["name"])
+            if phase["name"] == "interrupted":
+                raise SystemExit()
             if phase["name"] == "night" or phase["name"] == "month" and retry:
                 raise error
 
@@ -578,6 +580,25 @@ def test_night_approved_directive_closes_into_month_end_without_second_review(
             response = await client.post("/api/decree/advance_without_edict")
             return ("done" if response.status_code == 200 else "error"), response.json()
 
+    interrupted = stage == "forecast" and kind == "code"
+    if interrupted:
+        # The front half really commits before an unrecorded process interruption.
+        phase["name"] = "interrupted"
+        with pytest.raises(SystemExit):
+            asyncio.run(scenario())
+        assert game.state.turn_phase == TurnPhase.SETTLING.value
+        assert month_chain_call_failure(game.db, turn_before) is None
+
+        async def recovered_state():
+            async with _client() as client:
+                return (await client.get("/api/game/state")).json()
+
+        recovery = asyncio.run(recovered_state())["settlement_recovery"]
+        assert recovery["retryable"] is True
+        assert recovery["error_pack_path"] == ""
+        assert str(error) not in recovery["message"]
+        phase["name"] = "month"
+
     event, result = asyncio.run(scenario())
     if retry:
         assert event == "error"
@@ -593,7 +614,10 @@ def test_night_approved_directive_closes_into_month_end_without_second_review(
 
     assert event == "done", result
     assert result["advanced"] is True
-    assert calls == ["night", "month"] + (["retry"] if retry else [])
+    assert calls == (
+        ["night"] + (["interrupted"] if interrupted else [])
+        + ["month"] + (["retry"] if retry else [])
+    )
     assert game.db.staged_declarations.is_settled(ref)
     assert game.state_payload()["settlement_recovery"] is None
     for target in ("ready", "needs-forecast"):

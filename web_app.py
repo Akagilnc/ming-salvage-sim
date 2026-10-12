@@ -1415,11 +1415,6 @@ class WebGame:
             from ming_sim.month_chain import month_chain_call_failure
             month_failure = month_chain_call_failure(self.db, int(self.state.turn))
             if turn_phase == TurnPhase.SETTLING.value or month_failure is not None:
-                from ming_sim.error_pack import (
-                    latest_error_pack_for_turn,
-                    _read_complete_pack_manifest,
-                    settlement_abort_message,
-                )
                 if month_failure is not None:
                     # 本次失败记录是诊断包真源；没有本次包就空着，不借同月旧包。
                     settlement_recovery = {
@@ -1429,22 +1424,12 @@ class WebGame:
                         "stage": str(month_failure.get("step") or ""),
                     }
                 else:
-                    pack_path = latest_error_pack_for_turn(
-                        self.db.path, int(self.state.turn),
-                    )
-                    manifest = (
-                        _read_complete_pack_manifest(Path(pack_path)) if pack_path else None
-                    )
+                    # An interrupted process has no diagnosed cause. Same-turn
+                    # packs can belong to night forecasts or unrelated work.
                     settlement_recovery = {
                         "retryable": True,
-                        "error_pack_path": pack_path or "",
-                        "message": (
-                            settlement_abort_message(
-                                pack_path, reason=str(manifest["exception_message"]),
-                            )
-                            if manifest is not None
-                            else "上月结算未完成（进度已保存）。"
-                        ),
+                        "error_pack_path": "",
+                        "message": "上月结算未完成（进度已保存）。",
                     }
         # #1726：奏疏收件箱与未读数同份 list，禁每请求双跑 list_player_memorials。
         memorials = self.memorial_payloads()

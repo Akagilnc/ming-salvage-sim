@@ -108,11 +108,11 @@ def settlement_abort_message(pack_path: str, *, reason: str) -> str:
 
 
 def latest_error_pack_for_turn(db_path: object, turn: int) -> Optional[str]:
-    """同 DB + turn 最新完整错误包绝对路径；无则 None（ADR 0008 决定 7 恢复面）。
+    """同 DB + turn 最新完整诊断包；无则 None，不作为本次故障的归因来源。
 
     身份取 manifest.db_path + turn，
     禁跨存档串包（同 user-data 下另一 DB 的更高 attempt 不得入选）。
-    目录扫描/条目 stat 的 OSError 视为无诊断包——不得拖垮 settling 恢复面。
+    目录扫描/条目 stat 的 OSError 视为无诊断包。
     """
     root = error_packs_root()
     try:
