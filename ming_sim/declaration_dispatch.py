@@ -1345,8 +1345,6 @@ def _dispatch_commissions(
                 _reject(rejected, item, "密令缺本轮口谕源轮", "missing_ref", source)
                 continue
             actor = str(minister_name or "").strip() or str(source_turn["minister_name"])
-            # 另行暗护沿既有密令声明入口；专用暂存资格校验与双载体承接已退役。
-            # 已记录拨银可由密令载荷 dossier_links 走既有关联槽（功能接续 #1873）。
             # 差务契约在此一次冻结并校验：落不成案的原因此刻即知，写一条
             # durable 拒收让下一句戏文里的大臣自己复述/请示（ADR 0155 场中
             # 承接），不留一条注定落不了库的暂存。

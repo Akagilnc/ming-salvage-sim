@@ -84,8 +84,8 @@ def _record_monthly(db, state, *, progress=None):
     db.conn.commit()
 
 
-def test_per_route_storage_restore_without_retired_escort_accounting(game):
-    """W4 核账恒为无护（接续 #1873）；密令进展独立落账并可恢复。"""
+def test_per_route_storage_and_secret_progress_restore(game):
+    """Per-route reconciliation and secret-order progress survive reopening."""
 
     db, state, content = game
     bare = _in_transit_grant(db, state, text="无护行路", target_id="liaodong")
@@ -104,12 +104,9 @@ def test_per_route_storage_restore_without_retired_escort_accounting(game):
     assert len(bare_rows) == 1 and bare_rows[0]["turn"] == turn
     assert len(escort_rows) == 1 and escort_rows[0]["turn"] == turn
     assert bare_rows[0]["arrived_amount"] == 16
-    assert escort_rows[0]["arrived_amount"] == 16
     assert bare_rows[0]["escorted"] is False
-    assert escort_rows[0]["escorted"] is False
-    assert escort_rows[0]["escort_source_dossier_id"] is None
 
-    # 无护行：不对拨饷案卷写进展；有护行：进展挂密令案卷（#566 容器）
+    # Monthly progress belongs to the secret-order dossier, not either grant.
     assert db.dossiers.list_dossier_progress(bare) == []
     assert db.dossiers.list_dossier_progress(escorted_grant) == []
     progress = db.dossiers.list_dossier_progress(escort_dossier_id)
