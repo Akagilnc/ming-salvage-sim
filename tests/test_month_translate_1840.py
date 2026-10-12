@@ -99,14 +99,17 @@ def test_world_segment_explicit_stock_transfers_share_actual_amount(
     assert all(row["origin_ref"] == origin for row in logs)
 
 
-@pytest.mark.parametrize("route", ["resolved", "failed", "cancels"])
-@pytest.mark.parametrize("field,bad_value,level", [
-    ("cannon_transfer", value, "item") for value in (None, True, -1.5, "bad")
+@pytest.mark.parametrize("route,field,bad_value,level", [
+    (route, "cannon_transfer", value, "item") for route in ("resolved", "failed", "cancels")
+    for value in (None, True, -1.5, "bad")
 ] + [
-    (field, value, "item") for field in ("army_delta", "region_delta")
+    (route, field, value, "item") for route in ("resolved", "failed", "cancels")
+    for field in ("army_delta", "region_delta")
     for value in (None, [], 5, 1.5, "bad", True)
 ] + [
-    (field, value, "section") for field in ("army_delta", "region_delta")
+    (route, field, value, "section")
+    for route in ("resolved", "failed", "cancels", "new_resolved", "new_failed")
+    for field in ("army_delta", "region_delta")
     for value in ([], 5, 1.5, "bad", True)
 ])
 def test_world_segment_nested_entity_effects_reject_bad_items(game, route, field, bad_value, level):
@@ -144,8 +147,28 @@ def test_world_segment_nested_entity_effects_reject_bad_items(game, route, field
             ("invalid_shape", {"field": field, "id": entity_id, "value": value}, "system_simulation")
             for entity_id, value in bad_items.items()
         ]
+    fresh_issue = route in ("new_resolved", "new_failed")
+    terminal_route = route.removeprefix("new_")
+    effect_field = f"effect_on_{'resolve' if terminal_route == 'resolved' else 'fail'}"
+    creation_rejected = []
+    if fresh_issue:
+        dossier_id = db.create_decree_dossier(
+            state, action_type="policy", decree_text="调炮", target_kind="issue", target_id="test",
+        )
+        db.dossiers.record_dossier_decision(dossier_id, "promulgated")
+        created = dispatch_month_segment(
+            db, state, segment="立项", translate_fn=lambda request, config: {"effects": {
+                "new_issues": [{
+                    "origin_kind": "decree", "origin_ref": f"dossier:{dossier_id}",
+                    "kind": "situation", "title": "调炮", effect_field: effect,
+                }],
+            }},
+        )
+        creation = section(created.effects.applied[0], "issue_summary")
+        issue_id = creation.new_issues[0]["issue_id"]
+        creation_rejected = creation.rejected
     # Close + section: seed same-named preset so rejected fresh section keeps preset work.
-    if route == "cancels":
+    elif route == "cancels":
         issue_kwargs = {"cancellable": "decree"}
     elif level == "section":
         issue_kwargs = {
@@ -154,7 +177,8 @@ def test_world_segment_nested_entity_effects_reject_bad_items(game, route, field
         }
     else:
         issue_kwargs = {"effect_on_fail": effect if route == "failed" else {}}
-    issue_id = db.insert_issue(state, kind="situation", title="调炮", **issue_kwargs)
+    if not fresh_issue:
+        issue_id = db.insert_issue(state, kind="situation", title="调炮", **issue_kwargs)
     if route == "cancels":
         declaration = {"effects": {
             "cancels": [{"issue_id": issue_id, "narrative": "撤回", "applied_cost": effect}],
@@ -163,15 +187,23 @@ def test_world_segment_nested_entity_effects_reject_bad_items(game, route, field
     else:
         declaration = {"effects": {
             "close_issues": [{
-                "issue_id": issue_id, "reason": route,
-                f"effect_on_{'resolve' if route == 'resolved' else 'fail'}": effect,
+                "issue_id": issue_id, "reason": terminal_route,
+                **({} if fresh_issue else {effect_field: effect}),
             }],
         }}
-        expected_status = route
+        expected_status = terminal_route
+    if fresh_issue:
+        declaration["effects"]["army_delta"] = {winner: {"origin_ref": "盘面自发", "manpower": 2}}
     result = dispatch_month_segment(
         db, state, segment="调炮", translate_fn=lambda request, config: declaration,
     )
     rejected = section(result.effects.applied[0], "issue_summary").rejected
+    if fresh_issue:
+        assert rejected == []
+        rejected = creation_rejected
+        assert json.loads(db.issues.row(issue_id)[effect_field]) == {
+            key: value for key, value in legal.items() if key != field
+        }
     assert [(item.category, item.item, item.source.value) for item in rejected] == expected_rejections
     reports = db.conn.execute("SELECT category, item_json, source FROM rejection_reports").fetchall()
     assert [(row["category"], json.loads(row["item_json"]), row["source"]) for row in reports] == expected_rejections
@@ -179,8 +211,10 @@ def test_world_segment_nested_entity_effects_reject_bad_items(game, route, field
         "SELECT id, cannon_equipment FROM armies WHERE id IN (?, ?) ORDER BY id", (loser, winner),
     )] == cannon_before
     assert db.conn.execute("SELECT COUNT(*) FROM army_logs WHERE field='cannon_equipment'").fetchone()[0] == logs_before
-    expect_manpower = manpower_before + (0 if level == "section" and field == "army_delta" and route == "cancels" else 1)
-    expect_unrest = 10 if level == "section" and field == "region_delta" and route == "cancels" else 11
+    expect_manpower = manpower_before + (2 if fresh_issue else 0) + (
+        0 if level == "section" and field == "army_delta" and (route == "cancels" or fresh_issue) else 1
+    )
+    expect_unrest = 10 if level == "section" and field == "region_delta" and (route == "cancels" or fresh_issue) else 11
     assert db.armies.row(winner)["manpower"] == expect_manpower
     assert dict(db.regions.row(bad_region)) == bad_region_before
     assert db.regions.row(good_region)["unrest"] == expect_unrest

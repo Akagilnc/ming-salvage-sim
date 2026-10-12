@@ -604,6 +604,14 @@ def apply_issue_tracker_output(
         )
         # 段派生 end_turn（max stage due）不落 DB；落库会在末段到期 + ongoing 时误走 mechanical expire（#620）。
         # issue+affair 成对写由 GameDB 拥有（ADR 0150-D3）；本段不自包事务生命周期。
+        resolve_eff, resolve_rejections = issue_effects.admit_fresh_mapping_sections(
+            resolve_eff, source=source,
+        )
+        fail_eff, fail_rejections = issue_effects.admit_fresh_mapping_sections(
+            fail_eff, source=source,
+        )
+        entity_rejections.extend(resolve_rejections)
+        entity_rejections.extend(fail_rejections)
         _issue_fields = dict(
             kind=kind,
             title=title if str(title).strip() else "无名事项",
