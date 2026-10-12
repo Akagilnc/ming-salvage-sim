@@ -215,7 +215,7 @@ def _candidate_contract_block(candidates: Mapping[str, object]) -> str:
         "战事，其世界状态主账效果逐项在同一 effects 项里声明，并在该项顶层 event_id "
         "写同一事件 id；该候选的 outcome_labels 非空时，在 事件结局 里按事件 id 给出"
         "其中一个标签，为空则不写 事件结局。其余候选事件的效果不写 event_id，"
-        "按各自独立效果声明。已经由引擎触发的大事不在 new_issues 再新立。\n"
+        "按各自独立效果声明。\n"
         "- 【本月候选】里的弹劾潮候选，由发难派系的立场自行决定发不发难："
         '发难时在 effects.new_issues 声明 {"origin_kind": "impeachment_surge", '
         '"candidate_id": 候选 id, "faction_hint": 该候选派系, '

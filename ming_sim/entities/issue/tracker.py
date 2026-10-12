@@ -329,7 +329,7 @@ def apply_issue_tracker_output(
                 event_terminal.apply_event_cascading_invalidations(state, db)
                 consumed_event_ids.add(ev.id)
                 candidates_dirty = True
-                print(f"[INFO] new_issue 已拒：事件 {event_id} 为 {ev.event_type}，不转 issue。")
+                print(f"[INFO] new_issue 已接收：事件 {event_id} 为 {ev.event_type}，已记为触发。")
                 applied_new.append({"id": ev.id, "title": ev.title, "reason": f"event_type={ev.event_type} 已记为触发"})
                 continue
             issue_id = issue_records.event_to_issue(db, state, ev)
