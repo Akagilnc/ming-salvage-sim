@@ -17,6 +17,7 @@ from ming_sim.issues import FISCAL_LEVY_RESCRIPT_SOURCE
 from ming_sim.entities.issue.event_terminal import apply_petition_event_outcome
 from ming_sim.models import LLMConfig
 from ming_sim.month_chain import _LEVY_PETITION_PREFIX
+from tests.conftest import _drain_registered_sessions_before_close
 from tests.month_chain_helpers import make_light_session
 
 def _settle_p(db, region_id="shaanxi"):
@@ -522,6 +523,7 @@ def test_reopen_after_petition_stored_keeps_event_identity(game, tmp_path, monke
     db.conn.commit()
     path = str(tmp_path / "reopen.db")
     shutil.copyfile(db.path, path)
+    _drain_registered_sessions_before_close(db)
     db.close()
 
     reopened = GameDB(path, content)
@@ -557,6 +559,7 @@ def test_reopen_after_petition_stored_keeps_event_identity(game, tmp_path, monke
         assert stored["status"] == "decided"
         assert int(state2.turn) > closed_turn
     finally:
+        _drain_registered_sessions_before_close(reopened)
         reopened.close()
 
 def test_declined_presentation_keeps_following_world_facts(game, monkeypatch):
