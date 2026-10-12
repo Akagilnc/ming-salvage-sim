@@ -35,6 +35,7 @@ def _levy_block(title="辽饷升至一分二厘"):
                 "options": [
                     {"label": "准行加派", "hint": "边饷稍续而民间加派更重"},
                     {"label": "不准，仍照九厘", "hint": "民力已困"},
+                    {"label": "留中", "hint": "俟户部再议"},
                 ],
             },
             ensure_ascii=False,
@@ -80,7 +81,7 @@ def _install_model_boundary(
     seen: dict = {
         "world_messages": world_log if world_log is not None else [],
         "continue_prompts": [], "translate_prompts": [],
-        "segments": [], "gazette": 0,
+        "segments": [], "answered_verdicts": [], "gazette": 0,
     }
 
     def _agent_text(_agent, prompt, tag="", **_kwargs):
@@ -93,6 +94,8 @@ def _install_model_boundary(
         if tag == "world-segment-continue":
             seen["continue_prompts"].append(prompt)
             return continue_text
+        if tag == "decree-forecast-continue":
+            return "遵旨，内库拨银修城。"
         if tag == "gazette":
             seen["gazette"] += 1
             return json.dumps({"title": "邸报", "report": "边情邸报。"}, ensure_ascii=False)
@@ -116,6 +119,7 @@ def _install_model_boundary(
     def _dispatch(db, state, *args, **kwargs):
         # 转译入口实际收到的段文。请旨机标须已在切前缀时拿掉。
         seen["segments"].append(str(kwargs.get("segment") or ""))
+        seen["answered_verdicts"].append(kwargs.get("answered_verdicts", ()))
         return dispatch_month_segment(db, state, *args, **kwargs)
 
     monkeypatch.setattr(month_translate, "dispatch_month_segment", _dispatch)
@@ -147,7 +151,11 @@ def _ledger_field(db, field, event_id="liao_levy_rise_1631", default=""):
     row = _ledger(db, event_id)
     return default if row is None else str(row[field] or "")
 
-def test_emperor_approves_levy_petition_through_real_month_chain(game, monkeypatch):
+@pytest.mark.parametrize("choice", [
+    {"label": "准行加派"},
+    {"label": "", "note": "准奏，依所请加派"},
+])
+def test_emperor_approves_levy_petition_through_real_month_chain(game, monkeypatch, choice):
     """世界段上疏 → 同一批红页亲裁「准」→ 转译按闭集声明 → 事件终局。"""
     db, state, content = game
     _prepare(db, state, content, monkeypatch)
@@ -189,10 +197,10 @@ def test_emperor_approves_levy_petition_through_real_month_chain(game, monkeypat
     # 到点但未裁 → 账上无终局行（不再自动置已准）。
     assert _ledger_field(db, "terminal_state") == ""
 
-    # 皇帝在批红页点「准行加派」。submit 入口内的 phase2 接既有续推与转译：
+    # Approve by draft or handwritten note through the same submission path:
     # 答复先按事实落账，结局由同一段转译按闭集声明后落唯一写口。
     session.submit_hitl_choices(
-        [{"decision_key": row["decision_key"], "label": "准行加派"}],
+        [{"decision_key": row["decision_key"], **choice}],
         write_gate=session._write_gate,
     )
     # 答复确实经既有世界段续推（不是代码当场判的语义）。
@@ -202,7 +210,11 @@ def test_emperor_approves_levy_petition_through_real_month_chain(game, monkeypat
     assert ledger["terminal_reason"] == "已准"
     assert ledger["source"] == FISCAL_LEVY_RESCRIPT_SOURCE
     # 亲笔/拟批措辞原样留在 choice 事实里，不被改写成结局标签以外的任何东西。
-    assert json.loads(ledger["choice_json"])["label"] == "准行加派"
+    stored_choice = json.loads(ledger["choice_json"])
+    assert {key: stored_choice[key] for key in choice} == choice
+    verdict = seen["answered_verdicts"][-1][0]
+    assert verdict["event_id"] == "liao_levy_rise_1631"
+    assert {key: verdict["rescript"][key] for key in choice} == choice
     # 本月三饷应征参数仍是批准前的九厘。
     assert _settle_p(db)["p"]["三饷应征"] == before
 
@@ -333,29 +345,51 @@ def test_held_levy_petition_advances_month_without_terminal_state(game, monkeypa
             "key": "辽饷_rate", "origin_ref": "盘面自发", "reason": "罢征",
         }]}]})
         before = 0
-    # A spurious approval declaration gains no authority from a held rescript.
+    from tests.test_month_chain_1843 import _stage_edict
+    affair = db.affairs.open(
+        name="修城", origin="旨意", year=state.year, period=state.period, turn=state.turn,
+    )
+    _, ref = _stage_edict(
+        db, state, next(iter(content.characters.values())).name, "修城", "修城", 0, affair.id,
+    )
+    db.staged_declarations.replace_questions(ref, [{
+        "title": "是否拨内库修城", "context": "城垣需修。",
+        "options": [{"label": "准拨", "hint": "拨银修城"}],
+    }], forecast_text="修城请旨。")
+    # The model leaves the first rescript unresolved; an unrelated later
+    # segment cannot borrow that old answer to declare a terminal outcome.
     _install_model_boundary(
         monkeypatch, world_text="本月边情，户部请加辽饷。" + _levy_block(),
-        declaration={"effects": [{
-            "event_id": "liao_levy_rise_1631",
-            "事件结局": {"liao_levy_rise_1631": "已准"},
-        }]},
+        continue_text="户部再议。",
     )
     session = _make_session(db, state, content)
 
     session.resolve_turn(allow_empty_decree=True)
-    row = session.pending_decisions()[0]
-    # 只批朱笔、不点拟批＝留中。
+    desk = session.pending_decisions()
+    row = next(item for item in desk if str(item["event_id"]).startswith(_LEVY_PETITION_PREFIX))
+    ordinary = next(item for item in desk if str(item["event_id"]).startswith("decree-question:"))
+    declarations = iter([
+        {"effects": {}},
+        {"effects": [{
+            "event_id": "liao_levy_rise_1631",
+            "事件结局": {"liao_levy_rise_1631": "已准"},
+        }]},
+    ])
+    monkeypatch.setattr(
+        "ming_sim.month_translate.run_declaration_translate_prompt",
+        lambda *args, **kwargs: next(declarations),
+    )
     session.submit_hitl_choices(
         [{"decision_key": row["decision_key"],
-          "label": "", "note": "留中，俟户部再议"}],
+          "label": "留中", "note": "留中，俟户部再议"},
+         {"decision_key": ordinary["decision_key"], "label": "准拨"}],
         write_gate=session._write_gate,
     )
 
     assert _ledger_field(db, "terminal_state") == ""
     assert _ledger_field(db, "terminal_reason") == ""
     held_choice = json.loads(_ledger_field(db, "choice_json"))
-    assert held_choice["label"] == ""
+    assert held_choice["label"] == "留中"
     assert held_choice["note"] == "留中，俟户部再议"
     # 留中不改征收。
     assert _settle_p(db)["p"]["三饷应征"] == before

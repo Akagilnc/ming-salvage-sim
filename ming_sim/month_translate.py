@@ -38,17 +38,15 @@ def _visible_effect_refs(
 def petition_verdict_grounding(db: Any, state: Any) -> list[dict[str, object]]:
     """已呈皇帝、待亲裁落定结局的三饷事项及其封闭标签集（#1892 / ADR 0143 输入侧）。
 
-    只列本回合已选票拟、终态仍空的事项。未上疏、未答或留中不在此列；
-    留中事实仍供世界段，不授予转译结局的资格。只供事实，不代模型判断。
+    只列本段已交接答复、终态仍空的事项，与供料及落账资格同源。
+    留中由转译不声明结局；历史答复不借给别段。只供事实，不代模型判断。
     """
     from ming_sim.entities.fiscal.levy import _fiscal_levy_event_by_id
-    from ming_sim.issues import petition_outcome_is_admissible
+    from ming_sim.issues import _segment_levy_verdicts, petition_outcome_is_admissible
 
     out: list[dict[str, object]] = []
-    for row in db.issues.list_event_petition_records():
-        event_id = str(row.get("event_id") or "")
-        if not event_id or any(item["event_id"] == event_id for item in out):
-            continue
+    for row in _segment_levy_verdicts.get():
+        event_id = str(row["event_id"])
         if not petition_outcome_is_admissible(state, db, event_id, None):
             continue
         ev = _fiscal_levy_event_by_id(event_id)
@@ -237,7 +235,7 @@ def translate_month_segment(
 def _answered_levy_verdicts(
     db: Any, turn: int, *, answers: list[dict[str, object]],
 ) -> list[dict[str, object]]:
-    """本段待译的三饷请旨事件：已选票拟的事件身份、闭集与原批语（#1891）。
+    """本段待译的三饷请旨事件：已答的事件身份、闭集与原批语（#1891）。
 
     已答行只读 ``_fiscal_levy_answered_rows``，从已交接的实际答复取本次供料。
     历史仍留账，不重标为新答复；不解析批语或在这里判准驳（ADR 0142 / P6）。
@@ -315,6 +313,7 @@ def dispatch_month_segment(
     三饷原批语只由世界答后段传入；旨意续推和问前世界段不是那一次解释。
     """
     from ming_sim.materials import candidate_supply, continuing_dossier_facts
+    from ming_sim.issues import _segment_levy_verdicts
 
     payload = decree_payload or {}
     turn = int(state.turn)
@@ -323,18 +322,24 @@ def dispatch_month_segment(
     # 候选集与同一次世界段材料目录（prepare_world_materials 默认口径）和落库写口
     # （impeachment_surge 走 gather_impeachment_surge_candidates）三者同一：谁在
     # 世界段被供到，转译就能声明，写口也收；否则模型看得到却永远立不下。
-    declaration, refs = _translate_month_segment_front(
-        db, segment=segment, turn=turn, state=state, decree_payload=payload,
-        llm_config=llm_config, translate_fn=translate_fn,
-        continuing_dossiers=continuing_dossier_facts(db, turn),
-        candidates=candidate_supply(db, state),
-        answered_verdicts=answered_verdicts,
-    )
-    return dispatch_declaration(
-        db, state, declaration,
-        minister_name=minister_name,
-        source=source,
-        visible_refs=refs,
-        alongside=alongside,
-        defer_disclosure=True,
-    )
+    # A call-local carrier, not a second ledger: translation and preflight read
+    # the same handed-off answers, then discard this scope even on failure.
+    token = _segment_levy_verdicts.set(tuple(answered_verdicts))
+    try:
+        declaration, refs = _translate_month_segment_front(
+            db, segment=segment, turn=turn, state=state, decree_payload=payload,
+            llm_config=llm_config, translate_fn=translate_fn,
+            continuing_dossiers=continuing_dossier_facts(db, turn),
+            candidates=candidate_supply(db, state),
+            answered_verdicts=_segment_levy_verdicts.get(),
+        )
+        return dispatch_declaration(
+            db, state, declaration,
+            minister_name=minister_name,
+            source=source,
+            visible_refs=refs,
+            alongside=alongside,
+            defer_disclosure=True,
+        )
+    finally:
+        _segment_levy_verdicts.reset(token)
