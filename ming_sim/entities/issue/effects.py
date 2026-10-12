@@ -19,9 +19,19 @@ _ISSUE_PSEUDO_EVENT = Event(
     id="issue_resolution", title="局势结案", kind="月末", summary="",
     urgency=0, severity=0, credibility=100, interests=[], audiences=[],
 )
+# Single admission type table for issue terminal-effect top-level sections.
+# dict = mapping/object containers; list = array containers. None is illegal.
 _ISSUE_ENTITY_FIELDS = {
-    "region_delta": dict, "army_delta": dict, "new_armies": list,
-    "power_renames": list, "人物变更": list,
+    "region_delta": dict,
+    "army_delta": dict,
+    "metrics": dict,
+    "factions": dict,
+    "legacy": dict,
+    "new_armies": list,
+    "power_renames": list,
+    "人物变更": list,
+    "economy": list,
+    "buildings": list,
 }
 
 
@@ -29,22 +39,23 @@ def admit_fresh_mapping_sections(
     effect: Dict[str, object],
     *,
     source: Provenance = Provenance.system_simulation,
-    container: type = dict,
+    container: Optional[type] = None,
     drop: bool = True,
 ) -> tuple[Dict[str, object], List[RejectedItem]]:
-    """Admit illegal ``_ISSUE_ENTITY_FIELDS`` containers of one expected type.
+    """Admit illegal ``_ISSUE_ENTITY_FIELDS`` containers.
 
-    Fresh close/cancel mapping: ``container=dict, drop=True`` — strip bad keys so
-    same-named presets survive a shallow merge; durable loaders stay loud.
+    Fresh new/close/cancel entry: ``container=None, drop=True`` — check every
+    registered section type, strip bad keys (including ``None``) so same-named
+    presets survive a shallow merge; durable loaders stay loud.
     List fields inside ``_apply_issue_entities``: ``container=list, drop=False`` —
     leave one rejection, keep the key for downstream isinstance skips.
     """
     cleaned = dict(effect) if drop else effect
     rejected: List[RejectedItem] = []
     for key, expected in _ISSUE_ENTITY_FIELDS.items():
-        if expected is not container:
+        if container is not None and expected is not container:
             continue
-        if key in cleaned and cleaned[key] is not None and not isinstance(cleaned[key], expected):
+        if key in cleaned and not isinstance(cleaned[key], expected):
             rejected.append(RejectedItem(
                 item={"field": key, "raw_value": cleaned[key]},
                 reason=f"局势效果 {key} 容器类型非法",
@@ -202,28 +213,48 @@ def _apply_issue_entities(
     from ming_sim.entities.faction.apply import _apply_faction_dict
 
     tolerated: List[RejectedItem] = []
-    unknown = effect.keys() - (_ISSUE_ENTITY_FIELDS.keys() | {"metrics", "economy", "factions", "buildings", "legacy"})
+    unknown = effect.keys() - _ISSUE_ENTITY_FIELDS.keys()
     for key in unknown:
         tolerated.append(RejectedItem(item={"field": key, "raw_value": effect[key]}, reason="局势效果字段不可执行", category="invalid_shape", source=source))
-    building_rows, building_rejections = _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, label, origin_ref=origin_ref, source=source)
-    tolerated.extend(building_rejections)
-    if applied_buildings is not None:
-        applied_buildings.extend(building_rows)
-    _, legacy_rejections = _spawn_legacy_from_effect(db, state, effect, issue_id, issue_title or label, source=source)
+    # list 拒收走同一权威件；dict 段留给持久加载器（新鲜坏映射已在入口剔除）。
+    # 入口已剔键的坏段不会再到此；本处只为未走入口的调用留一次痕。
+    _, list_rejections = admit_fresh_mapping_sections(
+        effect, source=source, container=list, drop=False,
+    )
+    tolerated.extend(list_rejections)
+    # buildings/economy 已由上面 list 准入留痕；非法容器不再交给 handler 重复记拒。
+    buildings_raw = effect.get("buildings")
+    if buildings_raw is None or isinstance(buildings_raw, list):
+        building_rows, building_rejections = _apply_issue_buildings(
+            db, state, buildings_raw, _ISSUE_PSEUDO_EVENT, label,
+            origin_ref=origin_ref, source=source,
+        )
+        tolerated.extend(building_rejections)
+        if applied_buildings is not None:
+            applied_buildings.extend(building_rows)
+    _, legacy_rejections = _spawn_legacy_from_effect(
+        db, state, effect, issue_id, issue_title or label, source=source,
+    )
     tolerated.extend(legacy_rejections)
     metrics = {} if effect.get("metrics") is None else effect["metrics"]
     if isinstance(metrics, dict):
         _, refused = declare_metric_pairs(state, list(metrics.items()), db=db, source=source)
         tolerated.extend(refused)
-    else:
-        tolerated.append(RejectedItem(item={"field": "metrics", "raw_value": metrics}, reason="指标效果须为对象", category="invalid_shape", source=source))
-    tolerated.extend(_apply_economy_list(db, state, [] if effect.get("economy") is None else effect["economy"], origin_ref=origin_ref, source=source)[1])
-    tolerated.extend(_apply_faction_dict(db, {} if effect.get("factions") is None else effect["factions"], source=source)[1])
-    # list 拒收走同一权威件；dict 段留给持久加载器（新鲜坏映射已在入口剔除）。
-    _, list_rejections = admit_fresh_mapping_sections(
-        effect, source=source, container=list, drop=False,
-    )
-    tolerated.extend(list_rejections)
+    elif "metrics" in effect:
+        # 入口已拒的坏段不会到此；未走入口的调用仍留一痕。
+        tolerated.append(RejectedItem(
+            item={"field": "metrics", "raw_value": metrics},
+            reason="指标效果须为对象", category="invalid_shape", source=source,
+        ))
+    economy_raw = effect.get("economy")
+    if economy_raw is None or isinstance(economy_raw, list):
+        tolerated.extend(_apply_economy_list(
+            db, state, [] if economy_raw is None else economy_raw,
+            origin_ref=origin_ref, source=source,
+        )[1])
+    tolerated.extend(_apply_faction_dict(
+        db, {} if effect.get("factions") is None else effect["factions"], source=source,
+    )[1])
     def effective_content():
         return content if content is not None else _ctx()
 

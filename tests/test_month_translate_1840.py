@@ -109,8 +109,8 @@ def test_world_segment_explicit_stock_transfers_share_actual_amount(
 ] + [
     (route, field, value, "section")
     for route in ("resolved", "failed", "cancels", "new_resolved", "new_failed")
-    for field in ("army_delta", "region_delta")
-    for value in ([], 5, 1.5, "bad", True)
+    for field in ("army_delta", "region_delta", "metrics")
+    for value in (None, [], 5, 1.5, "bad", True)
 ])
 def test_world_segment_nested_entity_effects_reject_bad_items(game, route, field, bad_value, level):
     from ming_sim.month_translate import dispatch_month_segment
@@ -128,7 +128,13 @@ def test_world_segment_nested_entity_effects_reject_bad_items(game, route, field
     bad_region, good_region = [row[0] for row in db.conn.execute("SELECT id FROM regions ORDER BY id LIMIT 2")]
     db.conn.execute("UPDATE regions SET unrest=10 WHERE id=?", (good_region,))
     bad_region_before = dict(db.regions.row(bad_region))
-    legal = {"army_delta": {winner: {"manpower": 1}}, "region_delta": {good_region: {"unrest": 1}}}
+    state.metrics["民心"] = 50
+    metric_before = state.metrics["民心"]
+    legal = {
+        "army_delta": {winner: {"manpower": 1}},
+        "region_delta": {good_region: {"unrest": 1}},
+        "metrics": {"民心": 3},
+    }
     effect = dict(legal)
     if field == "cannon_transfer":
         bad_changes = {"随军大炮": bad_value, "cannon_transfer_to": winner}
@@ -215,9 +221,14 @@ def test_world_segment_nested_entity_effects_reject_bad_items(game, route, field
         0 if level == "section" and field == "army_delta" and (route == "cancels" or fresh_issue) else 1
     )
     expect_unrest = 10 if level == "section" and field == "region_delta" and (route == "cancels" or fresh_issue) else 11
+    # Section-level bad fresh keeps same-named preset; cancels/new have no preset to keep.
+    expect_metric = metric_before + (
+        0 if level == "section" and field == "metrics" and (route == "cancels" or fresh_issue) else 3
+    )
     assert db.armies.row(winner)["manpower"] == expect_manpower
     assert dict(db.regions.row(bad_region)) == bad_region_before
     assert db.regions.row(good_region)["unrest"] == expect_unrest
+    assert state.metrics["民心"] == expect_metric
     assert db.issues.row(issue_id)["status"] == expected_status
 
 
