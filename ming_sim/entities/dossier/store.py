@@ -2727,10 +2727,10 @@ class DossierStore:
             "SELECT * FROM pending_actions WHERE id=?", params
         ).fetchone()
 
-    def read_uncased_grant_catalog_token(self, params: Any = ()) -> Any:
+    def read_uncased_catalog_token(self, params: Any = ()) -> Any:
         return self._conn.execute(
             "SELECT id FROM decree_dossiers "
-            "WHERE action_type='grant_allocation' AND pending_action_id=? LIMIT 1",
+            "WHERE pending_action_id=? LIMIT 1",
             params,
         ).fetchone()
 
@@ -2739,11 +2739,6 @@ class DossierStore:
             "SELECT status,kind,action,night_approved,night_id,version "
             "FROM pending_actions WHERE id=?",
             params,
-        ).fetchone()
-
-    def read_pending_snapshot_decree_dossiers(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT COALESCE(MAX(id),0)+1 FROM decree_dossiers", params
         ).fetchone()
 
     def read_gather_impeachment_surge_candidates(self, params: Any = ()) -> Any:

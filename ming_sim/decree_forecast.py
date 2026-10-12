@@ -94,19 +94,23 @@ def _payload_dict(candidate: Dict[str, Any]) -> Dict[str, Any]:
 
 def _this_decree_fact(
     candidate: Dict[str, Any], *, decree_text: str, db: Any = None,
+    uncased_ref: Optional[str] = None,
 ) -> Dict[str, object]:
     """本旨事实：随调用消息携带，不进材料目录（ADR 0155）。
 
     字段形状沿 continuing_dossier_facts，另附完整载荷与 mode；status 固定按已颁看待。
     已有案卷的 paid 从账本实付投影（materials.dossier_paid_amount）；
-    夜里尚未成案的拟旨 id 无动账，投影为 0。
+    夜里尚未成案的拟旨使用暂存身份，无案卷实付，投影为 0。
     """
     from ming_sim.materials import dossier_paid_amount, revoke_target_facts
 
     payload = _payload_dict(candidate)
-    paid = dossier_paid_amount(db, candidate.get("id")) if db is not None else 0
+    paid = (
+        dossier_paid_amount(db, candidate.get("id"))
+        if db is not None and uncased_ref is None else 0
+    )
     fact: Dict[str, object] = {
-        "id": candidate.get("id"),
+        "id": uncased_ref if uncased_ref is not None else candidate.get("id"),
         "status": "promulgated",
         "decree_text": decree_text,
         "action_type": str(candidate.get("action_type") or ""),
@@ -159,25 +163,25 @@ def forecast_snapshot(
     body["decree_text"] = text
     body["decree_ref"] = decree_ref
     turn = int(state.turn)
+    catalog_token = _uncased_catalog_token(db, body, decree_ref)
     # 判官上下文用原始候选；推演侧本旨事实按已颁看待。
-    context = decree.build_promulgation_judge_context(db, state, [body])
+    context = decree.build_promulgation_judge_context(
+        db, state, [body], uncased=catalog_token is not None,
+    )
     # 与世界段同一读法；独立 dest_root，避免并行预推互踩固定「世界推演」根。
     dest_parent = Path(world_materials_root(db, state)).parent / "decree-forecast"
     prepared = prepare_world_materials(db, state, dest_root=dest_parent)
     try:
         grounding, refs = _frozen_effect_refs(db, turn)
-        # 夜里拨银还没有案卷。目录与本旨身份用这道暂存自己的 decree_ref，
-        # 不用 MAX(id)+1 猜号——两道同夜预推会猜到同一个未来号，落账时串路。
-        # 猜号只留在判官候选的整数 id 上（批红契约要正整数），不进护送目录。
-        catalog_token = _uncased_grant_catalog_token(db, body, decree_ref)
+        # 未成案旨的目录与本旨共用记录号+版本身份。判官整数 id 仅关联
+        # 本次候选与判决，不是未来案卷号；成案后使用真实案卷 id。
         if catalog_token and payload_declares_escort(payload):
             grounding = _append_this_decree_escort_grounding(
                 grounding, body, catalog_token,
             )
-        this_decree = _this_decree_fact(body, decree_text=text, db=db)
-        if catalog_token:
-            this_decree = dict(this_decree)
-            this_decree["id"] = catalog_token
+        this_decree = _this_decree_fact(
+            body, decree_text=text, db=db, uncased_ref=catalog_token,
+        )
     except BaseException:
         release_material_tree(prepared.root)
         raise
@@ -213,9 +217,8 @@ def _pending_snapshot(session: Any, pending_action_id: int, night_id: int) -> Op
     payload = dict(prepared_directive["payload"])
     action_type = db._directive_dossier_action_type(payload)
     executor_kind, executor_id = db._directive_executor(action_type, payload)
-    next_id = int(db.dossiers.read_pending_snapshot_decree_dossiers()[0])
     candidate: Dict[str, object] = {
-        "id": next_id,
+        "id": int(pending_action_id),
         "pending_action_id": int(pending_action_id),
         "action_type": action_type,
         "decree_text": str(prepared_directive["text"]),
@@ -264,25 +267,14 @@ def _held_snapshot(session: Any, dossier_id: int) -> Optional[Dict[str, Any]]:
     return snapshot
 
 
-def _uncased_grant_catalog_token(
+def _uncased_catalog_token(
     db: Any, candidate: Dict[str, Any], decree_ref: str,
 ) -> Optional[str]:
-    """尚未成案的拨银用自己的暂存标识当目录行；已经有案卷则不再补行。"""
-    if str(candidate.get("action_type") or "") != "grant_allocation":
-        return None
-    token = str(decree_ref or "")
-    if not token:
-        return None
-    try:
-        pending_id = int(candidate.get("pending_action_id"))
-    except (TypeError, ValueError):
-        return None
-    if pending_id <= 0:
-        return None
-    existing = db.dossiers.read_uncased_grant_catalog_token((pending_id,))
-    if existing is not None:
-        return None
-    return token
+    """尚未成案的旨用自己的暂存身份；已成案者仍用真实案卷号。"""
+    pending_id = int(candidate.get("pending_action_id") or 0)
+    if pending_id > 0 and db.dossiers.read_uncased_catalog_token((pending_id,)) is None:
+        return decree_ref
+    return None
 
 
 def _append_this_decree_escort_grounding(

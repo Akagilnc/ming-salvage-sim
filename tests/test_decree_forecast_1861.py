@@ -7,6 +7,8 @@ import shutil
 import threading
 from types import SimpleNamespace
 
+import pytest
+
 import ming_sim.decree as decree_mod
 import ming_sim.decree_forecast as forecast_mod
 import ming_sim.month_translate as month_translate
@@ -142,7 +144,10 @@ def _sess(db, state, content, monkeypatch, translate_fn):
     ))
     return sess
 
-def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(game, monkeypatch):
+@pytest.mark.parametrize("exhaust_first", [False, True])
+def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(
+    game, monkeypatch, exhaust_first,
+):
     db, state, content = game
     night = open_night(db, state)
     minister = next(iter(content.characters.values()))
@@ -150,6 +155,20 @@ def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(game, 
         "dossier_action_type": "policy", "target_kind": "issue",
         "target_id": "test-policy", "actor": minister.name, "mode": "ordinary",
     }
+    # Existing dossier ids overlap the pending-action sequence, but are not
+    # this night's candidates and must not supply their paid/endorsement facts.
+    for text in ("旧甲案", "旧乙案"):
+        old_id = db.create_decree_dossier(
+            state, action_type="policy", decree_text=text,
+            target_kind="issue", target_id="old-policy",
+        )
+        db.record_dossier_promulgation(state, old_id, "promulgated")
+        db.dossiers.add_endorsement(
+            old_id, form="御笔手敕", imperial=True, decision_key=f"old:{old_id}",
+        )
+        db.record_issue_economy_move(
+            state, "国库", -7, "过月支出", text, origin_ref=f"dossier:{old_id}",
+        )
     first = db.stage_pending_action(
         state.turn, kind="directive", action="拟旨", minister_name=minister.name,
         payload={**payload, "text": "甲旨"},
@@ -184,19 +203,21 @@ def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(game, 
         }
 
     judge_policies = []
+    judge_facts = {}
 
     def judge(_agent, prompt, **kwargs):
         judge_policies.append(kwargs.get("transport_policy"))
         dossier = json.loads(prompt)["dossiers"][0]
-        if dossier["decree_text"] == "甲旨":
+        judge_facts[dossier["mode"]] = dossier
+        if exhaust_first and dossier["decree_text"] == "甲旨":
             raise LLMUnavailable("exhausted", code="http_429", status_code=429)
-        assert dossier["mode"] == "midzhi"
         return json.dumps({
             "verdicts": [{"dossier_id": dossier["id"], "decision": "promulgated"}],
         })
 
     monkeypatch.setattr(decree_mod, "run_agent_text", judge)
     policies = []
+    decree_facts = {}
     before_question = "before-question"
     after_question = "after-question"
     decision_block = "<<DECISION>>" + json.dumps({
@@ -207,7 +228,7 @@ def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(game, 
     def simulate(_agent, _prompt, **kwargs):
         decree_fact = json.loads(_prompt)["this_decree"]
         assert decree_fact["payload"]["target_id"] == "test-policy"
-        assert decree_fact["payload"]["mode"] == "midzhi"
+        decree_facts[decree_fact["mode"]] = decree_fact
         policies.append(kwargs.get("transport_policy"))
         return before_question + decision_block + after_question
 
@@ -226,15 +247,32 @@ def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(game, 
     monkeypatch.setattr(month_translate, "run_declaration_translate_prompt", translate_segment)
     sess = _sess(db, state, content, monkeypatch, translate_fn)
     ctid = db.create_chat_turn(state, "殿上", "scene", 0, night_id=int(night["id"]))
+    own_endorsement = {
+        "form": "会签", "endorser_id": minister.name,
+        "source_chat_turn_id": ctid, "imperial": False,
+    }
+    db.dossiers.attach_pending_action_endorsement(second, own_endorsement)
     result = sess.scene_chat("两道都准", chat_turn_id=ctid)
     persist_and_schedule_scene(sess, db, result)
     # 有限时排空：真挂死在此报红，不靠 CI job 终线兜底（见 _DRAIN_TIMEOUT_S）。
     wait_pending_writes(sess, timeout_s=_DRAIN_TIMEOUT_S)
 
-    assert db.conn.execute(
+    first_staged = db.conn.execute(
         "SELECT 1 FROM staged_declarations WHERE decree_ref=?",
         (pending_action_decree_ref(first, 1),),
-    ).fetchone() is None
+    ).fetchone()
+    assert (first_staged is None) == exhaust_first
+    expected_refs = {"midzhi": pending_action_decree_ref(second, 1)}
+    if not exhaust_first:
+        expected_refs["ordinary"] = pending_action_decree_ref(first, 1)
+    assert {mode: fact["id"] for mode, fact in decree_facts.items()} == expected_refs
+    assert all(fact["paid"] == 0 for fact in decree_facts.values())
+    assert judge_facts["ordinary"]["endorsements"] == []
+    assert judge_facts["midzhi"]["endorsements"] == [own_endorsement]
+    assert all(
+        fact["criteria_snapshot_source"]["endorsement_entry_ids"] == []
+        for fact in judge_facts.values()
+    )
     staged = db.conn.execute(
         "SELECT declaration_json,status FROM staged_declarations WHERE decree_ref=?",
         (pending_action_decree_ref(second, 1),),
