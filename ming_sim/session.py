@@ -2192,14 +2192,6 @@ class GameSession:
         # 既受理转译、欠账补跑和调用方收夜，不留重新准入窗口。
         write_queue = get_session_write_queue(self)
         def _drain_catch_up_and_continue() -> None:
-            from ming_sim.decree_forecast import failed_decree_forecast
-            forecast_failure = failed_decree_forecast(self)
-            if forecast_failure is not None:
-                raise SettlementAbort(
-                    str(forecast_failure["message"]), turn=int(self.state.turn),
-                    stage=str(forecast_failure["step"]),
-                    error_pack_path=forecast_failure.get("error_pack_path"),
-                )
             # 票的完成只表示本次 worker 已终止，不代表机械尾已终结。
             # 屏障等完票后复查持久状态；非耗尽异常留下 pending 时不能过月。
             from ming_sim.mechanical_tail import _pending_mechanical_tails

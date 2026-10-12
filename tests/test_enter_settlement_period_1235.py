@@ -182,7 +182,7 @@ def test_true_failure_pending_translation_exits_display(web_game, monkeypatch, t
 
 
 def test_advance_http_reject_after_accept_exits_display(web_game, monkeypatch):
-    """#1235 r1 D：退朝 accept 后 _serialized_web_write 抢锁 409 → 出展示态。
+    """#1235 r1 D：退朝 accept 后非阻塞会话闸拒收 → 出展示态。
 
     HTTPException 非 ValueError 子类；须经 settled_ok 失败臂收口，禁孤儿快照。
     """
@@ -203,7 +203,7 @@ def test_advance_http_reject_after_accept_exits_display(web_game, monkeypatch):
         )
         yield  # pragma: no cover — raise 后不可达；保 CM 形
 
-    monkeypatch.setattr(web_app, "_serialized_web_write", _gate_busy)
+    monkeypatch.setattr(web_app, "_NonBlockingWebWriteGate", _gate_busy)
     async def go():
         async with _client() as client:
             return await client.post("/api/decree/advance_without_edict")

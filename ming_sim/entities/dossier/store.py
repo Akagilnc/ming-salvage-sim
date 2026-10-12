@@ -2734,11 +2734,6 @@ class DossierStore:
             params,
         ).fetchone()
 
-    def read_failed_forecast_key(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT id,version,night_id FROM pending_actions WHERE turn=?", params
-        ).fetchall()
-
     def read_current_forecast_ref(self, params: Any = ()) -> Any:
         return self._conn.execute(
             "SELECT status,kind,action,night_approved,night_id,version "

@@ -1410,13 +1410,10 @@ class WebGame:
                 and self.db.resolve_contexts.get(self.state.turn) is not None
                 and not pending_decisions
             )
-            # One failure projection for night forecasts, settlement and rescript continuation.
+            # One failure projection for settlement and rescript continuation.
             settlement_recovery = None
             from ming_sim.month_chain import month_chain_call_failure
             month_failure = month_chain_call_failure(self.db, int(self.state.turn))
-            if month_failure is not None and month_failure.get("step") == "edict_forecast":
-                from ming_sim.decree_forecast import failed_decree_forecast
-                month_failure = failed_decree_forecast(self.session)
             if turn_phase == TurnPhase.SETTLING.value or month_failure is not None:
                 from ming_sim.error_pack import (
                     latest_error_pack_for_turn,
@@ -2609,15 +2606,15 @@ def _try_acquire_serialized_web_write_gate(game):
 class _NonBlockingWebWriteGate:
     """#1353 r12：同一把 runtime write_gate 的非阻塞短持适配（不是平行闸）。
 
-    advance 路径注入 auto_close/get_open_night 真实 with 接缝：占用即 409，
+    advance 路径的收夜与结算主体共用此适配：占用即 409，
     禁阻塞等闸（#1842：转译短持与 ``_try_acquire`` 同缝等待后重试）。
     issue/stream 仍传裸 Lock（阻塞 acquire）。
     """
 
     __slots__ = ("_lock",)
 
-    def __init__(self, lock: threading.Lock) -> None:
-        self._lock = lock
+    def __init__(self, game: Any) -> None:
+        self._lock = _game_write_gate(game)
 
     def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
         del blocking, timeout  # 契约：短持处不挂死在结算长写上
@@ -2655,7 +2652,7 @@ def _serialized_web_write(game):
          窗口）→ 立即 409，不在事件循环上阻塞等结算（F1 同因）；抢到则持锁到写完再释放。
     直写 game.db 的端点、以及绕过 _write_gate 的会话写端点（诏稿/拟旨/撤回召对——它们各自的
     session._refuse_if_settling/相位门只查相位、守不住 pre_settle 窗口）都经本 CM 串行；结算入口
-    （resolve_turn/submit_decisions）走阻塞版 _game_write_gate（在自己的 worker 线程里持锁）。"""
+    走 `_settlement_period_entry` 指定的同闸适配，由会话处理恢复相位。"""
     _refuse_settling_or_busy_write_phase(game)
     gate = _try_acquire_serialized_web_write_gate(game)
     try:
@@ -2673,10 +2670,10 @@ def _settlement_period_entry(
 ):
     """#1241 S1：颁布/退朝/stream 三入口受理样板（begin→accept→await→close→gate）。
 
-    行为零变化硬约束：write_cm **必须**参数化锁获取语义分叉——
-      · advance → `_serialized_web_write`（非阻塞抢锁，撞锁/相位拒 409）
+    write_cm 参数化锁获取语义分叉——
+      · advance → `_NonBlockingWebWriteGate`（非阻塞抢锁，撞锁拒 409）
       · issue / stream → `_game_write_gate`（阻塞 acquire）
-    统一获取语义即破 T2 行为零变化（r2-r7 不变式）。
+    结算入口由会话解释相位；直写端点的相位禁令不能阻断过月续跑。
 
     #657 resolve/stream：hold_write_for_body=False——展示态仍走本样板，但 body 内
     submit_hitl_choices 自管 ①/③ 短持同一 write_cm（② 无锁 join）；禁整段 gate 盖 join。
@@ -2698,10 +2695,9 @@ def _settlement_period_entry(
         created_display = _accept_settlement_period(game)
         # #1353 r12：advance 非阻塞下沉到 auto_close 真实短持接缝（占用即 409）；
         # 删预探即释——探后至 get_open_night 短持之间 TOCTOU 可再阻塞。
-        # 相位拒仍在进 barrier 前（避免 settling 窗误收夜）；issue/stream 阻塞等闸。
-        if write_cm is _serialized_web_write:
-            _refuse_settling_or_busy_write_phase(game)
-            close_gate: Any = _NonBlockingWebWriteGate(_game_write_gate(game))
+        # 退朝与颁诏同可续跑已提交的前半段；issue/stream 阻塞等闸。
+        if write_cm is _NonBlockingWebWriteGate:
+            close_gate: Any = _NonBlockingWebWriteGate(game)
         else:
             close_gate = _game_write_gate(game)
 
@@ -4754,7 +4750,7 @@ def api_advance_without_edict(
     game = get_game()
     from ming_sim.audience_night import AudienceNightError
     try:
-        with _settlement_period_entry(game, write_cm=_serialized_web_write):
+        with _settlement_period_entry(game, write_cm=_NonBlockingWebWriteGate):
             _reject_stale_month_token(game, body.expected_turn, token_label="退朝")
             settlement_result = game.session.advance_without_decree(
                 write_gate_already_held=True,
