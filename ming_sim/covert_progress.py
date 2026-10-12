@@ -1924,8 +1924,8 @@ def _apply_investigation_selection(
     did = int(dossier["id"])
     oid = int(order["id"])
     reaction_rejections: List[RejectedItem] = []
-    # 同月重入不重复施加投入：实况轨已有本月行即说明本月已核算过。lane 累加本身
-    # 不带幂等键，若不在此拦一道，同一 turn 内被扫两次就会把力气算两遍。
+    # 同月重入不重复施加投入：实况轨已核算本月 units（含 0）才跳过，只有说明不算。
+    # lane 累加本身不带幂等键，同一 turn 内被扫两次就会把力气算两遍。
     existing = db.dossiers.read_apply_investigation_selection(
         (did, int(turn))
     )
@@ -2026,11 +2026,18 @@ def _apply_investigation_selection(
         raw_note = None
     # 查案 note = 密奏正文（可谎）：入奏报轨，不入实况轨（DELTA_SCHEMA / #1897 R1）。
     # 复用 update_secret_order_progress 既有奏报写口（自带进展档），不另造 band 前置。
-    # 写口前禁 str() 洗白；坏类型沿既有写口响亮（#1897 J820-E1）。
+    # 坏正文项级拒收留原值；不洗白，也不撤销合法投入和同批其他密令。
     memorial_note: Optional[str] = None
     if raw_note is not None:
-
-        memorial_note = raw_note
+        if isinstance(raw_note, str):
+            memorial_note = raw_note
+        else:
+            reaction_rejections.append(RejectedItem(
+                item={"order_id": oid, "note": raw_note},
+                reason="密奏 note 须为字符串",
+                category="invalid_shape",
+                source=source,
+            ))
     row = db.dossiers.record_actual_progress(
         did, turn, units=units, fidelity_state="", floor_state="",
         note=None, commit=False,

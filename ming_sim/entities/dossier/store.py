@@ -276,7 +276,7 @@ CREATE TABLE IF NOT EXISTS dossier_actual_progress (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 dossier_id INTEGER NOT NULL,
                 turn INTEGER NOT NULL,
-                units REAL NOT NULL,
+                units REAL, -- NULL: prose recorded, monthly actuals not yet accounted
                 fidelity_state TEXT NOT NULL,
                 floor_state TEXT NOT NULL,
                 note TEXT NOT NULL DEFAULT '',
@@ -1938,9 +1938,9 @@ class DossierStore:
 
     def record_actual_progress(
         self, dossier_id: int, turn: int, *, units: float, fidelity_state: str,
-        floor_state: str, note: str = "", commit: bool = True,
+        floor_state: str, note: Optional[str] = "", commit: bool = True,
     ) -> dict[str, object]:
-        """#1504 实况轨月度进度（0073）。禁与 dossier_progress_json/sim_note 混写。"""
+        """Record monthly actuals; note=None preserves any separately recorded prose."""
         owns = self._owns()
         did = int(dossier_id)
         origin = f"dossier:{did}"
@@ -1953,7 +1953,7 @@ class DossierStore:
                 units=excluded.units,
                 fidelity_state=excluded.fidelity_state,
                 floor_state=excluded.floor_state,
-                note=excluded.note,
+                note=COALESCE(?, dossier_actual_progress.note),
                 origin_ref=excluded.origin_ref
             """,
             (
@@ -1964,6 +1964,7 @@ class DossierStore:
                 str(floor_state),
                 str(note or ""),
                 origin,
+                note,
             ),
         )
         self._commit(commit, owns)
@@ -2351,7 +2352,7 @@ class DossierStore:
     def read_apply_investigation_selection(self, params: Any = ()) -> Any:
         return self._conn.execute(
             "SELECT id, units FROM dossier_actual_progress "
-            "WHERE dossier_id=? AND turn=? LIMIT 1",
+            "WHERE dossier_id=? AND turn=? AND units IS NOT NULL LIMIT 1",
             params,
         ).fetchone()
 
@@ -2449,11 +2450,11 @@ class DossierStore:
 
 
     def set_actual_progress_note(self, dossier_id: int, turn: int, note: str) -> None:
-        """Set this month's original note without changing existing progress units."""
+        """Set original prose; absent actuals remain unaccounted, not a zero result."""
         self._conn.execute(
             "INSERT INTO dossier_actual_progress "
             "(dossier_id, turn, units, fidelity_state, floor_state, note, origin_ref) "
-            "VALUES (?, ?, 0, '', '', ?, ?) "
+            "VALUES (?, ?, NULL, '', '', ?, ?) "
             "ON CONFLICT(dossier_id, turn) DO UPDATE SET note=excluded.note",
             (int(dossier_id), int(turn), note, f"dossier:{int(dossier_id)}"),
         )
