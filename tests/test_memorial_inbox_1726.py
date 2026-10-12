@@ -130,7 +130,7 @@ def test_mark_read_binds_to_row_not_dossier_and_persists(game):
 
     # 持久化：重开同一库路径后已读仍在
     path = db.path
-    db.close()
+    db.conn.close()
     restored = GameDB(path, content)
     try:
         assert _unread_count(restored) == 1
@@ -140,7 +140,7 @@ def test_mark_read_binds_to_row_not_dossier_and_persists(game):
         restored.reign.mark_memorials_read([key2])
         assert _unread_count(restored) == 0
     finally:
-        restored.close()
+        restored.conn.close()
 
 
 def test_state_payload_memorials_and_mark_read_api(game, monkeypatch):

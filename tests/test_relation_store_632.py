@@ -94,7 +94,7 @@ def test_relation_edges_survive_restore(game, tmp_path):
     )
     summary = db.person_logs.get_relation_summary("杨嗣昌", "徐光启")
     path = db.path
-    db.close()
+    db.conn.close()
 
     restored = GameDB(path, content)
     try:
@@ -113,7 +113,7 @@ def test_relation_edges_survive_restore(game, tmp_path):
         ):
             assert summary2[key] == summary[key]
     finally:
-        restored.close()
+        restored.conn.close()
 
 
 def test_distinct_pipe_origins_are_never_merged(game):
@@ -144,7 +144,7 @@ def test_record_relation_edge_event_respects_caller_owned_transaction(game):
 
     原 bug:入口先调 load_state(),其末尾 self.conn.commit() 把调用方半成品落盘;
     入口自身尾部的 commit 守卫又漏判 conn.in_transaction。修复后两处都与
-    owns_transaction() 一致——调用方回滚则入口写入一并消失,无半成品落盘。
+    connection_owns_transaction 一致——调用方回滚则入口写入一并消失,无半成品落盘。
     """
     db, state, _ = game
     db.conn.execute("DELETE FROM kv_store WHERE key='s1_rel_open'")

@@ -7,6 +7,7 @@ from ming_sim.context import bind_content
 from ming_sim.db import GameDB
 from ming_sim.db import infer_office_type_from_office as infer
 from ming_sim.models import LLMConfig
+from ming_sim.opening_seed import seed_opening_world
 """官职分类经真实授官和开局入口验证 DB 与运行态，不以推断 helper 自证。"""
 
 
@@ -91,7 +92,7 @@ def test_api_channel_unknown_office_ignores_cli_derived_cache(monkeypatch):
 
 def test_fresh_gamesession_start_makes_no_backend_calls(tmp_path, monkeypatch):
     """全路径回归（new_game 真实路径）：GameSession(fresh) 构造 + begin_turn 整段零 CLI 后端。
-    覆盖 seed_static_data 与 _sync_offices_from_db_impl 两条逐人 infer 路径——后者每 begin_turn
+    覆盖 seed_opening_world 与 _sync_offices_from_db_impl 两条逐人 infer 路径——后者每 begin_turn
     都跑，缓存填法一变风暴会从 seed 搬到 sync（实测教训），故端到端锁死整段零调用。"""
     from ming_sim.session import GameSession
 
@@ -132,7 +133,7 @@ def test_sync_preserves_persisted_court_office_type_on_table_miss(tmp_path):
     content = GameContent.load()
     bind_content(content)
     db = GameDB(str(tmp_path / "sync.db"), content=content, llm_config=_cli_cfg())
-    db.seed_static_data()
+    seed_opening_world(db)
     # 模拟一次动态任命：DB 里某人 office=生造朝堂官名(表查不中) + office_type=礼部(持久化真相)
     db.conn.execute(
         "UPDATE characters SET office=?, office_type=? WHERE name=?",

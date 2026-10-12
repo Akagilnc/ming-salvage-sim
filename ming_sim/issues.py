@@ -57,7 +57,10 @@ def _ctx() -> GameContent:
 
 def _event_issue_refs(db: GameDB) -> set:
     refs: set = set()
-    for r in db.issues.read_event_issue_refs():
+    for r in db.conn.execute(
+        "SELECT origin_ref FROM issues WHERE origin_kind='event_pool'",
+        (),
+    ).fetchall():
         if r["origin_ref"]:
             refs.add(r["origin_ref"])
     return refs
@@ -69,7 +72,10 @@ def _event_trigger_refs(db: GameDB) -> set:
 
 def _event_terminal_states(db: GameDB) -> Dict[str, str]:
     states: Dict[str, str] = {}
-    for r in db.issues.read_event_terminal_states():
+    for r in db.conn.execute(
+        'SELECT event_id, terminal_state FROM event_triggers',
+        (),
+    ).fetchall():
         terminal_state = str(r["terminal_state"] or "")
         if r["event_id"] and terminal_state:
             states[str(r["event_id"])] = terminal_state
@@ -79,7 +85,10 @@ def _event_terminal_states(db: GameDB) -> Dict[str, str]:
 def _event_terminal_records(db: GameDB) -> Dict[str, Dict[str, str]]:
     """只读事件终态；财政不由历史批语重建或重放征收决定。"""
     records: Dict[str, Dict[str, str]] = {}
-    for r in db.issues.read_event_terminal_records(()):
+    for r in db.conn.execute(
+        'SELECT event_id, terminal_state, terminal_reason FROM event_triggers',
+        (),
+    ).fetchall():
         terminal_state = str(r["terminal_state"] or "")
         if r["event_id"] and terminal_state:
             records[str(r["event_id"])] = {
@@ -143,7 +152,10 @@ def _fiscal_levy_petitions_awaiting_verdict(db: GameDB) -> set[str]:
     from ming_sim.month_chain import _LEVY_PETITION_PREFIX
 
     awaiting: set[str] = set()
-    for row in db.issues.read_fiscal_levy_petitions_awaiting_verdict():
+    for row in db.conn.execute(
+        "SELECT event_id FROM pending_decisions WHERE kind='decision' AND status='pending'",
+        (),
+    ).fetchall():
         event_id = str(row["event_id"] or "").strip()
         if event_id.startswith(_LEVY_PETITION_PREFIX):
             awaiting.add(event_id[len(_LEVY_PETITION_PREFIX):])
@@ -676,7 +688,10 @@ def _eval_gate_key_str(key: str, db: GameDB) -> Optional[str]:
     table, cid, field = parts
     field = _gate_sql_field(table, field, key, kind="text")
     if table == "event":
-        row = db.issues.read_eval_gate_key_str_owned((cid,), field).fetchone()
+        row = db.conn.execute(
+            f'SELECT {field} FROM event_triggers WHERE event_id=?',
+            (cid,),
+        ).fetchone()
     else:
         store = {
             "region": db.regions, "army": db.armies,
@@ -748,9 +763,13 @@ def gather_impeachment_surge_candidates(state: GameState, db: GameDB) -> List[Di
         if isinstance(item, dict):
             personas_by_faction.setdefault(str(item.get("faction") or ""), []).append(item)
 
-    rows = db.dossiers.read_gather_impeachment_surge_candidates(
-        (max(0, int(state.turn) - 1), int(state.turn))
-    )
+    rows = db.conn.execute(
+        'SELECT '
+        'id,closed_turn,participant_roster,decree_text,execution_note,execution_outcome'
+        " FROM decree_dossiers WHERE execution_outcome='transformed' AND closed_turn "
+        'BETWEEN ? AND ? ORDER BY id',
+        (max(0, int(state.turn) - 1), int(state.turn)),
+    ).fetchall()
     candidates: List[Dict[str, object]] = []
     for row in rows:
         did = int(row["id"])
@@ -821,9 +840,11 @@ def gather_impeachment_surge_candidates(state: GameState, db: GameDB) -> List[Di
             personas = personas_by_faction.get(faction, [])
             if not situation or not personas:
                 continue
-            if db.issues.read_gather_impeachment_surge_candidates(
-                (origin_ref, faction)
-            ):
+            if db.conn.execute(
+                "SELECT 1 FROM issues WHERE origin_kind='impeachment_surge' AND "
+                'origin_ref=? AND faction_hint=? LIMIT 1',
+                (origin_ref, faction),
+            ).fetchone():
                 continue
             candidate_id = f"impeachment_surge:{origin_ref}:{faction}"
             decree_text = str(row["decree_text"] or "")
@@ -965,7 +986,11 @@ def _fiscal_levy_answered_rows(db: GameDB, turn: int) -> List[Dict[str, object]]
     from ming_sim.month_chain import _LEVY_PETITION_PREFIX
 
     rows: List[Dict[str, object]] = []
-    for row in db.issues.read_fiscal_levy_answered_rows((int(turn),)):
+    for row in db.conn.execute(
+        'SELECT event_id, choice_json FROM pending_decisions WHERE turn = ? AND '
+        "kind='decision' AND status='decided'",
+        (int(turn),),
+    ).fetchall():
         event_id = str(row["event_id"] or "")
         if not event_id.startswith(_LEVY_PETITION_PREFIX):
             continue

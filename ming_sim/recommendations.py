@@ -13,7 +13,10 @@ from .relations import EMPEROR_NODE
 def _known_names(db: Any, recommender: str) -> set[str]:
     """Read independently recorded source rosters once, without event mirrors."""
     names: set[str] = set()
-    for source in db.character_knowledge.read_known_names():
+    for source in db.conn.execute(
+        'SELECT source_id, participant_roster, kind FROM character_knowledge_sources',
+        (),
+    ).fetchall():
         roster = participant_roster_names(source["participant_roster"])
         if (source["kind"] == "public" or recommender in roster) and knowledge_row_visible_to(
             db, source, recommender,
@@ -35,7 +38,14 @@ def list_recommendation_candidates(db: Any, state: Any, recommender: str) -> Lis
         return []
     faction = str(source["faction"] or "")
     known = _known_names(db, recommender)
-    rows = CharacterStore(conn).read_list_recommendation_candidates((recommender, int(state.year), int(state.year), int(state.period)))
+    rows = conn.execute(
+        'SELECT name, office, office_type, faction, status, reason_code, '
+        "status_reason FROM characters WHERE name != ? AND power_id='ming' AND "
+        "faction != '流寇' AND office_type NOT IN ('后宫','宗藩','未仕') AND status IN "
+        "('active','offstage','retired','dismissed') AND NOT (debut_year > 0 AND "
+        '(debut_year > ? OR (debut_year = ? AND debut_month > ?))) ORDER BY name',
+        (recommender, int(state.year), int(state.year), int(state.period)),
+    ).fetchall()
     result: List[Dict[str, object]] = []
     for row in rows:
         same_faction = str(row["faction"] or "") == faction
@@ -111,9 +121,24 @@ def record_recommendation(db: Any, state: Any, recommender: str,
     event_kind = {"荐起复": "起复", "荐在职": "在职"}.get(
         str(candidate.get("candidate_kind") or ""), str(candidate.get("candidate_kind") or "")
     )
-    cur = db.characters.write_record_recommendation((int(state.turn), int(state.year), int(state.period), recommender,
-         str(candidate.get("name") or ""), event_kind,
-         target_office, str(candidate.get("basis") or ""), reason))
+    cur = db.conn.execute(
+        """
+        INSERT INTO recommendation_events
+                   (turn,year,period,recommender,candidate,candidate_kind,target_office,basis,reason,status)
+                   VALUES (?,?,?,?,?,?,?,?,?,'adopted')
+        """,
+        (
+            int(state.turn),
+            int(state.year),
+            int(state.period),
+            recommender,
+            str(candidate.get('name') or ''),
+            event_kind,
+            target_office,
+            str(candidate.get('basis') or ''),
+            reason,
+        ),
+    )
     return int(cur.lastrowid)
 
 
@@ -143,7 +168,7 @@ def record_recommendation_edges(db: Any, state: Any, recommender: str,
         """荐人专属幂等：稳定 origin（|round 后缀前）+端点+腿别，跨回合、
         忽略可变 context；命中即返回原 id，不重写。"""
         base = f"recommendation:{int(event_id)}:{leg_kind}"
-        row = db.person_logs.read_existing_leg_id((leg_source, leg_target, leg_kind, base, f"{base}|%"))
+        row = db.person_logs.relation_by_origin((leg_source, leg_target, leg_kind, base, f"{base}|%"))
         return int(row["id"]) if row is not None else None
 
     grace = _existing_leg_id("恩义", source, target)

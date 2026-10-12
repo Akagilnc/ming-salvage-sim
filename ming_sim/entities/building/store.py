@@ -24,8 +24,6 @@ _LOG_COLUMNS = (
 )
 
 
-def _checked(values: Mapping[str, object], *, allowed: frozenset[str]) -> list[str]:
-    return checked_columns(values, allowed, what="buildings")
 
 
 class BuildingStore:
@@ -41,7 +39,6 @@ class BuildingStore:
     def has_any(self) -> bool:
         return self._conn.execute("SELECT 1 FROM buildings LIMIT 1").fetchone() is not None
 
-
     def get(self, building_id: str) -> Any:
         return self._conn.execute(
             "SELECT * FROM buildings WHERE id = ?", (building_id,),
@@ -50,7 +47,7 @@ class BuildingStore:
     def insert(self, row: Mapping[str, object]) -> None:
         if "id" not in row:
             raise ValueError("buildings insert needs id")
-        columns = _checked(row, allowed=BUILDING_COLUMNS)
+        columns = checked_columns(row, BUILDING_COLUMNS, what="buildings")
         placeholders = ", ".join("?" for _ in columns)
         self._conn.execute(
             f"INSERT INTO buildings ({', '.join(columns)}) VALUES ({placeholders})",
@@ -72,7 +69,7 @@ class BuildingStore:
         return building_id
 
     def update(self, building_id: str, values: Mapping[str, object]) -> int:
-        columns = _checked(values, allowed=_MUTABLE_COLUMNS)
+        columns = checked_columns(values, _MUTABLE_COLUMNS, what="buildings")
         if not columns:
             raise ValueError("buildings update needs fields")
         assignments = ", ".join(f"{column}=?" for column in columns)
@@ -96,25 +93,13 @@ class BuildingStore:
             tuple(row.get(column) for column in _LOG_COLUMNS),
         )
 
-    def read_buildings_report(self, params: Any = ()) -> Any:
+    def region_rows(self, params: Any = ()) -> Any:
         return self._conn.execute(
             "SELECT * FROM buildings WHERE region_id = ? ORDER BY category, name",
             params,
         ).fetchall()
 
-    def read_buildings_report_(self, params: Any = ()) -> Any:
+    def rows(self, params: Any = ()) -> Any:
         return self._conn.execute(
             "SELECT * FROM buildings ORDER BY region_id, category, name", params
-        ).fetchall()
-
-    def read_compute_budget_lines(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT category, condition, maintenance, output_metric, output_amount FROM buildings",
-            params,
-        ).fetchall()
-
-    def read_apply_fixed_period_flows(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT id, name, category, condition, maintenance, output_metric, output_amount FROM buildings",
-            params,
         ).fetchall()

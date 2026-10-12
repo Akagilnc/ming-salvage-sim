@@ -89,7 +89,7 @@ def test_production_path_grant_restore_revoke_without_auto_grudge(game):
     ]
 
     db_path = db.path
-    db.close()
+    db.conn.close()
     restored = GameDB(db_path, content)
     restored_state = restored.load_state()
     after_restore = decree_mod.build_promulgation_judge_context(
@@ -106,7 +106,7 @@ def test_production_path_grant_restore_revoke_without_auto_grudge(game):
     revoke_result = settle_delta(restored_state, restored, {'authority_changes': [{'动作': '收回', 'authority_id': authority_id, 'dossier_id': revoke_dossier['id']}]}, SettlementContext(content=content))
     assert view(revoke_result, "authority_changes")[0]["authority_id"] == authority_id
 
-    restored.close()
+    restored.conn.close()
     final = GameDB(db_path, content)
     final_state = final.load_state()
     record = final.characters.get_authority(authority_id)

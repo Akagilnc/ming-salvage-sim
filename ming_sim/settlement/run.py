@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from ming_sim.models import GameState
 
 from ming_sim.applier import (
+    connection_owns_transaction,
     ItemAtomicReject,
     Provenance,
     RejectedItem,
@@ -299,7 +300,7 @@ def _preflight(
         ordered_deltas=ordered_deltas,
         ordered_effect_event_ids=dict(ordered_effect_event_ids or {}),
         effect_sequence=effect_sequence,
-        commit_now=db.owns_transaction(),
+        commit_now=connection_owns_transaction(db.conn),
         shape_rejections=validate_rejections,
         runtime_content=ctx.content if ctx.content is not None else content_context(),
         candidate_event_ids_at_input=candidate_ids,
@@ -725,7 +726,7 @@ def apply_person_changes_only(
     from ming_sim.entities.character.normalize import normalize_person_changes
 
     runtime_content = content if content is not None else db.content
-    caller_transaction = not db.owns_transaction()
+    caller_transaction = not connection_owns_transaction(db.conn)
     changes = character_names._canonicalize_person_change_names(
         normalize_person_changes({"人物变更": list(person_changes or [])}),
         runtime_content,

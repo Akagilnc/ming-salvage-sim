@@ -32,7 +32,7 @@ def surcharge_population_pool_members(db: GameDB, region_id: str) -> set[str]:
     """Return the materialized provincial rows that make up a surcharge pool."""
     return {
         str(row["name"])
-        for row in db.classes.read_surcharge_population_pool_members((region_id,))
+        for row in db.conn.execute("SELECT name FROM classes WHERE region_id=? AND name IN ('农民', '流民')", (region_id,)).fetchall()
     }
 
 def apply_levy_driven_transfers(
@@ -50,7 +50,11 @@ def apply_levy_driven_transfers(
     ≤0 的省零入池——停加派/蠲免后入池止（AC5；出口回流归 S5 #652）。
     """
     records: List[Dict[str, object]] = []
-    rows = db.regions.read_apply_levy_driven_transfers(())
+    rows = db.conn.execute(
+        "SELECT id, fiscal, public_support FROM regions WHERE controlled_by='ming' "
+        'ORDER BY id',
+        (),
+    ).fetchall()
     for row in rows:
         region_id = str(row["id"])
         try:
@@ -82,7 +86,7 @@ def apply_levy_driven_transfers(
         if amount <= 0:
             continue
         balance = int(
-            db.classes.read_apply_population_transfers(("农民", region_id))[
+            db.classes.population_row(("农民", region_id))[
                 "population"
             ]
         )

@@ -232,7 +232,7 @@ def _apply_issue_entities(
             if not power_id or not new_name.strip():
                 tolerated.append(RejectedItem(item=item, reason="势力更名缺 power_id/new_name", category="missing_field", source=source))
                 continue
-            if db.powers.read_apply_issue_entities((power_id,)) is None:
+            if db.powers.presence((power_id,)) is None:
                 tolerated.append(RejectedItem(item=item, reason="势力更名目标未入库", category="missing_ref", source=source))
                 continue
             db.apply_power_rename(

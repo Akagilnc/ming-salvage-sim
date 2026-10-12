@@ -250,13 +250,6 @@ class StagedDeclarationStore:
             self._conn.commit()
         return int(cur.rowcount or 0)
 
-    def read_month_fact_materials(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT decree_ref, declaration_json, forecast_text "
-            "FROM staged_declarations WHERE created_turn=? AND status='settled' ORDER BY id",
-            params,
-        ).fetchall()
-
 
 def _row_to_staged(row: Any) -> StagedDeclaration:
     from ming_sim.db import _load_durable_json

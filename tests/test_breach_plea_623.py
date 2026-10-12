@@ -546,7 +546,7 @@ def test_breach_plea_survives_restore(game):
     assert len(pleas) == 1
     scenes = list_due_review_scenes(db2)
     assert any(s.get("kind") == "breach_plea" for s in scenes)
-    db2.close()
+    db2.conn.close()
 
 
 def test_no_decision_pause_on_breach_plea_settle(game, monkeypatch):

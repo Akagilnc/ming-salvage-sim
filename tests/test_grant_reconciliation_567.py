@@ -118,7 +118,7 @@ def test_per_route_storage_restore_without_retired_escort_accounting(game):
 
     # restore 逐路无损
     path = db.path
-    db.close()
+    db.conn.close()
     reopened = GameDB(path, content=content)
     assert reopened.dossiers.reconciliations(bare) == bare_rows
     assert reopened.dossiers.reconciliations(escorted_grant) == escort_rows
@@ -127,7 +127,7 @@ def test_per_route_storage_restore_without_retired_escort_accounting(game):
         "SELECT dossier_progress_json FROM secret_orders WHERE id=?", (order_id,),
     ).fetchone()
     assert json.loads(stored["dossier_progress_json"]) == progress
-    reopened.close()
+    reopened.conn.close()
 
 
 def test_close_merges_recon_note_without_second_treasury_debit(game):

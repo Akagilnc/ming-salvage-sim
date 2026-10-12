@@ -177,7 +177,10 @@ def appointment_break_rank(
     target = str(new_office or "").strip()
     target_type = str(new_office_type or "").strip()
     new_band = office_rank_band(target, target_type)
-    row = db.characters.read_appointment_break_rank((person,))
+    row = db.conn.execute(
+        'SELECT office,office_type,status,reason_code FROM characters WHERE name=?',
+        (person,),
+    ).fetchone()
 
     historical = False
     current_title = ""
@@ -192,7 +195,20 @@ def appointment_break_rank(
             or (current_title == "听用候铨" and str(row["reason_code"] or "") == "被顶替")
         )
         if may_have_history:
-            archived = db.characters.read_appointment_break_rank_o_office_title_SELECT_c_office_type((person,))
+            archived = db.conn.execute(
+                """
+                SELECT o.office_title,
+                       (
+                         SELECT c.office_type FROM office_change_records c
+                         WHERE c.character_name=o.character_name
+                           AND c.office_title=o.office_title
+                         ORDER BY c.id DESC LIMIT 1
+                       ) AS office_type
+                FROM character_offices o
+                WHERE o.character_name=?
+                """,
+                (person,),
+            ).fetchone()
             if archived is not None and _is_substantive_office(
                 archived["office_title"], archived["office_type"]
             ):

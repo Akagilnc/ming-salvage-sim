@@ -432,7 +432,7 @@ def test_impeachment_surge_candidate_survives_restore(game, content):
         db, state, segment="发难", translate_fn=lambda rq, cfg: declaration,
     )
     path = db.conn.execute("PRAGMA database_list").fetchone()[2]
-    db.close()
+    db.conn.close()
 
     restored = GameDB(path, content_pack)
     try:
@@ -448,4 +448,4 @@ def test_impeachment_surge_candidate_survives_restore(game, content):
             "SELECT COUNT(*) FROM issues WHERE origin_kind='impeachment_surge'"
         ).fetchone()[0] == 1
     finally:
-        restored.close()
+        restored.conn.close()

@@ -16,7 +16,11 @@ from ming_sim.models import GameState
 def clear_gated_legacies(db: GameDB, state: GameState) -> List[str]:
     """每月调一次：取所有 active 且带 clear_gate 的 legacy，gate 达标即置 'cleared'。
     返回被消除的 legacy 名称列表（供叙事/提示用，不强制使用）。"""
-    rows = db.reign.read_clear_gated_legacies(())
+    rows = db.conn.execute(
+        'SELECT id, name, clear_gate, narrative_hint FROM legacies WHERE '
+        "status='active' AND clear_gate != '' AND clear_gate != '{}'",
+        (),
+    ).fetchall()
     cleared: List[str] = []
     for row in rows:
         gate = parse_engine_payload_json(
@@ -25,7 +29,7 @@ def clear_gated_legacies(db: GameDB, state: GameState) -> List[str]:
         if not gate:
             continue
         if issues._gate_passed(gate, state.metrics, db):
-            db.reign.write_legacy_statuses([("cleared", int(row["id"]))])
+            db.reign.set_legacy_statuses([("cleared", int(row["id"]))])
             cleared.append(str(row["name"]))
     if cleared:
         db._legacy_mod_cache = None  # active 集变了，修正符缓存失效

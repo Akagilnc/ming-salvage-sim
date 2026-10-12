@@ -740,7 +740,10 @@ def player_facing_secret_order_close_text(
 
 
 def minister_eligible_for_monthly_covert(db: Any, minister_name: str) -> bool:
-    row = db.characters.read_minister_eligible_for_monthly_covert((str(minister_name or "").strip(),))
+    row = db.conn.execute(
+        "SELECT 1 FROM characters WHERE name=? AND status='active'",
+        (str(minister_name or '').strip(),),
+    ).fetchone()
     return row is not None
 
 
@@ -915,7 +918,10 @@ def globally_used_fact_keys(db: Any, *, except_dossier_id: int = 0) -> set[str]:
     复用 DossierStore.get，腐坏 payload 不上扫跳过（#1897 E1/K2）。
     """
     used: set[str] = set()
-    rows = db.dossiers.read_globally_used_fact_keys()
+    rows = db.conn.execute(
+        'SELECT id FROM decree_dossiers',
+        (),
+    ).fetchall()
     skip = int(except_dossier_id or 0)
     for row in rows:
         did = int(row["id"] or 0)
@@ -1127,7 +1133,10 @@ def investigation_monthly_capacity(
     worker = str(investigator or "").strip()
     if not worker:
         return _CAPACITY_MIN
-    row = db.characters.read_investigation_monthly_capacity((worker,))
+    row = db.conn.execute(
+        'SELECT ability, location, transit_to FROM characters WHERE name=?',
+        (worker,),
+    ).fetchone()
     if row is not None and not _investigator_on_site(db, row, target):
         return _CAPACITY_MIN  # 未到差：无差可查，投入为零
     capacity = 1.0
@@ -1138,9 +1147,11 @@ def investigation_monthly_capacity(
             capacity *= 1.0 + _ABILITY_CAPACITY_WEIGHT * (
                 (ability - _ABILITY_CAPACITY_REFERENCE) / _ABILITY_CAPACITY_REFERENCE
             )
-    open_errands = db.dossiers.read_investigation_monthly_capacity(
-        (worker, int(dossier_id or 0))
-    )
+    open_errands = db.conn.execute(
+        "SELECT COUNT(*) AS n FROM decree_dossiers WHERE executor_kind='character' "
+        "AND executor_id=? AND status IN ('promulgated','executing') AND id<>?",
+        (worker, int(dossier_id or 0)),
+    ).fetchone()
     capacity *= 1.0 - _BANDWIDTH_PER_ERRAND * min(
         int(open_errands["n"] or 0), _BANDWIDTH_ERRAND_CAP,
     )
@@ -1681,14 +1692,17 @@ def originated_quantity_this_turn(
             qty += abs(float(item.get("delta") or 0))
     if "人物变更" in fields:
         action = str(delivery.get("person_action") or "").strip()
-        rows = db.person_logs.read_originated_quantity_this_turn(
-            (origin, current, action)
-        )
+        rows = db.conn.execute(
+            'SELECT id FROM person_logs WHERE origin_ref=? AND turn=? AND action=?',
+            (origin, current, action),
+        ).fetchall()
         qty += float(len(rows))
     if "region_delta" in fields:
-        rows = db.regions.read_originated_quantity_this_turn(
-            (origin, current)
-        )
+        rows = db.conn.execute(
+            'SELECT region_id, field, new_value, delta FROM region_logs WHERE '
+            'origin_ref=? AND turn=?',
+            (origin, current),
+        ).fetchall()
         for row in rows:
             if _delivery_matches_region(row, delivery):
                 qty += abs(float(row["delta"] or 0))
@@ -1926,9 +1940,10 @@ def _apply_investigation_selection(
     reaction_rejections: List[RejectedItem] = []
     # 同月重入不重复施加投入：实况轨已有本月行即说明本月已核算过。lane 累加本身
     # 不带幂等键，若不在此拦一道，同一 turn 内被扫两次就会把力气算两遍。
-    existing = db.dossiers.read_apply_investigation_selection(
-        (did, int(turn))
-    )
+    existing = db.conn.execute(
+        'SELECT id, units FROM dossier_actual_progress WHERE dossier_id=? AND turn=? LIMIT 1',
+        (did, int(turn)),
+    ).fetchone()
     declaration = _investigation_declaration(sel)
     invalid = str(declaration.get("invalid") or "")
     if invalid.strip():

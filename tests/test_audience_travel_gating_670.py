@@ -171,7 +171,7 @@ def test_in_transit_summon_origin_is_idempotent_and_restorable(game):
     before_close = list(unsettled)
 
     path = db.path
-    db.close()
+    db.conn.close()
     restored = GameDB(path, content)
     try:
         assert an.list_unsettled_summons(restored) == before_close
@@ -188,7 +188,7 @@ def test_in_transit_summon_origin_is_idempotent_and_restorable(game):
         assert an.settle_summon_origin(restored, origin) is False
         assert an.list_unsettled_summons(restored) == []
     finally:
-        restored.close()
+        restored.conn.close()
 
 
 def test_fresh_summon_origin_is_idempotent_and_projects_kind(game):

@@ -118,7 +118,7 @@ def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, conten
         assert r_moves[0]["origin_ref"] == f"dossier:{xf_id}"
         assert restored.dossiers.get(xf_id)["execution_outcome"] == "transformed"
     finally:
-        restored.close()
+        restored.conn.close()
 
     # ── degraded 对照：同场景无旨外标记、仅表报 → degraded ──
     deg_id = _executing_policy(db, state, token="deg-622")

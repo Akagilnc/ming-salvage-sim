@@ -77,7 +77,10 @@ def project_relation_ledger(db: Any, *, viewer: str | None) -> List[Dict[str, st
         (str(row["source"]), str(row["target"]))
         for row in db.person_logs.get_relation_summaries()
     }
-    for row in db.person_logs.read_project_relation_ledger():
+    for row in db.conn.execute(
+        'SELECT DISTINCT source, target FROM relation_edge_events',
+        (),
+    ).fetchall():
         pairs.add((str(row["source"]), str(row["target"])))
     if name is not None:
         pairs = {pair for pair in pairs if name in pair}

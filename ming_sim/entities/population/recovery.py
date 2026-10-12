@@ -63,7 +63,7 @@ def _apply_recovery_driven_transfers(
         if target_kind != "region" or not region_id:
             continue
         if (
-            db.regions.read_assert_commission_grant_target_exists(
+            db.regions.presence(
                 (region_id,)
             )
             is None
@@ -89,7 +89,11 @@ def _apply_recovery_driven_transfers(
             if reconciled:
                 silver = max(0, sum(reconciled))
             else:
-                paid_row = db.reign.read_apply_recovery_driven_transfers((f"dossier:{dossier_id}", turn))
+                paid_row = db.conn.execute(
+                    'SELECT COALESCE(SUM(-delta), 0) FROM economy_ledger WHERE '
+                    'origin_ref=? AND turn=? AND delta<0',
+                    (f'dossier:{dossier_id}', turn),
+                ).fetchone()
                 silver = max(0, int(paid_row[0] or 0))
         else:
             silver = _recovery_effective_silver_wan(db, dossier_id, turn)
@@ -99,10 +103,8 @@ def _apply_recovery_driven_transfers(
         amount = int(round(raw_persons))
         if amount <= 0:
             continue
-        pool_row = db.classes.read_apply_population_transfers(("流民", region_id))
-        farmer_row = db.classes.read_apply_recovery_driven_transfers(
-            (region_id,)
-        )
+        pool_row = db.classes.population_row(("流民", region_id))
+        farmer_row = db.conn.execute("SELECT 1 FROM classes WHERE name='农民' AND region_id=?", (region_id,)).fetchone()
         if pool_row is None or farmer_row is None:
             continue
         remaining = remaining_by_region.setdefault(region_id, int(pool_row["population"]))

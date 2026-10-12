@@ -24,7 +24,6 @@ class FiscalConfigStore:
     def row(self, key: str) -> Any:
         return self._conn.execute("SELECT * FROM fiscal_config WHERE key=?", (key,)).fetchone()
 
-
     def values(self) -> dict[str, int]:
         return {str(r["key"]): int(r["value"]) for r in self._conn.execute(
             "SELECT key, value FROM fiscal_config WHERE key NOT LIKE '\\_\\_%' ESCAPE '\\'",
@@ -58,13 +57,11 @@ class FiscalConfigStore:
     def set_origin(self, key: str, origin: str) -> None:
         self._conn.execute("UPDATE fiscal_config SET origin_ref=? WHERE key=?", (origin, key))
 
-
     def override_rows_for_origin(self, origin: str) -> list[Any]:
         return list(self._conn.execute(
             "SELECT key,value FROM fiscal_config WHERE origin_ref=? AND kind='override'",
             (str(origin),),
         ).fetchall())
-
 
     def delete(self, key: str) -> None:
         self._conn.execute("DELETE FROM fiscal_config WHERE key=?", (key,))
@@ -93,13 +90,11 @@ class FiscalConfigStore:
             "SELECT COUNT(*) FROM fiscal_config_creations WHERE origin_ref=?", (origin,),
         ).fetchone()[0])
 
-
     def reduction_at(self, origin: str, turn: int) -> Any:
         return self._conn.execute(
             "SELECT old_value,new_value FROM fiscal_config_changes "
             "WHERE origin_ref=? AND turn=? AND new_value<old_value LIMIT 1", (origin, turn),
         ).fetchone()
-
 
     def changes_for(self, key: str, origin: str) -> list[Any]:
         return self._conn.execute(
@@ -148,62 +143,19 @@ class FiscalConfigStore:
             },
         )
 
-    def read_fiscal_funding_cut_this_turn(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT 1 FROM fiscal_config_tombstones "
-            "WHERE origin_ref=? AND removed_turn=? LIMIT 1",
-            params,
-        ).fetchone()
-
-
-    def read_create_fiscal_item(self, params: Any = ()) -> Any:
+    def item_presence(self, params: Any = ()) -> Any:
         return self._conn.execute(
             "SELECT 1 FROM fiscal_config WHERE key IN (?, ?)", params
         ).fetchone()
 
-    def read_neutralize_covert_fiscal_effects(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            """SELECT 1 FROM fiscal_config_changes
-                   WHERE origin_ref=? AND key=? AND reason=? LIMIT 1""",
-            params,
-        ).fetchone()
-
-    def read_neutralize_covert_fiscal_effects_fiscal_config_tombstones(
-        self, params: Any = ()
-    ) -> Any:
-        return self._conn.execute(
-            "SELECT removed_turn turn,id FROM fiscal_config_tombstones WHERE key=? ORDER BY removed_turn DESC,id DESC LIMIT 1",
-            params,
-        ).fetchone()
-
-    def read_neutralize_covert_fiscal_effects_fiscal_config_creations(
-        self, params: Any = ()
-    ) -> Any:
-        return self._conn.execute(
-            "SELECT turn,id,origin_ref,beyond_intent FROM fiscal_config_creations WHERE key=? ORDER BY turn DESC,id DESC LIMIT 1",
-            params,
-        ).fetchone()
-
-    def read_neutralize_covert_fiscal_effects_fiscal_config_tombstones_2(
-        self, params: Any = ()
-    ) -> Any:
-        return self._conn.execute(
-            """SELECT 1 FROM fiscal_config_tombstones
-                       WHERE origin_ref=? AND key IN (?, ?) AND reason=? LIMIT 1""",
-            params,
-        ).fetchone()
-
-
-
-    def write_materialize_pay_order_decree(self, params: Any = ()) -> Any:
+    def upsert_pay_override(self, params: Any = ()) -> Any:
         return self._conn.execute(
             "INSERT INTO fiscal_config (key, value, kind, note) VALUES (?, ?, 'override', ?) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             params,
         )
 
-
-    def read_restore_pay_order_override(self, params: Any = ()) -> Any:
+    def override_row(self, params: Any = ()) -> Any:
         return self._conn.execute(
             "SELECT value, origin_ref FROM fiscal_config WHERE key = ?", params
         ).fetchone()

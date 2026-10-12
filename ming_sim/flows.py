@@ -7,6 +7,7 @@ import copy
 import math
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
+from ming_sim.applier import connection_owns_transaction
 from ming_sim.army_pay import (
     ARMY_SALARY_PRIORITY,
     _clear_zero_manpower_mutiny_latch,
@@ -43,7 +44,7 @@ def raise_fixed_period_flow_abort_if_needed(
     """Record fixed-fiscal failures after rollback, preserving their original cause."""
     if not in_fixed_fiscal and not isinstance(exc, _FixedFiscalAbort):
         return
-    if not db.owns_transaction():
+    if not connection_owns_transaction(db.conn):
         if in_fixed_fiscal and not isinstance(exc, _FixedFiscalAbort):
             raise _FixedFiscalAbort(str(exc)) from exc
         return
@@ -83,7 +84,7 @@ def _substrate_hub_salt_commerce_income_split(db: GameDB) -> Tuple[float, float]
     """Salt and commerce taxes stay as central side-channel income under cutover."""
     salt_total = 0.0
     commerce_total = 0.0
-    rows = db.regions.read_province_army_pay_container_total(())
+    rows = db.regions.ming_fiscal_rows(())
     for row in rows:
         fiscal = parse_engine_payload_json(row["fiscal"])
         salt_total += _as_finite_nonnegative_float(
@@ -100,7 +101,7 @@ def _project_substrate_hub_remittance(db: GameDB) -> float:
     from .fiscal_tick import settle_tick
 
     remittance_total = 0.0
-    rows = db.regions.read_settle_ming_province_substrate_ticks(())
+    rows = db.regions.ordered_ming_fiscal_rows(())
     for row in rows:
         region_id = str(row["id"])
         try:
@@ -239,7 +240,13 @@ def compute_budget_lines(
     nk_huang = 0
     # #1366 军饷预算只陈列结算前拟拨事实：京运补与中央份额分开，
     # 均不受当月国库能力或未来转运损耗影响。
-    rows = db.armies.read_compute_budget_lines(())
+    rows = db.conn.execute("""
+        SELECT id, manpower, salary_rate, owner_power, central_pay_share,
+               pay_source_region
+        FROM armies
+        WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0
+          AND central_pay_share > 0
+    """, ()).fetchall()
     army_map = {str(row["id"]): row for row in rows}
     ordered = [army_map[key] for key in ARMY_SALARY_PRIORITY if key in army_map]
     ordered += [row for row in rows if str(row["id"]) not in ARMY_SALARY_PRIORITY]
@@ -288,7 +295,11 @@ def compute_budget_lines(
     # 建筑：按当前 condition 折算月产出/维护。内廷类维护扣内库，余扣国库；产出按 output_metric。
     bld_in = {"国库": 0, "内库": 0}
     bld_out = {"国库": 0, "内库": 0}
-    for r in db.buildings.read_compute_budget_lines(()):
+    for r in db.conn.execute(
+        'SELECT category, condition, maintenance, output_metric, output_amount FROM '
+        'buildings',
+        (),
+    ).fetchall():
         cond = max(0, min(100, int(r["condition"])))
         metric = str(r["output_metric"] or "")
         if metric in ("国库", "内库") and r["output_amount"]:
@@ -324,7 +335,7 @@ class _HubOutboundResult(NamedTuple):
 def _substrate_hub_jingyun_due_by_region(db: GameDB) -> Dict[str, float]:
     """Read the existing province substrate 京运补 gross demand for the shared hub tier."""
     due_by_region: Dict[str, float] = {}
-    rows = db.regions.read_province_army_pay_container_total(())
+    rows = db.regions.ming_fiscal_rows(())
     for row in rows:
         # 持久财政读取故障响亮上抛；不得出列成「无需求」后照常出成功预算（ADR 0005）。
         fiscal = _load_durable_json(row["fiscal"], default='{}')
@@ -508,7 +519,7 @@ def _central_dues_with_haircut(
 
 def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, object]]:
     """月度财政 tick：固定收支（compute_budget_lines 定额）+ 军饷逐军 + 建筑逐项落账，LLM 推演前完成。"""
-    if db.owns_transaction():
+    if connection_owns_transaction(db.conn):
         from ming_sim.applier import atomic
         metrics_before = dict(state.metrics)
         try:
@@ -549,7 +560,15 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
     db._current_month_central_pay_shortfalls = {}
     db._current_month_central_pay_dues = {}
     db._current_month_pay_opening_arrears = {}
-    army_rows_raw = db.armies.read_apply_fixed_period_flows(())
+    army_rows_raw = db.conn.execute("""
+        SELECT id, name, manpower, salary_rate, owner_power, arrears, morale, loyalty,
+               pay_source_region, province_pay_share, central_pay_share,
+               province_pay_arrears, central_pay_arrears, consecutive_pay_shortfall_months,
+               is_tusi, self_funded_pay
+        FROM armies
+        WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0
+          AND central_pay_share > 0
+    """, ()).fetchall()
     try:
         for row in army_rows_raw:
             db._validate_pay_source_values(
@@ -666,9 +685,11 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
 
     # ── #318 分叉前全军归一（不挂资格子集）──
     # 1) 零兵先清闩（防误转流寇） 2) 旧存档第三振正兵力在 advance 可解闩前转出
-    for _pre_row in db.armies.read_apply_fixed_period_flows_id_manpower_salary_rate_owner_power_is_mutinied_mutiny_count(
-        ()
-    ):
+    for _pre_row in db.conn.execute(
+        'SELECT id, manpower, salary_rate, owner_power, is_mutinied, mutiny_count '
+        'FROM armies',
+        (),
+    ).fetchall():
         if army_needed(_pre_row) <= 0:
             _clear_zero_manpower_mutiny_latch(db, state, _pre_row)
             continue
@@ -689,7 +710,11 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
     # buildings 表 maintenance/output_amount 已是月值，不过 monthly_amount。
     # 产出按 condition/100 折算；output_metric 按建筑自报去向落（国库/内库/民心/皇威）。
     # 维护按 category 分账：内廷类(皇庄/织造/御窑等) 扣内库；其它(财政/军事/民生/科技/交通) 扣国库。
-    building_rows = db.buildings.read_apply_fixed_period_flows(())
+    building_rows = db.conn.execute(
+        'SELECT id, name, category, condition, maintenance, output_metric, '
+        'output_amount FROM buildings',
+        (),
+    ).fetchall()
     for row in building_rows:
         name = str(row["name"])
         category = str(row["category"])

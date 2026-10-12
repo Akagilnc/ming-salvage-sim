@@ -171,7 +171,7 @@ def test_ac1_monthly_write_idempotent_readable_and_restore(game, tmp_path, conte
 
     backup = tmp_path / "restore-625.db"
     db.backup_to(str(backup))
-    db.close()
+    db.conn.close()
 
     restored = GameDB(str(backup), content=content)
     try:
@@ -183,7 +183,7 @@ def test_ac1_monthly_write_idempotent_readable_and_restore(game, tmp_path, conte
         restored.conn.commit()
         assert len(restored.dossiers.presence_rows(subject_id)) == 1
     finally:
-        restored.close()
+        restored.conn.close()
 
 
 def test_ac1_settle_segment_writes_presence(game, monkeypatch):
@@ -273,7 +273,7 @@ def test_ac2_paired_observation_slots_and_countermeasure_hard_gate(game):
     state.turn_phase = TurnPhase.SUMMONING.value
     db.reign.save_game_state(state)
     pre_settle(state, db, content=content)
-    assert db.issues.read_find_any_issue_by_origin(('supervision_countermeasure', f"auditor:{upright['name']}:dossier:{sub_u}")) is None
+    assert db.issues.by_origin(('supervision_countermeasure', f"auditor:{upright['name']}:dossier:{sub_u}")) is None
 
 
 # ── AC4 空子转移读入面差分 ────────────────────────────────────────

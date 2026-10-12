@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from ming_sim.applier import atomic
 from ming_sim.db import GameDB
+from ming_sim.knowledge import build_character_knowledge
 
 
 INJURY = "孙传庭右臂受伤，暂时不能亲自挥刀，但仍能指挥军队"
@@ -87,7 +88,7 @@ def test_textual_facts_are_not_rumors_and_do_not_change_character_mechanics(game
         "SELECT loyalty, ability, status FROM characters WHERE name=?",
         ("孙传庭",),
     ).fetchone()
-    before_knowledge = db.get_character_knowledge(state, "孙传庭")
+    before_knowledge = build_character_knowledge(db, state, '孙传庭')
 
     db.textual_facts.append(
         subject_kind="character",
@@ -103,7 +104,7 @@ def test_textual_facts_are_not_rumors_and_do_not_change_character_mechanics(game
         "SELECT loyalty, ability, status FROM characters WHERE name=?",
         ("孙传庭",),
     ).fetchone()
-    after_knowledge = db.get_character_knowledge(state, "孙传庭")
+    after_knowledge = build_character_knowledge(db, state, '孙传庭')
     assert (after_status, after_reason) == (before_status, before_reason)
     assert tuple(after_row) == tuple(before_row)
     assert after_knowledge["events"] == before_knowledge["events"]
@@ -149,7 +150,7 @@ def test_textual_facts_survive_reopen(game, content):
         period=state.period + 1,
         turn=state.turn + 1,
     )
-    db.close()
+    db.conn.close()
 
     restored = GameDB(path, content)
     try:
@@ -158,4 +159,4 @@ def test_textual_facts_survive_reopen(game, content):
         )
         assert [fact.body for fact in materials] == [INJURY, RECOVERY]
     finally:
-        restored.close()
+        restored.conn.close()

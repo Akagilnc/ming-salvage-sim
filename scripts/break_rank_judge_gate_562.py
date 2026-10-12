@@ -27,6 +27,7 @@ sys.path.insert(0, str(ROOT))
 
 from agno.db.sqlite import SqliteDb
 
+from ming_sim.opening_seed import seed_opening_world
 from ming_sim.agents import bind_content as bind_agent_content
 from ming_sim.cli_backend import (
     add_gate_llm_args,
@@ -85,7 +86,7 @@ def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> 
     sample_dir.mkdir()
     db = GameDB(str(sample_dir / "game.db"), content)
     try:
-        db.seed_static_data()
+        seed_opening_world(db)
         state = db.load_state()
         # Different real histories produce the intervention: 编修→巡抚 is a
         # four-band jump; 布政使→巡抚 is same-band. Neither condition is fabricated.
@@ -133,7 +134,7 @@ def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> 
             },
         }
     finally:
-        db.close()
+        db.conn.close()
 
 
 def main() -> int:

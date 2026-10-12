@@ -7,6 +7,7 @@ from __future__ import annotations
 
 
 import json
+from ming_sim.opening_seed import seed_opening_world
 import ming_sim.agents as agents_mod
 from ming_sim.db import GameDB
 from ming_sim.llm_model import create_agno_db
@@ -92,7 +93,7 @@ def test_run_agent_text_history_backed_drops_empty_completed_before_retry(
     monkeypatch.setattr(agents_mod, "_dump_llm_messages", lambda *_a, **_k: None)
     path = str(tmp_path / "hist.db")
     game_db = GameDB(path, content)
-    game_db.seed_static_data()
+    seed_opening_world(game_db)
     agno_db = create_agno_db(path)
     _ensure_agno_run_store(game_db, agno_db)
     session_id = "promulgation-judge-test-empty-retry"

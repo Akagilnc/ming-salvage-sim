@@ -244,7 +244,10 @@ def character_context_with_db(
 
 def faction_context_with_db(character: Character, db: GameDB) -> str:
     """只组装当前人物认同度允许知道的本派档料；不提供全局派系表。"""
-    faction = db.factions.read_faction_context_with_db((character.faction,))
+    faction = db.conn.execute(
+        'SELECT agenda, satisfaction, leverage FROM factions WHERE name = ?',
+        (character.faction,),
+    ).fetchone()
     bucket = _identity_bucket(character.identity)
     dossier = _FACTION_DOSSIERS.get(character.faction)
     if bucket == "low":

@@ -436,7 +436,7 @@ def test_existing_save_is_never_touched_by_seed_import(game, monkeypatch):
         "SELECT * FROM relation_summaries ORDER BY source, target"
     ).fetchall()]
     db_path = db.path
-    db.close()
+    db.conn.close()
 
     monkeypatch.setattr(
         llm_mod, "verify_llm_available",

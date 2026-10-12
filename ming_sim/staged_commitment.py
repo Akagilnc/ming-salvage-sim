@@ -236,7 +236,19 @@ def list_due_stages_for_scan(db: Any, turn: int) -> List[Dict[str, object]]:
 
     去重键在写端用 (commitment_id, stage_idx)；此处返回全部到期段候选。
     """
-    rows = db.issues.read_list_due_stages_for_scan()
+    rows = db.conn.execute(
+        """
+        SELECT id, title, stages_json, origin_ref, origin_turn, stage_text
+        FROM issues
+        WHERE status='active'
+          AND commitment_kind != ''
+          AND stages_json IS NOT NULL
+          AND stages_json != ''
+          AND stages_json != '[]'
+        ORDER BY id
+        """,
+        (),
+    ).fetchall()
     due: List[Dict[str, object]] = []
     for row in rows:
         stages = load_commitment_stages(row["stages_json"])
@@ -263,9 +275,18 @@ def list_due_grant_report_dossiers_for_scan(
     payload 携带 dossier_id/origin_ref 供 due_review 桥接。
     复用 DossierStore.get 响亮读口，不平行宽容腐坏 payload（#1897 E1/K2）。
     """
-    rows = db.dossiers.read_list_due_grant_report_dossiers_for_scan(
-        (int(turn),)
-    )
+    rows = db.conn.execute(
+        """
+        SELECT id, due_turn, execution_outcome
+        FROM decree_dossiers
+        WHERE status='executing'
+          AND action_type='grant_allocation'
+          AND due_turn > 0
+          AND due_turn <= ?
+        ORDER BY id
+        """,
+        (int(turn),),
+    ).fetchall()
     due: List[Dict[str, object]] = []
     for row in rows:
         if str(row["execution_outcome"] or "").strip():

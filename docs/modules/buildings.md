@@ -4,7 +4,7 @@
 
 ## 数据来源与表
 
-- 开局/预设建筑设定在 `content/buildings.json`，`GameDB.seed_static_data` 入库。
+- 开局/预设建筑设定在 `content/buildings.json`，`opening_seed.seed_opening_world` 入库。
 - `buildings` 表：每座建筑一行。`building_logs` 表：每次数值变动一条日志（镜像 `region_logs`/`army_logs`）。
 
 ## 核心数值

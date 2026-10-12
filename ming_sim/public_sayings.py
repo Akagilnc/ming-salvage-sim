@@ -79,7 +79,11 @@ def list_public_sayings(
     involved_character: str | None = None,
     affair_ref: str | None = None,
 ) -> list[dict[str, object]]:
-    rows = db.character_knowledge.read_list_public_sayings()
+    rows = db.conn.execute(
+        'SELECT id, turn, year, period, body, involved_characters, affair_ref, '
+        'source_id FROM public_sayings ORDER BY id',
+        (),
+    ).fetchall()
     result = [_row_as_saying(row) for row in rows]
     if involved_character is not None:
         name = str(involved_character).strip()

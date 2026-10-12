@@ -43,6 +43,7 @@ sys.path.insert(0, str(ROOT))
 
 from agno.db.sqlite import SqliteDb
 
+from ming_sim.opening_seed import seed_opening_world
 from ming_sim.agents import bind_content as bind_agent_content
 from ming_sim.content import GameContent
 from ming_sim.context import bind_content
@@ -178,7 +179,7 @@ def _open_pair(root: str, index: int, content: GameContent) -> tuple:
         arm_dir = pair_dir / arm
         arm_dir.mkdir()
         db = GameDB(str(arm_dir / "game.db"), content)
-        db.seed_static_data()
+        seed_opening_world(db)
         state = db.load_state()
         # Moderate authority: admin midzhi should clear on clean arm (#561 path).
         state.metrics["皇威"] = 55
@@ -255,8 +256,8 @@ def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> 
             },
         }
     finally:
-        db_a.close()
-        db_b.close()
+        db_a.conn.close()
+        db_b.conn.close()
 
 
 def main() -> int:

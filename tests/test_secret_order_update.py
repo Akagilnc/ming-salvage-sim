@@ -1,5 +1,6 @@
 from __future__ import annotations
 from tests.dossier_test_helpers import create_test_secret_order
+from ming_sim.knowledge import build_character_knowledge
 """密令更新路径：按精确 order id 更新 active 密令（现役 id 写路）。
 
 旧按承办大臣猜选最新 active 的 upsert_secret_order 已退役。
@@ -62,11 +63,11 @@ def test_update_by_id_persists_assignee_brief_after_restore(game):
     # boundary.  A reopened save must project the revised order to its assignee.
     path = db.path
     content = db.content
-    db.close()
+    db.conn.close()
     from ming_sim.db import GameDB
     restored = GameDB(path, content)
     restored_state = restored.load_state()
-    knowledge = restored.get_character_knowledge(restored_state, "保签官")
+    knowledge = build_character_knowledge(restored, restored_state, '保签官')
     source = restored.conn.execute(
         "SELECT title, body FROM secret_order_briefs WHERE order_id=?", (oid,)
     ).fetchone()
@@ -78,7 +79,7 @@ def test_update_by_id_persists_assignee_brief_after_restore(game):
     assert len(projected) == 1
     assert projected[0]["title"] == source["title"]
     assert projected[0]["body"] == source["body"]
-    restored.close()
+    restored.conn.close()
 
 
 def test_update_by_id_keeps_assignee_brief_identical_to_persisted_order(game):

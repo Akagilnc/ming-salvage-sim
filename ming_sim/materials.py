@@ -9,7 +9,6 @@ live agent session.
 
 from __future__ import annotations
 
-
 import hashlib
 import json
 import re
@@ -20,6 +19,7 @@ from pathlib import Path
 from typing import Any, List, Mapping, Optional, Sequence
 
 from ming_sim.exceptions import DeclarationDataError
+from ming_sim.knowledge import build_character_knowledge
 
 _UNSAFE = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
 _INDEX_NAME = "INDEX.txt"
@@ -77,14 +77,17 @@ def write_identity_materials(
     for raw in names:
         name = str(raw or "").strip()
         row = (
-            db.characters.read_knowledge_row_visible_to((name,))
+            db.conn.execute(
+                'SELECT name, office, office_type FROM characters WHERE name=?',
+                (name,),
+            ).fetchone()
             if name
             else None
         )
         if row is None:
             continue  # 不是真人物（如「某类人」式题名）：没有身份材料，不编
         character = SimpleNamespace(**dict(row))
-        knowledge = db.get_character_knowledge(state, name)
+        knowledge = build_character_knowledge(db, state, name)
         # Same affair-authority projection as scene materials (F45 / ADR 0154).
         matter_lines = _character_affair_lines(db, state, name, knowledge)
         rel = identity_material_rel(name)
@@ -298,10 +301,10 @@ def _issue_linked_affair_id(db: Any, issue_id: object) -> int:
     """ADR 0154：issue 若已指向某 affair，返回该 affair id；未挂靠返 0。
 
     Missing issue (KeyError) is not a link. Corrupt durable ``issues.affair_id``
-    raises from AffairStore.affair_id_for_issue (F39) — never wash into unlinked.
+    raises from IssueStore.affair_id_of (F39) — never wash into unlinked.
     """
     iid = int(issue_id)  # type: ignore[arg-type]
-    return db.affairs.affair_id_for_issue(iid)
+    return db.issues.affair_id_of(iid)
 
 
 def _own_affair_lines(
@@ -334,7 +337,11 @@ def _own_affair_lines(
     store = db.affairs
 
     dossier_participant_ids: set[int] = set()
-    for row in db.dossiers.read_own_affair_lines():
+    for row in db.conn.execute(
+        'SELECT id, affair_id, secret_order_id, participant_roster FROM '
+        'decree_dossiers WHERE affair_id != 0',
+        (),
+    ).fetchall():
         if (
             row["secret_order_id"] is not None
             and origin_visible_to(db, f"dossier:{row['id']}", character_name)
@@ -406,7 +413,7 @@ def _own_affair_lines(
     lines: list[tuple[str, str, str, str, bool]] = []
     for affair_id in candidate_ids:
         affair = store.get(affair_id)
-        facts = tuple(fact for fact in store.current_situation(textual_facts, affair_id)
+        facts = tuple(fact for fact in textual_facts.readable_materials(subject_kind="affair", subject_id=str(int(affair_id)))
                       if origin_visible_to(db, fact.origin_ref, character_name))
         fact_lines = [f"{fact.occurred_month}：{fact.body}" for fact in facts]
         extra_lines = linked_material.get(affair_id) or []
@@ -614,7 +621,7 @@ def _write_secret_order_file(tmp: Path, db: Any, state: Any, character: Any, *, 
     from ming_sim.supervision import report_origin_base
 
     name = str(getattr(character, "name", "") or "")
-    orders = db.character_knowledge.get_active_secret_orders_for_minister(name) if name else []
+    orders = db.character_knowledge.list_secret_orders(status="active", minister_name=name) if name else []
     if orders:
         monthly = GameDB.DOSSIER_REPORT_ORIGIN_MONTHLY
         lines = [
@@ -1172,7 +1179,7 @@ def _world_affair_lines(
     opening_lines: list[tuple[str, str, str, str]] = []
     for affair in store.list_all():
         facts = tuple(
-            fact for fact in store.current_situation(textual_facts, affair.id)
+            fact for fact in textual_facts.readable_materials(subject_kind="affair", subject_id=str(int(affair.id)))
             if _keep_fact(fact, include_fact)
         )
         # Metadata follows durable dossier links, never the free-prose origin.
@@ -1206,7 +1213,11 @@ def _world_roster_names(db: Any) -> list[str]:
     处经历目录的人物枚举各司其职，互不作为对方的过滤条件。"""
     return [
         str(row["name"] or "").strip()
-        for row in db.characters.read_world_roster_names()
+        for row in db.conn.execute(
+            'SELECT name FROM characters UNION SELECT subject_id AS name FROM '
+            "textual_facts WHERE subject_kind='character' ORDER BY name",
+            (),
+        ).fetchall()
         if str(row["name"] or "").strip()
     ]
 
@@ -1526,7 +1537,7 @@ def _write_world_tree(
     index.append(_COURT_ROSTER_REL)
 
     for name in _world_roster_names(db):
-        knowledge = db.get_character_knowledge(state, name)
+        knowledge = build_character_knowledge(db, state, name)
         person_dir = f"{_PERSON_DIR}/{_safe_segment(name)}"
         rel = f"{person_dir}/经历.txt"
         audience = _omit_secret_order_audience(_person_audience_experience(db, name), secret_turn_ids or set())
@@ -1875,7 +1886,15 @@ def _resolve_present_character(
     hit = characters.get(name)
     if hit is not None:
         return hit
-    row = db.characters.read_resolve_present_character((name,))
+    row = db.conn.execute(
+        """
+        SELECT name, office, office_type, faction, aliases, personal_skills,
+               loyalty, ability, integrity, courage, style, identity,
+               summary, power_id
+        FROM characters WHERE name=?
+        """,
+        (name,),
+    ).fetchone()
     if row is not None:
         return _character_projection_from_db_row(row)
     from ming_sim.models import Character
@@ -2139,7 +2158,7 @@ def prepare_scene_materials(
     handling_by_person: list[tuple[str, list[tuple[str, str]]]] = []
     for name, office in present_rows:
         character = _resolve_present_character(db, name, office, characters)
-        knowledge = db.get_character_knowledge(state, name)
+        knowledge = build_character_knowledge(db, state, name)
         matter_lines = _character_affair_lines(db, state, name, knowledge)
         person_payloads.append((character, knowledge, matter_lines))
         handling_by_person.append(
@@ -2282,7 +2301,7 @@ def _inquiry_monthly_report_rels(
         return []
     own_active = {
         int(order["id"])
-        for order in db.character_knowledge.get_active_secret_orders_for_minister(name)
+        for order in db.character_knowledge.list_secret_orders(status="active", minister_name=name)
     }
     by_id = {int(order["id"]): order for order in db.character_knowledge.list_secret_orders()}
     written: list[str] = []

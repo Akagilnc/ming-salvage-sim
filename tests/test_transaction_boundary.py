@@ -1,7 +1,7 @@
 from __future__ import annotations
 import sqlite3
 import pytest
-from ming_sim.applier import atomic
+from ming_sim.applier import atomic, connection_owns_transaction
 """S1 — ming_sim/applier.py 事务包裹 + commit 暂停（ADR 0008 决定 2/8）。
 
 覆盖 atomic contextmanager 的原子语义：暂停期 commit 变 no-op、正常退出真 commit、
@@ -24,19 +24,19 @@ def _fiscal_config_value(db, key: str) -> int:
     return int(row["value"])
 
 
-def test_game_db_owns_transaction_tracks_atomic_and_open_transactions(game):
+def test_transaction_ownership_tracks_atomic_and_open_transactions(game):
     db, state, content = game
-    assert db.owns_transaction() is True
+    assert connection_owns_transaction(db.conn) is True
 
     with atomic(db):
-        assert db.owns_transaction() is False
+        assert connection_owns_transaction(db.conn) is False
 
-    assert db.owns_transaction() is True
+    assert connection_owns_transaction(db.conn) is True
     db.conn.execute("DELETE FROM kv_store WHERE key='s1_owns_tx'")
     db.conn.commit()
     db.conn.execute("INSERT INTO kv_store(key,value) VALUES('s1_owns_tx','open')")
     try:
-        assert db.owns_transaction() is False
+        assert connection_owns_transaction(db.conn) is False
     finally:
         db.conn.rollback()
 

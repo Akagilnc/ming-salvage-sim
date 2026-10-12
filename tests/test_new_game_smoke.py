@@ -159,4 +159,4 @@ def test_appointment_category_survives_reopen_from_canonical_source(fresh_game_d
         )
         assert reopened.conn.execute("PRAGMA foreign_key_check").fetchall() == []
     finally:
-        reopened.close()
+        reopened.conn.close()

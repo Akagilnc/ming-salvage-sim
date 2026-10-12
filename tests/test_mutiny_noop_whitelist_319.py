@@ -250,7 +250,7 @@ def test_latched_loyalty_legacy_flip_preflight_rejects_strategic_envelope(game):
         }],
     })
 
-    assert not db.issues.has_event_triggered("jisi_lubian")
+    assert not db.issues.has_event_terminal_state('jisi_lubian', "triggered")
     assert db.conn.execute(
         "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
     ).fetchone()["military_pressure"] == 22
@@ -290,7 +290,7 @@ def test_latched_loyalty_at_mutiny_cap_preflight_rejects_strategic_envelope(game
         }],
     })
 
-    assert not db.issues.has_event_triggered("jisi_lubian")
+    assert not db.issues.has_event_terminal_state('jisi_lubian', "triggered")
     assert db.conn.execute(
         "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
     ).fetchone()["military_pressure"] == 20
@@ -527,7 +527,7 @@ def test_latched_loyalty_cap_mixed_manpower_preflight_rejects_whole_envelope(gam
         }],
     })
 
-    assert not db.issues.has_event_triggered("jisi_lubian")
+    assert not db.issues.has_event_terminal_state('jisi_lubian', "triggered")
     assert db.conn.execute(
         "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
     ).fetchone()["military_pressure"] == 20
@@ -575,7 +575,7 @@ def test_strategic_event_cannon_transfer_preflight_reuses_transfer_write_path(ga
         }],
     })
 
-    assert db.issues.has_event_triggered("jisi_lubian")
+    assert db.issues.has_event_terminal_state('jisi_lubian', "triggered")
     cannons = {
         row["id"]: row["cannon_equipment"]
         for row in db.conn.execute(
@@ -639,7 +639,7 @@ def test_strategic_same_value_text_with_numeric_change_preflight_allows(game):
         },
     )
 
-    assert db.issues.has_event_triggered("jisi_lubian")
+    assert db.issues.has_event_terminal_state('jisi_lubian', "triggered")
     region = db.conn.execute(
         "SELECT military_pressure, controlled_by FROM regions WHERE id=?",
         ("beizhili",),

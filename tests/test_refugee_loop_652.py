@@ -397,7 +397,7 @@ def test_recovery_shared_pool_advances_once_after_empty_effect_month(game, monke
         assert _pop(loaded, "流民", "shaanxi") == 0
         assert _pop(loaded, "农民", "shaanxi") == before_farmers + 100000
     finally:
-        loaded.close()
+        loaded.conn.close()
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")

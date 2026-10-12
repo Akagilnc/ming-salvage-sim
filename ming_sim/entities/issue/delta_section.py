@@ -61,9 +61,10 @@ def apply(run) -> SectionResult:
             and item.get("issue_id") is not None
         ):
             continue
-        row = run.db.issues.read_apply_score_extraction_body(
-            (int(item["issue_id"]),)
-        )
+        row = run.db.conn.execute(
+            'SELECT ongoing_effects FROM issues WHERE id=?',
+            (int(item['issue_id']),),
+        ).fetchone()
         if row is None:
             continue
         carriers.extend(_monthly_economy_items(loads_effect_dict(row["ongoing_effects"])))

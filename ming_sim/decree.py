@@ -20,6 +20,7 @@ from ming_sim.agents import (
     run_agent_text,
 )
 from ming_sim.applier import (
+    connection_owns_transaction,
     Provenance, RejectionCollector, atomic,
     mirror_rejections_after_commit,
 )
@@ -144,8 +145,8 @@ def build_promulgation_judge_context(
     dossiers: Sequence[Dict[str, object]],
 ) -> Dict[str, object]:
     """Build the deterministic snapshot from persisted dossier evidence only."""
-    faction_rows = db.factions.read_build_promulgation_judge_context(())
-    class_rows = db.classes.read_ordered_names(())
+    faction_rows = db.conn.execute('SELECT name,leverage,agenda FROM factions ORDER BY name', ()).fetchall()
+    class_rows = db.classes.ordered_names(())
     issue_rows = db.issues.active_rows()
     authority = int(state.metrics.get("皇威", 0))
     authority_band = imperial_authority_band(authority)
@@ -349,15 +350,15 @@ def _validate_promulgation_verdict_item(
         }
     else:
         faction_names = {
-            str(item["name"]) for item in db.factions.read_names()
+            str(item["name"]) for item in db.factions.names()
         }
         class_names = {
             str(item["name"])
-            for item in db.classes.read_names()
+            for item in db.classes.names()
         }
         gatekeeper_ids = {
             str(item["name"])
-            for item in db.characters.read_names()
+            for item in db.characters.names()
         }
         context_dossiers = {}
 
@@ -449,13 +450,13 @@ def validate_promulgation_verdicts(
         # Minimal identity sets when callers do not pass the judge snapshot.
         context = {
             "dossiers": [],
-            "factions": [dict(item) for item in db.factions.read_names()],
+            "factions": [dict(item) for item in db.factions.names()],
             "classes": [
-                str(item["name"]) for item in db.classes.read_ordered_names()
+                str(item["name"]) for item in db.classes.ordered_names()
             ],
             "gatekeepers": [
                 {"name": str(item["name"])}
-                for item in db.characters.read_names()
+                for item in db.characters.names()
             ],
         }
     proposed_modes: Dict[int, str] = {}
@@ -645,7 +646,7 @@ def reload_state_from_db(db: GameDB, state: GameState, *, content=None) -> GameS
     嵌套 atomic 内禁止 reload：depth>0 时 rollback 尚未发生（flat 语义，最外层才回滚），
     load_state 同连接会读到未提交脏写——把脏数据当真相刷进 state（cmr S5 r1 claude）。
     """
-    if not db.owns_transaction():
+    if not connection_owns_transaction(db.conn):
         raise RuntimeError(
             "reload_state_from_db 在外层事务内禁止：回滚尚未发生，会把未提交脏写"
             "当 DB 真相刷进内存。最外层 atomic 拥有者负责真回滚后再 reload。"
@@ -697,7 +698,7 @@ def atomic_and_reload(
     except BaseException as exc:
         if on_error is not None:
             on_error(exc)
-        if db.owns_transaction():
+        if connection_owns_transaction(db.conn):
             try:
                 reload_state_from_db(db, state, content=content)
             except BaseException as reload_exc:
@@ -719,7 +720,13 @@ def tick_transit_arrivals(
     由外层事务（如 pre_settle 的 atomic_and_reload）统一提交。
     """
     current_turn = int(state.turn)
-    rows = db.characters.read_tick_transit_arrivals(())
+    rows = db.conn.execute(
+        'SELECT name, transit_to, transit_distance_remaining, transit_speed_factor, '
+        "transit_start_turn FROM characters WHERE status='active' AND "
+        "COALESCE(transit_to, '') != '' AND transit_distance_remaining IS NOT NULL "
+        'AND transit_speed_factor IS NOT NULL ORDER BY name',
+        (),
+    ).fetchall()
     arrivals: List[Dict[str, object]] = []
     for row in rows:
         name = str(row["name"])

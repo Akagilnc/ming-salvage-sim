@@ -134,8 +134,8 @@ def test_typed_affair_new_issues_share_provenance(game):
     )
     created = result.issue.new_issues
     assert len(created) == 2
-    assert db.affairs.affair_id_for_issue(created[0]["issue_id"]) == existing.id
-    assert db.affairs.affair_id_for_issue(created[1]["issue_id"]) != existing.id
+    assert db.issues.affair_id_of(created[0]['issue_id']) == existing.id
+    assert db.issues.affair_id_of(created[1]['issue_id']) != existing.id
     assert db.affairs.get(existing.id).status == "open"
 
 
@@ -180,7 +180,7 @@ def test_strategic_event_unauthorized_person_origin_reaches_final_projection(gam
         }]}
 
     dispatch_month_segment(db, state, segment="戊寅虏变战果", translate_fn=translate)
-    assert db.issues.has_event_triggered("wuyin_lubian")
+    assert db.issues.has_event_terminal_state('wuyin_lubian', "triggered")
     assert db.conn.execute(
         "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",),
     ).fetchone()["military_pressure"] == 35

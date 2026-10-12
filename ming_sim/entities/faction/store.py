@@ -52,7 +52,6 @@ class FactionStore:
     def delete(self, name: str) -> None:
         self._conn.execute("DELETE FROM factions WHERE name=?", (name,))
 
-
     def faction_satisfaction(self, faction: str) -> int:
         row = self.field_row('satisfaction', faction)
         return int(row["satisfaction"]) if row else 50
@@ -61,65 +60,14 @@ class FactionStore:
         row = self.field_row('leverage', faction)
         return int(row["leverage"]) if row else 50
 
-
-    def read_names(self, params: Any = ()) -> Any:
+    def names(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT name FROM factions', params).fetchall()
-
-    def read_faction_context_with_db(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT agenda, satisfaction, leverage FROM factions WHERE name = ?', params).fetchone()
 
     def get_faction_stance_summaries(self) -> list[dict]:
         rows = self._conn.execute(
             "SELECT * FROM faction_stance_summaries ORDER BY faction", ()
         ).fetchall()
         return [dict(row) for row in rows]
-
-    def write_apply_faction_brew_result(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "\n                INSERT INTO faction_stance_summaries\n                    (faction, stance_segment, last_event_id,\n                     last_brewed_turn, last_brewed_year, last_brewed_period)\n                VALUES (?, ?, ?, ?, ?, ?)\n                ON CONFLICT(faction) DO UPDATE SET\n                    stance_segment = excluded.stance_segment,\n                    last_event_id = excluded.last_event_id,\n                    last_brewed_turn = excluded.last_brewed_turn,\n                    last_brewed_year = excluded.last_brewed_year,\n                    last_brewed_period = excluded.last_brewed_period,\n                    updated_at = CURRENT_TIMESTAMP\n                ",
-            params,
-        )
-
-
-    def read_adjust_factions(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT satisfaction, leverage FROM factions WHERE name = ?", params
-        ).fetchone()
-
-    def read_build_faction_denunciation_facts(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT name FROM factions ORDER BY name", params
-        ).fetchall()
-
-    def read_build_promulgation_judge_context(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT name,leverage,agenda FROM factions ORDER BY name", params
-        ).fetchall()
-
-    def write_recompute_faction_leverage(self, params: Any = ()) -> Any:
-        return self._conn.execute("UPDATE factions SET leverage=? WHERE name=?", params)
-
-    def write_calibrate_faction_offsets(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "UPDATE factions SET leverage_offset=? WHERE name=?", params
-        )
-
-    def write_adjust_factions(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "UPDATE factions SET satisfaction = ?, leverage_offset = leverage_offset + ? "
-            "WHERE name = ?",
-            params,
-        )
-
-    def write_adjust_factions_factions(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "UPDATE factions SET satisfaction = ?, leverage = ? WHERE name = ?", params
-        )
-
-    def read_calibrate_faction_offsets(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT 1 FROM factions WHERE name=?", params
-        ).fetchone()
 
     def snapshot_rows(self) -> Any:
         return self._conn.execute("SELECT * FROM factions").fetchall()

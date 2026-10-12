@@ -126,7 +126,7 @@ def test_highlights_survive_db_restore(game, content, tmp_path):
         scroll_min = [m for m in scroll if m["role"] == "minister"]
         assert scroll_min and scroll_min[0]["highlights"] == ["军务", "辽饷"]
     finally:
-        db2.close()
+        db2.conn.close()
 
 
 # ── 通道时序（注入假判官，零真 LLM）────────────────────────────────────

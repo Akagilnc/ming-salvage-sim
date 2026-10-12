@@ -930,7 +930,10 @@ def _apply_punishment_verdict_effect(
     issue_id = int(payload.get("issue_id") or 0)
     issue = None
     if issue_id:
-        issue = db.issues.read_apply_punishment_verdict_effect((issue_id,))
+        issue = db.conn.execute(
+            'SELECT status,origin_kind,faction_hint,target_roster FROM issues WHERE id=?',
+            (issue_id,),
+        ).fetchone()
         if issue is None or issue["origin_kind"] != "impeachment_surge":
             raise ValueError("处置所指弹劾潮不存在")
         if issue["status"] != "active":
@@ -1241,9 +1244,9 @@ def apply_dossier_verdicts(
     """结算判决注入入口：批量、同事务消费每案结构化 verdict。"""
     # Validate the complete batch before the first write at this public seam.
     rows = list(verdicts)
-    faction_names = {str(row["name"]) for row in db.factions.read_names()}
-    class_names = {str(row["name"]) for row in db.classes.read_names(())}
-    character_ids = {str(row["name"]) for row in db.characters.read_names()}
+    faction_names = {str(row["name"]) for row in db.factions.names()}
+    class_names = {str(row["name"]) for row in db.classes.names(())}
+    character_ids = {str(row["name"]) for row in db.characters.names()}
     for verdict in rows:
         if not isinstance(verdict, dict):
             raise ValueError("案卷 verdict 须为对象")

@@ -92,7 +92,7 @@ def build_night_said_so_far(
     cutoff_id = int(until_chat_turn_id or 0)
     cutoff_seq: Optional[int] = None
     if cutoff_id > 0:
-        crow = db.reign.read_chat_turn_night_seq((cutoff_id,))
+        crow = db.reign.chat_turn_sequence_row((cutoff_id,))
         if crow is not None:
             cutoff_seq = int(crow["night_seq"] or 0)
 
@@ -123,7 +123,7 @@ def build_night_said_so_far(
         ):
             if not mid:
                 continue
-            row = db.chat_messages.read_build_night_said_so_far((int(mid),))
+            row = db.chat_messages.content_row((int(mid),))
             if row is None:
                 continue
             body = str(row["content"] or "")
@@ -186,28 +186,41 @@ def build_translation_target_grounding(db: Any, state: Any = None) -> str:
     不猜、不从正文匹配改写模型输出。
     """
     lines: List[str] = []
-    for row in db.regions.read_build_translation_target_grounding(()):
+    for row in db.conn.execute('SELECT id, name FROM regions ORDER BY id', ()).fetchall():
         lines.append(f"region\t{row['id']}\t{row['name']}")
-    for row in db.armies.read_build_translation_target_grounding(()):
+    for row in db.conn.execute('SELECT id, name FROM armies ORDER BY id', ()).fetchall():
         lines.append(f"army\t{row['id']}\t{row['name']}")
-    for row in db.characters.read_build_translation_target_grounding(()):
+    for row in db.conn.execute(
+        "SELECT name, office FROM characters WHERE status='active' ORDER BY name",
+        (),
+    ).fetchall():
         lines.append(
             f"character\t{row['name']}\t{str(row['office'] or row['name'])}"
         )
     from ming_sim.staged_commitment import normalize_commitment_stages
 
-    for row in db.issues.read_build_translation_target_grounding(()):
+    for row in db.conn.execute(
+        "SELECT id, title, stages_json FROM issues WHERE status='active' ORDER BY id",
+        (),
+    ).fetchall():
         stages = normalize_commitment_stages(row['stages_json'])
         lines.append(f"issue\t{int(row['id'])}\t{str(row['title'] or '')}")
         for stage in stages:
             lines.append(f"stage\t{int(row['id'])}\t{stage['stage_idx']}\t{stage}")
-    for row in db.character_knowledge.read_build_translation_target_grounding():
+    for row in db.conn.execute(
+        'SELECT id, title, status FROM secret_orders ORDER BY id',
+        (),
+    ).fetchall():
         lines.append(
             f"secret_order\t{int(row['id'])}\t{str(row['status'] or '')}\t"
             f"{str(row['title'] or '')}"
         )
     # 在途拨帑与自带押解标记（普通押解随拨银旨）；专用护送目录/实况行已退役。
-    for row in db.dossiers.read_build_translation_target_grounding():
+    for row in db.conn.execute(
+        'SELECT id, action_type, target_kind, target_id FROM decree_dossiers WHERE '
+        "status='executing' AND action_type='grant_allocation' ORDER BY id",
+        (),
+    ).fetchall():
         declared = db.dossier_declares_escort(int(row["id"]))
         lines.append(
             f"dossier\t{int(row['id'])}\t{str(row['target_kind'] or '')}:{str(row['target_id'] or '')}"

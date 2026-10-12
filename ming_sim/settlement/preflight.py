@@ -377,7 +377,7 @@ def _strategic_event_result_preflight_error(
             # #1835 S2：领域字段/整数/势力准入交写核；此处只组 noop 快照并消费写核拒收。
             snapshots: List[tuple[object, str, str, object, object]] = []
             seen_fields: set[str] = set()
-            region_row = db.regions.read_assert_commission_grant_target_exists((region_id,))
+            region_row = db.regions.presence((region_id,))
             if region_row is not None:
                 for raw_field, value in raw_changes.items():
                     field = REGION_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
@@ -413,7 +413,7 @@ def _strategic_event_result_preflight_error(
             # #1835 S2：炮转移/字段/整数准入复用 apply_army_delta_with_cannon_transfer。
             snapshots = []
             seen_fields = set()
-            army_row = db.armies.read_assert_commission_grant_target_exists(
+            army_row = db.armies.presence(
                 (army_id,)
             )
             for raw_field, value in raw_changes.items():
@@ -422,7 +422,7 @@ def _strategic_event_result_preflight_error(
                     continue
                 if field == "cannon_transfer_to":
                     transfer_target = str(value)
-                    target_row = db.armies.read_assert_commission_grant_target_exists((transfer_target,))
+                    target_row = db.armies.presence((transfer_target,))
                     if target_row is not None:
                         snapshots.append(
                             (
@@ -513,9 +513,13 @@ def _strategic_event_result_preflight_error(
             if action in {"任命", "调任"}:
                 target_office = normalize_office(str(item.get("office") or item.get("new_office") or ""))
                 if target_office:
-                    row = db.characters.read_strategic_event_result_preflight_error_c_office_c_office_type_COALESCE_co_appointment_tenure_真除_AS_appoi(
-                        (name,)
-                    )
+                    row = db.conn.execute(
+                        'SELECT c.office, c.office_type, '
+                        "COALESCE(co.appointment_tenure, '真除') AS appointment_tenure "
+                        'FROM characters c LEFT JOIN character_offices co ON '
+                        'co.character_name = c.name WHERE c.name = ?',
+                        (name,),
+                    ).fetchone()
                     if row is not None:
                         current_office = normalize_office(str(row["office"] or ""))
                         current_type = str(row["office_type"] or "")
@@ -550,9 +554,10 @@ def _strategic_event_result_preflight_error(
                             )
             if action != "行止":
                 continue
-            row = db.characters.read_strategic_event_result_preflight_error(
-                (name,)
-            )
+            row = db.conn.execute(
+                'SELECT status, location, transit_to FROM characters WHERE name = ?',
+                (name,),
+            ).fetchone()
             if row is not None:
                 departure, departure_error = admit_transit_departure(
                     item,

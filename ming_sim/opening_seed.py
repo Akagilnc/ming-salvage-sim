@@ -34,7 +34,14 @@ def seed_opening_world(db: Any) -> None:
     characters = db.characters
 
     if not characters.has_any("office_slots"):
-        characters.write_seed_opening_world([(*slot, index) for index, slot in enumerate(OFFICE_SLOTS)])
+        db.conn.executemany(
+            """
+            INSERT INTO office_slots
+                (office_title, office_type, region_id, jurisdiction, sort_order)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            [(*slot, index) for index, slot in enumerate(OFFICE_SLOTS)],
+        )
 
     if not characters.has_any("characters"):
         for character in db.content.characters.values():
@@ -75,7 +82,10 @@ def seed_opening_world(db: Any) -> None:
                 "summary": character.summary,
             })
     if not characters.has_any("character_offices"):
-        for row in characters.read_knowledge_items_for_turn():
+        for row in db.conn.execute(
+            'SELECT name, office, office_type FROM characters',
+            (),
+        ).fetchall():
             # 同 add_character/set_character_office 走 person-title 守卫接缝：名分不写脏行。
             # Jurisdiction only from explicit content office_region — never location.
             ch = (

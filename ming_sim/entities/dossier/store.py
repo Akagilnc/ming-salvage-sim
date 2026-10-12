@@ -11,6 +11,9 @@ from __future__ import annotations
 import json
 from typing import Any, Iterable, Mapping, Optional
 
+from ming_sim.applier import connection_owns_transaction
+from ming_sim.entities.reign_state.store import ReignStateStore
+
 from ming_sim.applier import (
     StoredDocumentError,
     durable_int,
@@ -463,16 +466,6 @@ class DossierStore:
     def __init__(self, conn: Any) -> None:
         self._conn = conn
 
-    def _owns(self) -> bool:
-        """Snapshot before this method's first DML.
-
-        SQLite opens an implicit transaction on UPDATE/INSERT, so reading
-        in_transaction afterwards would skip every commit.
-        """
-        from ming_sim.applier import connection_owns_transaction
-
-        return connection_owns_transaction(self._conn)
-
     def _commit(self, commit: bool, owns: bool) -> None:
         if commit and owns:
             self._conn.commit()
@@ -549,7 +542,7 @@ class DossierStore:
     def transition(
         self, dossier_id: int, new_status: str, *, commit: bool = True,
     ) -> None:
-        owns = self._owns()
+        owns = connection_owns_transaction(self._conn)
         row = self._conn.execute(
             "SELECT status,action_type,payload_json,execution_outcome "
             "FROM decree_dossiers WHERE id=?",
@@ -580,7 +573,7 @@ class DossierStore:
         self, order_id: int, *, commit: bool = True,
     ) -> None:
         """任何首次实际办理入口共用：密令轴在办时，案卷轴幂等进入 executing。"""
-        owns = self._owns()
+        owns = connection_owns_transaction(self._conn)
         dossier = self.get_for_secret_order(order_id)
         if dossier is None:
             raise ValueError("密令进展缺少对应案卷")
@@ -595,7 +588,7 @@ class DossierStore:
     def close(
         self, dossier_id: int, reason: str = "", *, commit: bool = True,
     ) -> None:
-        owns = self._owns()
+        owns = connection_owns_transaction(self._conn)
         row = self.get(dossier_id)
         if row is None:
             raise KeyError(f"案卷不存在：{dossier_id}")
@@ -654,7 +647,7 @@ class DossierStore:
         #624：payload_json 引擎侧列（真伪底）；默认 '{}'。
         返回新建行 id；已存在则返回 0（幂等，不覆盖）。
         """
-        owns = self._owns()
+        owns = connection_owns_transaction(self._conn)
         payload_blob = self._coerce_todo_payload_json(payload_json)
         cur = self._conn.execute(
             "INSERT OR IGNORE INTO next_audience_todos "
@@ -757,7 +750,7 @@ class DossierStore:
             return False
         if current != "pending":
             return False
-        owns = self._owns()
+        owns = connection_owns_transaction(self._conn)
         if patch is not None:
             existing = self._parse_todo_payload_json(row["payload_json"])
             merged = dict(existing)
@@ -789,15 +782,11 @@ class DossierStore:
             "SELECT 1 FROM decree_dossiers WHERE id=?", (int(dossier_id),),
         ).fetchone() is not None
 
-    def source_chat_turn_exists(self, chat_turn_id: int) -> bool:
-        from ming_sim.entities.reign_state.store import ReignStateStore
-        return ReignStateStore(self._conn).chat_turn_exists(int(chat_turn_id))
-
     def update_payload(
         self, dossier_id: int, payload: Mapping[str, object], *, commit: bool = True,
     ) -> None:
         """Replace payload_json for an existing dossier (deliberation_state 等 typed 字段)."""
-        owns = self._owns()
+        owns = connection_owns_transaction(self._conn)
         did = int(dossier_id)
         if not self.exists(did):
             raise KeyError(f"案卷不存在：{did}")
@@ -816,7 +805,7 @@ class DossierStore:
     ) -> None:
         """把确认后的新→旧案卷关联整批落账；任一坏引用则整批拒收并留痕。"""
         from ming_sim.action_materialize import DecreeMaterializationValidationError
-        owns = self._owns()
+        owns = connection_owns_transaction(self._conn)
         source_id = strict_int(source_dossier_id, accept_numeric_strings=False)
         source = self.get(source_id)
         if source is None:
@@ -1002,7 +991,7 @@ class DossierStore:
     def set_stigma(
         self, dossier_id: int, stigma: list[dict[str, object]], *, commit: bool = True,
     ) -> None:
-        owns = self._owns()
+        owns = connection_owns_transaction(self._conn)
         self._conn.execute(
             "UPDATE decree_dossiers SET stigma_json=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
             (json.dumps(stigma, ensure_ascii=False), int(dossier_id)),
@@ -1013,7 +1002,7 @@ class DossierStore:
         self, dossier_id: int, *, decision: str, turn: int, commit: bool = True,
     ) -> None:
         """Append one marker per dossier semantic midzhi event, regardless of replay turn."""
-        owns = self._owns()
+        owns = connection_owns_transaction(self._conn)
         marker_fields = {
             "rejected": ("predeclared", "rejected"),
             "promulgated": ("predeclared", "promulgated"),
@@ -1047,7 +1036,7 @@ class DossierStore:
         commit: bool = True,
     ) -> int:
         """Persist one already-spoken ADR 0070 endorsement; never re-judge willingness."""
-        owns = self._owns()
+        owns = connection_owns_transaction(self._conn)
         did, cid, dkey, kind, person, is_imperial = self._validate_endorsement(
             dossier_id, form=form, source_chat_turn_id=source_chat_turn_id,
             decision_key=decision_key, endorser_id=endorser_id, imperial=imperial,
@@ -1072,7 +1061,7 @@ class DossierStore:
         """#1842：成案时把载荷 endorsements 继承到案卷（来源仍为声明轮）。"""
         if not isinstance(payload, Mapping):
             return []
-        owns = self._owns()
+        owns = connection_owns_transaction(self._conn)
         raw_items = load_stored_object_list(
             payload.get("endorsements"), label="endorsements",
         )
@@ -1129,7 +1118,7 @@ class DossierStore:
         if not self.exists(did):
             raise ValueError("背书所指案卷不存在")
         if has_turn:
-            if not self.source_chat_turn_exists(cid):
+            if not ReignStateStore(self._conn).chat_turn_exists(int(cid)):
                 raise ValueError("背书来源对话轮不存在")
         if kind not in {"会签", "当面站台", "御笔手敕"}:
             raise ValueError("背书形式非法")
@@ -1139,7 +1128,7 @@ class DossierStore:
         else:
             if is_imperial or not person:
                 raise ValueError("会签/当面站台必须具名背书人")
-            if CharacterStore(self._conn).read_assert_characters_exist((person,)) is None:
+            if CharacterStore(self._conn).presence((person,)) is None:
                 raise ValueError("背书人物不存在")
         return did, cid, dkey, kind, person, is_imperial
 
@@ -1147,7 +1136,7 @@ class DossierStore:
         self, action_id: int, entry: Mapping[str, object], *, commit: bool = True,
     ) -> None:
         """#1842：把本轮背书挂进暂存载荷 endorsements 列表（不造待背书表）。"""
-        owns = self._owns()
+        owns = connection_owns_transaction(self._conn)
         aid = int(action_id)
         row = self.pending_action_payload_status(aid)
         if row is None:
@@ -1170,11 +1159,11 @@ class DossierStore:
         else:
             if imperial or not endorser_id:
                 raise ValueError("会签/当面站台必须具名背书人")
-            if CharacterStore(self._conn).read_assert_characters_exist((endorser_id,)) is None:
+            if CharacterStore(self._conn).presence((endorser_id,)) is None:
                 raise ValueError("背书人物不存在")
         if source_cid <= 0:
             raise ValueError("背书来源对话轮 id 须为正整数")
-        if not self.source_chat_turn_exists(source_cid):
+        if not ReignStateStore(self._conn).chat_turn_exists(int(source_cid)):
             raise ValueError("背书来源对话轮不存在")
         items = load_stored_object_list(
             payload.get("endorsements"), label="endorsements",
@@ -1258,7 +1247,7 @@ class DossierStore:
         """颁布/批红组合态。rejected 与 hold 永不成为主链 status。"""
         from ming_sim.entities.reign_state.store import ReignStateStore
 
-        owns = self._owns()
+        owns = connection_owns_transaction(self._conn)
         if str(legal_reason_code or "").strip():
             raise ValueError("legal_reason_code 仅供尚未落地的依律集写入路径")
         decision = str(decision or "").strip()
@@ -1277,7 +1266,7 @@ class DossierStore:
                 blocked_layer = str(row.get("promulgation_blocked_layer") or "")
             slot_reason = str(row.get("promulgation_reason") or "")
             slot_legal_reason = str(row.get("legal_reason_code") or "")
-        turn_row = ReignStateStore(self._conn).read_current_settle_turn()
+        turn_row = ReignStateStore(self._conn).turn_row()
         current_turn = int(turn_row["turn"] if turn_row else 0)
         if (
             decision in {"promulgated", "rejected"}
@@ -1347,7 +1336,7 @@ class DossierStore:
 
         纯案卷记录；人事/财政效果物化不在此。
         """
-        owns = self._owns()
+        owns = connection_owns_transaction(self._conn)
         row = self.get(dossier_id)
         if row is None:
             raise KeyError(f"案卷不存在：{dossier_id}")
@@ -1394,7 +1383,7 @@ class DossierStore:
 
         from ming_sim.participant_roster import resolve_dossier_owner_name
 
-        owns = self._owns()
+        owns = connection_owns_transaction(self._conn)
         turn_i = int(turn)
         presence_written = 0
         link_rows = self.audit_link_rows(SUPERVISION_RELATION)
@@ -1424,7 +1413,7 @@ class DossierStore:
         self, turn: int, *, commit: bool = False,
     ) -> dict[str, object]:
         """对账后暴露派生：本回合 loss>0 且该案卷当月稽核在场 → 暴露行。"""
-        owns = self._owns()
+        owns = connection_owns_transaction(self._conn)
         turn_i = int(turn)
         exposure_written = 0
         recon_rows = self.reconciliation_loss_rows(turn_i)
@@ -1459,7 +1448,6 @@ class DossierStore:
             int(row["source_chat_turn_id"] or 0) == ctid
             and str(row["status"] or "") == "pending"
         )
-
 
     def reconciliation_loss_rows(self, turn: int) -> list[Any]:
         return self._conn.execute(
@@ -1614,7 +1602,7 @@ class DossierStore:
 
         True when this call wrote the row (existence of the rail is the key).
         """
-        owns = self._owns()
+        owns = connection_owns_transaction(self._conn)
         form = str(execution_form or "").strip()
         if form not in DOSSIER_EXECUTION_OUTCOMES:
             raise ValueError(f"空子暴露执行格形态非法：{form!r}")
@@ -1747,7 +1735,7 @@ class DossierStore:
         """
         from ming_sim.entities.character_knowledge.store import CharacterKnowledgeStore
 
-        owns = self._owns()
+        owns = connection_owns_transaction(self._conn)
         dossier = self.get(int(dossier_id))
         band = str(progress_band or "")
         text = str(memorial_text or "")
@@ -1941,7 +1929,7 @@ class DossierStore:
         floor_state: str, note: str = "", commit: bool = True,
     ) -> dict[str, object]:
         """#1504 实况轨月度进度（0073）。禁与 dossier_progress_json/sim_note 混写。"""
-        owns = self._owns()
+        owns = connection_owns_transaction(self._conn)
         did = int(dossier_id)
         origin = f"dossier:{did}"
         self._conn.execute(
@@ -2113,7 +2101,7 @@ class DossierStore:
         不删行；commit_pending_actions 只读 pending，故默认提交自然跳过、不成案。
         返回更新条数。action_ids 非空=只留中指定 id（#502 点名粒度）。
         """
-        owns = self._owns()
+        owns = connection_owns_transaction(self._conn)
         params: list[object] = [int(turn), str(minister_name)]
         where = "turn=? AND minister_name=? AND status='pending'"
         if action_ids is not None:
@@ -2256,7 +2244,7 @@ class DossierStore:
         *,
         commit: bool = True,
     ) -> None:
-        owns = self._owns()
+        owns = connection_owns_transaction(self._conn)
         self._conn.execute(
             "UPDATE decree_dossiers SET participant_roster=?,office_archive_keys=?, "
             "updated_at=CURRENT_TIMESTAMP WHERE id=?",
@@ -2299,101 +2287,12 @@ class DossierStore:
         ).fetchone()
         return None if existing is None else int(existing["id"])
 
-    def read_apply_existing_appointment_hit(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT payload_json FROM pending_actions WHERE id=?", params
-        ).fetchone()
-
-    def read_build_translation_target_grounding(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT id, action_type, target_kind, target_id FROM decree_dossiers "
-            "WHERE status='executing' AND action_type='grant_allocation' ORDER BY id",
-            params,
-        ).fetchall()
-
-    def write_merge_plea_kind_into_todo(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "UPDATE next_audience_todos SET origin_context=? WHERE id=?", params
-        )
-
-    def read_sponsor_transferred(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT executor_id, payload_json FROM decree_dossiers WHERE id=?", params
-        ).fetchone()
-
-    def read_write_exposure_todos(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT id FROM decree_dossiers ORDER BY id", params
-        ).fetchall()
-
-    def read_write_exposure_todos_faction_denunciations(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT origin FROM faction_denunciations WHERE target_dossier_id=?", params
-        ).fetchall()
-
-    def read_write_exposure_todos_decree_dossier_links(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT 1 FROM decree_dossier_links WHERE target_dossier_id=? AND relation_type='稽核' LIMIT 1",
-            params,
-        ).fetchone()
-
-    def read_globally_used_fact_keys(self, params: Any = ()) -> Any:
-        return self._conn.execute("SELECT id FROM decree_dossiers", params).fetchall()
-
-    def read_investigation_monthly_capacity(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT COUNT(*) AS n FROM decree_dossiers "
-            "WHERE executor_kind='character' AND executor_id=? "
-            "AND status IN ('promulgated','executing') AND id<>?",
-            params,
-        ).fetchone()
-
-    def read_apply_investigation_selection(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT id, units FROM dossier_actual_progress "
-            "WHERE dossier_id=? AND turn=? LIMIT 1",
-            params,
-        ).fetchone()
-
-    def write_record_dossier_verdict_metadata(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            """UPDATE decree_dossier_decisions
-                   SET affected_parties_json=?, midzhi_unpromulgatable=?
-                   WHERE id=(SELECT MAX(id) FROM decree_dossier_decisions WHERE dossier_id=?)""",
-            params,
-        )
-
     def insert_pending_action(self, params: Any) -> Any:
         return self._conn.execute(
             "INSERT INTO pending_actions "
             "(turn, kind, action, target_id, minister_name, payload_json, status, night_id, "
             "night_approved, source_chat_turn_id) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            params,
-        )
-
-    def write_update_office_candidate_payload(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "UPDATE pending_actions SET payload_json=?, night_id=?, night_approved=0 WHERE id=?",
-            params,
-        )
-
-    def write_update_directive_candidate(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "UPDATE pending_actions SET payload_json=?, night_id=?, night_approved=0, "
-            "version=version+1 WHERE id=?",
-            params,
-        )
-
-    def write_withdraw_pending_action(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "DELETE FROM pending_actions WHERE id=? AND turn=? AND status='pending'",
-            params,
-        )
-
-    def write_undo_chat_turn(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "DELETE FROM decree_dossier_endorsements WHERE source_chat_turn_id = ?",
             params,
         )
 
@@ -2411,42 +2310,10 @@ class DossierStore:
         )
         return self.reconciliations(int(params[0]))[-1] if cur.rowcount else None
 
-    def write_accept_faction_denunciations(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            """
-                    INSERT INTO faction_denunciations
-                        (turn, accuser_name, accuser_faction, subject_name,
-                         subject_faction, target_dossier_id, origin,
-                         payload_json, memorial_text)
-                    VALUES (?,?,?,?,?,?,?,?,?)
-                    """,
-            params,
-        )
-
-    def write_pending_action_status(self, params: Any) -> Any:
+    def set_pending_action_status(self, params: Any) -> Any:
         return self._conn.execute(
             "UPDATE pending_actions SET status=? WHERE id=?", params
         )
-
-    def write_void_pending_actions_for_chat_turn(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "UPDATE pending_actions SET status='voided', night_approved=0 "
-            "WHERE id=? AND status='pending'",
-            params,
-        )
-
-    def write_create_secret_order(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            """
-                    UPDATE decree_dossiers
-                    SET promulgation_decision='promulgated',
-                        promulgation_blocked_layer='palace_rescript',
-                        promulgation_reason='内批自动顺颁'
-                    WHERE id=?
-                    """,
-            params,
-        )
-
 
     def set_actual_progress_note(self, dossier_id: int, turn: int, note: str) -> None:
         """Set this month's original note without changing existing progress units."""
@@ -2458,333 +2325,16 @@ class DossierStore:
             (int(dossier_id), int(turn), note, f"dossier:{int(dossier_id)}"),
         )
 
-    def read_list_monthly_dossier_progress_nudges(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            """
-                SELECT d.*, s.title AS secret_title, s.content AS secret_content,
-                       s.due_turn AS secret_due_turn
-                FROM decree_dossiers d
-                JOIN secret_orders s ON s.id=d.secret_order_id
-                WHERE d.status IN ('promulgated','executing') AND s.status='active'
-                ORDER BY d.id
-                """,
-            params,
-        ).fetchall()
-
-    def read_dossier_declares_escort(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT payload_json FROM decree_dossiers WHERE id=?", params
-        ).fetchone()
-
-    def read_list_referenceable_dossiers(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            """SELECT d.*,
-                          s.title AS secret_title,
-                          EXISTS(
-                              SELECT 1 FROM decree_dossier_decisions h
-                              WHERE h.dossier_id=d.id
-                                AND h.rescript_action='force_promulgated'
-                          ) AS was_force_promulgated
-                   FROM decree_dossiers d
-                   LEFT JOIN secret_orders s ON s.id=d.secret_order_id
-                   WHERE d.created_turn <= ?
-                   ORDER BY d.id DESC""",
-            params,
-        ).fetchall()
-
-    def write_record_dossier_promulgation(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            """
-                        UPDATE decree_dossiers
-                        SET status='promulgated',rescript_pending=0,
-                            updated_at=CURRENT_TIMESTAMP
-                        WHERE id=?
-                        """,
-            params,
-        )
-
-
-    def read_current_judge_affected_parties(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            """SELECT affected_parties_json FROM decree_dossier_decisions
-                   WHERE dossier_id=? AND turn=? AND rescript_action=''
-                   ORDER BY id DESC LIMIT 1""",
-            params,
-        ).fetchone()
-
-    def write_breach_decree_dossier(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "UPDATE decree_dossiers SET interruption_reason=CASE WHEN interruption_reason='' THEN ? ELSE interruption_reason END WHERE id=?",
-            params,
-        )
-
-    def read_interrupt_dossiers_for_character(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            """
-                SELECT id,secret_order_id,status FROM decree_dossiers
-                WHERE executor_kind='character' AND executor_id=?
-                  AND status IN ('promulgated','executing')
-                ORDER BY id
-                """,
-            params,
-        ).fetchall()
-
-    def read_update_office_candidate_payload(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT id,payload_json,status FROM pending_actions "
-            "WHERE id=? AND kind='office'",
-            params,
-        ).fetchone()
-
-    def read_update_directive_candidate(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT id,payload_json,status,version FROM pending_actions "
-            "WHERE id=? AND kind='directive'",
-            params,
-        ).fetchone()
-
-    def read_discard_deleted_directive_forecast(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT kind, version FROM pending_actions WHERE id=?", params
-        ).fetchone()
-
-    def write_apply_pending_action(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "UPDATE decree_dossiers SET pending_action_id=? "
-            "WHERE directive_id=? AND (pending_action_id IS NULL "
-            "OR pending_action_id=0 OR pending_action_id=?)",
-            params,
-        )
-
-    def read_void_pending_actions_for_chat_turn(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT id, kind, version FROM pending_actions "
-            "WHERE source_chat_turn_id = ? AND status = 'pending' ORDER BY id",
-            params,
-        ).fetchall()
-
-    def read_withdraw_pending_action(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT id, kind, version FROM pending_actions "
-            "WHERE id=? AND turn=? AND status='pending'",
-            params,
-        ).fetchone()
-
-    def read_secret_origin_message_ids(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT minister_name, payload_json FROM pending_actions "
-            "WHERE kind='secret_order' AND status IN ('pending','failed')",
-            params,
-        ).fetchall()
-
-    def read_undo_chat_turn(self, params: Any = ()) -> Any:
+    def pending_action_source_turn(self, params: Any = ()) -> Any:
         return self._conn.execute(
             "SELECT source_chat_turn_id FROM pending_actions WHERE id=?", params
         ).fetchone()
 
-    def read_list_monthly_grant_reconciliation_targets(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            """
-                    SELECT * FROM decree_dossiers
-                    WHERE status='executing' AND action_type='grant_allocation'
-                    ORDER BY id
-                    """,
-            params,
-        ).fetchall()
-
-    def read_list_monthly_grant_reconciliation_targets_decree_dossiers(
-        self, params: Any = ()
-    ) -> Any:
-        return self._conn.execute(
-            """
-                    SELECT * FROM decree_dossiers
-                    WHERE action_type='grant_allocation'
-                      AND (
-                        status='executing'
-                        OR (status='closed' AND closed_turn=?)
-                      )
-                    ORDER BY id
-                    """,
-            params,
-        ).fetchall()
-
-    def read_accept_faction_denunciations(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            """
-                    SELECT id, turn, payload_json FROM faction_denunciations
-                    WHERE accuser_name=? AND target_dossier_id=? AND origin=?
-                    ORDER BY id DESC
-                    LIMIT 1
-                    """,
-            params,
-        ).fetchone()
-
-    def read_create_decree_dossiers(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT id FROM decree_dossiers WHERE secret_order_id=? "
-            "ORDER BY region_id, id",
-            params,
-        ).fetchall()
-
-    def read_create_decree_dossiers_decree_dossiers(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT id, region_id FROM decree_dossiers WHERE directive_id=? "
-            "ORDER BY region_id, id",
-            params,
-        ).fetchall()
-
-    def read_append_decree_dossier_participants(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT office_archive_keys FROM decree_dossiers WHERE id=?", params
-        ).fetchone()
-
-    def read_resolve_commitment_origin_ref(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT COUNT(*) AS n FROM decree_dossiers WHERE created_turn=?", params
-        ).fetchone()
-
-    def read_apply_override_costs(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            """SELECT 1 FROM decree_cost_events
-                   WHERE dossier_id=? AND cost_kind='satisfaction' AND cost_identity='override'
-                   LIMIT 1""",
-            params,
-        ).fetchone()
-
-
-    def read_discard_pending_decree_forecast(self, params: Any = ()) -> Any:
+    def directive_version(self, params: Any = ()) -> Any:
         return self._conn.execute(
             "SELECT version FROM pending_actions WHERE id=? AND kind='directive'",
             params,
         ).fetchone()
-
-    def read_create_decree_dossiers_decree_dossiers_2(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT id, region_id FROM decree_dossiers WHERE pending_action_id=? "
-            "ORDER BY region_id, id",
-            params,
-        ).fetchall()
-
-    def read_undo_chat_turn_pending_actions(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT id FROM pending_actions WHERE source_chat_turn_id = ? ORDER BY id",
-            params,
-        ).fetchall()
-
-    def read_commit_pending_actions(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT secret_order_id FROM decree_dossiers "
-            "WHERE pending_action_id=? AND secret_order_id IS NOT NULL "
-            "ORDER BY id DESC LIMIT 1",
-            params,
-        ).fetchone()
-
-    def read_list_world_effect_history(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT * FROM dossier_actual_progress WHERE dossier_id=? ORDER BY turn, id",
-            params,
-        ).fetchall()
-
-    def read_dispatch_endorsements(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT id, night_id, status, payload_json FROM pending_actions "
-            "WHERE id=? AND turn=?",
-            params,
-        ).fetchone()
-
-    def read_dispatch_promises(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT night_id, kind, action, minister_name, night_approved, payload_json FROM pending_actions "
-            "WHERE id=? AND turn=? AND status='pending'",
-            params,
-        ).fetchone()
-
-    def write_dispatch_promises(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "UPDATE pending_actions SET payload_json=?, night_approved=0 WHERE id=?",
-            params,
-        )
-
-    def read_dispatch_declaration_sections(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT id FROM pending_actions WHERE turn=? AND status='pending'", params
-        ).fetchall()
-
-    def read_dispatch_endorsements_decree_dossiers(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT id FROM decree_dossiers WHERE pending_action_id=? ORDER BY id",
-            params,
-        ).fetchall()
-
-    def write_dispatch_promises_pending_actions(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "UPDATE pending_actions SET payload_json=?, version=version+1 WHERE id=?",
-            params,
-        )
-
-    def read_pending_snapshot(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT * FROM pending_actions WHERE id=?", params
-        ).fetchone()
-
-    def read_uncased_grant_catalog_token(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT id FROM decree_dossiers "
-            "WHERE action_type='grant_allocation' AND pending_action_id=? LIMIT 1",
-            params,
-        ).fetchone()
-
-    def read_failed_forecast_key(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT id,version,night_id FROM pending_actions WHERE turn=?", params
-        ).fetchall()
-
-    def read_current_forecast_ref(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT status,kind,action,night_approved,night_id,version "
-            "FROM pending_actions WHERE id=?",
-            params,
-        ).fetchone()
-
-    def read_pending_snapshot_decree_dossiers(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT COALESCE(MAX(id),0)+1 FROM decree_dossiers", params
-        ).fetchone()
-
-    def read_gather_impeachment_surge_candidates(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT id,closed_turn,participant_roster,decree_text,execution_note,execution_outcome "
-            "FROM decree_dossiers "
-            "WHERE execution_outcome='transformed' AND closed_turn BETWEEN ? AND ? ORDER BY id",
-            params,
-        ).fetchall()
-
-    def read_origin_visible_to(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT secret_order_id FROM decree_dossiers WHERE id=?", params
-        ).fetchone()
-
-    def read_own_affair_lines(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT id, affair_id, secret_order_id, participant_roster "
-            "FROM decree_dossiers WHERE affair_id != 0",
-            params,
-        ).fetchall()
-
-    def read_list_due_grant_report_dossiers_for_scan(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            """
-            SELECT id, due_turn, execution_outcome
-            FROM decree_dossiers
-            WHERE status='executing'
-              AND action_type='grant_allocation'
-              AND due_turn > 0
-              AND due_turn <= ?
-            ORDER BY id
-            """,
-            params,
-        ).fetchall()
-
 
     def snapshot_rows(self, table: str) -> Any:
         sql = {

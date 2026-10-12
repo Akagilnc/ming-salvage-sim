@@ -150,7 +150,13 @@ def apply_person_changes(
         return rejected(item, str(error["reason"]), str(error["category"])) if error else None
 
     def character_row(name: str):
-        return db.characters.read_character_row((name,))
+        return db.conn.execute(
+            'SELECT name, status, office, office_type, power_id, status_reason, '
+            'status_changed_turn, reason_code, transit_to, '
+            'transit_distance_remaining, transit_speed_factor, transit_start_turn '
+            'FROM characters WHERE name=?',
+            (name,),
+        ).fetchone()
 
     def log_applied(
         result: Dict[str, object],
@@ -162,7 +168,7 @@ def apply_person_changes(
         action = str(result.get("动作") or result.get("action") or "").strip()
         if not name or not action:
             return
-        if db.characters.read_assert_characters_exist((name,)) is None:
+        if db.characters.presence((name,)) is None:
             return
         summary = (
             str(result.get("reason") or item.get("reason") or "")
@@ -243,7 +249,10 @@ def apply_person_changes(
             if content is not None and name not in content.characters:
                 rejections.append(rejected(item, "非既有人物", "hallucinated_id"))
                 continue
-            row = db.characters.read_apply_person_changes((name,))
+            row = db.conn.execute(
+                'SELECT name, loyalty FROM characters WHERE name=?',
+                (name,),
+            ).fetchone()
             if row is None:
                 rejections.append(rejected(item, "非既有人物", "hallucinated_id"))
                 continue
@@ -276,7 +285,10 @@ def apply_person_changes(
             if content is not None and name not in content.characters:
                 rejections.append(rejected(item, "非既有人物", "hallucinated_id"))
                 continue
-            row = db.characters.read_apply_person_changes_name_style((name,))
+            row = db.conn.execute(
+                'SELECT name, style FROM characters WHERE name=?',
+                (name,),
+            ).fetchone()
             if row is None:
                 rejections.append(rejected(item, "非既有人物", "hallucinated_id"))
                 continue
@@ -624,9 +636,12 @@ def apply_person_changes(
             if content is not None and name not in content.characters:
                 rejections.append(rejected(item, "非既有人物", "hallucinated_id"))
                 continue
-            row = db.characters.read_apply_person_changes_status_location_transit_to_transit_distance_remaining_transit_spe(
-                (name,)
-            )
+            row = db.conn.execute(
+                'SELECT status, location, transit_to, transit_distance_remaining, '
+                'transit_speed_factor, transit_start_turn FROM characters WHERE '
+                'name=?',
+                (name,),
+            ).fetchone()
             if row is None:
                 rejections.append(rejected(item, "非既有人物", "hallucinated_id"))
                 continue

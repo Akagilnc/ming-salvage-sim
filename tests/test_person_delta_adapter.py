@@ -1,3 +1,4 @@
+from ming_sim.opening_seed import seed_opening_world
 from ming_sim.entities.character.appointment import apply_office_appointment
 import ming_sim.entities.character.appointment as office_appointment
 from ming_sim.applier import Provenance, RejectedItem
@@ -983,7 +984,7 @@ def test_add_character_non_canonical_office_type_still_raises(game):
         )
 
 def test_seed_backfill_skips_person_title_character_offices(game):
-    """#1057 AC「seed 路同守卫」回归钉：旧档回填入口 seed_static_data（character_offices 空时
+    """#1057 AC「seed 路同守卫」回归钉：旧档回填入口 seed_opening_world（character_offices 空时
     从 characters 补档）须对 person-title 走同守卫。静态 content 无名分人物，故必须让含名分
     的人物真实经过 seed 回填口——否则守卫退回无条件 INSERT 会撞 offices FK（名分无父行）。"""
     db, state, _content = game
@@ -994,7 +995,7 @@ def test_seed_backfill_skips_person_title_character_offices(game):
     db.conn.execute("DELETE FROM character_offices")
     db.conn.commit()
 
-    db.seed_static_data()  # 旧档回填入口（L2588 backfill）
+    seed_opening_world(db)  # 旧档回填入口（L2588 backfill）
 
     # 回填真跑了：canonical 朝臣拿到 character_offices 行（否则等于没验回填）。
     assert db.conn.execute(
@@ -1463,7 +1464,7 @@ def test_fresh_seed_migrates_legacy_office_pollution(tmp_path):
     fresh = GameContent.load()
     db = GameDB(str(tmp_path / "fresh.db"), fresh)
     try:
-        db.seed_static_data()
+        seed_opening_world(db)
         row = db.conn.execute(
             "SELECT status, reason_code, office FROM characters WHERE name=?", ("钱谦益",)
         ).fetchone()
@@ -2107,7 +2108,7 @@ def test_fresh_static_seed_person_title_character_no_offices_parent(content):
     db = None
     try:
         db = GameDB(path, seed_content)
-        db.seed_static_data()
+        seed_opening_world(db)
         for kind in PERSON_TITLE_KINDS:
             assert db.conn.execute(
                 "SELECT 1 FROM offices WHERE office_type=?", (kind,)
@@ -2121,7 +2122,7 @@ def test_fresh_static_seed_person_title_character_no_offices_parent(content):
         ).fetchone() is None
     finally:
         if db is not None:
-            db.close()
+            db.conn.close()
         for p in (path, f"{path}_agno.db"):
             if os.path.exists(p):
                 os.remove(p)

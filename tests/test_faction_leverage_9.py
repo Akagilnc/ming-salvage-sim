@@ -2,6 +2,7 @@ from __future__ import annotations
 from ming_sim.entities.character.appointment import apply_office_appointment
 from ming_sim.applier import Provenance, RejectedItem
 import pytest
+from ming_sim.opening_seed import seed_opening_world
 """#9：派系势力(faction leverage) 随「在朝成员官职权重」全重算联动。
 
 修前 set_character_status 不动 leverage、character_status_changes 与派系势力无联动，
@@ -270,7 +271,7 @@ def test_displaced_minister_faction_leverage_recomputed(game):
 def test_offset_not_re_anchored_on_reload_after_clamp(game):
     """#9 cmr R3：老档每次 load 重锚 offset，clamp 后腐蚀基线。
     seed 后取白名单派系 offset；手动把 leverage 打到 0（模拟 clamp 触底）；再开一个 GameDB
-    （生产里每次 GameSession init = 新 GameDB.__init__→init_schema→seed_static_data，是真正的 reload）。
+    （生产里每次 GameSession init = 新 GameDB.__init__→init_schema→seed_opening_world，是真正的 reload）。
     修前每次 load 都 offset=round(0−weight_sum)≠原值（被腐蚀）；修后因「非新档」直接 return，offset 不变。"""
     from ming_sim.db import GameDB
 
@@ -287,12 +288,12 @@ def test_offset_not_re_anchored_on_reload_after_clamp(game):
     # 真·reload：在同一 DB 文件上新开 GameDB（init_schema 见 offset 列已存在 → flag=False），再 seed。
     reloaded = GameDB(db.path, content)
     try:
-        reloaded.seed_static_data()
+        seed_opening_world(reloaded)
         after_offset = reloaded.conn.execute(
             "SELECT leverage_offset FROM factions WHERE name=?", (faction,)
         ).fetchone()["leverage_offset"]
     finally:
-        reloaded.close()
+        reloaded.conn.close()
     assert after_offset == before_offset, (
         f"reload(clamp 后)不应重锚 offset：before={before_offset} after={after_offset}"
     )

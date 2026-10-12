@@ -277,7 +277,10 @@ def write_audience_error_pack(
 
 def resolve_standing_roster(db: Any) -> List[str]:
     """开夜时动态解析常在员额：在职且 active 的御前近臣槽位持有者。"""
-    rows = db.characters.read_resolve_standing_roster()
+    rows = db.conn.execute(
+        "SELECT name, office, office_type, status FROM characters WHERE status = 'active' ORDER BY name",
+        (),
+    ).fetchall()
     return [str(row["name"]) for row in rows if is_inner_court_attendant(row)]
 
 
@@ -356,7 +359,11 @@ def _entry_order_key(raw: Dict[str, Any]) -> float:
 def list_ledger(db: Any, night_id: int) -> List[Dict[str, Any]]:
     # 时序键排序（#501 AC11）：COALESCE(order_key, seq) 使补跑的抽取账落回源轮原位、
     # 不因补跑执行时刻排到后续轮之后；同键内 id 稳定次序。
-    rows = db.reign.read_list_ledger((int(night_id),))
+    rows = db.conn.execute(
+        'SELECT * FROM story_ledger_entries WHERE night_id = ? ORDER BY '
+        'COALESCE(order_key, seq) ASC, id ASC',
+        (int(night_id),),
+    ).fetchall()
     out: List[Dict[str, Any]] = []
     for row in rows:
         raw = _row_dict(row)
@@ -473,7 +480,10 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
             message_id = int(turn.get(column) or 0)
             if not message_id:
                 continue
-            row = db.chat_messages.read_read_night_scroll((message_id,))
+            row = db.conn.execute(
+                'SELECT content,created_at,highlights_json FROM chat_messages WHERE id=?',
+                (message_id,),
+            ).fetchone()
             if row is None:
                 continue
             content = str(row["content"] or "")
@@ -610,7 +620,12 @@ def is_pending_source_round(db: Any, night_id: int, chat_turn_id: int, turn: int
     """封夜后只承接同月、同夜仍待补的既有回话，不开放新玩家输入。"""
     if chat_turn_id <= 0:
         return False
-    return db.reign.read_is_pending_source_round_owned((int(chat_turn_id), int(night_id), int(turn))).fetchone() is not None
+    return db.conn.execute(
+        'SELECT 1 FROM chat_turns t JOIN game_state g ON g.id=1 WHERE t.id=? AND '
+        "t.night_id=? AND t.status='active' AND t.minister_message_id>0 AND "
+        "t.extract_status='pending' AND g.turn=?",
+        (int(chat_turn_id), int(night_id), int(turn)),
+    ).fetchone() is not None
 
 
 def append_ledger_entry(
@@ -742,7 +757,13 @@ def open_night(
     sp = f"open_night_{int(state.turn)}_{id(state)}"
     db.conn.execute(f"SAVEPOINT {sp}")
     try:
-        cur = db.reign.write_open_night(
+        cur = db.conn.execute(
+            """
+            INSERT INTO audience_nights
+                (turn, year, period, time_of_day, location, status,
+                 close_commit_cursor, next_event_seq)
+            VALUES (?, ?, ?, ?, ?, ?, 0, 0)
+            """,
             (
                 int(state.turn),
                 int(state.year),
@@ -750,7 +771,7 @@ def open_night(
                 time_of_day,
                 location,
                 NIGHT_STATUS_OPEN,
-            )
+            ),
         )
         night_id = int(cur.lastrowid)
         for name in roster:
@@ -920,9 +941,12 @@ def commit_late_night_approved(
     db: Any, state: GameState, *, content: Any, write_gate: Any = None,
 ) -> None:
     """过月 join 后沿收夜提交、明发入口补完迟到应允（#1842：背书随载荷，不另补批）。"""
-    nights = db.reign.read_commit_late_night_approved(
-        (int(state.turn), NIGHT_STATUS_CLOSED)
-    )
+    nights = db.conn.execute(
+        'SELECT DISTINCT n.id FROM audience_nights n JOIN pending_actions pa ON '
+        "pa.night_id=n.id WHERE n.turn=? AND n.status=? AND pa.status='pending' AND "
+        'pa.night_approved=1 ORDER BY n.id',
+        (int(state.turn), NIGHT_STATUS_CLOSED),
+    ).fetchall()
     if not nights:
         return
     gate = _gate_cm(write_gate)
@@ -1172,7 +1196,7 @@ def _project_unsettled_summon_kind(
         return "fresh"
     from ming_sim.matching import is_capital_location
 
-    row = db.characters.read_project_unsettled_summon_kind((person_name,))
+    row = db.characters.location_status_row((person_name,))
     if row is None:
         return "in_transit"
     status = str(row["status"] or "active").strip() or "active"
@@ -1300,7 +1324,7 @@ def _mark_summon_entries_in_transit(db: Any, items: Sequence[Dict[str, Any]]) ->
         if TAG_IN_TRANSIT in tags:
             continue
         tags.append(TAG_IN_TRANSIT)
-        db.reign.write_update_summon_travel_tone(
+        db.reign.set_ledger_tags(
             (json.dumps(tags, ensure_ascii=False), entry_id)
         )
     if owns:
@@ -1329,7 +1353,7 @@ def settle_summon_origin(
             tag for tag in _load_durable_str_list(row["tags"], surface="story_ledger_entries.tags") if tag != TAG_SUMMON_UNSETTLED
         ]
         tags.append(TAG_SUMMON_SETTLED)
-        db.reign.write_update_summon_travel_tone(
+        db.reign.set_ledger_tags(
             (json.dumps(tags, ensure_ascii=False), item["entry_id"])
         )
     if owns:
@@ -1434,7 +1458,10 @@ def update_summon_travel_tone(
             continue
         if item.get("person_name") != name:
             continue
-        row = db.reign.read_update_summon_travel_tone_story_ledger_entries((int(item["entry_id"]),))
+        row = db.conn.execute(
+            'SELECT origin_chat_turn_id FROM story_ledger_entries WHERE id=?',
+            (int(item['entry_id']),),
+        ).fetchone()
         if row is None or int(row["origin_chat_turn_id"] or 0) != int(origin_chat_turn_id):
             continue
         target = item
@@ -1450,7 +1477,7 @@ def update_summon_travel_tone(
         if not t.startswith(_SUMMON_TRAVEL_TONE_PREFIX)
     ]
     tags.append(_travel_tone_tag(tone))
-    db.reign.write_update_summon_travel_tone(
+    db.reign.set_ledger_tags(
         (json.dumps(tags, ensure_ascii=False), entry_id)
     )
     if owns:
@@ -1488,7 +1515,7 @@ def commit_fresh_summons_for_night(
     origins: List[str] = []
     with atomic_and_reload(db, state, content=content):
         for person_name, items in by_person.items():
-            row = db.characters.read_project_unsettled_summon_kind(
+            row = db.characters.location_status_row(
                 (person_name,)
             )
             current_transit = str(row["transit_to"] or "").strip() if row is not None else ""
