@@ -96,6 +96,8 @@ def test_no_edict_fast_path_branch_is_dead(game, monkeypatch):
         narrative="世界自演变邸报。",
         simulator_calls=sim_calls,
     )
+    # 直调 resolve_directives 进月链前须 bind；删兜底后不能靠临时 owner。
+    _session(db, state, content)
     result = resolve_directives(
         state, db, None, None, "",
         content=content,

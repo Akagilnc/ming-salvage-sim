@@ -110,16 +110,22 @@ def wait_for_background_jobs(db):
 
 
 def own_session_until_game_teardown(db, owner) -> None:
-    """让 ``game`` fixture 在关闭 SQLite 前排空该 session 的已接纳工作。"""
+    """让 ``game`` fixture 在关闭 SQLite 前排空该 session 的已接纳工作。
+
+    Same write queue → one drain target. When a newer owner shares that queue
+    (light shell rebound as forecast owner), replace the prior entry so the
+    current weakref target stays strongly held until teardown.
+    """
     owners = getattr(db, "_test_session_owners", None)
     if owners is None:
         owners = []
         db._test_session_owners = owners
     queue = getattr(owner, "_write_queue", None)
-    for existing in owners:
+    for i, existing in enumerate(owners):
         if existing is owner:
             return
         if queue is not None and getattr(existing, "_write_queue", None) is queue:
+            owners[i] = owner
             return
     owners.append(owner)
 
@@ -129,25 +135,6 @@ def note_queue_until_game_teardown(db, queue) -> None:
     from types import SimpleNamespace
 
     own_session_until_game_teardown(db, SimpleNamespace(_write_queue=queue))
-
-
-def _install_tail_owner_note(mp: pytest.MonkeyPatch) -> None:
-    """机械尾的 owner 可能是未 bind 的临时对象，轻壳登记覆盖不到。
-
-    在既有 ``_submit_tail`` 入口把该写队列送进排空名单。不改生产调度。
-    """
-    import ming_sim.mechanical_tail as tail_mod
-    from ming_sim.session_write_queue import get_session_write_queue
-
-    real_submit = tail_mod._submit_tail
-
-    def _submit_and_note(session, **kwargs):
-        note_queue_until_game_teardown(
-            session.db, get_session_write_queue(session),
-        )
-        return real_submit(session, **kwargs)
-
-    mp.setattr(tail_mod, "_submit_tail", _submit_and_note)
 
 
 def _drain_registered_sessions_before_close(db) -> None:
@@ -275,21 +262,15 @@ def game(content, _game_template_path, monkeypatch, tmp_path):
     workdir.mkdir(parents=True, exist_ok=True)
     path = str(workdir / "game.db")
     db = None
-    # 独立 MonkeyPatch：测试内 monkeypatch.undo() 不撤掉尾票登记。
-    tail_note = pytest.MonkeyPatch()
     try:
         shutil.copyfile(_game_template_path, path)
         db = GameDB(path, content)
         state = db.load_state()
-        _install_tail_owner_note(tail_note)
         yield db, state, content
     finally:
-        try:
-            if db is not None:
-                _drain_registered_sessions_before_close(db)
-                db.conn.close()
-        finally:
-            tail_note.undo()
+        if db is not None:
+            _drain_registered_sessions_before_close(db)
+            db.conn.close()
 
 
 @pytest.fixture

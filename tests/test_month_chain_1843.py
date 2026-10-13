@@ -6,6 +6,7 @@ import ming_sim.decree as decree_mod
 import ming_sim.month_chain as month_chain
 import ming_sim.month_translate as month_translate
 from ming_sim.declaration_dispatch import pending_action_decree_ref
+from tests.conftest import wait_for_background_jobs
 from tests.month_chain_helpers import make_light_session
 from tests.dossier_test_helpers import create_test_secret_order
 from ming_sim.session_write_queue import get_session_write_queue
@@ -277,6 +278,7 @@ def test_questions_hold_rescript_and_gazette_is_required_before_advance(game, mo
     advanced = session.resolve_turn(allow_empty_decree=True)
     assert advanced.advanced is True
     assert int(state.turn) == closed_turn + 1
+    wait_for_background_jobs(db)
     from ming_sim.constants import RECOVERY_PERSONS_PER_WAN
     assert _pop(db, "流民", "shaanxi") == pool_before - 10 * RECOVERY_PERSONS_PER_WAN
     assert _pop(db, "农民", "shaanxi") == farmers_before + 10 * RECOVERY_PERSONS_PER_WAN
@@ -319,10 +321,12 @@ def test_world_segment_persists_declaration_ending_with_commit(game, monkeypatch
     session = make_light_session(db, state, content)
     turn = int(state.turn)
     assert session.resolve_turn(allow_empty_decree=True).stage == "gazette"
+    wait_for_background_jobs(db)
     payload = db.resolve_contexts.get(turn)["simulator_payload"]
     assert payload["month_chain"]["declaration_outcome"]["status"] == "emperor_suicide"
     db.save_turn_report(state, "邸报已成")
     assert session.resolve_turn(allow_empty_decree=True).advanced is True
+    wait_for_background_jobs(db)
     assert state.ended is True
     assert state.ending_status == "emperor_suicide"
     assert int(state.turn) == turn + 1
@@ -728,6 +732,7 @@ def test_month_chain_lands_specialized_facts_before_due_and_gazette(game, monkey
     result = session.resolve_turn(allow_empty_decree=True)
 
     assert result.advanced is True
+    wait_for_background_jobs(db)
     assert db.turn_reports.report_text(closed_turn) == "本月已归档。"
     assert db.character_knowledge.get_secret_order(order_id)["status"] == "done"
     assert db.conn.execute(

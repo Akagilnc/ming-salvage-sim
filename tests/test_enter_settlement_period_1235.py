@@ -198,7 +198,7 @@ def test_advance_http_reject_after_accept_exits_display(web_game, monkeypatch):
     acquire = type(gate).acquire
 
     def _busy_once(lock, blocking=True, timeout=-1):
-        if lock is gate and not saw:
+        if lock is gate and not saw and game.db.month_open_snapshots.get(turn) is not None:
             # 仅在锁资源边界制造一次占用；受理、拒收、失败清快照仍走真实入口。
             saw["snap"] = game.db.month_open_snapshots.get(turn)
             assert blocking is False

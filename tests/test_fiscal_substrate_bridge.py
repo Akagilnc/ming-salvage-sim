@@ -3496,7 +3496,7 @@ def test_advance_without_edict_cutover_bad_state_uses_settlement_abort_error_pac
     """#1274：无旨完整结算 pre_settle 遇坏 fiscal 态 → SettlementAbort 错误包。"""
     import ming_sim.error_pack as error_pack_mod
     from ming_sim.models import TurnPhase
-    from ming_sim.session import GameSession
+    from tests.month_chain_helpers import make_light_session
 
     db, state = fresh_game
     content = getattr(db, "content", None)
@@ -3513,13 +3513,7 @@ def test_advance_without_edict_cutover_bad_state_uses_settlement_abort_error_pac
     before_phase = state.turn_phase
 
     # canned LLM；崩应在 pre_settle fiscal，到不了 simulator
-    sess = GameSession.__new__(GameSession)
-    sess.db, sess.state, sess.content = db, state, content
-    sess.registry = sess.llm_config = sess.agno_db = None
-    sess.deaths_this_turn, sess.debuts_this_turn = [], []
-    sess.last_decree = ""
-    sess._decree_draft_fingerprint = ()
-    sess.auto_save = lambda *a, **k: None
+    sess = make_light_session(db, state, content)
 
     with pytest.raises(SettlementAbort) as exc_info:
         sess.advance_without_decree()

@@ -1,7 +1,6 @@
 from __future__ import annotations
 import pytest
 from tests.wait_utils import wait_until
-from tests.conftest import wait_for_background_jobs
 import asyncio
 import threading
 import web_app

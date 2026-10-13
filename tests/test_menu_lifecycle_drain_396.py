@@ -319,7 +319,7 @@ class _GapBSession(HallAdmissionSessionMixin):
     def pending_count(self):
         return 0
 
-    def scene_chat(self, message, *, chat_turn_id=0, stream_emit=None, minister_name="", on_protagonist_changed=None):
+    def scene_chat(self, message, *, chat_turn_id=0, stream_emit=None, minister_name="", on_protagonist_changed=None, write_gate=None):
         # #1849 reopen：殿上入口不绑单人 character；轻壳取任一假 agent。
         from ming_sim.session import ChatTurnResult
 

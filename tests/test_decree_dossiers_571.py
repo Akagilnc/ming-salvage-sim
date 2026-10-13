@@ -3,6 +3,7 @@ from ming_sim.session import GameSession
 from ming_sim.settlement.dossier import apply_dossier_promulgation, apply_dossier_verdicts
 import json
 import pytest
+from tests.conftest import wait_for_background_jobs
 from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_order as _create_secret_order, rejected_verdict as _rejected_verdict
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import view
@@ -977,8 +978,10 @@ def test_probe_directive_shared_entry_creates_and_settles_structured_dossier(gam
     )
     player = _prepare_player_month(db, state, content, monkeypatch)
     player.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     db.save_turn_report(state, "邸报", public_body="邸报")
     player.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
 
     assert state.turn == 2
     assert db.dossiers.get(dossier["id"])["status"] == "executing"

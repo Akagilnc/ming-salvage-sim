@@ -2093,6 +2093,7 @@ class WebGame:
             chat_turn_id=int(chat_turn_id or 0),
             stream_emit=_emit,
             on_protagonist_changed=on_protagonist_changed,
+            write_gate=write_gate,
         )
         answer = str(getattr(result, "answer", "") or "")
         # 非流式 agent 回整段时 transport 可能未分片 emit——补一次 delta 保 SSE 契约。
@@ -2641,7 +2642,11 @@ def _retryable_audience_close_http(exc: BaseException) -> HTTPException:
     return HTTPException(status_code=409, detail=_exception_detail(exc))
 
 
-def _accept_settlement_period(game) -> bool:
+def _accept_settlement_period(
+    game,
+    *,
+    blocking: bool = True,
+) -> bool:
     """#1235 / ADR 0149 点即入：颁布/退朝受理即 capture 月初快照（先于 await/close）。
 
     无真实 db 的测试替身直接跳过。幂等；FRONT_HALF_DONE 不重写。
@@ -2652,7 +2657,32 @@ def _accept_settlement_period(game) -> bool:
     if db is None or state is None:
         return False
     from ming_sim.month_open_snapshot import accept_settlement_period
-    return accept_settlement_period(db, state)
+
+    gate = _game_write_gate(game)
+    if blocking:
+        gate.acquire()
+    else:
+        # Snapshot admission bypasses queue barriers / peer LLM. Recheck entry
+        # count before every try; wait outside entry_lock (O1a-R / O1a-R2).
+        while True:
+            with _settlement_entry_lock(game):
+                concurrent = (
+                    int(getattr(game, "_settlement_entry_inflight", 0) or 0) > 1
+                )
+                if not concurrent and gate.acquire(blocking=False):
+                    break
+            if concurrent:
+                _acquire_web_write_gate_or_409(gate)
+                break
+            with gate._cv:
+                if gate._held:
+                    # Entry registration does not notify this condition. Wake to
+                    # recheck it even if release was missed; no request deadline.
+                    gate._cv.wait(timeout=0.05)
+    try:
+        return accept_settlement_period(db, state)
+    finally:
+        gate.release()
 
 
 def _settlement_entry_lock(game) -> threading.Lock:
@@ -2899,7 +2929,8 @@ def _settlement_period_entry(
 ):
     """#1241 S1：颁布/退朝/stream 三入口受理样板（begin→accept→await→close→gate）。
 
-    锁获取语义分叉：退朝非阻塞抢锁（撞锁 409），颁诏阻塞 acquire。
+    退朝受理在入口锁外等裸写闸上的短写；并发结算与下游短持仍非阻塞（撞锁 409）。
+    颁诏阻塞 acquire。
     结算恢复由会话月链裁定，不经直写端点的 settling/awaiting 相位拒收。
     统一获取语义即破 T2 行为零变化（r2-r7 不变式）。
 
@@ -2920,7 +2951,7 @@ def _settlement_period_entry(
         _begin_settlement_entry(game)
         entered = True
         # #1235 / ADR 0149：点即入——先 capture 入核账展示态，再等在飞/收夜/结算续跑。
-        created_display = _accept_settlement_period(game)
+        created_display = _accept_settlement_period(game, blocking=blocking)
         # #1353 r12：advance 非阻塞下沉到 auto_close 真实短持接缝（占用即 409）；
         # 删预探即释——探后至 get_open_night 短持之间 TOCTOU 可再阻塞。
         write_gate: Any = _game_write_gate(game)

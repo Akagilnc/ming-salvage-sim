@@ -3,6 +3,7 @@ from tests.material_helpers import prepare_identity_materials
 import json
 from types import SimpleNamespace
 import pytest
+from tests.conftest import wait_for_background_jobs
 from ming_sim.knowledge import build_character_knowledge
 from ming_sim.audience_night import (
     list_unsettled_summons,
@@ -140,10 +141,12 @@ def _player_month(db, state, content, monkeypatch, dossier_id, *, effects=None):
     session._write_gate = ClassifiedWriteGate()
     before = int(state.turn)
     result = session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     assert result.stage == "gazette"
     # The same player entry resumes after the (offline) gazette is archived.
     db.save_turn_report(state, "月报", title="月报", public_body="月报")
     result = session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     assert result.advanced and int(state.turn) > before
 
 

@@ -1030,11 +1030,16 @@ class GameSession:
         thread.start()
         return thread
 
-    def _mark_control_turn_translation_done(self, chat_turn_id: int) -> None:
+    def _mark_control_turn_translation_done(
+        self, chat_turn_id: int, *, write_gate: Any = None,
+    ) -> None:
         """口令早退轮：复用转译水位单真源，避免假 pending 进 list_pending_translations。"""
         from ming_sim.audience_translation import mark_turn_translation_done
+        from ming_sim.session_write_queue import get_session_write_queue
 
-        mark_turn_translation_done(self.db, chat_turn_id, commit=True)
+        gate = write_gate if write_gate is not None else get_session_write_queue(self).write_gate
+        with gate:
+            mark_turn_translation_done(self.db, chat_turn_id, commit=True)
 
     # ── 召对话轮生命周期（#1902：入口只做适配，不持业务编排）────────
     # 入口只做输入／呈现适配；建轮、快照、问话与回话落库、回滚与失败终态全在
@@ -1647,6 +1652,7 @@ class GameSession:
                 question,
                 chat_turn_id=chat_turn_id,
                 stream_emit=stream_emit,
+                write_gate=write_gate,
             )
             with gate_cm:
                 minister_message_id = self.complete_audience_chat_turn(
@@ -1676,6 +1682,7 @@ class GameSession:
         self, message: str, *, chat_turn_id: int = 0,
         stream_emit: Any = None,
         on_protagonist_changed: Any = None,
+        write_gate: Any = None,
     ) -> ChatTurnResult:
         """#1836 T1 / #1837 C1a / #1842 T2：一夜一场入口——一个场景 LLM 演整场。
 
@@ -1688,6 +1695,7 @@ class GameSession:
           代码触发读心（转译承接）；按大臣 chat() 入口已退役。
         - stream_emit 非空：同核走 transport 流式（SSE delta / 重试 / 失败路径）
         """
+        from ming_sim.session_write_queue import get_session_write_queue
         from ming_sim.audience_night import (
             SCENE_CHAT_SPEAKER,
             ensure_summon_enter,
@@ -1696,6 +1704,8 @@ class GameSession:
             recognize_xuan_command,
         )
         from ming_sim.llm_model import extract_agent_text
+
+        gate = write_gate if write_gate is not None else get_session_write_queue(self).write_gate
 
         # Free emperor prose: empty-check without mutating carried body (P6).
         message_text = str(message or "")
@@ -1708,9 +1718,10 @@ class GameSession:
         night = get_open_night(self.db)
         opened_new_night = night is None
         if opened_new_night:
-            night = open_night(self.db, self.state)
-            from ming_sim.decree_forecast import schedule_held_decree_forecasts
-            schedule_held_decree_forecasts(self)
+            with gate:
+                night = open_night(self.db, self.state)
+                from ming_sim.decree_forecast import schedule_held_decree_forecasts
+                schedule_held_decree_forecasts(self)
         night_id = int(night["id"])
 
         result = ChatTurnResult(answer="")
@@ -1719,7 +1730,7 @@ class GameSession:
             # 生产：退朝只标 court_break，由 epilogue／schedule_close_night 收夜。
             # 零轮当场 close_night 旁路已清退（注释曾称已删、代码残留）。
             if ctid > 0:
-                self._mark_control_turn_translation_done(ctid)
+                self._mark_control_turn_translation_done(ctid, write_gate=gate)
             result.court_action = "court_break"
             return result
 
@@ -1736,37 +1747,38 @@ class GameSession:
                 except ValueError:
                     target = None
             if target is not None:
-                decision = self.consume_audience_admission(
-                    target,
-                    origin_id=f"scene:xuan:{int(chat_turn_id or 0)}:{target.name}",
-                    origin_chat_turn_id=int(chat_turn_id or 0),
-                )
-                if decision.allowed:
-                    ensure_summon_enter(
-                        self.db, night_id, target.name,
+                with gate:
+                    decision = self.consume_audience_admission(
+                        target,
+                        origin_id=f"scene:xuan:{int(chat_turn_id or 0)}:{target.name}",
                         origin_chat_turn_id=int(chat_turn_id or 0),
                     )
-                    # #1838 / ADR 0158：宣 X 当场先切御前主角（不等转译）。
-                    # 夜当前值是投影；ctid>0 时同步写 chat_turns.protagonist_name
-                    # 作按源轮真源，供 undo 按存活最近轮重投影（ADR 0038 / 0155）。
-                    # ctid==0：无源轮场景（单测/无生命周期），只写夜表、不参与撤回联动
-                    # ——与入殿账 origin_chat_turn_id==0 框架账不随轮撤同语义。
-                    from ming_sim.audience_night import set_night_protagonist
-                    set_night_protagonist(
-                        self.db, night_id, target.name,
-                    )
-                    xuan_ctid = int(chat_turn_id or 0)
-                    if xuan_ctid > 0:
-                        self.db.reign.set_chat_turn_protagonist(
-                            xuan_ctid, target.name
+                    if decision.allowed:
+                        ensure_summon_enter(
+                            self.db, night_id, target.name,
+                            origin_chat_turn_id=int(chat_turn_id or 0),
                         )
-                        if (
-                            not bool(getattr(self.db.conn, "_commit_suspended", False))
-                            and int(getattr(self.db.conn, "_atomic_depth", 0) or 0) == 0
-                        ):
-                            self.db.conn.commit()
-                    if on_protagonist_changed is not None:
-                        on_protagonist_changed()
+                        # #1838 / ADR 0158：宣 X 当场先切御前主角（不等转译）。
+                        # 夜当前值是投影；ctid>0 时同步写 chat_turns.protagonist_name
+                        # 作按源轮真源，供 undo 按存活最近轮重投影（ADR 0038 / 0155）。
+                        # ctid==0：无源轮场景（单测/无生命周期），只写夜表、不参与撤回联动
+                        # ——与入殿账 origin_chat_turn_id==0 框架账不随轮撤同语义。
+                        from ming_sim.audience_night import set_night_protagonist
+                        set_night_protagonist(
+                            self.db, night_id, target.name,
+                        )
+                        xuan_ctid = int(chat_turn_id or 0)
+                        if xuan_ctid > 0:
+                            self.db.reign.set_chat_turn_protagonist(
+                                xuan_ctid, target.name
+                            )
+                            if (
+                                not bool(getattr(self.db.conn, "_commit_suspended", False))
+                                and int(getattr(self.db.conn, "_atomic_depth", 0) or 0) == 0
+                            ):
+                                self.db.conn.commit()
+                if decision.allowed and on_protagonist_changed is not None:
+                    on_protagonist_changed()
             # 被拒的宣召仍是一轮殿上戏文；只在合法入殿时先写入殿账。
             # #1838 reopen：不再等入殿旁白。
 
@@ -1784,6 +1796,7 @@ class GameSession:
             answer, transport_attempts_box = self._run_scene_agent_transport(
                 agent, agent_prompt, stream_emit,
                 chat_turn_id=int(chat_turn_id or 0),
+                write_gate=gate,
             )
         else:
             from ming_sim.llm_transport import (
@@ -1844,10 +1857,11 @@ class GameSession:
         stream_emit: Any,
         *,
         chat_turn_id: int = 0,
+        write_gate: Any = None,
     ) -> tuple[str, list]:
 
         """场景 agent 的 transport 流式核——零动作工具；材料只读工具不进 court_action。"""
-
+        from ming_sim.session_write_queue import get_session_write_queue
         from ming_sim.llm_model import extract_agent_text
         from ming_sim.llm_transport import (
             bind_transport_sdk_budget,
@@ -1859,6 +1873,8 @@ class GameSession:
             transport_attempts_public,
             transport_failure_unavailable,
         )
+
+        gate = write_gate if write_gate is not None else get_session_write_queue(self).write_gate
 
         llm_cfg = getattr(self, "llm_config", None)
         policy = audience_transport_policy(llm_cfg)
@@ -1901,7 +1917,8 @@ class GameSession:
             if stream_attempt_n["n"] > 0:
                 stream_emit("", replace=True)
                 if int(chat_turn_id or 0) > 0:
-                    self.db.reign.truncate_chat_turn_agno_runs(int(chat_turn_id))
+                    with gate:
+                        self.db.reign.truncate_chat_turn_agno_runs(int(chat_turn_id))
             stream_attempt_n["n"] += 1
             return agent.run(
                 agent_prompt, stream=True, stream_events=True, yield_run_output=True,
@@ -2331,13 +2348,20 @@ class GameSession:
         # #1234/#1235：点击受理即独立提交月初快照（不进 pre_settle 事务）。
         # accept_settlement_period：FRONT_HALF_DONE 跳过（恢复态已有快照/半程活值不可重写）。
         # Web 入口另在 await/close 前先 capture（点即入时序）；此处幂等兜底 CLI/直调。
+        import contextlib
         from ming_sim.audience_night import AudienceNightError, auto_close_open_night
         from ming_sim.exceptions import LLMUnavailable
         from ming_sim.month_open_snapshot import (
             accept_settlement_period,
             exit_settlement_display_on_failure,
         )
-        accept_settlement_period(self.db, self.state)
+        snapshot_cm = (
+            contextlib.nullcontext()
+            if write_gate_already_held
+            else self._write_gate
+        )
+        with snapshot_cm:
+            accept_settlement_period(self.db, self.state)
         # #503/#542：收夜与开夜、入殿、退侍共用真实 scene LLM adapter。
         # Close-night owns short write sections + gate-free pending translations.
         # Web 入口先在闸外 free-close（issue/stream/no-edict），再持闸跑 resolve；
@@ -2354,7 +2378,8 @@ class GameSession:
                 )
         except (AudienceNightError, LLMUnavailable):
             # #1235 真失败另形：收夜中止后人话 + 出展示态（欠账耗尽=失败单源）。
-            exit_settlement_display_on_failure(self.db, self.state)
+            with snapshot_cm:
+                exit_settlement_display_on_failure(self.db, self.state)
             raise
         # 结束回合才执行“不回=默认同意”；旧式 turn_directives 沿用既有确认口。
         # pending_actions directive 则保持 durable pending，直到 resolve_directives 的

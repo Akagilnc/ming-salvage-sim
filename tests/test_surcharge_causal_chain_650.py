@@ -72,6 +72,7 @@ def _settle_month(state, db, delta, *, before_turn, content, monkeypatch, narrat
         translate=lambda *_a, **_k: {"effects": delta},
     )
     session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     db.save_turn_report(state, narrative, public_body=narrative)
     session.resolve_turn(allow_empty_decree=True)
     wait_for_background_jobs(db)
