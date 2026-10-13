@@ -1363,7 +1363,7 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 ),
                 FieldSpec(
                     "account", "账户",
-                    frozenset({"国库", "内库", "太仓"}), "",
+                    frozenset((*ECONOMY_ACCOUNTS, "太仓")), "",
                 ),
                 FieldSpec(
                     "purpose", "用途", frozenset({"补饷"}), "",
