@@ -8,8 +8,6 @@ from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_ord
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import view
 from ming_sim.settlement.views import section
-import ming_sim.issues as issue_engine
-from ming_sim.entities.issue.store import IssueStore
 
 
 def _active_people(db, count):

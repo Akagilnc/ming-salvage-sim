@@ -1,8 +1,5 @@
 from ming_sim.applier import Provenance
-import math
 import pytest
-from ming_sim.army_pay import army_needed
-from ming_sim.constants import SALARY_RATE_ANCHOR
 from ming_sim.flows import apply_fixed_period_flows
 """#44：军饷应发挂钩兵力（设计 v2）——军存每军 salary_rate（两/兵·月），
 应发 needed(万两) = ceil(manpower × salary_rate / 10000)，仅 owner_power=='ming'。

@@ -1,5 +1,4 @@
 from __future__ import annotations
-from ming_sim.army_pay import derive_army_mutiny_state
 from ming_sim.flows import apply_fixed_period_flows
 """#316 — 月末真实结算入口持久推进哗变次数、军心上限与察看期。"""
 

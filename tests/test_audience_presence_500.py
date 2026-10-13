@@ -9,13 +9,6 @@ from ming_sim.audience_night import (
     TAG_EXIT,
     AudienceNightError,
 )
-from ming_sim.audience_night import (
-    AUDIBILITY_PRIVATE,
-    AUDIBILITY_PUBLIC,
-    TAG_ENTER,
-    TAG_EXIT,
-    AudienceNightError,
-)
 """#500 在场推导与进出账——真实 GameDB + 真实 content 语境的进出账 → 在场末态。
 
 一条外部行为契约：进出账（入殿/告退/传召在途）经确定性推导器得出「任一时刻

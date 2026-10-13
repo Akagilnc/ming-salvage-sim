@@ -6,15 +6,11 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 from ming_sim.opening_seed import seed_opening_world
-import ming_sim.issues as issues_mod
 from ming_sim import audience_night as an
 from tests.conftest import open_hall_turn, stub_scene_agent
 from tests.test_web_audience_night_498 import _FakeAgent
 from ming_sim.db import GameDB
 from web_app import FRONT_HALF_DONE_PHASES
-import ming_sim.entities.issue.legacy as issue_legacy
-import web_app
-from tests.conftest import open_hall_turn
 from ming_sim.session import ChatTurnResult
 """#505 [S4] 续夜 restore：重开回到最后一条持久化对话轮续夜（ADR 0036）。
 
@@ -543,7 +539,6 @@ def test_start_chat_turn_second_turn_reads_agno_v3_runs(web_game):
     断言第二轮 create 成功且 agno_runs_before=既有 run 数。
     """
     from ming_sim.audience_night import SCENE_CHAT_SPEAKER, get_open_night, open_night
-    from ming_sim.session import ChatTurnResult
 
     game = web_game
     night = get_open_night(game.db) or open_night(game.db, game.state)

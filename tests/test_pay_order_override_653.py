@@ -1,7 +1,6 @@
 from __future__ import annotations
 from ming_sim.settlement.dossier import apply_dossier_promulgation, apply_dossier_verdicts
 import copy
-import math
 import pytest
 from ming_sim.fiscal_tick import settle_tick
 from ming_sim.settlement import SettlementContext, settle_delta
@@ -9,12 +8,9 @@ from ming_sim.settlement.views import section
 from ming_sim.pay_order import (
     PayOrderKeyError,
     materialize_pay_order_decree,
-    parse_override_key,
     resolve_pay_order_overrides,
     restore_pay_order_override,
 )
-import json
-from ming_sim.pay_order import PayOrderKeyError, restore_pay_order_override, materialize_pay_order_decree
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """#653 / ADR 0090 偿还序 override ＋ Due 折发系数＋阶级怨气喂判。

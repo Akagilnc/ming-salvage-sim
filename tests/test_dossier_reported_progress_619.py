@@ -4,8 +4,6 @@ import json
 import pytest
 from ming_sim.db import GameDB
 from tests.dossier_test_helpers import create_test_secret_order
-from ming_sim.settlement import SettlementContext, settle_delta
-import ming_sim.issues as issue_engine
 """#619: 通用奏报记录持久轨（非密令执行面案卷通用化）。
 
 双物理轨：密令仍走 secret_orders 私轨；非密令走 dossier_reported_progress。

@@ -6,7 +6,6 @@ from ming_sim.decree import pre_settle, reload_state_from_db, tick_transit_arriv
 from ming_sim.distance import DistanceMatrix
 from ming_sim.models import Event, TurnPhase
 from tests.conftest import active_ming_character
-from ming_sim.entities.issue.store import IssueStore
 """#668：0095 确定性在途倒数 tick + transit_arrivals 叙事投喂 + 恢复。
 
 Seams under test:

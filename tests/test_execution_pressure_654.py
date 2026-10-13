@@ -4,7 +4,6 @@ import json
 import pytest
 from ming_sim.decree_vocabulary import TARGET_KINDS
 from ming_sim.execution_pressure import (
-    normalize_locality_scope,
     resolve_dossier_region_ids,
 )
 """#654 差务属地 oracle：组合矩阵及案卷归属。"""

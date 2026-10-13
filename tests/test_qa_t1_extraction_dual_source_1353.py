@@ -1,10 +1,8 @@
 from __future__ import annotations
-from tests.month_chain_helpers import canned_full_settlement as _canned_full_settlement
 import threading
 import pytest
 import ming_sim.audience_translation as audience_translation
 from ming_sim.audience_translation import list_pending_translations
-import ming_sim.issues as issues_mod
 import web_app
 from ming_sim import audience_night as an
 from tests.test_audience_extraction_501 import (
@@ -282,7 +280,6 @@ def test_startup_catchup_uses_ticketed_gate_not_bare(web_game, monkeypatch):
         spawned.append(t)
         return t
 
-    from ming_sim import audience_translation
     monkeypatch.setattr(
         audience_translation, "catch_up_pending_translations", fake_catch_up,
     )

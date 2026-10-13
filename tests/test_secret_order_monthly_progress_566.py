@@ -1,5 +1,4 @@
 import threading
-from pathlib import Path
 import pytest
 from tests.dossier_test_helpers import create_test_secret_order
 from ming_sim.settlement import SettlementContext, settle_delta

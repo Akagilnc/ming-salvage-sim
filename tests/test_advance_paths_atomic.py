@@ -2,7 +2,6 @@ from __future__ import annotations
 import json
 import pytest
 import ming_sim.decree as decree_mod
-from ming_sim.session_write_queue import get_session_write_queue
 """玩家月链恢复入口与持久化决议验证。"""
 
 
@@ -37,7 +36,6 @@ def test_record_event_decision_choice_preserves_non_triggered_terminal_state(gam
     只补 choice_json，**不得**把已有非 triggered 终态（avoided/expired/obsolete）翻成 triggered，
     也不得把非 triggered 行的 source 改成 hitl_decision（原 ON CONFLICT 的 terminal_state CASE
     实为空操作：excluded 恒为 'triggered'）。"""
-    import json
     db, state, content = game
     eid = "__terminal_account_preserve_test__"
     db.conn.execute(
@@ -63,7 +61,6 @@ def test_record_event_decision_choice_preserves_non_triggered_terminal_state(gam
 
 def test_record_event_decision_choice_inserts_fresh_without_terminal_state(game):
     """HITL 选择只暂存 choice，不抢先把新事件写成 triggered 终态。"""
-    import json
     db, state, content = game
     eid = content.events[0].id
     db.record_event_decision_choice(state, eid, {"label": "斩"})
@@ -82,7 +79,6 @@ def test_mark_event_triggered_upgrades_pending_choice_row(game):
     配套断言（比较本身已删，时刻保留失去依据）；按「被改动作废的旧物随同改动删除」，
     时刻断言一并删除，此处只留仍然成立的终态／来源／choice 契约。
     """
-    import json
     db, state, content = game
     eid = content.events[0].id
     db.record_event_decision_choice(state, eid, {"label": "留"})
@@ -111,7 +107,6 @@ def test_mark_event_triggered_upgrades_pending_choice_row(game):
 )
 def test_terminal_markers_upgrade_pending_choice_row(game, marker, terminal_state, source, reason):
     """确定性终态须覆盖空终态 HITL choice 行，保留亲裁选择，并刷新终态时刻。"""
-    import json
     db, state, content = game
     eid = content.events[0].id
     db.record_event_decision_choice(state, eid, {"label": "留"})

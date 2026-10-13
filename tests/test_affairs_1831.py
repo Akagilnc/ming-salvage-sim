@@ -4,7 +4,6 @@ from ming_sim.applier import Provenance, atomic
 import pytest
 from ming_sim import issues as issues_mod
 from ming_sim.settlement import SettlementContext, settle_delta
-from tests.test_declaration_dispatch_1835 import _minister
 """#1831 事务记录与指向：收夜同生、新指旧、当前情况可恢复、代码不判了结。"""
 
 

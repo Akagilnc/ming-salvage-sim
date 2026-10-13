@@ -5,9 +5,7 @@ import pytest
 import ming_sim.issues as I
 import ming_sim.entities.issue.records as issue_records
 from ming_sim.models import Event
-from contextlib import nullcontext
 from ming_sim.entities.issue.store import IssueStore
-from tests.section_rejection_helpers import game
 """#63 class 4 / ADR 0008 决定 1：apply_issue_tracker_output 的 new_issues 段 insert 路迁逐项拒收。
 
 原先：db.insert_issue 连同内联 int()/dict()/list() 强转一起裹在 `try: ... except Exception:

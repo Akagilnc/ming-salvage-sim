@@ -14,7 +14,6 @@ from ming_sim.context import bind_content
 from ming_sim.db import GameDB
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.fiscal_tick import settle_tick
-from ming_sim.army_pay import army_needed
 from ming_sim.entities.issue.legacy import sync_opening_legacies
 from ming_sim.models import TurnPhase
 from tests.fiscal_test_utils import zero_non_meta_fiscal_config
@@ -1779,7 +1778,6 @@ def test_army_delta_arrears_reconciles_pay_source_container_immediately(fresh_db
 
 def test_pay_source_conservation_rejects_per_army_derived_arrears_drift(fresh_db):
     """The total is read-only, so offsetting independent writes cannot drift it."""
-    import sqlite3
 
     before = dict(fresh_db.conn.execute(
         "SELECT * FROM armies WHERE id='shaanxi_army'",

@@ -9,7 +9,6 @@ from ming_sim.audience_translate import _default_translate_runner as _real_audie
 from tests.conftest import stub_audience_translate, stub_scene_agent
 import web_app
 import ming_sim.decree as decree_mod
-import ming_sim.session as session_mod
 from ming_sim import audience_night as an
 from ming_sim.models import TurnPhase
 import ming_sim.agents as agents_mod

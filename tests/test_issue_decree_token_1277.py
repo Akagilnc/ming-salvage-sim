@@ -3,9 +3,7 @@ from ming_sim.session_write_queue import ClassifiedWriteGate
 from types import SimpleNamespace
 import asyncio
 import pytest
-from fastapi import HTTPException
 import web_app
-from ming_sim.decree import ResolveResult
 from ming_sim.models import TurnPhase
 from ming_sim.session import GameSession
 """#1277 — issue/issue-stream 可选 expected_turn 防双发吃月（同 #1351 口径）。

@@ -5,7 +5,6 @@ from ming_sim.situation_drift import apply_situation_monthly_drift
 from ming_sim.staged_commitment import write_due_staged_commitment_todos
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import section, view
-from ming_sim.entities.issue.store import IssueStore
 """#1260 fiscal 三表 beyond_intent 全链 + 读端单源化 + 嵌套别名。
 
 S1 写端 tracer（三族 + 负向）

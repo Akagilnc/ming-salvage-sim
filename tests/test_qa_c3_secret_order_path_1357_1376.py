@@ -55,7 +55,6 @@ def _state_runtime(db, state, content, *, pending_count_fn):
 
 def test_pending_secret_order_count_zero_without_staged(read_game):
     """负向：无 staged 密令候选时 pending_secret_order_count / 含密令的 pending_count 为 0。"""
-    from ming_sim.session import GameSession
 
     db, state, content = read_game
     sess = SimpleNamespace(db=db, state=state)
@@ -74,7 +73,6 @@ def test_pending_secret_order_count_reflects_staged_candidate(game):
 
     确认前闸门：secret_orders 表仍空（应允后才直写落地，见下条 #1376）。
     """
-    from ming_sim.session import GameSession
 
     db, state, content = game
     name = _active_minister_name(db, content)

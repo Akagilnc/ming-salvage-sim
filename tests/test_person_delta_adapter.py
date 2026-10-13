@@ -16,7 +16,6 @@ from tests.conftest import active_ming_character
 from tests.dossier_test_helpers import create_test_secret_order
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import section, view
-import ming_sim.issues as issues
 """ADR 0009 person delta normalization behavior."""
 
 

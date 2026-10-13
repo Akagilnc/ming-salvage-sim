@@ -187,7 +187,6 @@ def test_menu_save_llm_persists_cli_channel_without_api_key(monkeypatch):
 def test_menu_save_cli_verify_runs_off_event_loop(monkeypatch):
     """P1/P2:CLI verify smoke(~12s,最长 300s)不许同步跑在 asyncio event loop 上卡住
     并发请求——api_menu_save_llm 须经 run_in_executor offload。断言 verify 在非主线程跑。"""
-    import threading
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     seen = {}

@@ -2,9 +2,6 @@ from ming_sim.opening_seed import seed_opening_world
 from tests.material_helpers import prepare_identity_materials
 import json
 import pytest
-from ming_sim.materials import (
-    list_materials,
-)
 from tests.dossier_test_helpers import create_test_secret_order
 from ming_sim.knowledge import build_character_knowledge
 """#489 角色见闻：职位裁切、公开事件与参与留痕。"""

@@ -26,7 +26,7 @@ from ming_sim.entities.character_knowledge import (
 from ming_sim.entities.person_log import ensure_schema as ensure_person_log_schema
 from ming_sim.entities.person_log.store import PersonLogStore
 from ming_sim.entities.reign_state import ensure_schema as ensure_reign_schema
-from ming_sim.entities.reign_state.store import POPULATION_UNIT_PERSONS
+from ming_sim.entities.reign_state.store import POPULATION_UNIT_PERSONS as POPULATION_UNIT_PERSONS
 from ming_sim.appointment_tenure import appointment_tenure_from
 from ming_sim.assets import format_money, format_money_delta, format_wanliang_amount
 from ming_sim.constants import (
@@ -4140,7 +4140,6 @@ class GameDB:
         # #173：danger 排序的欠饷月数归一改按引擎实扣应发 army_needed（替退役 maintenance_per_turn）。
         # army_needed 是 Python 公式（ceil + ming-only + 锚点，SQL 难复现），故 danger 排序在 Python 做；
         # 非 danger 路只按 theater,name 排序、不涉 army_needed，仍走 SQL ORDER BY/LIMIT（线上 gemini perf）。
-        from ming_sim.army_pay import army_needed
         if not danger_order:
             return self.armies.ordered_rows(limit=limit)
 

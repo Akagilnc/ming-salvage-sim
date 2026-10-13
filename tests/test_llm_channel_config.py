@@ -1,6 +1,5 @@
 from __future__ import annotations
 import pytest
-from agno.models.message import Message
 from agno.models.openai import OpenAIChat
 from ming_sim import cli_backend
 from ming_sim.cli_backend import CliChat

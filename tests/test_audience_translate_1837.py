@@ -17,13 +17,6 @@ from tests.conftest import (
     persist_and_schedule_scene,
     stub_audience_translate,
 )
-from ming_sim.session import GameSession
-from tests.conftest import (
-    note_queue_until_game_teardown,
-    offline_empty_audience_translate,
-    persist_and_schedule_scene,
-    stub_audience_translate,
-)
 """#1837 C1a：召对转译——交办载荷与应允。
 
 Seams:

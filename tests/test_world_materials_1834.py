@@ -4,15 +4,12 @@ from ming_sim.materials import (
     list_materials, prepare_world_materials,
 )
 import json
-import os
-import tempfile
 from pathlib import Path
 import pytest
 from ming_sim.knowledge import build_character_knowledge
 from ming_sim.db import GameDB
 from ming_sim.materials import (
-    list_materials, prepare_world_materials, read_material,
-    world_materials_root,
+    read_material,
 )
 """#1834 [M18 供料] S4：推演者材料目录。
 
@@ -177,7 +174,6 @@ def test_prepare_rebuilds_from_world_record_after_restore(game, tmp_path):
     path = str(db.path)
     db.conn.close()
 
-    from ming_sim.db import GameDB
     restored = GameDB(path, content)
     try:
         state2 = restored.load_state()

@@ -1,7 +1,7 @@
 from __future__ import annotations
 import pytest
 from ming_sim.settlement import SettlementContext, settle_delta
-from tests.section_rejection_helpers import game, rejection_rows as _rejection_rows, run_declaration
+from tests.section_rejection_helpers import run_declaration
 """PR2-S1(ADR 0008 决定 1,#91)——两个整段吞 section 迁入逐项拒收契约。
 
 section 5 power_updates、section 9b character_power_changes：原先 `try: db.apply_*()

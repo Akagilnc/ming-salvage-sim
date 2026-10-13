@@ -11,7 +11,6 @@ from ming_sim.entities.fiscal.levy import apply_historical_fiscal_rates
 import ming_sim.issues as issues
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import section, view
-from ming_sim.applier import StoredDocumentError
 """#650（[#477 S3]）：明渠加派 e2e 因果链。
 
 canonical＝ADR 0089（明渠）＋0087（人口守恒转移）＋#650 票面（庭判 run

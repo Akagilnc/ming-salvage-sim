@@ -9,7 +9,6 @@ from ming_sim.supervision import (
 )
 from tests.test_dossier_reported_progress_619 import _world_fingerprint
 from tests.dossier_test_helpers import create_test_secret_order
-import json
 """#627 政敌检举轨——真伪底与带私货审计（ID-12，r4 宪法版）。
 
 引擎三职：供事实（注入既有叙事 LLM 步）/ 承接落库（clamp）/ 真伪底派生。
@@ -93,8 +92,7 @@ def _make_forked(db, state, dossier_id: int, *, token: str = "fork"):
 
 def test_world_materials_exclude_secret_fork_from_gazette(game, tmp_path, monkeypatch):
     """公开材料只列入有奏报且与旨外或执行格分叉的案；密令案与未分叉案不入。"""
-    import json
-    from ming_sim.materials import prepare_world_materials, read_material
+    from ming_sim.materials import prepare_world_materials
 
     db, state, content = game
     owner = next(iter(_chars_by_faction(db).values()))[0]["name"]

@@ -6,12 +6,10 @@ from ming_sim.covert_levy import (
     write_exposure_todos,
 )
 from ming_sim.due_review import audience_todo_lane, build_due_review_input, list_due_review_scenes
-from types import SimpleNamespace
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import view
 from ming_sim.settlement.views import section
 from tests.conftest import wait_for_background_jobs
-from ming_sim.covert_levy import ENTRY_KIND, PROHIBITION_ACTION, active_prohibition_dossier, settle_exposure_from_canonical_actions, write_exposure_todos
 
 
 

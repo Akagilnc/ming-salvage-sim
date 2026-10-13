@@ -1,7 +1,4 @@
 from __future__ import annotations
-import json
-import types
-import pytest
 """#1274 QA D-1 拟诏归一残余：验证庭 r1 四类处方聚焦测。
 
 1) #1391 泛称闭集（大臣）capture 零 409；「不存在之人甲」仍 409

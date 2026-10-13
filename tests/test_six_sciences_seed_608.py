@@ -1,7 +1,4 @@
 from __future__ import annotations
-from ming_sim.db import (
-    _member_office_weight,
-)
 """#608：六科官署与言官 seed。"""
 
 

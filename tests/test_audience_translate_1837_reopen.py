@@ -14,7 +14,6 @@ from ming_sim.audience_translate import normalize_audience_declaration
 from ming_sim.covert_levy import PROHIBITION_ACTION, write_exposure_todos
 from ming_sim.declaration_dispatch import dispatch_declaration
 from tests.month_chain_helpers import make_light_session
-from tests.recommendation_rows import recommendation_events
 from tests.test_covert_levy_651 import _realize_fork
 from ming_sim.session_write_queue import ClassifiedWriteGate
 """#1837 reopen：旧 agent 退役后，转译承接禁摊派/荐人/查访/催办/行程语气。

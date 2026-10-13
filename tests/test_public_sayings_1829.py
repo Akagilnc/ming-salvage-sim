@@ -3,19 +3,6 @@ import shutil
 from ming_sim.knowledge import build_character_knowledge
 from ming_sim.db import GameDB
 from ming_sim.public_sayings import list_public_sayings, record_public_saying
-import json
-import threading
-from ming_sim.audience_night import open_night
-from types import SimpleNamespace
-from ming_sim.session import GameSession
-from ming_sim.models import LLMConfig
-from tests.conftest import (
-    offline_empty_audience_translate,
-    persist_and_schedule_scene,
-    stub_audience_translate,
-    stub_scene_agent,
-)
-from tests.test_month_chain_1843 import _prepare_player_month
 """#1829 公开说法：独立记录入 0034 公开层，不冒充实况。"""
 
 

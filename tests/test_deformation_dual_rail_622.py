@@ -13,7 +13,6 @@ from tests.test_dossier_reported_progress_619 import _world_fingerprint
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import section, view
 from functools import partial
-from tests.test_due_review_621 import _executing_policy_dossier as _executing_policy
 from tests.test_fiscal_beyond_intent_1260 import _prime_and_apply_due_review as _apply_due_review
 """#622 变形判定＋双口径分叉（0072 口径＋0073 读端）。
 

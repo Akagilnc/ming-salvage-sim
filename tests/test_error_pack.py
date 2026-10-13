@@ -2,7 +2,6 @@ from __future__ import annotations
 import asyncio
 import pytest
 from ming_sim.exceptions import SettlementAbort
-import threading
 import json
 from pathlib import Path
 """S6 (ADR 0008 PR1) — 月链失败响亮中止与错误包。

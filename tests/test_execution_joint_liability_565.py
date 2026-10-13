@@ -3,7 +3,6 @@ import pytest
 from ming_sim.strict_types import validate_affected_parties
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import section, view
-import ming_sim.issues as issue_engine
 """#565 执行格终值链 + 委派连坐（唯一契约 r3）。"""
 
 

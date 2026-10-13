@@ -1,6 +1,5 @@
 from ming_sim.recommendations import list_recommendation_candidates
 import pytest
-from tests.recommendation_rows import recommendation_events
 from tests.dossier_test_helpers import promulgate_proposed_appointments
 """#635 [479·S4] 荐人口：荐人事件消费·原子双边（庭裁 r1-r3）。
 

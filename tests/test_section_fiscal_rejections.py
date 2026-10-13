@@ -1,7 +1,7 @@
 from __future__ import annotations
 import pytest
 from tests.section_rejection_helpers import run_declaration as _run_settle
-from tests.section_rejection_helpers import game, rejection_rows as _rejection_rows
+from tests.section_rejection_helpers import rejection_rows as _rejection_rows
 """PR2-S3(ADR 0008 决定 1,#91)——apply_score_extraction 的 fiscal 三段迁拒收契约。
 
 fiscal_removes / fiscal_creates / fiscal_changes 三段原先 LLM 脏项要么 print 静默跳、

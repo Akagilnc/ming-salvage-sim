@@ -9,7 +9,6 @@ import ming_sim.entities.issue.event_terminal as event_terminal
 from ming_sim.models import Event
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import section, view
-from pathlib import Path
 from ming_sim.entities.issue.store import IssueStore
 """#12（M1 P0）：历史锚定事件结构化前提门。
 

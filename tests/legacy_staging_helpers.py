@@ -1,6 +1,4 @@
 from __future__ import annotations
-from ming_sim import audience_night
-from ming_sim.action_materialize import stage_punishment_candidate
 """Test helpers that stage pending actions without the retired classifier chain.
 
 #1871 deleted apply_cli_conversation_actions / run_materialize_pipeline.

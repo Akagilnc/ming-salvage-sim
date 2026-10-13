@@ -11,8 +11,6 @@ import web_app
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.llm_transport import default_transport_policy
 from tests.conftest import stub_audience_translate, stub_scene_agent
-from tests.web_audience_test_doubles import install_hall_admission, minister_double
-from tests.conftest import stub_scene_agent
 """#393 / cmr Gate2 F-B：召对流式 prologue 在「已建 chat_turn」之后写途中崩溃，必须失败该轮
 （fail_chat_turn）并释放写路径——否则留下 active 且无大臣回复的孤儿轮，后续召对/drain 永久卡住。
 

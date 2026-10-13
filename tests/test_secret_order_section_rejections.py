@@ -3,7 +3,7 @@ from functools import partial
 import json
 import pytest
 from tests.section_rejection_helpers import run_declaration as run_settle
-from tests.section_rejection_helpers import game, rejection_rows
+from tests.section_rejection_helpers import rejection_rows
 from tests.dossier_test_helpers import create_test_secret_order
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import view

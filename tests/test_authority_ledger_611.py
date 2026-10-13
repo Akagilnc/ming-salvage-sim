@@ -6,7 +6,6 @@ from ming_sim.relations import EMPEROR_NODE
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import view
 from ming_sim.settlement.views import section
-from ming_sim import issues as issue_engine
 """#611 authority ledger: production slot, projection, restore, revoke facts."""
 
 

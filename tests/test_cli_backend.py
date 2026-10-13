@@ -1,12 +1,10 @@
 from __future__ import annotations
-import json
 from types import SimpleNamespace
 import pytest
 from agno.models.message import Message
 import ming_sim.cli_backend as cb
 from ming_sim.models import LLMConfig
 from ming_sim.exceptions import LLMUnavailable
-import os
 """CLI backend contracts: public resolve/extract/runner seams (backend mocked).
 
 #1185 wave2b: drop private helper unit pins; merge same-seam tracers; assert
