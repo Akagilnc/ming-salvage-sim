@@ -377,7 +377,7 @@ def test_executescript_inside_atomic_fails_loud(game):
 
 
 # ---------------------------------------------------------------------------
-# cmr S1 r2 修复回归（F1-F4）
+# cmr S1 r2 修复回归（F1/F3/F4）
 # ---------------------------------------------------------------------------
 
 def test_swallowed_conn_context_exception_forces_outer_rollback(game):
