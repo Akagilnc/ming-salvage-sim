@@ -2662,19 +2662,23 @@ def _accept_settlement_period(
     if blocking:
         gate.acquire()
     else:
-        # Sole retirement: short critical try-acquire under entry_lock, then any
-        # wait on the bare write gate outside that lock (O1a-R). Open barriers /
-        # peer LLM do not hold the bare gate; a queue ticket would. Concurrent
-        # month entry keeps #1353 r12 non-blocking 409.
-        with _settlement_entry_lock(game):
-            concurrent = (
-                int(getattr(game, "_settlement_entry_inflight", 0) or 0) > 1
-            )
-            acquired = (not concurrent) and gate.acquire(blocking=False)
-        if concurrent:
-            _acquire_web_write_gate_or_409(gate)
-        elif not acquired:
-            gate.acquire()
+        # Snapshot admission bypasses queue barriers / peer LLM. Recheck entry
+        # count before every try; wait outside entry_lock (O1a-R / O1a-R2).
+        while True:
+            with _settlement_entry_lock(game):
+                concurrent = (
+                    int(getattr(game, "_settlement_entry_inflight", 0) or 0) > 1
+                )
+                if not concurrent and gate.acquire(blocking=False):
+                    break
+            if concurrent:
+                _acquire_web_write_gate_or_409(gate)
+                break
+            with gate._cv:
+                if gate._held:
+                    # Entry registration does not notify this condition. Wake to
+                    # recheck it even if release was missed; no request deadline.
+                    gate._cv.wait(timeout=0.05)
     try:
         return accept_settlement_period(db, state)
     finally:
