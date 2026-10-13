@@ -216,8 +216,20 @@ def build_translation_target_grounding(db: Any, state: Any = None) -> str:
                 lines.append("scene\t" + json.dumps(scene, ensure_ascii=False, sort_keys=True))
     candidate_block = _person_candidate_grounding(db, state)
     from ming_sim.applier import list_unresolved_player_rejections
-    for fact in list_unresolved_player_rejections(db):
+    unresolved = list_unresolved_player_rejections(db)
+    for fact in unresolved:
         lines.append("player_rejection\t" + json.dumps(fact, ensure_ascii=False, sort_keys=True))
+    from ming_sim.declaration_dispatch import _correction_context
+
+    unresolved_ids = {fact["rejection_id"] for fact in unresolved}
+    for dossier in db.dossiers.list_dossiers():
+        _, _, payload = _correction_context(db, None, dossier=dossier)
+        ids = [rid for rid in payload.get("_resolves_rejection_ids", []) if rid in unresolved_ids]
+        if ids:
+            lines.append("rejection_correction\t" + json.dumps({
+                "dossier_id": dossier["id"], "resolves_rejection_ids": ids,
+                "status": dossier["status"], "execution_outcome": dossier["execution_outcome"],
+            }, ensure_ascii=False, sort_keys=True))
     if not lines and not candidate_block:
         return ""
     parts: List[str] = []
@@ -251,10 +263,6 @@ def build_c0_declaration_shape() -> str:
         f"    {line}" for line in json.dumps(
             {
                 "event_id": "仅属某事件战果时填事件 id；未填即独立",
-                "resolves_rejection_ids": [
-                    "本旨明确修正的拒收 id；无则省略；与普通效果同一有序数组"
-                ],
-                "dossier_id": "世界段修正时填可见在途案卷 id；本旨续推可省略",
                 **DECLARATION_EFFECT_FIELDS,
             },
             ensure_ascii=False, indent=2,
@@ -327,7 +335,7 @@ def build_c0_declaration_shape() -> str:
         '  "rushes": [{"target_kind": "commitment|secret_order", "target_id": 正整数, '
         '"stage_idx": 0, "deadline_months": 1, "reason": "催办缘由"}],\n'
         '  "travel_tones": [{"person_name": "人名", "tone": "常行|加急|星夜兼程"}],\n'
-        '  "rejection_withdrawals": [{"rejection_id": 正整数（皇帝明确说不做的那条未了结拒收 id）}],\n'
+        '  "rejection_withdrawals": [{"rejection_id": 正整数（皇帝明确说不做或叙事了结的未了结拒收 id）, "decision": "withdrawn|succeeded（默认 withdrawn）", "dossier_id": "叙事了结所援案卷 id（succeeded 时填）"}],\n'
         '  "on_scene_facts": [\n'
         "    {\n"
         '      "name": "人名",\n'
@@ -423,8 +431,7 @@ def build_audience_translate_prompt(
         "- 无对应事实的 section 输出空数组（protagonist 无则省略或 null），不要编造。\n"
         "- 承接不了的交办仍写入 commissions（由代码拒收），不要改写皇帝原话去猜。\n"
         "- 皇帝明确修正某条未了结拒收 → 新 commissions 项带 resolves_rejection_ids；"
-        "只关联被拒收的部分，暂存/应允不等于下达成功。修正仍拒收则新旧拒收都未了结。"
-        "皇帝明确说不做 → rejection_withdrawals；闲谈、留中与未回应不算撤回。\n"
+        "皇帝明确说不做或明确确认叙事修正已办成 → rejection_withdrawals（decision 可填 withdrawn 或 succeeded）；闲谈、留中与未回应不算撤回/了结。\n"
         "- 暗渠揭破场面呈上后皇帝禁摊派 → commissions 一项 dossier_action_type=prohibit_covert_levy，target_id 填当前场面案卷 dossier_id。\n"
         "- 大臣具名举荐某人任某差并附荐词 → commissions 任命 + recommendation（荐者/荐词原句）。\n"
         "- 皇帝交代近侍查某事 → inquiries；只有点名【权威目标目录】里某一条密令时才填该行精确 order_id，"

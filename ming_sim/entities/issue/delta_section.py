@@ -25,17 +25,14 @@ def apply(run) -> SectionResult:
 
     # 静态门闩先响亮筛：只有真能过候选/结果闸的事件结局标签才 fail-loud，
     # 非候选幻觉留给后面的 event_pool 逐项拒收（免不相干 delta 一并被带走）。
-    # 逐笔路径只闸本笔战略从属，避免提前读/拒别笔事件。
     strategic_event_label_gate_ids = (
         run.strategic_event_pool_ids
-        & run.current_strategic_delta_ids()
+        & run.strategic_event_result_delta_event_ids
         & run.candidate_event_ids_at_input
     )
     for event_id in sorted(strategic_event_label_gate_ids):
         _strategic_event_outcome_label_or_error(
-            event_id,
-            run.extracted if event_id in run.ctx.admitted_event_ids else run.current_extracted,
-            run.runtime_content,
+            event_id, run.extracted, run.runtime_content,
         )
 
     issue_summary = apply_issue_tracker_output(
@@ -71,11 +68,9 @@ def apply(run) -> SectionResult:
         if row is None:
             continue
         carriers.extend(_monthly_economy_items(loads_effect_dict(row["ongoing_effects"])))
-    # 逐笔交错时跨信封累加：后笔财政 creates 仍能见到先笔承诺月支载体。
-    run.commitment_economy_carriers.extend(carriers)
+    run.commitment_economy_carriers = carriers
 
     extras = _resolve_strategic_events(run, issue_summary)
-    # 战略从属跨域结果走共同 _store：逐笔时经 active_step_parts 叠进本笔步结果。
     from ming_sim.settlement.run import _store
     for extra_name, extra in extras.items():
         _store(run, extra_name, extra)
@@ -126,17 +121,6 @@ def _resolve_strategic_events(run, issue_summary) -> Dict[str, SectionResult]:
         "person_issue": [], "new_armies": [],
     }
     reject_bucket = {name: [] for name in bucket}
-    # 只处理本笔（或整批）声明里的战略从属——读全批会重复拒收别笔、提前物化别笔。
-    step_strategic_ids = run.current_strategic_delta_ids()
-    step_pool_ids = (
-        run.strategic_event_pool_ids
-        if run.effect_sequence is None
-        else (
-            {
-                eid for eids in run.current_event_ids.values() for eid in eids if eid
-            } & run.strategic_event_pool_ids
-        )
-    )
     new_issues = issue_summary.new_issues
     seen = {str(row.get("id") or "").strip() for row in new_issues}
     for refusal in issue_summary.rejected:
@@ -144,39 +128,30 @@ def _resolve_strategic_events(run, issue_summary) -> Dict[str, SectionResult]:
         if not isinstance(original, dict):
             continue
         event_id = str(original.get("id") or original.get("origin_ref") or "").strip()
-        if event_id not in step_strategic_ids and event_id not in step_pool_ids:
+        if event_id not in run.strategic_event_referenced_ids:
             continue
         seen.add(event_id)
         _extend_bucket(reject_bucket, _suppressed_rows(
             run, event_id, str(original.get("title") or ""),
         ))
 
-    for event_id in sorted(step_strategic_ids - seen - run.ctx.admitted_event_ids):
+    for event_id in sorted(run.strategic_event_delta_ids - seen):
         ev = run.runtime_content.event_by_id.get(event_id)
         _extend_bucket(reject_bucket, _suppressed_rows(
             run, event_id, ev.title if ev is not None else event_id,
         ))
 
-    # Preflight admitted the event group once. Later envelopes land their own
-    # results without requiring a duplicate event_pool declaration or re-gating.
-    work = list(new_issues)
-    work.extend(
-        {"id": event_id, "deferred_trigger": True}
-        for event_id in sorted((step_strategic_ids & run.ctx.admitted_event_ids) - seen)
-    )
-    for new_issue in work:
+    for new_issue in list(new_issues):
         if not (
             isinstance(new_issue, dict)
             and new_issue.get("deferred_trigger")
         ):
             continue
         event_id = str(new_issue.get("id") or "").strip()
-        if event_id not in step_pool_ids:
+        if event_id not in run.strategic_event_pool_ids:
             continue
         outcome_label, outcome_error = _strategic_event_outcome_label_or_error(
-            event_id,
-            run.extracted if event_id in run.ctx.admitted_event_ids else run.current_extracted,
-            run.runtime_content,
+            event_id, run.extracted, run.runtime_content,
         )
         if outcome_error:
             issue_summary.rejected.append(RejectedItem(item=new_issue, reason=outcome_error, category="missing_event_outcome", source=run.ctx.source))
@@ -230,12 +205,11 @@ def _resolve_strategic_events(run, issue_summary) -> Dict[str, SectionResult]:
             source=run.ctx.source)
             bucket["power"].extend(landed)
             reject_bucket["power"].extend(refused)
-        if new_issue in new_issues:
-            run.db.mark_event_triggered(
-                run.state, event_id, terminal_reason=outcome_label, commit=False,
-            )
-            apply_event_cascading_invalidations(run.state, run.db)
-            new_issue["reason"] = "事件已记为触发，软判结果已落主账"
+        run.db.mark_event_triggered(
+            run.state, event_id, terminal_reason=outcome_label, commit=False,
+        )
+        apply_event_cascading_invalidations(run.state, run.db)
+        new_issue["reason"] = "事件已记为触发，软判结果已落主账"
     return {
         name: SectionResult(applied=rows, rejected=reject_bucket[name])
         for name, rows in bucket.items()

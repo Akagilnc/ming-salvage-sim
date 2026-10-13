@@ -16,9 +16,8 @@ def apply(run):
     applied_surcharges, surcharge_rejections = _apply_surcharge_decrees(
         run.db, run.current_extracted.get("surcharge_decrees") or [], source=run.ctx.source,
     )
-    # 逐笔交错时跨信封累加：后笔人口段仍能见到先笔已落加派认领。
-    run.surcharge_claims.update({
+    run.surcharge_claims = {
         (str(item.get("origin_ref") or ""), str(item.get("region_id") or ""))
         for item in applied_surcharges
-    })
+    }
     return SectionResult(applied=applied_surcharges, rejected=surcharge_rejections)
