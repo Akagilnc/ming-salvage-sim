@@ -73,6 +73,7 @@ class SettlementContext:
     secret_dossier_ids_at_input: Set[int] = field(default_factory=set)
     open_affair_ids_at_input: Set[int] = field(default_factory=set)
     defer_disclosure: bool = False
+    admitted_event_ids: Set[str] = field(default_factory=set)
 
 
 @dataclass
@@ -173,7 +174,7 @@ class SettlementRun:
 
     def event_new_armies(self, event_id: str) -> List[dict]:
         return [
-            item for item in self.strategic_new_armies_raw
+            item for item in (self.current_extracted.get("new_armies") or [])
             if self.declared_new_army_event_by_item.get(id(item), "") == event_id
         ]
 
@@ -236,15 +237,14 @@ def _preflight(
         else {c.id for c in gather_candidate_events(state, db)}
     )
 
-    # 人物变更挂所属效果 id（战略事件从属后果的归属判定用），读完即摘——
-    # 内部字段不进任何段的可见 delta。就地挂标，保持与 effect_sequence 各笔共享
-    # 同一批对象，供盖章投影 / 拒收 id 映射按对象身份对齐（另建副本会错步）。
+    # Preserve input identity for stamping; event ownership stays outside raw items.
     person_event_ids = (ordered_effect_event_ids or {}).get("人物变更", [])
-    person_items = clean.get("人物变更")
-    if isinstance(person_items, list) and person_event_ids:
-        for index, item in enumerate(person_items):
-            if isinstance(item, dict) and index < len(person_event_ids):
-                item["_effect_event_id"] = person_event_ids[index]
+    person_events = {
+        id(item): person_event_ids[index]
+        for index, item in enumerate(clean.get("人物变更") or [])
+        if index < len(person_event_ids)
+    }
+    stamped_person_events: Dict[int, str] = {}
 
     batch_new_identities: Dict[str, Tuple[str, str, str]] = {}
 
@@ -306,6 +306,8 @@ def _preflight(
                     rejection_by_origin_id[id(raw_item)] = rejected_item
                     continue
                 stamped_by_origin[id(raw_item)] = stamped
+                if field_name == "人物变更":
+                    stamped_person_events[id(stamped)] = person_events.get(id(raw_item), "")
                 kept.append(stamped)
             clean[field_name] = kept
 
@@ -354,7 +356,10 @@ def _preflight(
 
     # 人物只走 人物变更 一条流（#1835 F1：旧四键已退役，不再静默翻成平行写路）。
     person_changes = _canonicalize_person_change_names(
-        normalize_person_changes({"人物变更": clean.get("人物变更") or []}),
+        normalize_person_changes({"人物变更": [
+            {**item, "_effect_event_id": stamped_person_events.get(id(item), "")}
+            for item in (clean.get("人物变更") or [])
+        ]}),
         run.runtime_content,
         db,
     )
@@ -498,12 +503,13 @@ def _bind_step_person_changes(run, step_index: int) -> None:
     if step_index < len(run.effect_sequence_person_changes):
         people = list(run.effect_sequence_person_changes[step_index])
     pre_issue, post_issue = split_pre_issue_person_changes(people)
-    _str_pre, pre_issue = _split_strategic_person_result_changes(
+    str_pre, pre_issue = _split_strategic_person_result_changes(
         pre_issue, run.strategic_event_referenced_ids, run.declared_person_event_by_item,
     )
-    _str_post, post_issue = _split_strategic_person_result_changes(
+    str_post, post_issue = _split_strategic_person_result_changes(
         post_issue, run.strategic_event_referenced_ids, run.declared_person_event_by_item,
     )
+    run.strategic_person_result_changes = [*str_pre, *str_post]
     run.pre_issue_person_changes = pre_issue
     run.post_issue_person_changes = post_issue
 

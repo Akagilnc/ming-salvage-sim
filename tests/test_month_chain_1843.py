@@ -252,6 +252,10 @@ def test_player_rejection_lifecycle_through_translation_and_month(game, monkeypa
                      "economy_moves": [{**bad, "account": "国库", "category": "经济成功"}],
                      "fiscal_removes": [{"key": "查无此税项", "origin_ref": origin,
                                         "reason": "财政拒收"}]}]
+        if kind == "shape":
+            return [{"resolves_rejection_ids": ids,
+                     "economy_moves": [{**bad, "account": "国库", "category": "shape-sibling"}],
+                     "fiscal_removes": "invalid-container"}]
         if kind == "stamp":
             return [{"resolves_rejection_ids": ids, "economy_moves": [
                 {**bad, "account": "国库", "category": "先立",
@@ -413,6 +417,7 @@ def test_player_rejection_lifecycle_through_translation_and_month(game, monkeypa
             ("dual", False),        # 同旨好坏两信封
             ("fiscal_ok", True),    # 仅财政落账须认成功
             ("mixed_reject", False),  # 经济成功+财政拒收须认失败
+            ("shape", False),       # 形状坏项留供，不带走合法同笔条目
             ("stamp", False),       # 前置盖章拒收须进步结果
             ("unowned", False),     # 未归属事件结局须进步结果
             ("specialized_ok", True),     # 专属检举落账须认成功（须先于同案卷再检举）
@@ -429,6 +434,10 @@ def test_player_rejection_lifecycle_through_translation_and_month(game, monkeypa
                 assert rid not in unresolved_ids, kind
             else:
                 assert rid in unresolved_ids, kind
+            if kind == "shape":
+                assert db.conn.execute(
+                    "SELECT delta FROM economy_ledger WHERE category='shape-sibling'",
+                ).fetchone()[0] == int(bad["delta"])
             reopen_check(f"k5-{kind}.db")
 
     # K4：同一段里修正转拨与普通支出按交代先后争库。

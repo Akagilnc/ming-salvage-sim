@@ -90,7 +90,7 @@ from ming_sim.entities.affair import ATTACH_BIRTH, ATTACH_EXPERIENCE, declaratio
 from ming_sim.entities.dossier import DOSSIER_MODES
 from ming_sim.error_pack import rejections_jsonl_path
 from ming_sim.relations import EMPEROR_NODE, summon_edge_origin
-from ming_sim.settlement.run import apply_person_changes_only
+from ming_sim.settlement.run import EffectSequence, apply_person_changes_only
 from ming_sim.settlement.preflight import _ORDERED_DELTA_FIELDS
 from ming_sim.public_sayings import record_public_saying
 from ming_sim.relations import validate_edge_kind
@@ -616,8 +616,6 @@ def _dispatch_effects(
                 )
                 if owner_err or not dossier:
                     raise KeyError(owner_err or "missing_ref")
-                if invalid:
-                    raise ValueError("修正效果声明形状被拒")
             except (TypeError, ValueError, KeyError) as exc:
                 mark_dossier_id = None
                 try:
@@ -650,7 +648,10 @@ def _dispatch_effects(
                     item=dict(item), reason=str(exc), category=category, source=source,
                 ))
                 continue
-            annotation = {"ids": ids, "pending_id": pending_id}
+            annotation = {
+                "ids": ids, "pending_id": pending_id,
+                "shape_rejections": [refusal for _section, refusal in invalid],
+            }
             if correction_refs is not None and owner_ref:
                 correction_refs.append(owner_ref)
         has_effect = True
@@ -665,7 +666,7 @@ def _dispatch_effects(
     extraction: dict[str, object] = {}
     ordered_deltas: dict[str, list[tuple[str, object]]] = {field: [] for field in _ORDERED_DELTA_FIELDS}
     ordered_effect_event_ids: dict[str, list[str]] = {}
-    effect_sequence: list[tuple[dict[str, object], dict[str, list[tuple[str, object]]], dict[str, list[str]]]] = []
+    effect_sequence: EffectSequence = []
     accepted_effect = False
     accepted_event_ids: list[str] = []
     from ming_sim.issues import (
@@ -688,7 +689,9 @@ def _dispatch_effects(
         step_extraction, step_ordered, step_event_ids, unowned_outcomes = (
             _effect_extraction_from_clean(clean, event_id)
         )
-        step_priors: list[RejectedItem] = []
+        step_priors: list[RejectedItem] = (
+            list(annotation["shape_rejections"]) if annotation is not None else []
+        )
         for stray in unowned_outcomes:
             item = RejectedItem(
                 item={"event_id": event_id, "事件结局": stray},
@@ -723,6 +726,7 @@ def _dispatch_effects(
             dossier_ids_at_input=set(refs.get("dossiers", ())),
             secret_dossier_ids_at_input=set(refs.get("secret_dossiers", ())),
             defer_disclosure=defer_disclosure,
+            admitted_event_ids=set(accepted_event_ids),
         ),
         ordered_deltas=ordered_deltas,
         ordered_effect_event_ids=ordered_effect_event_ids,
