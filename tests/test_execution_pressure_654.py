@@ -234,7 +234,6 @@ def test_revoke_decree_523_producer_durable_oracle_chain(env):
 
     owner A：八值成员、dossier 三格、unknown 拒绝、revoke identity 保留。
     """
-    import ming_sim.action_materialize  # noqa: F401 -- installs package catalog
     from ming_sim.action_materialize import stage_revoke_decree_candidate
 
     db, state, content = env
