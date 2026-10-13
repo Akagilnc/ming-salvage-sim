@@ -263,8 +263,7 @@ def compute_budget_lines(
     ]
 
     budget: Dict[str, Dict[str, list]] = {
-        "国库": {"income": [], "expense": []},
-        "内库": {"income": [], "expense": []},
+        acc: {"income": [], "expense": []} for acc in ECONOMY_ACCOUNTS
     }
     budget["国库"]["income"].extend(hub_income_lines)
     budget["国库"]["expense"].extend(army_pay_lines)
@@ -287,8 +286,8 @@ def compute_budget_lines(
         )
 
     # 建筑：按当前 condition 折算月产出/维护。内廷类维护扣内库，余扣国库；产出按 output_metric。
-    bld_in = {"国库": 0, "内库": 0}
-    bld_out = {"国库": 0, "内库": 0}
+    bld_in = {acc: 0 for acc in ECONOMY_ACCOUNTS}
+    bld_out = {acc: 0 for acc in ECONOMY_ACCOUNTS}
     for r in db.conn.execute(
         'SELECT category, condition, maintenance, output_metric, output_amount FROM '
         'buildings',
