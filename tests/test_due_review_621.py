@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests.dossier_test_helpers import _cost_events
 from ming_sim.settlement.dossier import apply_dossier_promulgation
 import pytest
 from tests.conftest import wait_for_background_jobs
@@ -89,16 +90,6 @@ def _settle_empty_month(db, state, content, monkeypatch):
     wait_for_background_jobs(db)
     assert state.turn == before + 1
     return result
-
-
-def _cost_events(db, dossier_id, *, identity="连坐"):
-    return [
-        dict(row)
-        for row in db.conn.execute(
-            "SELECT * FROM decree_cost_events WHERE dossier_id=? AND cost_identity=? ORDER BY id",
-            (int(dossier_id), identity),
-        ).fetchall()
-    ]
 
 
 # ── P3 待办消费 ───────────────────────────────────────────────────────
@@ -248,7 +239,7 @@ def test_dossier_branch_writes_execution_slot_via_adapter(game, monkeypatch):
     # 中段：不写终值、不结案、不连坐；todo 已消费
     assert dossier["status"] == "executing"
     assert dossier["execution_outcome"] in ("", None, "executing")
-    assert _cost_events(db, dossier_id) == []
+    assert _cost_events(db, dossier_id, identity="连坐") == []
     assert db.dossiers.list_next_audience_todos(status=TODO_STATUS_PENDING) == []
 
 
@@ -408,7 +399,7 @@ def test_mid_stage_no_close_no_joint_liability(game):
     # 中段不写终值、不关案、不连坐、不代写奏报
     assert dossier["status"] == "executing"
     assert dossier["execution_outcome"] in ("", None, "executing")
-    assert _cost_events(db, dossier_id) == []
+    assert _cost_events(db, dossier_id, identity="连坐") == []
     assert db.dossiers.list_dossier_progress(dossier_id) == []
 
 
@@ -448,7 +439,7 @@ def test_final_stage_terminal_close_joint_liability_at_most_once(game):
     dossier = db.dossiers.get(dossier_id)
     assert dossier["execution_outcome"] == "failed"
     assert dossier["status"] == "closed"
-    costs = _cost_events(db, dossier_id)
+    costs = _cost_events(db, dossier_id, identity="连坐")
     liability_gates = [c for c in costs if c.get("cost_kind") == "liability"]
     assert len(liability_gates) == 1
 
@@ -463,7 +454,7 @@ def test_final_stage_terminal_close_joint_liability_at_most_once(game):
     assert second[0].get("branch") == "dossier", second
     assert (second[0].get("execution") or {}).get("rejected") is not True, second
     assert (second[0].get("execution") or {}).get("noop") is True, second
-    costs_after = _cost_events(db, dossier_id)
+    costs_after = _cost_events(db, dossier_id, identity="连坐")
     assert costs_after == costs
     liability_after = [c for c in costs_after if c.get("cost_kind") == "liability"]
     assert len(liability_after) == 1

@@ -942,7 +942,7 @@ def _assert_commission_grant_target_exists(
     kind = str(target_kind or "").strip()
     tid = str(target_id or "").strip()
     if kind == "region":
-        row = db.regions.presence((tid,))
+        row = db.regions.row(tid, fields="1")
         if row is None:
             raise DeclarationReferenceError(f"地区不存在：{tid}")
         return
@@ -950,7 +950,7 @@ def _assert_commission_grant_target_exists(
         _assert_characters_exist(db, [tid])
         return
     if kind == "army":
-        row = db.armies.presence((tid,))
+        row = db.armies.row(tid, fields="1")
         if row is None:
             raise DeclarationReferenceError(f"军队不存在：{tid}")
         return
@@ -2063,7 +2063,7 @@ def _is_roster_character(db: Any, name: str) -> bool:
     text = str(name or "").strip()
     if not text:
         return False
-    row = db.characters.presence((text,))
+    row = db.characters.row(text, fields="1")
     return row is not None
 
 
@@ -2111,7 +2111,7 @@ def _declared_dossier_links(raw: object) -> Optional[List[Dict[str, object]]]:
 def _commission_fallback_actor(db: Any) -> str:
     """场景整场入口无单人大臣锚时，directive.actor 回落殿前常在（王承恩优先）。"""
     for name in ("王承恩", "曹化淳"):
-        row = db.characters.field_row('name', name)
+        row = db.characters.row(name, fields="name")
         if row is not None:
             return str(row["name"])
     row = db.conn.execute(
@@ -2371,7 +2371,7 @@ def _dispatch_inquiries(
             continue
         from ming_sim.audience_night import is_inner_court_attendant
 
-        character = db.characters.field_row('office', attendant)
+        character = db.characters.row(attendant, fields="office")
         if not is_inner_court_attendant(character):
             _reject(rejected, item, "受命者不是近侍", "invalid_state", source)
             continue
@@ -2888,7 +2888,7 @@ def _dispatch_textual_facts(
 
 def _assert_characters_exist(db: Any, names: Sequence[str]) -> None:
     for name in names:
-        row = db.characters.presence((name,))
+        row = db.characters.row(name, fields="1")
         if row is None:
             raise DeclarationReferenceError(f"人物不存在：{name}")
 
@@ -3021,7 +3021,7 @@ def _resolve_night_source_chat_turn(
         return ctid, None
     if ctid <= 0:
         return 0, "召对夜上下文的当场实况须带正源轮 chat_turn_id"
-    row = db.reign.chat_turn_night_id(ctid)
+    row = db.reign.row(ctid, fields="night_id")
     if row is None or int(row["night_id"] or 0) != nid:
         return 0, f"源轮不属于本夜：chat_turn_id={ctid}"
     return ctid, None

@@ -118,7 +118,7 @@ def test_r4_named_characters_debut_in_historical_order(tmp_path, content):
             for name, office, faction in batch:
                 assert office == session.content.characters[name].debut_office
                 assert {"name": name, "office": office, "faction": faction} in debuted
-                row = db.characters.field_row("office", name)
+                row = db.characters.row(name, fields="office")
                 assert row["office"] == office
                 assert db.characters.get_character_status(name)[0] == "active"
     finally:

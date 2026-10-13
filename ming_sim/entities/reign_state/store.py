@@ -15,6 +15,8 @@ from typing import Any, Dict, Iterable, List, Optional
 from ming_sim.applier import load_stored_json, load_stored_list
 
 # Population unit constant (shared with GameDB read path; no durable marker).
+from ming_sim.entities.column_write import RowStore
+
 POPULATION_UNIT_PERSONS = "人"
 
 _METRIC_UPSERT_SQL = (
@@ -44,14 +46,12 @@ def ensure_schema(conn: Any) -> None:
     conn.executescript(_SCHEMA_SQL)
 
 
-class ReignStateStore:
+class ReignStateStore(RowStore):
     """Single write port for the reign header and the balance metrics."""
 
-    def __init__(self, conn: Any) -> None:
-        self._conn = conn
-
-    def exists(self) -> bool:
-        return self._conn.execute("SELECT 1 FROM game_state WHERE id = 1").fetchone() is not None
+    TABLE = "chat_turns"
+    PK = "id"
+    TABLES = {"rejection_resolutions": "rejection_id", "rejection_reports": "id"}
 
     def save_game_state(self, state) -> None:
         """Write reign header and balances from a GameState-like object."""
@@ -77,10 +77,11 @@ class ReignStateStore:
 
     def read(self) -> Optional[Dict[str, object]]:
         """The reign header, or None when this save has never been initialized."""
-        row = self._conn.execute(
-            "SELECT year, period, turn, turn_phase, ended, ending_status "
-            "FROM game_state WHERE id = 1"
-        ).fetchone()
+        row = self.row(
+            1,
+            fields="year, period, turn, turn_phase, ended, ending_status",
+            table="game_state",
+        )
         if row is None:
             return None
         return {
@@ -105,9 +106,6 @@ class ReignStateStore:
             _METRIC_UPSERT_SQL,
             (str(key), int(value)),
         )
-
-    def turn_row(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT turn FROM game_state WHERE id = 1', params).fetchone()
 
     def save_ending_summary(
         self,
@@ -165,15 +163,13 @@ class ReignStateStore:
 
     def current_settle_turn(self, fallback: int = 0) -> int:
         """Current absolute turn from game_state; missing row uses fallback."""
-        row = self.turn_row()
+        row = self.row(1, fields="turn", table="game_state")
         if row is None or row["turn"] is None:
             return int(fallback)
         return int(row["turn"])
 
     def has_meta_flag(self, key: str) -> bool:
-        row = self._conn.execute(
-            "SELECT value FROM metrics WHERE key=?", (key,)
-        ).fetchone()
+        row = self.row(key, fields="value", table="metrics", pk="key")
         return row is not None and int(row["value"]) == 1
 
     def list_economy_moves_for_origin(self, origin: str) -> List[Dict[str, object]]:
@@ -206,10 +202,7 @@ class ReignStateStore:
         nid = int(night_id)
         if nid <= 0:
             return 0
-        row = self._conn.execute(
-            "SELECT next_event_seq FROM audience_nights WHERE id = ?",
-            (nid,),
-        ).fetchone()
+        row = self.row(nid, fields="next_event_seq", table="audience_nights")
         if row is None:
             raise ValueError(f"audience night not found: {nid}")
         nxt = int(row["next_event_seq"] or 0) + 1
@@ -272,11 +265,6 @@ class ReignStateStore:
         self._conn.commit()
         return cur.rowcount > 0
 
-    def chat_turn_row(self, chat_turn_id: int) -> Any:
-        return self._conn.execute(
-            "SELECT * FROM chat_turns WHERE id = ?", (int(chat_turn_id),),
-        ).fetchone()
-
     def update_chat_turn_messages(
         self,
         chat_turn_id: int,
@@ -304,10 +292,7 @@ class ReignStateStore:
         self._conn.commit()
 
     def get_story_extract_status(self, chat_turn_id: int) -> str:
-        row = self._conn.execute(
-            "SELECT extract_status FROM chat_turns WHERE id = ?",
-            (int(chat_turn_id),),
-        ).fetchone()
+        row = self.row(int(chat_turn_id), fields="extract_status")
         return str(row["extract_status"] or "") if row is not None else ""
 
     def set_chat_turn_error_pack(self, chat_turn_id: int, path: str) -> None:
@@ -333,7 +318,7 @@ class ReignStateStore:
         return bool(row and int(row["id"]) == int(chat_turn_id))
 
     def kv_get(self, key: str) -> str | None:
-        row = self._conn.execute("SELECT value FROM kv_store WHERE key=?", (key,)).fetchone()
+        row = self.row(key, fields="value", table="kv_store", pk="key")
         return row[0] if row else None
 
     def kv_set(self, key: str, value: str) -> None:
@@ -349,27 +334,6 @@ class ReignStateStore:
             "SELECT * FROM audience_nights "
             "WHERE status IN ('open', 'closing') ORDER BY id DESC LIMIT 1"
         ).fetchone()
-
-    def night_by_id(self, night_id: int) -> Any:
-        return self._conn.execute(
-            "SELECT * FROM audience_nights WHERE id = ?", (int(night_id),)
-        ).fetchone()
-
-    def update_night(self, assignments: str, night_id: int, params: tuple = ()) -> None:
-        self._conn.execute(
-            f"UPDATE audience_nights SET {assignments} WHERE id = ?",
-            (*params, int(night_id)),
-        )
-
-    def ledger_tags(self, entry_id: int) -> Any:
-        return self._conn.execute(
-            "SELECT tags FROM story_ledger_entries WHERE id=?", (int(entry_id),)
-        ).fetchone()
-
-    def chat_turn_exists(self, chat_turn_id: int) -> bool:
-        return self._conn.execute(
-            "SELECT 1 FROM chat_turns WHERE id=?", (int(chat_turn_id),)
-        ).fetchone() is not None
 
     def latest_alive_protagonist_for_night(self, night_id: int) -> Any:
         return self._conn.execute(
@@ -564,33 +528,12 @@ class ReignStateStore:
             (name, int(chat_turn_id)),
         )
 
-    def chat_turn_night_id(self, chat_turn_id: int) -> Any:
-        return self._conn.execute(
-            "SELECT night_id FROM chat_turns WHERE id=?", (int(chat_turn_id),),
-        ).fetchone()
-
     def mark_extract_status_done(self, chat_turn_id: int) -> None:
         self._conn.execute(
             "UPDATE chat_turns SET extract_status='done' "
             "WHERE id=? AND status NOT IN ('failed','undone')",
             (int(chat_turn_id),),
         )
-
-    def chat_turn_status_and_minister_message(self, chat_turn_id: int) -> Any:
-        return self._conn.execute(
-            "SELECT status, minister_message_id FROM chat_turns WHERE id=?",
-            (int(chat_turn_id),),
-        ).fetchone()
-
-    def chat_turn_status(self, chat_turn_id: int) -> Any:
-        return self._conn.execute(
-            "SELECT status FROM chat_turns WHERE id=?", (int(chat_turn_id),),
-        ).fetchone()
-
-    def chat_turn_user_message_id(self, chat_turn_id: int) -> Any:
-        return self._conn.execute(
-            "SELECT user_message_id FROM chat_turns WHERE id=?", (int(chat_turn_id),),
-        ).fetchone()
 
     def insert_story_ledger_entry_row(
         self,
@@ -661,7 +604,7 @@ class ReignStateStore:
         """
         if not chat_turn_id:
             return
-        row = self.chat_turn_row(chat_turn_id)
+        row = self.row(chat_turn_id)
         if row is None:
             return
         self.truncate_agno_session_runs(
@@ -704,21 +647,36 @@ class ReignStateStore:
             "SELECT id, night_id, person_names, tags FROM story_ledger_entries ORDER BY id"
         ).fetchall()
 
-    def insert_legacy(self, params: Any = ()) -> Any:
+    def insert_legacy(
+        self,
+        name: object,
+        source_issue_id: object,
+        modifiers: object,
+        narrative_hint: object,
+        start_month: object,
+        duration_months: object,
+        clear_gate: object,
+        legacy_key: object,
+    ) -> Any:
         return self._conn.execute(
             "INSERT INTO legacies\n               (name, source_issue_id, modifiers, narrative_hint,\n                start_month, duration_months, status, clear_gate, legacy_key)\n               VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)",
-            params,
+            (
+                name,
+                source_issue_id,
+                modifiers,
+                narrative_hint,
+                start_month,
+                duration_months,
+                clear_gate,
+                legacy_key,
+            ),
         )
 
-    def set_legacy_statuses(self, params: Any) -> Any:
+    def set_legacy_statuses(self, status: str, legacy_ids: Iterable[int]) -> Any:
         return self._conn.executemany(
-            "UPDATE legacies SET status=? WHERE id=?", params
+            "UPDATE legacies SET status=? WHERE id=?",
+            [(status, int(legacy_id)) for legacy_id in legacy_ids],
         )
-
-    def calendar_row(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT turn, year, period FROM game_state WHERE id = 1", params
-        ).fetchone()
 
     def closed_nights_archive_rows(self) -> Any:
         return self._conn.execute(
@@ -764,7 +722,14 @@ class ReignStateStore:
         if passed:
             return False
         self.insert_legacy(
-            (name, None, modifiers_json, narrative_hint, start_month, -1, gate_json, legacy_key)
+            name,
+            None,
+            modifiers_json,
+            narrative_hint,
+            start_month,
+            -1,
+            gate_json,
+            legacy_key,
         )
         return True
 
@@ -773,48 +738,80 @@ class ReignStateStore:
             "SELECT id FROM audience_nights ORDER BY id"
         ).fetchall()
 
-    def chat_turn_sequence_row(self, params: Any = ()) -> Any:
+    def set_ledger_tags(self, tags: object, id: object) -> Any:
         return self._conn.execute(
-            "SELECT night_seq FROM chat_turns WHERE id=?", params
-        ).fetchone()
-
-    def set_ledger_tags(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "UPDATE story_ledger_entries SET tags=? WHERE id=?", params
+            "UPDATE story_ledger_entries SET tags=? WHERE id=?", (tags, id)
         )
 
-    def insert_economy_move(self, params: Any) -> Any:
+    def insert_economy_move(
+        self,
+        turn: object,
+        year: object,
+        period: object,
+        account: object,
+        delta: object,
+        balance_after: object,
+        category: object,
+        reason: object,
+        event_id: object,
+        edict_id: object,
+        actor: object,
+        purpose: object,
+        target_kind: object,
+        target_id: object,
+        dossier_id: object,
+        origin_ref: object,
+        beyond_intent: object,
+    ) -> Any:
         return self._conn.execute(
             "INSERT INTO economy_ledger "
             "(turn, year, period, account, delta, balance_after, category, reason, "
             "event_id, edict_id, actor, purpose, target_kind, target_id, dossier_id, "
             "origin_ref, beyond_intent) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            params,
+            (
+                turn,
+                year,
+                period,
+                account,
+                delta,
+                balance_after,
+                category,
+                reason,
+                event_id,
+                edict_id,
+                actor,
+                purpose,
+                target_kind,
+                target_id,
+                dossier_id,
+                origin_ref,
+                beyond_intent,
+            ),
         )
 
-    def delete_chat_turn_ledger(self, params: Any = ()) -> Any:
+    def delete_chat_turn_ledger(
+        self, source_chat_turn_id: object, origin_chat_turn_id: object
+    ) -> Any:
         return self._conn.execute(
             "DELETE FROM story_ledger_entries "
             "WHERE source_chat_turn_id = ? OR origin_chat_turn_id = ?",
-            params,
+            (source_chat_turn_id, origin_chat_turn_id),
         )
 
-    def set_chat_turn_status(self, params: Any) -> Any:
+    def set_chat_turn_status(self, status: object, id: object) -> Any:
         return self._conn.execute(
-            "UPDATE chat_turns SET status=? WHERE id=?", params
+            "UPDATE chat_turns SET status=? WHERE id=?", (status, id)
         )
 
-    def chat_turn_rollback_rows(
-        self, params: Any = ()
-    ) -> Any:
+    def chat_turn_rollback_rows(self, chat_turn_id: object) -> Any:
         return self._conn.execute(
             """
                 SELECT * FROM chat_turn_rollback_items
                 WHERE chat_turn_id = ?
                 ORDER BY id DESC
                 """,
-            params,
+            (chat_turn_id,),
         ).fetchall()
 
     def ledger_archive_rows_for_nights(self, night_ids: list[int]) -> Any:

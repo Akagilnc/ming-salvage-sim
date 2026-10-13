@@ -275,19 +275,17 @@ def _ack_due_commitment_issue(
         },
     )
     db.issues.insert_advance(
-        (
-            issue_id,
-            state.turn,
-            "commitment_ack",
-            "",
-            0,
-            from_value,
-            from_value,
-            "",
-            "",
-            summary,
-            "{}",
-        )
+        issue_id,
+        state.turn,
+        "commitment_ack",
+        "",
+        0,
+        from_value,
+        from_value,
+        "",
+        "",
+        summary,
+        "{}",
     )
     return db.issues.row(issue_id)
 
@@ -307,10 +305,10 @@ def event_to_issue(
     if issues._is_fiscal_levy_event(ev):
         return None
     if ev.trigger_gate:
-        if db.issues.active_by_origin(('event_pool', ev.id)) is not None:
+        if db.issues.active_by_origin("event_pool", ev.id) is not None:
             return None
     else:
-        if db.issues.by_origin(('event_pool', ev.id)) is not None:
+        if db.issues.by_origin("event_pool", ev.id) is not None:
             return None
     # 初值由 severity 推一个偏中性的 bar
     bar = max(20, min(60, 50 - int(ev.severity / 5)))
@@ -494,9 +492,9 @@ def auto_trigger_seed_issues_in_atomic(
             # 同源软 issue 已在（存档迁移残留）而事件终态未落：event_to_issue 早退未消费
             # 核心事实，此处补落一次并记终态（#1892 终态与实况同落、只落一次）。
             row = (
-                db.issues.active_by_origin(('event_pool', ev.id))
+                db.issues.active_by_origin("event_pool", ev.id)
                 if ev.trigger_gate
-                else db.issues.by_origin(('event_pool', ev.id))
+                else db.issues.by_origin("event_pool", ev.id)
             )
             if row is None:
                 raise RuntimeError(f"历史事件 {ev.id} 未建局势且无法找到同源 issue")

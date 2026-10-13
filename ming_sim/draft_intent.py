@@ -542,7 +542,7 @@ def _pay_order_grounding_facts(content: Any, db: Any = None) -> str:
     if db is not None:
         # 整段 game_state 时点读为持久缝：fetch/解码任一失败→代码故障（F39）。
         try:
-            state = db.reign.calendar_row(())
+            state = db.reign.row(1, fields="turn, year, period", table="game_state")
             if state is not None:
                 timing = (
                     f"当前结算时点：turn={int(state['turn'])}，"
@@ -575,7 +575,7 @@ def _pay_order_grounding_facts(content: Any, db: Any = None) -> str:
 def _ground_relative_pay_order_deadlines(result: Dict[str, Any], db: Any) -> Dict[str, Any]:
     """在既有抽取适配缝把结构化相对月数落成 active-through 绝对 turn。"""
     try:
-        row = db.reign.turn_row(())
+        row = db.reign.row(1, fields="turn", table="game_state")
         if row is None:
             return result
         current_turn = int(row["turn"])

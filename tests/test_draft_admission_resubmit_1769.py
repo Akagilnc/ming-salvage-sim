@@ -330,7 +330,16 @@ def test_draft_admission_mixed_good_and_bad_independent(
         assert body["_event"] == "error"
         assert int(game.state.turn) == turn
         assert game.db.dossiers.get_for_directive(bad_id) is None
-        assert str(game.db.issues.directive(bad_id)["status"]) == "draft"
+        assert (
+            str(
+                game.db.issues.row(
+                    bad_id,
+                    fields="id, text, status, turn, dossier_payload_json",
+                    table="turn_directives",
+                )["status"]
+            )
+            == "draft"
+        )
         manifest = json.loads(
             (Path(body["error_pack_path"]) / "manifest.json").read_text(encoding="utf-8"),
         )
@@ -340,9 +349,27 @@ def test_draft_admission_mixed_good_and_bad_independent(
     assert _turn_of(_get_state(client)) == turn + 1
     assert game.db.dossiers.get_for_directive(good_id) is not None
     _finish_month_after_gazette(game, turn)
-    assert str(game.db.issues.directive(good_id)["status"]) == "issued"
+    assert (
+        str(
+            game.db.issues.row(
+                good_id,
+                fields="id, text, status, turn, dossier_payload_json",
+                table="turn_directives",
+            )["status"]
+        )
+        == "issued"
+    )
     assert game.db.dossiers.get_for_directive(bad_id) is None
-    assert str(game.db.issues.directive(bad_id)["status"]) == "draft"
+    assert (
+        str(
+            game.db.issues.row(
+                bad_id,
+                fields="id, text, status, turn, dossier_payload_json",
+                table="turn_directives",
+            )["status"]
+        )
+        == "draft"
+    )
     assert len(_rejection_rows(game, bad_id)) == 1
     assert not _rejection_rows(game, good_id)
     # 名册产物错未被当成系统故障：无错误包、月已推进（上方断言）
@@ -388,7 +415,16 @@ def test_exhaust_zero_dossier_system_simulation_no_steam_decree(
         client, expected_turn=turn, step="1769 zero-exhaust system_simulation",
     )
     assert _turn_of(_get_state(client)) == turn + 1
-    assert str(game.db.issues.directive(did)["status"]) == "draft"
+    assert (
+        str(
+            game.db.issues.row(
+                did,
+                fields="id, text, status, turn, dossier_payload_json",
+                table="turn_directives",
+            )["status"]
+        )
+        == "draft"
+    )
     assert game.db.dossiers.get_for_directive(did) is None
 
     assert resolve_calls, "须进入 resolve_directives"
@@ -514,10 +550,14 @@ def _finish_month_after_gazette(game, turn: int) -> None:
 
 
 def _latest_directive_id(game) -> int:
-    row = game.db.issues.directive(
-        int(game.db.conn.execute(
-            "SELECT id FROM turn_directives ORDER BY id DESC LIMIT 1"
-        ).fetchone()["id"])
+    row = game.db.issues.row(
+        int(
+            game.db.conn.execute(
+                "SELECT id FROM turn_directives ORDER BY id DESC LIMIT 1"
+            ).fetchone()["id"]
+        ),
+        fields="id, text, status, turn, dossier_payload_json",
+        table="turn_directives",
     )
     assert row is not None
     return int(row["id"])

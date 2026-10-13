@@ -129,12 +129,12 @@ def test_pre_settle_tick_before_seed_auto_trigger_reads_new_location(game, monke
         pre_settle(state, db, content=content)
         row = _ledger(db, name)
         assert row['location'] == 'beizhili' and row['transit_to'] == ''
-        assert db.issues.by_origin(('event_pool', ev.id)) is None
+        assert db.issues.by_origin("event_pool", ev.id) is None
         from tests.month_chain_helpers import canned_full_settlement, make_light_session
         canned_full_settlement(monkeypatch)
         session = make_light_session(db, state, content)
         session.resolve_turn(allow_empty_decree=True)
-        issue = db.issues.by_origin(('event_pool', ev.id))
+        issue = db.issues.by_origin("event_pool", ev.id)
         assert issue is not None, 'seed 门应在 tick 后读新 location 并硬立项'
         assert issue['status'] == 'active'
     finally:

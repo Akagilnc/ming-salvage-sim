@@ -765,8 +765,12 @@ def test_supply_call_writes_identity_materials_into_its_own_tree(game, monkeypat
             "UPDATE issues SET participant_roster=? WHERE id=?",
             (_json.dumps([{"character_id": who, "tier": "主办"}]), row["id"]),
         )
-        db.record_character_participation(
-            state, [who], "case", row["title"], "本人的办案经历",
+        db.register_character_knowledge_source(
+            state,
+            [{"character_id": who}],
+            "case",
+            row["title"],
+            "本人的办案经历",
             source_id=f"issue:{row['id']}",
         )
     db.conn.commit()

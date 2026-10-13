@@ -1,4 +1,5 @@
 from ming_sim.settlement.dossier import apply_dossier_promulgation
+from tests.dossier_test_helpers import _cost_events
 import pytest
 from ming_sim.strict_types import validate_affected_parties
 from ming_sim.settlement import SettlementContext, settle_delta
@@ -37,16 +38,10 @@ def _executing_dossier(db, state, *, roster=None):
     return dossier_id
 
 
-def _cost_events(db, dossier_id, *, identity="连坐"):
-    return [dict(row) for row in db.conn.execute(
-        "SELECT * FROM decree_cost_events WHERE dossier_id=? AND cost_identity=? ORDER BY id",
-        (int(dossier_id), identity),
-    ).fetchall()]
-
-
 def _sat_events(db, dossier_id):
     return [
-        row for row in _cost_events(db, dossier_id)
+        row
+        for row in _cost_events(db, dossier_id, identity="连坐")
         if row["cost_kind"] == "satisfaction"
     ]
 
@@ -75,7 +70,7 @@ def test_fulfilled_writes_zero_joint_liability_rows(game):
         "dossier_id": dossier_id, "outcome": "fulfilled",
         "source_item": {"dossier_id": dossier_id, "outcome": "fulfilled", "note": "如期办妥"},
     }]
-    assert _cost_events(db, dossier_id) == []
+    assert _cost_events(db, dossier_id, identity="连坐") == []
     assert _sat(db, "东林") == before_donglin
     assert _sat(db, "西学") == before_xixue
     assert db.person_logs.get_relation_edge_events(event_kind="连坐") == []
@@ -112,7 +107,7 @@ def test_adapter_replay_is_idempotent_on_joint_liability_rows(
     assert {(r["target_id"], r["delta"]) for r in _sat_events(db, dossier_id)} == {
         (f, d) for f, d in (("东林", lead_delta), ("西学", delegator_delta)) if d
     }
-    first = _cost_events(db, dossier_id)
+    first = _cost_events(db, dossier_id, identity="连坐")
     first_edges = [
         e for e in db.person_logs.get_relation_edge_events(event_kind="连坐")
         if e["origin"].startswith(f"dossier:{dossier_id}:")
@@ -128,7 +123,7 @@ def test_adapter_replay_is_idempotent_on_joint_liability_rows(
     db.conn.commit()
     _close_via_adapter(db, state, content, dossier_id, outcome, note="重结")
 
-    assert _cost_events(db, dossier_id) == first
+    assert _cost_events(db, dossier_id, identity="连坐") == first
     second_edges = [
         e for e in db.person_logs.get_relation_edge_events(event_kind="连坐")
         if e["origin"].startswith(f"dossier:{dossier_id}:")
@@ -157,7 +152,7 @@ def test_engine_auto_failed_materialize_writes_zero_joint_liability(game):
 
     dossier = db.dossiers.get(dossier_id)
     assert dossier["execution_outcome"] == "failed"
-    assert _cost_events(db, dossier_id) == []
+    assert _cost_events(db, dossier_id, identity="连坐") == []
     assert db.person_logs.get_relation_edge_events(event_kind="连坐") == []
 
 
@@ -183,7 +178,7 @@ def test_explicit_affected_parties_must_pass_full_key_validation(game):
     )
     assert section(result, "dossier_executions").rejected
     assert db.dossiers.get(dossier_id)["status"] == "executing"
-    assert _cost_events(db, dossier_id) == []
+    assert _cost_events(db, dossier_id, identity="连坐") == []
 
     # 全键合法但声明 roster 推不出的派系 → accept-and-ignore（不驱动机械额度）
     outsider = "阉党"
@@ -243,5 +238,5 @@ def test_direct_record_dossier_execution_does_not_trigger_joint_liability(game):
     db.dossiers.record_execution(
         dossier_id, "failed", "直写终值", state.turn, close=True,
     )
-    assert _cost_events(db, dossier_id) == []
+    assert _cost_events(db, dossier_id, identity="连坐") == []
     assert db.person_logs.get_relation_edge_events(event_kind="连坐") == []

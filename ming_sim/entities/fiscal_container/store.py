@@ -5,14 +5,14 @@
 
 from __future__ import annotations
 
-from typing import Any
+from ming_sim.entities.column_write import RowStore
 
 
-class FiscalContainerStore:
+class FiscalContainerStore(RowStore):
     """Single write port for ``fiscal_containers``."""
 
-    def __init__(self, conn: Any) -> None:
-        self._conn = conn
+    TABLE = "fiscal_containers"
+    PK = "key"
 
     def replace(self, key: str, value: float, note: str) -> None:
         self._conn.execute(
@@ -42,9 +42,7 @@ class FiscalContainerStore:
 
     def value(self, key: str) -> float:
         """Scalar container read: missing row → 0.0."""
-        row = self._conn.execute(
-            "SELECT value FROM fiscal_containers WHERE key = ?", (str(key),)
-        ).fetchone()
+        row = self.row(str(key), fields="value")
         return float(row["value"] or 0.0) if row is not None else 0.0
 
     def values_when_complete(self, keys: tuple[str, ...]) -> dict[str, float] | None:

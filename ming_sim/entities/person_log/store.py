@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Mapping, Optional
 
-from ming_sim.entities.column_write import bind_affair_once, upsert_by_pk
+from ming_sim.entities.column_write import RowStore
 from ming_sim.applier import connection_owns_transaction
 
 
@@ -45,30 +45,12 @@ def ensure_schema(conn: Any) -> None:
     conn.executescript(_SCHEMA_SQL)
 
 
-_EDGE_COLUMNS = frozenset(
-    {
-        "id",
-        "source",
-        "target",
-        "event_kind",
-        "context",
-        "origin",
-        "origin_round",
-        "turn",
-        "year",
-        "period",
-        "evidence",
-        "affair_id",
-        "created_at",
-    }
-)
-
-
-class PersonLogStore:
+class PersonLogStore(RowStore):
     """Single write port for ``person_logs``; reads return plain dicts."""
 
-    def __init__(self, conn: Any) -> None:
-        self._conn = conn
+    TABLE = "relation_edge_events"
+    PK = "id"
+    TABLES = {"relation_edge_events": "id"}
 
     def append(
         self,
@@ -137,14 +119,29 @@ class PersonLogStore:
             total += int(cur.rowcount)
         return total
 
-    def relation_by_origin(self, params: Any = ()) -> Any:
-        return self._conn.execute('\n            SELECT id FROM relation_edge_events\n            WHERE source = ? AND target = ? AND event_kind = ?\n              AND (origin = ? OR origin LIKE ?)\n            ORDER BY id LIMIT 1\n            ', params).fetchone()
+    def relation_by_origin(
+        self,
+        source: object,
+        target: object,
+        event_kind: object,
+        origin: object,
+        origin_2: object,
+    ) -> Any:
+        return self._conn.execute(
+            "\n            SELECT id FROM relation_edge_events\n            WHERE source = ? AND target = ? AND event_kind = ?\n              AND (origin = ? OR origin LIKE ?)\n            ORDER BY id LIMIT 1\n            ",
+            (source, target, event_kind, origin, origin_2),
+        ).fetchone()
 
-    def recent_relation_pairs(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT source, target, MAX(id) AS max_id FROM relation_edge_events WHERE year = ? AND period = ? GROUP BY source, target', params).fetchall()
+    def recent_relation_pairs(self, year: object, period: object) -> Any:
+        return self._conn.execute(
+            "SELECT source, target, MAX(id) AS max_id FROM relation_edge_events WHERE year = ? AND period = ? GROUP BY source, target",
+            (year, period),
+        ).fetchall()
 
-    def relation_count_row(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT COUNT(*) AS c FROM relation_edge_events', params).fetchone()
+    def relation_count_row(self) -> Any:
+        return self._conn.execute(
+            "SELECT COUNT(*) AS c FROM relation_edge_events", ()
+        ).fetchone()
 
     def apply_seed_founding_segment(
         self,
@@ -340,50 +337,38 @@ class PersonLogStore:
             for row in rows
         ]
 
-    def record_relation_edge_event(self, params: Any) -> int:
+    def record_relation_edge_event(
+        self,
+        source: object,
+        target: object,
+        event_kind: object,
+        context: object,
+        origin: object,
+        origin_round: object,
+        turn: object,
+        year: object,
+        period: object,
+        evidence: object,
+    ) -> int:
         """Insert an edge idempotently and return its durable identity."""
         self._conn.execute(
             "\n            INSERT OR IGNORE INTO relation_edge_events\n                (source, target, event_kind, context, origin, origin_round,\n                 turn, year, period, evidence)\n            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n            ",
-            params,
+            (
+                source,
+                target,
+                event_kind,
+                context,
+                origin,
+                origin_round,
+                turn,
+                year,
+                period,
+                evidence,
+            ),
         )
         row = self._conn.execute(
             "SELECT id FROM relation_edge_events "
             "WHERE source=? AND target=? AND event_kind=? AND context=? AND origin=?",
-            params[:5],
+            (source, target, event_kind, context, origin),
         ).fetchone()
         return int(row["id"])
-
-    def edge_snapshot_rows(self) -> Any:
-        return self._conn.execute("SELECT * FROM relation_edge_events").fetchall()
-
-    def restore_edge(self, row: Mapping[str, object]) -> None:
-        upsert_by_pk(
-            self._conn,
-            "relation_edge_events",
-            row,
-            pk="id",
-            allowed=_EDGE_COLUMNS,
-            what="relation_edge_events",
-        )
-
-    def delete_edge(self, row_id: object) -> None:
-        self._conn.execute("DELETE FROM relation_edge_events WHERE id=?", (row_id,))
-
-    def affair_id_of(self, edge_id: int) -> int:
-        row = self._conn.execute(
-            "SELECT affair_id FROM relation_edge_events WHERE id=?", (int(edge_id),)
-        ).fetchone()
-        if row is None:
-            raise KeyError(edge_id)
-        return int(row["affair_id"] or 0)
-
-    def set_affair_id_if_unbound(self, edge_id: int, affair_id: int) -> int:
-        return bind_affair_once(
-            self._conn, "relation_edge_events", int(edge_id), affair_id
-        )
-
-    def rows_for_affair(self, affair_id: int) -> Any:
-        return self._conn.execute(
-            "SELECT * FROM relation_edge_events WHERE affair_id=? ORDER BY id",
-            (affair_id,),
-        ).fetchall()

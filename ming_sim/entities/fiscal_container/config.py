@@ -4,25 +4,18 @@ from typing import Any, Mapping
 
 from ming_sim.applier import coerce_beyond_intent_flag
 
-from ming_sim.entities.column_write import checked_columns
+from ming_sim.entities.column_write import RowStore
 
-_COLUMNS = frozenset({
-    "key", "value", "kind", "note", "budget_role", "account", "direction",
-    "display", "sort_order", "origin_ref",
-})
 _HISTORY = {
-    "create": ("fiscal_config_creations", frozenset({"turn", "key", "value", "kind", "origin_ref", "reason", "beyond_intent"})),
-    "change": ("fiscal_config_changes", frozenset({"turn", "key", "old_value", "new_value", "delta", "origin_ref", "reason", "beyond_intent"})),
-    "remove": ("fiscal_config_tombstones", frozenset({"removed_turn", "key", "value", "kind", "origin_ref", "reason", "beyond_intent"})),
+    "create": "fiscal_config_creations",
+    "change": "fiscal_config_changes",
+    "remove": "fiscal_config_tombstones",
 }
 
 
-class FiscalConfigStore:
-    def __init__(self, conn: Any) -> None:
-        self._conn = conn
-
-    def row(self, key: str) -> Any:
-        return self._conn.execute("SELECT * FROM fiscal_config WHERE key=?", (key,)).fetchone()
+class FiscalConfigStore(RowStore):
+    TABLE = "fiscal_config"
+    PK = "key"
 
     def values(self) -> dict[str, int]:
         return {str(r["key"]): int(r["value"]) for r in self._conn.execute(
@@ -41,13 +34,6 @@ class FiscalConfigStore:
             "SELECT COALESCE(MAX(sort_order), 0) + 10 FROM fiscal_config",
         ).fetchone()[0])
 
-    def insert(self, row: Mapping[str, object]) -> None:
-        columns = checked_columns(row, _COLUMNS, what="fiscal_config")
-        self._conn.execute(
-            f"INSERT INTO fiscal_config ({', '.join(columns)}) VALUES ({', '.join('?' for _ in columns)})",
-            [row[c] for c in columns],
-        )
-
     def set_values(self, values: Mapping[str, int]) -> None:
         self._conn.executemany(
             "UPDATE fiscal_config SET value=? WHERE key=?",
@@ -63,16 +49,8 @@ class FiscalConfigStore:
             (str(origin),),
         ).fetchall())
 
-    def delete(self, key: str) -> None:
-        self._conn.execute("DELETE FROM fiscal_config WHERE key=?", (key,))
-
     def append_history(self, kind: str, row: Mapping[str, object]) -> None:
-        table, allowed = _HISTORY[kind]
-        columns = checked_columns(row, allowed, what=table)
-        self._conn.execute(
-            f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({', '.join('?' for _ in columns)})",
-            [row[c] for c in columns],
-        )
+        self.insert(row, table=_HISTORY[kind])
 
     def remove_items(self, keys: tuple[str, ...], *, turn: int, origin: str, reason: str, beyond: int) -> None:
         placeholders = ",".join("?" for _ in keys)
@@ -104,11 +82,15 @@ class FiscalConfigStore:
 
     def effects_for_origin(self, origin: str) -> list[dict[str, object]]:
         return [
-            {**dict(row), "effect_kind": kind,
-             "beyond_intent": bool(coerce_beyond_intent_flag(row["beyond_intent"]))}
-            for kind, (table, _columns) in _HISTORY.items()
+            {
+                **dict(row),
+                "effect_kind": kind,
+                "beyond_intent": bool(coerce_beyond_intent_flag(row["beyond_intent"])),
+            }
+            for kind, table in _HISTORY.items()
             for row in self._conn.execute(
-                f"SELECT * FROM {table} WHERE origin_ref=? ORDER BY id", (origin,),
+                f"SELECT * FROM {table} WHERE origin_ref=? ORDER BY id",
+                (origin,),
             ).fetchall()
         ]
 
@@ -143,19 +125,15 @@ class FiscalConfigStore:
             },
         )
 
-    def item_presence(self, params: Any = ()) -> Any:
+    def item_presence(self, key: str, other_key: str) -> Any:
         return self._conn.execute(
-            "SELECT 1 FROM fiscal_config WHERE key IN (?, ?)", params
+            "SELECT 1 FROM fiscal_config WHERE key IN (?, ?)",
+            (key, other_key),
         ).fetchone()
 
-    def upsert_pay_override(self, params: Any = ()) -> Any:
+    def upsert_pay_override(self, key: str, value: int, note: str) -> Any:
         return self._conn.execute(
             "INSERT INTO fiscal_config (key, value, kind, note) VALUES (?, ?, 'override', ?) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            params,
+            (key, value, note),
         )
-
-    def override_row(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT value, origin_ref FROM fiscal_config WHERE key = ?", params
-        ).fetchone()

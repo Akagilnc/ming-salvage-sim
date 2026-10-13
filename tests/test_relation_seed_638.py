@@ -223,7 +223,7 @@ def test_missing_bundled_seed_fails_new_save_and_retry_imports(tmp_path, monkeyp
     monkeypatch.setattr(seed_mod, "bundled_path", original_bundled_path)
     sess = GameSession(db_path=db_path, llm_config=cfg, content=content)
     try:
-        assert sess.db.reign.exists() is True
+        assert sess.db.reign.row(1, fields="1", table="game_state") is not None
         assert sess.db.person_logs.get_relation_edge_events()
     finally:
         sess.close()
@@ -302,7 +302,7 @@ def test_seed_failure_rolls_back_new_save_and_retry_imports(tmp_path, monkeypatc
     monkeypatch.setattr(seed_mod, "import_bundled_relationship_seed", original_import)
     sess = GameSession(db_path=db_path, llm_config=cfg, content=content)
     try:
-        assert sess.db.reign.exists() is True
+        assert sess.db.reign.row(1, fields="1", table="game_state") is not None
         assert sess.db.person_logs.get_relation_edge_events()
     finally:
         sess.close()
@@ -428,7 +428,7 @@ def test_existing_save_is_never_touched_by_seed_import(game, monkeypatch):
     import ming_sim.llm_model as llm_mod
 
     db, _state, content = game
-    assert db.reign.exists() is True
+    assert db.reign.row(1, fields="1", table="game_state") is not None
     events_before = [tuple(row) for row in db.conn.execute(
         "SELECT * FROM relation_edge_events ORDER BY id"
     ).fetchall()]

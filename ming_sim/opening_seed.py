@@ -111,63 +111,73 @@ def seed_opening_world(db: Any) -> None:
     if is_fresh_factions_seed:
         for faction in db.content.factions.values():
             db.factions.insert(
-                name=faction.name,
-                satisfaction=faction.satisfaction,
-                leverage=faction.leverage,
-                agenda=faction.agenda,
+                {
+                    "name": faction.name,
+                    "satisfaction": faction.satisfaction,
+                    "leverage": faction.leverage,
+                    "agenda": faction.agenda,
+                }
             )
     if not db.classes.has_any():
         # 人口一律「人」。classes 首次 seed；已有行不重 seed。
         for cls in db.content.classes.values():
             db.classes.insert(
-                name=cls.name,
-                region_id=cls.region_id,
-                population=cls.population,
-                satisfaction=cls.satisfaction,
-                leverage=cls.leverage,
-                agenda=cls.agenda,
+                {
+                    "name": cls.name,
+                    "region_id": cls.region_id,
+                    "population": cls.population,
+                    "satisfaction": cls.satisfaction,
+                    "leverage": cls.leverage,
+                    "agenda": cls.agenda,
+                }
             )
     for power in db.content.powers.values():
-        db.powers.insert_ignore({
-            "id": power.id,
-            "name": power.name,
-            "kind": power.kind,
-            "leader": power.leader,
-            "stance": power.stance,
-            "leverage": power.leverage,
-            "satisfaction": power.satisfaction,
-            "military_strength": power.military_strength,
-            "cohesion": power.cohesion,
-            "supply": power.supply,
-            "agenda": power.agenda,
-            "status": power.status,
-            "last_action": power.last_action,
-            "aliases": (
-                json.dumps(power.aliases, ensure_ascii=False)
-                if isinstance(power.aliases, list)
-                else power.aliases
-            ),
-        })
+        db.powers.insert(
+            {
+                "id": power.id,
+                "name": power.name,
+                "kind": power.kind,
+                "leader": power.leader,
+                "stance": power.stance,
+                "leverage": power.leverage,
+                "satisfaction": power.satisfaction,
+                "military_strength": power.military_strength,
+                "cohesion": power.cohesion,
+                "supply": power.supply,
+                "agenda": power.agenda,
+                "status": power.status,
+                "last_action": power.last_action,
+                "aliases": (
+                    json.dumps(power.aliases, ensure_ascii=False)
+                    if isinstance(power.aliases, list)
+                    else power.aliases
+                ),
+            },
+            ignore=True,
+        )
     for region in db.content.regions.values():
-        db.regions.insert_ignore({
-            "id": region.id,
-            "name": region.name,
-            "kind": region.kind,
-            "population": region.population,
-            "public_support": region.public_support,
-            "unrest": region.unrest,
-            "natural_disaster": region.natural_disaster,
-            "human_disaster": region.human_disaster,
-            "registered_land": region.registered_land,
-            "hidden_land": region.hidden_land,
-            "tax_per_turn": region.tax_per_turn,
-            "grain_security": region.grain_security,
-            "gentry_resistance": region.gentry_resistance,
-            "military_pressure": region.military_pressure,
-            "status": region.status,
-            "controlled_by": region.controlled_by,
-            "fiscal": json.dumps(region.fiscal, ensure_ascii=False),
-        })
+        db.regions.insert(
+            {
+                "id": region.id,
+                "name": region.name,
+                "kind": region.kind,
+                "population": region.population,
+                "public_support": region.public_support,
+                "unrest": region.unrest,
+                "natural_disaster": region.natural_disaster,
+                "human_disaster": region.human_disaster,
+                "registered_land": region.registered_land,
+                "hidden_land": region.hidden_land,
+                "tax_per_turn": region.tax_per_turn,
+                "grain_security": region.grain_security,
+                "gentry_resistance": region.gentry_resistance,
+                "military_pressure": region.military_pressure,
+                "status": region.status,
+                "controlled_by": region.controlled_by,
+                "fiscal": json.dumps(region.fiscal, ensure_ascii=False),
+            },
+            ignore=True,
+        )
     is_fresh_armies_seed = not db.armies.has_any()
     if is_fresh_armies_seed:
         for army in db.content.armies.values():

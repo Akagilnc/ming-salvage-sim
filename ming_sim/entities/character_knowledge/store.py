@@ -24,7 +24,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 
-from ming_sim.entities.column_write import upsert_by_pk
+from ming_sim.entities.column_write import RowStore
 from ming_sim.applier import (
     StoredDocumentError,
     durable_int,
@@ -73,49 +73,12 @@ def ensure_schema(conn: Any) -> None:
     conn.executescript(_SCHEMA_SQL)
 
 
-_SNAPSHOT_COLUMNS = {
-    "secret_orders": frozenset(
-        {
-            "id",
-            "turn_issued",
-            "due_turn",
-            "deadline_span",
-            "year_issued",
-            "period_issued",
-            "minister_name",
-            "title",
-            "content",
-            "tags",
-            "importance",
-            "status",
-            "result",
-            "dossier_progress_json",
-            "turn_closed",
-            "created_at",
-            "updated_at",
-        }
-    ),
-    "public_sayings": frozenset(
-        {
-            "id",
-            "turn",
-            "year",
-            "period",
-            "body",
-            "involved_characters",
-            "affair_ref",
-            "source_id",
-            "created_at",
-        }
-    ),
-}
-
-
-class CharacterKnowledgeStore:
+class CharacterKnowledgeStore(RowStore):
     """Single write port for both knowledge ledgers; reads return plain dicts."""
 
-    def __init__(self, conn: Any) -> None:
-        self._conn = conn
+    TABLE = "secret_orders"
+    PK = "id"
+    TABLES = {"secret_orders": "id", "public_sayings": "id"}
 
     # ── delete port ──────────────────────────────────────────────
 
@@ -273,7 +236,7 @@ class CharacterKnowledgeStore:
         """
         from ming_sim.supervision import report_origin_base
 
-        row = self.secret_order_progress_row((int(order_id),))
+        row = self.row(int(order_id), fields="dossier_progress_json")
         if row is None:
             raise ValueError("密令不存在")
         reports = load_stored_list(
@@ -365,7 +328,7 @@ class CharacterKnowledgeStore:
 
     def list_secret_dossier_progress_items(self, order_id: int) -> list:
         """Load private-rail progress members; missing order is legal absence ([])."""
-        row = self.secret_order_progress_row((int(order_id),))
+        row = self.row(int(order_id), fields="dossier_progress_json")
         if row is None:
             return []
         return load_stored_list(
@@ -380,27 +343,35 @@ class CharacterKnowledgeStore:
             return
         pins = list(origin_chat_message_ids)
         self.upsert_secret_order_brief(
-            (
-                int(order_id),
-                int(order["turn_issued"]),
-                int(order["year_issued"]),
-                int(order["period_issued"]),
-                str(order["minister_name"]),
-                str(order["title"]),
-                str(order["content"]),
-                safe_json_dumps(pins, ensure_ascii=False),
-            )
+            int(order_id),
+            int(order["turn_issued"]),
+            int(order["year_issued"]),
+            int(order["period_issued"]),
+            str(order["minister_name"]),
+            str(order["title"]),
+            str(order["content"]),
+            safe_json_dumps(pins, ensure_ascii=False),
         )
 
-    def set_secret_order_deadline(self, params: Any = ()) -> Any:
+    def set_secret_order_deadline(
+        self, due_turn: object, deadline_span: object, id: object
+    ) -> Any:
         return self._conn.execute(
             "UPDATE secret_orders SET due_turn = ?, deadline_span = ?, "
             "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            params,
+            (due_turn, deadline_span, id),
         )
 
     def upsert_secret_order_brief(
-        self, params: Any = ()
+        self,
+        order_id: object,
+        turn: object,
+        year: object,
+        period: object,
+        minister_name: object,
+        title: object,
+        body: object,
+        origin_chat_message_ids: object,
     ) -> Any:
         return self._conn.execute(
             """
@@ -413,19 +384,25 @@ class CharacterKnowledgeStore:
                     origin_chat_message_ids=excluded.origin_chat_message_ids,
                     updated_at=CURRENT_TIMESTAMP
                 """,
-            params,
+            (
+                order_id,
+                turn,
+                year,
+                period,
+                minister_name,
+                title,
+                body,
+                origin_chat_message_ids,
+            ),
         )
 
-    def brief_origin_message_ids(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT origin_chat_message_ids FROM secret_order_briefs WHERE order_id=?",
-            params,
-        ).fetchone()
-
-    def secret_order_progress_row(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT dossier_progress_json FROM secret_orders WHERE id=?", params
-        ).fetchone()
+    def brief_origin_message_ids(self, order_id: object) -> Any:
+        return self.row(
+            order_id,
+            fields="origin_chat_message_ids",
+            table="secret_order_briefs",
+            pk="order_id",
+        )
 
     def update_secret_order(
         self, order_id: int, title: str, content: str, tags_json: str,
@@ -458,26 +435,6 @@ class CharacterKnowledgeStore:
             (f"{PUBLIC_SAYING_SOURCE_PREFIX}{saying_id}", saying_id),
         )
         return saying_id
-
-    def snapshot_rows(self, table: str) -> Any:
-        if table not in _SNAPSHOT_COLUMNS:
-            raise ValueError(table)
-        return self._conn.execute(f"SELECT * FROM {table}").fetchall()
-
-    def restore_snapshot(self, table: str, row: Mapping[str, object]) -> None:
-        upsert_by_pk(
-            self._conn,
-            table,
-            row,
-            pk="id",
-            allowed=_SNAPSHOT_COLUMNS[table],
-            what=table,
-        )
-
-    def delete_snapshot(self, table: str, row_id: object) -> None:
-        if table not in _SNAPSHOT_COLUMNS:
-            raise ValueError(table)
-        self._conn.execute(f"DELETE FROM {table} WHERE id=?", (row_id,))
 
     def secret_brief_pins(self, order_id: int | None = None) -> list[Any]:
         if order_id is None:

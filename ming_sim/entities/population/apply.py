@@ -77,12 +77,7 @@ def _apply_population_transfers(
                 f"跨省转移本票不做（#475 预留）：{row_source!r} → {target!r} 须同省",
             )
             continue
-        if (
-            db.regions.presence(
-                (src_region,)
-            )
-            is None
-        ):
+        if db.regions.row(src_region, fields="1") is None:
             _reject("missing_ref", f"population_transfers 未知 region_id：{src_region!r}")
             continue
         # 枚举查键用 strip 副本；落库/回执保留声明原文（F5）。
@@ -129,12 +124,8 @@ def _apply_population_transfers(
         if origin_error:
             rejected.append(RejectedItem(item=item, reason=f"population_transfers {origin_error['reason']}", category=origin_error["category"], source=source))
             continue
-        src_row = db.classes.population_row(
-            (src_cls, src_region)
-        )
-        dst_row = db.classes.population_row(
-            (dst_cls, dst_region)
-        )
+        src_row = db.classes.row((src_cls, src_region), fields="population")
+        dst_row = db.classes.row((dst_cls, dst_region), fields="population")
         if src_row is None or dst_row is None:
             missing = row_source if src_row is None else target
             _reject(
@@ -151,14 +142,18 @@ def _apply_population_transfers(
         if amount > 0:
             # 单记录双写：同一事务内源减目标增，任一腿失败整体回滚（ADR 0008 决定 2）。
             db.classes.record_population_transfer(
-                src_cls, src_region, dst_cls, dst_region, amount,
-                turn=int(db.reign.turn_row(())[0]),
-                source=row_source, target=target, reason=raw_reason, origin_ref=origin_ref,
+                src_cls,
+                src_region,
+                dst_cls,
+                dst_region,
+                amount,
+                turn=int(db.reign.row(1, fields="turn", table="game_state")[0]),
+                source=row_source,
+                target=target,
+                reason=raw_reason,
+                origin_ref=origin_ref,
             )
-        region_name = str(
-            db.regions.field_row('name', src_region)["name"]
-            or ""
-        )
+        region_name = str(db.regions.row(src_region, fields="name")["name"] or "")
         applied.append({
             "source": row_source,
             "target": target,

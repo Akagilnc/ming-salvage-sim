@@ -805,7 +805,7 @@ def live_investigation_fact_keys(db: Any, target: str) -> List[str]:
     if not name:
         return []
     keys: List[str] = []
-    row = db.characters.field_row('seed_guilt', name)
+    row = db.characters.row(name, fields="seed_guilt")
     if row is not None and seed_guilt_counts_as_debt(row["seed_guilt"]):
         keys.append(name)
     for edge in db.person_logs.get_relation_edge_events(person=name, evidence=True):
@@ -819,7 +819,7 @@ def _is_seed_guilt_fact_key(target: str, fact_key: str) -> bool:
 
 
 def _seed_guilt_severity(db: Any, target: str) -> str:
-    row = db.characters.field_row('seed_guilt', str(target))
+    row = db.characters.row(str(target), fields="seed_guilt")
     if row is None:
         return ""
     return str(_parse_seed_guilt(row["seed_guilt"]).get("severity") or "").strip()
@@ -1057,14 +1057,14 @@ def investigation_fact_difficulty(
     # 该列 NOT NULL INTEGER（content 侧 0–100 校验），故 int 直取、不设解析兜底；
     # 0 是合法值（0–100 闭集下端）且**必须**走 clamp——早前的 `if intrigue > 0`
     # 守卫会让最不会遮掩的人跳过乘子、落回参考值同难度，凭空造出一道非单调的台阶。
-    target_row = db.characters.field_row('intrigue', name)
+    target_row = db.characters.row(name, fields="intrigue")
     if target_row is not None:
         difficulty *= max(int(target_row["intrigue"]), _INTRIGUE_MIN) / _INTRIGUE_REFERENCE
 
     # 办案人能力（ADR 0092 带宽①同源）：能力强 → 同难度所需投入更少。
     worker = str(investigator or "").strip()
     if worker:
-        ability_row = db.characters.field_row('ability', worker)
+        ability_row = db.characters.row(worker, fields="ability")
         if ability_row is not None:
             ability = float(ability_row["ability"])
             # 零是合法能力，走同一公式（参考值/能力）。0 用 inf 表达除零，
@@ -1104,7 +1104,7 @@ def _investigator_on_site(db: Any, worker_row: Any, target: str) -> bool:
     if not who or not name:
         return True  # 该轴不参与（退化）
     # 查案对象不是真人物（如「某类人」式题名）时无当地可核，按退化放行。
-    target_row = db.characters.field_row("location", name)
+    target_row = db.characters.row(name, fields="location")
     if target_row is None:
         return True
     there = str(target_row["location"] or "").strip()

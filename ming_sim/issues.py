@@ -520,7 +520,7 @@ def _event_window_expired(ev: Event, state: GameState) -> bool:
 def _dead_person_core_subjects(ev: Event, db: GameDB) -> List[str]:
     dead: List[str] = []
     for name in getattr(ev, "person_core_subjects", []) or []:
-        row = db.characters.field_row('status', str(name))
+        row = db.characters.row(str(name), fields="status")
         if row is not None and str(row["status"] or "") == "dead":
             dead.append(str(name))
     return dead
@@ -655,7 +655,7 @@ def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[fl
                 continue
             if table == "class":
                 cname, rid = cid.split("@", 1) if "@" in cid else (cid, "")
-                row = db.classes.field_row(field, cname, rid)
+                row = db.classes.row((cname, rid), fields=field)
             else:
                 row = {
                     "region": db.regions,
@@ -664,7 +664,7 @@ def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[fl
                     "power": db.powers,
                     "faction": db.factions,
                     "character": db.characters,
-                }[table].field_row(field, cid)
+                }[table].row(cid, fields=field)
         except (TypeError, ValueError) as exc:
             raise RuntimeError(f"gate key 持久读失败：{key}") from exc
         if row is None:
@@ -705,7 +705,7 @@ def _eval_gate_key_str(key: str, db: GameDB) -> Optional[str]:
         }.get(table)
         if store is None:
             return None
-        row = store.field_row(field, cid)
+        row = store.row(cid, fields=field)
     if row is None:
         return None
     return str(row[0])

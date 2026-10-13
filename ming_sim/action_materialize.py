@@ -441,7 +441,7 @@ def _resolve_xiexang_army_id(db: Any, raw_target: str) -> str:
     tid = str(raw_target or "").strip()
     if not tid:
         return ""
-    row = db.armies.field_row('id', tid)
+    row = db.armies.row(tid, fields="id")
     if row is not None:
         return str(row["id"])
     armies = getattr(db.content, "armies", None)
@@ -449,7 +449,7 @@ def _resolve_xiexang_army_id(db: Any, raw_target: str) -> str:
         from ming_sim.matching import canonical_army_id_exact
         matched = canonical_army_id_exact(tid, armies)
         if matched:
-            hit = db.armies.field_row('id', matched)
+            hit = db.armies.row(matched, fields="id")
             if hit is not None:
                 return str(hit["id"])
     return ""
@@ -720,7 +720,7 @@ def character_person_names(db: Any) -> set[str]:
         return set()
     return {
         str(row["name"]).strip()
-        for row in db.characters.names(())
+        for row in db.characters.names()
         if str(row["name"] or "").strip()
     }
 
@@ -882,7 +882,7 @@ def _chat_turn_night_seq(db: Any, chat_turn_id: int) -> Optional[float]:
     """源轮在本夜事件序上的位置。补账用它落回原位，不另排到后写的轮次。"""
     if int(chat_turn_id or 0) <= 0:
         return None
-    row = db.reign.chat_turn_sequence_row((int(chat_turn_id),))
+    row = db.reign.row(int(chat_turn_id), fields="night_seq")
     if row is None:
         return None
     return float(int(row["night_seq"] or 0))

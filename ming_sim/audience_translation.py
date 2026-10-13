@@ -270,7 +270,7 @@ def run_turn_translation_job(
     already_done = False
     if ctid > 0:
         with _gate_cm():
-            row = db.reign.chat_turn_status_and_minister_message(ctid)
+            row = db.reign.row(ctid, fields="status, minister_message_id")
             if row is not None and str(row["status"] or "") in {"failed", "undone"}:
                 raise AudienceTranslateError(f"源轮已死：chat_turn_id={ctid}")
             status = str(row["status"] or "") if row is not None else ""
@@ -325,7 +325,7 @@ def run_turn_translation_job(
         with _gate_cm():
             # 落账临界区复查源轮仍存活（ADR 0038：后台写入前须校验目标轮仍存活）。
             if ctid > 0:
-                live = db.reign.chat_turn_status(ctid)
+                live = db.reign.row(ctid, fields="status")
                 if live is None or str(live["status"] or "") in {"failed", "undone"}:
                     from ming_sim.audience_translate import AudienceTranslateError
                     raise AudienceTranslateError(
@@ -508,7 +508,7 @@ def _load_emperor_message_for_turn(
     if ctid <= 0:
         return ""
     with _translation_write_cm(write_gate):
-        trow = db.reign.chat_turn_user_message_id(ctid)
+        trow = db.reign.row(ctid, fields="user_message_id")
         if trow is None:
             return ""
         uid = trow["user_message_id"]

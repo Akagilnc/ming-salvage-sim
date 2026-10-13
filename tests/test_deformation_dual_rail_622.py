@@ -4,7 +4,7 @@ from ming_sim.settlement.dossier import apply_dossier_promulgation
 from ming_sim.applier import Provenance, atomic
 import json
 from ming_sim.db import GameDB
-from tests.dossier_test_helpers import create_test_secret_order
+from tests.dossier_test_helpers import create_test_secret_order, _cost_events
 from ming_sim.due_review import apply_pending_due_reviews
 from ming_sim.entities.economy.apply import _apply_economy_list
 from ming_sim.situation_drift import apply_situation_monthly_drift
@@ -38,18 +38,6 @@ def _insert_final_stage(db, state, content, *, dossier_id: int, title: str):
 
 
 _prime_and_apply_due_review = partial(_apply_due_review, stage_writer=_insert_final_stage)
-
-
-def _cost_liability(db, dossier_id):
-    return [
-        dict(row)
-        for row in db.conn.execute(
-            "SELECT * FROM decree_cost_events "
-            "WHERE dossier_id=? AND cost_identity='连坐' AND cost_kind='liability' "
-            "ORDER BY id",
-            (int(dossier_id),),
-        ).fetchall()
-    ]
 
 
 # ── ① AC1+AC2(+AC4) tracer ───────────────────────────────────────────
@@ -95,7 +83,16 @@ def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, conten
     assert xf_dossier["status"] == "closed"
     assert (result_xf.get("execution") or {}).get("outcome") == "transformed"
     # 连坐走既有挂载点
-    assert len(_cost_liability(db, xf_id)) == 1
+    assert (
+        len(
+            [
+                row
+                for row in _cost_events(db, xf_id, identity="连坐")
+                if row["cost_kind"] == "liability"
+            ]
+        )
+        == 1
+    )
 
     # 双口径三面：既有模型/测试奏报 × 执行格记变形 × 实况效果在库
     # 复核不代写终奏；分叉读既有 progress 与执行格。
