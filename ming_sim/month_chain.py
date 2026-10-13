@@ -22,6 +22,7 @@ from types import SimpleNamespace
 from typing import Any, Dict, List, Mapping, Optional
 
 from ming_sim.applier import Provenance, atomic, connection_owns_transaction
+from ming_sim.exceptions import SettlementAbort
 from ming_sim.models import _load_durable_json_list
 
 logger = logging.getLogger(__name__)
@@ -29,6 +30,7 @@ logger = logging.getLogger(__name__)
 _CHAIN_KEY = "month_chain"
 _WORLD_QUESTION_PREFIX = "world-question:"
 _DECREE_QUESTION_PREFIX = "decree-question:"
+
 # #1891：请饷／议停请旨的案头身份前缀。真实事件身份在交接时绑定（真实 id 藏在前缀后），
 # 不从疏文猜配（ADR 0115）。与 world-question/decree-question 同列：都是案头身份，
 # 不是 events 表事件，故不进 event_triggers 的普通回写分支。
@@ -47,6 +49,19 @@ LEVY_HANDOFF_RULE = (
     "presentation_due 为 false 的由你决定是否再上疏；一件都不上时整段不写 LEVY 块。"
     "普通请旨仍用 <<DECISION>>，不能代替 LEVY 块，也不承担请饷事件身份。"
 )
+
+
+def _decree_ref_from_question_id(event_id: str) -> str:
+    if event_id.startswith(_DECREE_QUESTION_PREFIX):
+        return event_id[len(_DECREE_QUESTION_PREFIX):].rpartition(":")[0]
+    return ""
+
+
+def _accounted_settlement_abort(failure: Dict[str, Any], turn: int) -> SettlementAbort:
+    return SettlementAbort(
+        failure["message"], turn=turn, stage=failure["step"],
+        error_pack_path=failure.get("error_pack_path"), accounted=True,
+    )
 
 
 def _session_owner(db: Any, state: Any, llm_config: Any, agno_db: Any, content: Any):
@@ -145,7 +160,6 @@ def _levy_handoff_blocks(text: str, turn: int) -> List[Dict[str, Any]]:
     """按出现顺序读 <<LEVY>> 块。块内的事件 id 不是绑定源，读的时候丢掉。"""
     import json
 
-    from ming_sim.exceptions import SettlementAbort
     from ming_sim.settlement_payload import parse_decision_blocks
 
     if _unclosed_levy_opener(text) is not None:
@@ -200,8 +214,6 @@ def _pin_world_question_identities(
     失败。已留中的可以整段不写块（不再上疏）；要再上疏就必须与名单等长，不上的
     那件显式 present false。
     """
-    from ming_sim.exceptions import SettlementAbort
-
     roster = levy_petitions
     mandatory = []
     for item in roster:
@@ -622,7 +634,7 @@ def run_player_month_chain(
     write_gate_already_held: bool = False,
 ) -> Any:
     """从现有过月入口继续。已落的旨不动，未落的按序接着落。"""
-    from ming_sim.exceptions import LLMUnavailable, SettlementAbort
+    from ming_sim.exceptions import LLMUnavailable
     from ming_sim.mechanical_tail import ensure_mechanical_tails
 
     from ming_sim.decree_forecast import _owner_for
@@ -679,12 +691,7 @@ def run_player_month_chain(
                     chain.clear()
                     chain.update(_load_chain(db, turn))
                     if chain.get("call_failure"):
-                        raise SettlementAbort(
-                            chain["call_failure"]["message"], turn=turn,
-                            stage=chain["call_failure"]["step"],
-                            error_pack_path=chain["call_failure"].get("error_pack_path"),
-                            accounted=True,
-                        )
+                        raise _accounted_settlement_abort(chain["call_failure"], turn)
                     desk = _materialize_rescript_desk(db, state, chain)
                     # Durable decided-but-unconsumed answers block the monthly tail
                     # even before another request has claimed them into _rescript_jobs.
@@ -868,7 +875,6 @@ def _abort_month_call(
 ) -> None:
     """停住当前过月 run：持久化相位内 call_failure + 错误包，再 SettlementAbort。"""
     from ming_sim.error_pack import write_error_pack
-    from ming_sim.exceptions import SettlementAbort
 
     turn = int(state.turn)
     # 事务已回滚时，失败记录只叠在已提交链上。调用方链在 alongside 里改过的
@@ -899,13 +905,7 @@ def _abort_month_call(
     chain.clear()
     chain.update(committed)
     _save_chain(db, turn, chain, decree_text=decree_text, source=source)
-    raise SettlementAbort(
-        original,
-        turn=turn,
-        stage=step,
-        error_pack_path=pack_path or None,
-        accounted=True,
-    ) from exc
+    raise _accounted_settlement_abort(failure, turn) from exc
 
 
 def _guard_month_call(
@@ -925,7 +925,7 @@ def _guard_month_call(
     已有错误包或 call_failure 的 SettlementAbort 原样上浮；尚无诊断的中止
     接同一诊断与恢复通道。
     """
-    from ming_sim.exceptions import LLMUnavailable, SettlementAbort
+    from ming_sim.exceptions import LLMUnavailable
 
     try:
         return operation()
@@ -1822,6 +1822,23 @@ def _world_question_ids(chain, turn):
     )}
 
 
+def _rescript_target(
+    session: Any, chain: Dict[str, Any], row: Dict[str, Any],
+) -> Optional[tuple[str, str]]:
+    """Classify desk/decided row into (kind, ref) if still eligible for rescript model continuation."""
+    if row.get("kind") == "rescript_draft":
+        key = str(row["decision_key"])
+        return ("memorial", key) if key not in chain.get("rescript_consumed", []) else None
+    event = str(row.get("event_id") or "")
+    turn = int(session.state.turn)
+    if event in _world_question_ids(chain, turn):
+        return ("world", event)
+    decree_ref = _decree_ref_from_question_id(event)
+    if decree_ref and any(q["event_id"] == event for q in session.db.staged_declarations.questions_for(decree_ref)):
+        return ("decree", event)
+    return None
+
+
 def _eligible_rescript_answers(
     session: Any, chain: Dict[str, Any], *, decided: Optional[List[Dict[str, object]]] = None,
 ) -> List[Dict[str, object]]:
@@ -1831,20 +1848,13 @@ def _eligible_rescript_answers(
     if decided is None:
         rows = db.issues.list_pending_decisions(turn) + db.issues.list_rescript_drafts()
         decided = [r for r in rows if r["status"] == "decided" and r["answered_turn"] == turn]
-    world_ids = _world_question_ids(chain, turn)
     eligible: List[Dict[str, object]] = []
     for row in decided:
-        event = str(row.get("event_id") or "")
-        if row["kind"] == "rescript_draft":
-            if row["decision_key"] not in chain.get("rescript_consumed", []):
-                eligible.append(row)
-        elif event in world_ids:
+        if _rescript_target(session, chain, row) is not None:
             eligible.append(row)
-        elif event.startswith(_DECREE_QUESTION_PREFIX):
-            ref = event[len(_DECREE_QUESTION_PREFIX):].rpartition(":")[0]
-            if any(q["event_id"] == event for q in db.staged_declarations.questions_for(ref)):
-                eligible.append(row)
-        elif event.startswith("dossier:"):
+            continue
+        event = str(row.get("event_id") or "")
+        if event.startswith("dossier:"):
             # Decided triad still pending sync apply blocks month-tail (#1847 K2).
             raw_id = event.split(":", 1)[1]
             if not raw_id.isdigit():
@@ -1879,7 +1889,6 @@ def _consume_rescript_answers(
     """
     from concurrent.futures import as_completed
     from ming_sim.decree_forecast import _owner_for
-    from ming_sim.exceptions import SettlementAbort
     from ming_sim.rescript_draft import consume_memorial_answer
     from ming_sim.rescript_forecast import prepare_answers
 
@@ -1945,7 +1954,7 @@ def _consume_rescript_answers(
                         session, chain, answers=[_answer_from_row(row)], source=source, prepared=prepared,
                     )
                 else:
-                    decree_ref = ref[len(_DECREE_QUESTION_PREFIX):].rpartition(":")[0]
+                    decree_ref = _decree_ref_from_question_id(ref)
                     continue_decree_after_answers(
                         session, decree_ref=decree_ref, chain=chain,
                         answers=[_answer_from_row(row)], source=source, prepared=prepared,
@@ -1984,11 +1993,7 @@ def _consume_rescript_answers(
                 and accounted_abort.error_pack_path == failure.get("error_pack_path")
             ):
                 raise accounted_abort
-            raise SettlementAbort(
-                failure["message"], turn=turn, stage=failure["step"],
-                error_pack_path=failure.get("error_pack_path"),
-                accounted=True,
-            )
+            raise _accounted_settlement_abort(failure, turn)
 
 
 def _run_world_continuation_text(

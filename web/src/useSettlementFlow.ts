@@ -89,18 +89,29 @@ export function useSettlementFlow({
   // #657：typed resume_phase2 时空 pending 不报 PAUSED，接到 phase2 空 POST 续跑。
   React.useEffect(() => {
     if (!state) return;
+    const route = routeRefreshDecisions(
+      state.turn.phase,
+      state.pending_decisions || [],
+      state.resume_phase2,
+    );
+    // #1620：all-decided / resume_phase2 时 route 返 pendingDecisions:null——须清本地 residual modal，
+    // 接到 settle-resume；未决 pending（!== null）仍走 replace，保留 picks。
+    if (route.resumePhase2 === true) {
+      setPendingDecisions([]);
+    } else if (route.pendingDecisions !== null) {
+      const next = route.pendingDecisions;
+      setPendingDecisions((prev) => replacePendingDecisionsOnRefresh(prev, next) || []);
+    }
+    if (!state.settlement_entry_inflight && route.error !== null) {
+      setPausedDecisionError(route.error);
+    }
+
     // #1625: an observation-page refresh can land while another settlement entry
     // is consuming the desk. Reuse the injected state loader until that wait ends.
     // Gate on inflight alone — entry begins before turn_phase becomes settling
     // (still summoning/reviewing under settlement_display), so phase conjunction
     // would stall the observation page on the locked pre-settle face.
     if (state.settlement_entry_inflight) {
-      // In-flight continuation does not block the remaining desk (including a
-      // follow-up produced by another completed row). Keep the existing poll.
-      if (state.turn.phase === "awaiting_decision") {
-        const decisions = routeRefreshDecisions(state.turn.phase, state.pending_decisions || []);
-        if (decisions.pendingDecisions !== null) setPendingDecisions(decisions.pendingDecisions);
-      }
       let cancelled = false;
       let refreshTimer: number;
       const refresh = () => {
@@ -120,20 +131,6 @@ export function useSettlementFlow({
         window.clearTimeout(refreshTimer);
       };
     }
-    const route = routeRefreshDecisions(
-      state.turn.phase,
-      state.pending_decisions || [],
-      state.resume_phase2,
-    );
-    // #1620：all-decided / resume_phase2 时 route 返 pendingDecisions:null——须清本地 residual modal，
-    // 接到 settle-resume；未决 pending（!== null）仍走 replace，保留 picks。
-    if (route.resumePhase2 === true) {
-      setPendingDecisions([]);
-    } else if (route.pendingDecisions !== null) {
-      const next = route.pendingDecisions;
-      setPendingDecisions((prev) => replacePendingDecisionsOnRefresh(prev, next) || []);
-    }
-    if (route.error !== null) setPausedDecisionError(route.error);
   }, [state, loadState]);
 
   // 后台机械尾未终结时观察状态：总评落位或代码异常均在原页面呈现。

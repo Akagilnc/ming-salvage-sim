@@ -173,11 +173,10 @@ afterEach(() => {
 describe("#1625 useSettlementFlow — observation refresh convergence", () => {
   it("throttles inflight reloads and converges to the visible phase returned after waiting", async () => {
     vi.useFakeTimers();
-    // Real prior phase while entry is in flight: accept sets settlement_display +
-    // inflight before pre_settle writes SETTLING (still summoning/reviewing).
+    // The last answer is persisted before continuation finishes: the desk is
+    // empty while the durable phase is still awaiting_decision, not a failure.
     const inflightState = {
       ...awaitingState,
-      turn: { ...awaitingState.turn, phase: "summoning", settlement_display: true },
       pending_decisions: [],
       settlement_entry_inflight: true,
     } as GameState;
@@ -195,8 +194,9 @@ describe("#1625 useSettlementFlow — observation refresh convergence", () => {
       .mockResolvedValueOnce(settledState);
     // #1902 N6：实际异常对象留痕（非日志措辞锁）——生产侧 console.warn 带原 Error。
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const { host, cleanup } = mountHarness({ initial: inflightState, loadState });
+    const { host, hookRef, cleanup } = mountHarness({ initial: inflightState, loadState });
 
+    expect(hookRef.current!.pausedDecisionError).toBe("");
     expect(loadState).not.toHaveBeenCalled();
     await act(async () => {
       await vi.advanceTimersByTimeAsync(999);
@@ -206,13 +206,13 @@ describe("#1625 useSettlementFlow — observation refresh convergence", () => {
       await vi.advanceTimersByTimeAsync(1);
     });
     expect(loadState).toHaveBeenCalledTimes(1);
-    expect(host.querySelector('[data-testid="phase"]')?.textContent).toBe("summoning");
+    expect(host.querySelector('[data-testid="phase"]')?.textContent).toBe("awaiting_decision");
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1000);
     });
     expect(loadState).toHaveBeenCalledTimes(2);
-    expect(host.querySelector('[data-testid="phase"]')?.textContent).toBe("summoning");
+    expect(host.querySelector('[data-testid="phase"]')?.textContent).toBe("awaiting_decision");
     expect(host.querySelector('[data-testid="error"]')?.textContent).toBe("");
     expect(warn.mock.calls.some((call) => call.includes(pollError))).toBe(true);
 
@@ -222,6 +222,7 @@ describe("#1625 useSettlementFlow — observation refresh convergence", () => {
     expect(loadState).toHaveBeenCalledTimes(3);
     expect(host.querySelector('[data-testid="phase"]')?.textContent).toBe("awaiting_decision");
     expect(host.querySelector('[data-testid="pending-count"]')?.textContent).toBe("1");
+    expect(hookRef.current!.pausedDecisionError).toBe("");
     expect(host.querySelector('[data-testid="error"]')?.textContent).toBe("");
     expect(vi.getTimerCount()).toBe(0);
     warn.mockRestore();

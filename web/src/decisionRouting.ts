@@ -98,8 +98,8 @@ export function routeRefreshDecisions(
   if (phase !== "awaiting_decision") {
     return { pendingDecisions: null, error: null };
   }
-  // #1625 inflight wait is owned by useSettlementFlow's refresh effect gate;
-  // this path only runs after inflight is false.
+  // #1625: useSettlementFlow keeps the desk refreshed during inflight waits,
+  // but only applies refresh errors after the entry finishes.
   // #1374/#1418 r2 / #657：phase2 在办——不重开批红；接到 settle-resume。
   if (resumePhase2Signal || isAllDecisionsDecided(events)) {
     return { pendingDecisions: null, error: null, resumePhase2: true };
