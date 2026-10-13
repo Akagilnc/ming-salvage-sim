@@ -9,6 +9,7 @@ from __future__ import annotations
 from ming_sim.entities.character.store import CharacterStore
 from ming_sim.exceptions import DeclarationDataError
 
+import contextlib
 import logging
 import threading
 import time
@@ -959,7 +960,6 @@ class GameSession:
 
             gate = write_gate if write_gate is not None else getattr(self, "_write_gate", None)
             # #1353 r7：入口探测开夜短持 gate（共享 conn 读；无 gate 时 CLI 单写者）。
-            import contextlib
             with gate if gate is not None else contextlib.nullcontext():
                 night = get_night(self.db, night_id) if night_id is not None else get_open_night(self.db)
             if night is None and night_id is None:
@@ -1031,14 +1031,12 @@ class GameSession:
         return thread
 
     def _mark_control_turn_translation_done(
-        self, chat_turn_id: int, *, write_gate: Any = None,
+        self, chat_turn_id: int, *, write_gate: Any,
     ) -> None:
         """口令早退轮：复用转译水位单真源，避免假 pending 进 list_pending_translations。"""
         from ming_sim.audience_translation import mark_turn_translation_done
-        from ming_sim.session_write_queue import get_session_write_queue
 
-        gate = write_gate if write_gate is not None else get_session_write_queue(self).write_gate
-        with gate:
+        with write_gate:
             mark_turn_translation_done(self.db, chat_turn_id, commit=True)
 
     # ── 召对话轮生命周期（#1902：入口只做适配，不持业务编排）────────
@@ -1377,8 +1375,6 @@ class GameSession:
         ``write_gate`` 为宿主短写闸；未传则无闸上下文。
         claim 未赢 → ``PostReplyRecoveryError(conflict)``，入口映射 409。
         """
-        import contextlib
-
         chat_turn_id = int(target["chat_turn_id"])
         phase = str(target.get("recovery_phase") or "")
         gate_cm = write_gate if write_gate is not None else contextlib.nullcontext()
@@ -1613,7 +1609,7 @@ class GameSession:
         accepted_turn: int,
         user_message_id: int = 0,
         stream_emit: Optional[Callable[..., None]] = None,
-        write_gate: Any = None,
+        write_gate: Any,
     ) -> Optional[Tuple[AudienceChatTurn, "ChatTurnResult", int]]:
         """中断回话恢复共核：reopen CAS → 快照 → scene_chat → 落回话／失败收口。
 
@@ -1625,14 +1621,11 @@ class GameSession:
         不遗留 generating。
         成功返回 ``(turn, result, minister_message_id)``；转译由入口在闸外挂票后安排，
         收夜须先放行 pending write，再调 ``schedule_close_night_after_chat_if_needed``。
-        ``write_gate`` 可选：宿主短写闸（reopen／落库／失败收口）；LLM 生成在闸外。
+        ``write_gate``：宿主短写闸（reopen／落库／失败收口）；LLM 生成在闸外。
         """
-        import contextlib
-
-        gate_cm = write_gate if write_gate is not None else contextlib.nullcontext()
         turn: Optional[AudienceChatTurn] = None
         result: Optional[ChatTurnResult] = None
-        with gate_cm:
+        with write_gate:
             # #1902：与建轮同核资格（相位／收夜／在飞）；CAS 前拒绝，不留 generating。
             GameSession.assert_audience_chat_admission(self, what="召对")
             if not self.db.reign.reopen_interrupted_chat_turn_for_retry(chat_turn_id):
@@ -1646,7 +1639,7 @@ class GameSession:
                 user_message_id=int(user_message_id or 0),
             )
         try:
-            with gate_cm:
+            with write_gate:
                 turn.before_snapshot = self.db.capture_chat_rollback_snapshot()
             result = self.scene_chat(
                 question,
@@ -1654,7 +1647,7 @@ class GameSession:
                 stream_emit=stream_emit,
                 write_gate=write_gate,
             )
-            with gate_cm:
+            with write_gate:
                 minister_message_id = self.complete_audience_chat_turn(
                     turn,
                     message_speaker,
@@ -1664,7 +1657,7 @@ class GameSession:
         except Exception as exc:
             if turn is not None:
                 try:
-                    with gate_cm:
+                    with write_gate:
                         self.fail_audience_chat_turn(
                             turn,
                             replied=result is not None,
@@ -1682,7 +1675,7 @@ class GameSession:
         self, message: str, *, chat_turn_id: int = 0,
         stream_emit: Any = None,
         on_protagonist_changed: Any = None,
-        write_gate: Any = None,
+        write_gate: Any,
     ) -> ChatTurnResult:
         """#1836 T1 / #1837 C1a / #1842 T2：一夜一场入口——一个场景 LLM 演整场。
 
@@ -1695,7 +1688,6 @@ class GameSession:
           代码触发读心（转译承接）；按大臣 chat() 入口已退役。
         - stream_emit 非空：同核走 transport 流式（SSE delta / 重试 / 失败路径）
         """
-        from ming_sim.session_write_queue import get_session_write_queue
         from ming_sim.audience_night import (
             SCENE_CHAT_SPEAKER,
             ensure_summon_enter,
@@ -1705,7 +1697,7 @@ class GameSession:
         )
         from ming_sim.llm_model import extract_agent_text
 
-        gate = write_gate if write_gate is not None else get_session_write_queue(self).write_gate
+        gate = write_gate
 
         # Free emperor prose: empty-check without mutating carried body (P6).
         message_text = str(message or "")
@@ -1857,11 +1849,10 @@ class GameSession:
         stream_emit: Any,
         *,
         chat_turn_id: int = 0,
-        write_gate: Any = None,
+        write_gate: Any,
     ) -> tuple[str, list]:
 
         """场景 agent 的 transport 流式核——零动作工具；材料只读工具不进 court_action。"""
-        from ming_sim.session_write_queue import get_session_write_queue
         from ming_sim.llm_model import extract_agent_text
         from ming_sim.llm_transport import (
             bind_transport_sdk_budget,
@@ -1874,7 +1865,7 @@ class GameSession:
             transport_failure_unavailable,
         )
 
-        gate = write_gate if write_gate is not None else get_session_write_queue(self).write_gate
+        gate = write_gate
 
         llm_cfg = getattr(self, "llm_config", None)
         policy = audience_transport_policy(llm_cfg)
@@ -2348,7 +2339,6 @@ class GameSession:
         # #1234/#1235：点击受理即独立提交月初快照（不进 pre_settle 事务）。
         # accept_settlement_period：FRONT_HALF_DONE 跳过（恢复态已有快照/半程活值不可重写）。
         # Web 入口另在 await/close 前先 capture（点即入时序）；此处幂等兜底 CLI/直调。
-        import contextlib
         from ming_sim.audience_night import AudienceNightError, auto_close_open_night
         from ming_sim.exceptions import LLMUnavailable
         from ming_sim.month_open_snapshot import (

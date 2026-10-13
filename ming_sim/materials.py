@@ -297,6 +297,13 @@ def material_tools(root: Any) -> list:
     return [list_materials_tool, read_material_tool]
 
 
+def bind_material_tree(model: Any, root: Path | str) -> list:
+    """Bind CLI cwd and API read tools to the same prepared material tree."""
+    if hasattr(model, "materials_dir"):
+        model.materials_dir = str(root or "")
+    return material_tools(root)
+
+
 def _issue_linked_affair_id(db: Any, issue_id: object) -> int:
     """ADR 0154：issue 若已指向某 affair，返回该 affair id；未挂靠返 0。
 

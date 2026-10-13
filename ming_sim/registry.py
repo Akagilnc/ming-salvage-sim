@@ -15,7 +15,7 @@ from agno.db.sqlite import SqliteDb
 from ming_sim.content import GameContent
 from ming_sim.models import LLMConfig
 from ming_sim.llm_model import create_chat_model
-from ming_sim.materials import PreparedMaterials, material_tools
+from ming_sim.materials import PreparedMaterials, bind_material_tree
 
 def create_scene_agent(
     llm_config: LLMConfig,
@@ -33,8 +33,7 @@ def create_scene_agent(
     chat_model = model if model is not None else create_chat_model(
         llm_config, temperature=0.6, top_p=0.9,
     )
-    if hasattr(chat_model, "materials_dir"):
-        chat_model.materials_dir = str(prepared.root)
+    tools = bind_material_tree(chat_model, prepared.root)
     scene_prompt = str(getattr(content, "scene_agent_prompt", "") or "")
     if not scene_prompt.strip():
         # 无 bundled prompt 时的最低特征化底（真源仍是 content/prompts/scene_agent.md）。
@@ -59,7 +58,7 @@ def create_scene_agent(
         db=agno_db,
         model=chat_model,
         instructions=instructions,
-        tools=material_tools(prepared.root),
+        tools=tools,
         add_history_to_context=True,
         markdown=False,
     )

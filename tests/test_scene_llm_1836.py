@@ -65,7 +65,7 @@ def test_scene_chat_one_call_returns_multi_person_script(game, monkeypatch):
     # #1842：ctid=0 同步转译走 conftest 离线空声明缝，不另造平行 fixture。
     sess = _sess(db, state, content, llm_config=SimpleNamespace(channel=""))
     emperor = "洪承畴可堪大任？"
-    result = sess.scene_chat(emperor)
+    result = sess.scene_chat(emperor, write_gate=sess._write_gate)
 
     assert len(calls) == 1, "整段戏文必须出自同一次场景调用"
     # #1842：opening 已在 create_scene_agent instructions；run 输入不得再拼一份。
@@ -90,7 +90,7 @@ def test_xuan_lands_enter_then_present_on_next_prepare(game, monkeypatch, tmp_pa
 
     monkeypatch.setattr("ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent())
     sess = _sess(db, state, content, llm_config=SimpleNamespace(channel=""))
-    result = sess.scene_chat(f"宣{target}")
+    result = sess.scene_chat(f"宣{target}", write_gate=sess._write_gate)
 
     # 本次宣入必须新落一条 TAG_ENTER（非常在员额开夜账）。
     enters = [
@@ -123,7 +123,7 @@ def test_retire_via_scene_chat_closes_night_and_keeps_last_turn(game, monkeypatc
     monkeypatch.setattr("ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent())
     sess = _sess(db, state, content, llm_config=SimpleNamespace(channel=""))
 
-    result = sess.scene_chat("边饷如何？")
+    result = sess.scene_chat("边饷如何？", write_gate=sess._write_gate)
     assert result.court_action == ""
     user_mid = db.chat_messages.insert(minister_name='殿上', turn=state.turn, role='user', content='边饷如何？')
     minister_mid = db.chat_messages.insert(minister_name='殿上', turn=state.turn, role='assistant', content=result.answer or '众臣叩首：臣等遵旨。')
@@ -141,7 +141,7 @@ def test_retire_via_scene_chat_closes_night_and_keeps_last_turn(game, monkeypatc
     assert turns_before and int(turns_before[-1]["id"]) == ctid
 
     # 场景只标退朝；持久化尾调度后台封夜。
-    close_result = sess.scene_chat("退朝")
+    close_result = sess.scene_chat("退朝", write_gate=sess._write_gate)
     assert close_result.court_action == "court_break"
     close_worker = sess.schedule_close_night_after_chat_if_needed(close_result.court_action)
     assert close_worker is not None

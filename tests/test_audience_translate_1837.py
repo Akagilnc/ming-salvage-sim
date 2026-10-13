@@ -49,7 +49,7 @@ def _scene_turn(sess, db, state, message: str, *, night_id: int | None = None):
     ctid = db.create_chat_turn(
         state, "殿上", "test-sess", 0, night_id=nid or None,
     )
-    result = sess.scene_chat(message, chat_turn_id=ctid)
+    result = sess.scene_chat(message, chat_turn_id=ctid, write_gate=sess._write_gate)
     fut = persist_and_schedule_scene(sess, db, result)
     if fut is not None:
         fut.result(timeout=30)
@@ -179,7 +179,7 @@ def test_pending_round_approval_endorsed_before_close_or_after_month_join(
         sess = _sess(db, state, content, monkeypatch, translate_fn=failed_translation)
         # 真召对入口：回话先落库、后台转译失败，留下待补轮。
         ctid = db.create_chat_turn(state, "殿上", "test-sess", 0, night_id=nid)
-        result = sess.scene_chat("准", chat_turn_id=ctid)
+        result = sess.scene_chat("准", chat_turn_id=ctid, write_gate=sess._write_gate)
         future = persist_and_schedule_scene(sess, db, result)
         assert future is not None
         with pytest.raises(RuntimeError):
@@ -696,7 +696,7 @@ def test_translate_call_failure_is_not_empty_success_dispatch(game, monkeypatch)
     sess = _sess(db, state, content, monkeypatch, translate_fn=boom)
     ctid = db.create_chat_turn(state, "殿上", "test-sess", 0, night_id=None)
     # 开夜由 scene_chat 内部 ensure
-    result = sess.scene_chat("边饷如何？", chat_turn_id=ctid)
+    result = sess.scene_chat("边饷如何？", chat_turn_id=ctid, write_gate=sess._write_gate)
     fut = persist_and_schedule_scene(sess, db, result)
     assert fut is not None
     with pytest.raises(RuntimeError, match="simulated translate transport failure"):
@@ -781,7 +781,7 @@ def test_translation_pending_create_approve_reject_undo_via_real_chat_turn(
             "promises": [],
         },
     )
-    r = sess.scene_chat("拟赈灾", chat_turn_id=ctid_create)
+    r = sess.scene_chat("拟赈灾", chat_turn_id=ctid_create, write_gate=sess._write_gate)
     # #1902 T6：ChatTurnResult 不再挂 pending_action_id；前台不等后台转译由落库后查证。
     persist_and_schedule_scene(sess, db, r)
     sess._write_queue.barrier(lambda: None)
@@ -832,7 +832,7 @@ def test_translation_pending_create_approve_reject_undo_via_real_chat_turn(
             "promises": [{"action_id": approve_id, "decision": "应允"}],
         },
     )
-    r_approve = sess.scene_chat("准", chat_turn_id=ctid_approve)
+    r_approve = sess.scene_chat("准", chat_turn_id=ctid_approve, write_gate=sess._write_gate)
     persist_and_schedule_scene(sess, db, r_approve)
     sess._write_queue.barrier(lambda: None)
     assert int(db.conn.execute(
@@ -865,7 +865,7 @@ def test_translation_pending_create_approve_reject_undo_via_real_chat_turn(
             "promises": [{"action_id": reject_id, "decision": "拒绝"}],
         },
     )
-    r_reject = sess.scene_chat("不准", chat_turn_id=ctid_reject)
+    r_reject = sess.scene_chat("不准", chat_turn_id=ctid_reject, write_gate=sess._write_gate)
     persist_and_schedule_scene(sess, db, r_reject)
     sess._write_queue.barrier(lambda: None)
     assert db.conn.execute(

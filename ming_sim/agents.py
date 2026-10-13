@@ -33,6 +33,7 @@ from ming_sim.llm_transport import (
     run_with_transport,
     transport_failure_unavailable,
 )
+from ming_sim.materials import bind_material_tree
 from ming_sim.models import LLMConfig
 from ming_sim.token_stats import tlog
 
@@ -471,14 +472,11 @@ def create_highlight_judge_agent(llm_config: LLMConfig) -> Agent:
 def create_decree_forecast_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
     """逐旨预推：与世界段同一材料目录读法，本旨事实由调用消息携带。"""
     from ming_sim.settlement_payload import decision_prompt_contract
-    from ming_sim.materials import material_tools
 
     cfg = _llm_for_role(llm_config, "simulator")
     tlog(f"[decree-forecast] 使用模型 {describe_effective_model(cfg)}")
     model = create_chat_model(cfg, temperature=0.9, top_p=0.95, enable_thinking=True)
-    root = getattr(prepared, "root", "")
-    if hasattr(model, "materials_dir"):
-        model.materials_dir = str(root or "")
+    tools = bind_material_tree(model, getattr(prepared, "root", ""))
     instructions = [
         _ctx().game_world_prompt,
         "只推演本次输入中这一道旨在当前盘面上的可能后果。",
@@ -494,7 +492,7 @@ def create_decree_forecast_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
         id="decree-forecast",
         model=model,
         instructions=instructions,
-        tools=material_tools(root),
+        tools=tools,
         add_history_to_context=False,
         markdown=False,
     )
@@ -507,15 +505,12 @@ def create_world_segment_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
     设为 cwd。不另造读取机制。
     """
     from ming_sim.settlement_payload import decision_prompt_contract
-    from ming_sim.materials import material_tools
     from ming_sim.month_chain import LEVY_HANDOFF_RULE
 
     cfg = _llm_for_role(llm_config, "simulator")
     tlog(f"[world-segment] 使用模型 {describe_effective_model(cfg)}")
     model = create_chat_model(cfg, temperature=0.9, top_p=0.95, enable_thinking=True)
-    root = getattr(prepared, "root", "")
-    if hasattr(model, "materials_dir"):
-        model.materials_dir = str(root or "")
+    tools = bind_material_tree(model, getattr(prepared, "root", ""))
     instructions = [
         _ctx().game_world_prompt,
         "你推演本月旨意之外的世界事件，并承接开场列出的在途办理案卷。"
@@ -540,7 +535,7 @@ def create_world_segment_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
         id="world-segment",
         model=model,
         instructions=instructions,
-        tools=material_tools(root),
+        tools=tools,
         add_history_to_context=False,
         markdown=False,
     )
@@ -548,16 +543,12 @@ def create_world_segment_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
 
 def create_gazette_author_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
     """邸报作者：沿现有邸报写作提示与推演者目录，一次写出标题和正文。"""
-    from ming_sim.materials import material_tools
-
     cfg = _llm_for_role(llm_config, "simulator")
     tlog(f"[gazette] 使用模型 {describe_effective_model(cfg)}")
     model = create_chat_model(
         cfg, temperature=0.9, top_p=0.95, enable_thinking=True, force_json_output=True,
     )
-    root = getattr(prepared, "root", "")
-    if hasattr(model, "materials_dir"):
-        model.materials_dir = str(root or "")
+    tools = bind_material_tree(model, getattr(prepared, "root", ""))
     instructions = [
         _ctx().game_world_prompt,
         _ctx().gazette_author_prompt,
@@ -572,7 +563,7 @@ def create_gazette_author_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
         id="gazette-author",
         model=model,
         instructions=instructions,
-        tools=material_tools(root),
+        tools=tools,
         add_history_to_context=False,
         markdown=False,
     )
@@ -580,15 +571,13 @@ def create_gazette_author_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
 
 def create_rescript_draft_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
     """One perspective-fed run for memorials, revisions or raw rescript continuation."""
-    from ming_sim.materials import material_tools
     from ming_sim.structured_decree import structured_decree_prompt_contract
     from ming_sim.action_clusters import cluster_fields_prompt, cluster_by_kind
     from ming_sim.decree_vocabulary import DOSSIER_ACTION_TYPES
     cfg = _llm_for_role(llm_config, "simulator")
     model = create_chat_model(cfg, temperature=0.4, top_p=0.9,
                               enable_thinking=True, force_json_output=True)
-    if hasattr(model, "materials_dir"):
-        model.materials_dir = str(prepared.root)
+    tools = bind_material_tree(model, prepared.root)
     return Agent(
         name="急务票拟官", id="rescript-drafter", model=model,
         instructions=[
@@ -603,26 +592,23 @@ def create_rescript_draft_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
                 for kind in sorted(DOSSIER_ACTION_TYPES) if cluster_by_kind(kind) is not None
             ),
         ],
-        tools=material_tools(prepared.root), add_history_to_context=False, markdown=False,
+        tools=tools, add_history_to_context=False, markdown=False,
     )
 
 
 def create_ending_summary_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
     """国史编纂官：从材料目录按需取阅历月邸报，生成纯文本史评。"""
-    from ming_sim.materials import material_tools
-
     ctx = _ctx()
     model = create_chat_model(
         llm_config, temperature=0.6, top_p=0.9, enable_thinking=True,
     )
-    if hasattr(model, "materials_dir"):
-        model.materials_dir = str(prepared.root)
+    tools = bind_material_tree(model, prepared.root)
     return Agent(
         name="国史编纂官",
         id="ending-summary",
         model=model,
         instructions=[ctx.game_world_prompt, ctx.ending_summary_prompt, prepared.opening],
-        tools=material_tools(prepared.root),
+        tools=tools,
         add_history_to_context=False,
         markdown=False,
     )
@@ -677,16 +663,13 @@ def create_secret_order_supply_agent(llm_config: LLMConfig, prepared: Any = None
     与**所查事实**；被查者经关系网知情后的毁证选择也在同一次 run 内按其视角声明。
     引擎只据声明核算累计投入与逐证难度（P6：呈现层零改字，此处只改输入）。
     """
-    from ming_sim.materials import material_tools
-
     cfg = _llm_for_role(llm_config, "simulator")
     tlog(f"[secret-orders-supply] 使用模型 {describe_effective_model(cfg)}")
     model = create_chat_model(
         cfg, temperature=0.3, top_p=0.95, enable_thinking=True, force_json_output=True,
     )
     root = getattr(prepared, "root", "") if prepared is not None else ""
-    if hasattr(model, "materials_dir"):
-        model.materials_dir = str(root or "")
+    tools = bind_material_tree(model, root)
     instructions = [
         _ctx().game_world_prompt,
         "你是整月密令供料推演者（步骤 4a）。",
@@ -738,7 +721,7 @@ def create_secret_order_supply_agent(llm_config: LLMConfig, prepared: Any = None
         id="secret-orders-supply",
         model=model,
         instructions=instructions,
-        tools=material_tools(root) if root else [],
+        tools=tools if root else [],
         add_history_to_context=False,
         markdown=False,
     )
