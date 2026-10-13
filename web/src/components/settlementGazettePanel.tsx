@@ -1,5 +1,3 @@
-import React from "react";
-
 /**
  * #1852：核账期本面邸报落位（ADR 0158 决定 5）。
  * 非全屏自动弹窗；「朕知道了」只关阅读态。正文直写 DOM（P6 / ADR 0142）。
@@ -19,11 +17,6 @@ export function SettlementGazettePanel({
 }) {
   const rawAttendant = (attendantMessage || "");
   const masthead = periodLabel || "邸报";
-  const bodyRef = React.useRef<HTMLDivElement | null>(null);
-
-  React.useEffect(() => {
-    if (bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
-  }, [report]);
 
   return (
     <div
@@ -34,7 +27,7 @@ export function SettlementGazettePanel({
       data-testid="settlement-gazette-panel"
     >
       <div className="gazette-shell settlement-gazette-shell">
-        <div className="gazette-document modal-scroll" ref={bodyRef}>
+        <div className="gazette-document modal-scroll">
           <div className="gazette-masthead">
             <b>邸报</b>
             <span>{masthead} · 通政使司发抄</span>
