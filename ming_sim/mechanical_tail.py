@@ -77,7 +77,6 @@ def generate_ending_summary_for_tail(
     outcome: Dict[str, object],
     *,
     llm_config: Any = None,
-    save_fn: Any = None,
     gate_run: Any = None,
 ) -> str:
     """结局总评按需取阅邸报目录；已落总评在重试／重开时不再生成。
@@ -150,10 +149,8 @@ def generate_ending_summary_for_tail(
         }
         for row in reports
     ]
-    save = save_fn or db.reign.save_ending_summary
-
     def _save():
-        save(
+        db.reign.save_ending_summary(
             closed_state,
             str(outcome.get("status") or ""),
             summary_text,

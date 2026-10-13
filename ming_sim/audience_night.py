@@ -1002,8 +1002,6 @@ def close_night(
     night_id: Optional[int] = None,
     content: Any = None,
     auto: bool = False,
-    crash_after_step: Optional[int] = None,
-    on_step: Optional[Callable[[int, Dict[str, Any]], None]] = None,
     on_closing: Optional[Callable[[], None]] = None,
     llm_config: Any = None,
     write_gate: Any = None,
@@ -1076,14 +1074,6 @@ def close_night(
         nonlocal cursor
         _set_night_fields(db, night_id, close_commit_cursor=step)
         cursor = step
-        if on_step is not None:
-            on_step(step, get_night(db, night_id) or {})
-        if crash_after_step is not None and int(crash_after_step) == step:
-            raise AudienceNightError(
-                f"收夜提交崩溃注入：step={step}",
-                code="close_crash",
-                detail={"night_id": night_id, "step": step},
-            )
 
     # ── Phase 1: short writes for draft-dossier prerequisites only ─────────
     with gate:
@@ -1147,10 +1137,8 @@ def auto_close_open_night(
     state: GameState,
     *,
     content: Any = None,
-    crash_after_step: Optional[int] = None,
     llm_config: Any = None,
     write_gate: Any = None,
-    on_closing: Optional[Callable[[], None]] = None,
 ) -> Optional[Dict[str, Any]]:
     """颁诏/过回合前：有开夜则顺势收夜；无开夜返回 None。
 
@@ -1166,10 +1154,8 @@ def auto_close_open_night(
         night_id=int(open_n["id"]),
         content=content,
         auto=True,
-        crash_after_step=crash_after_step,
         llm_config=llm_config,
         write_gate=write_gate,
-        on_closing=on_closing,
     )
 
 
