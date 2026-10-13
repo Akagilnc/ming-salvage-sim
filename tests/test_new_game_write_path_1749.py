@@ -9,7 +9,7 @@ import web_app
 from ming_sim.session import GameSession
 from tests.test_month_loop_tracer_1468 import (
     _assert_not_bare_500,
-    tracer_client,  # noqa: F401
+    tracer_client,  # Pytest discovers this fixture by its imported name.
 )
 from tests.sse_helpers import parse_sse_event_pairs as _parse_sse
 from tests.test_session_write_queue_1353 import wait_pending_writes as _wait_pending_writes
@@ -262,7 +262,7 @@ def _write_and_verify_live(
     }
 
 
-def test_new_game_write_path_direct_and_via_exit(tracer_client, monkeypatch):  # noqa: F811
+def test_new_game_write_path_direct_and_via_exit(tracer_client, monkeypatch):
     """主干：直接 new_game 与 exit→new_game；旧档 load_save 恢复。
 
     迟到写/双句柄并发仅临时真跑，不进永久案（r5④ / r7 禁永久并发证明）。
@@ -418,7 +418,7 @@ def test_new_game_write_path_direct_and_via_exit(tracer_client, monkeypatch):  #
         )
 
 
-def test_new_game_construct_failure_keeps_old_writable(tracer_client, monkeypatch):  # noqa: F811
+def test_new_game_construct_failure_keeps_old_writable(tracer_client, monkeypatch):
     """真实 new_game 入口：构造失败恢复旧指针与主库路径，旧局仍可写。
 
     「仍可写」经玩家现役写入口（chat/stream）验，不经夹具直接写库（#1902 F5）。
@@ -494,7 +494,7 @@ def test_gamesession_load_state_failure_closes_partial_resources(tmp_path, monke
 
 
 
-def test_exit_close_fail_blocks_archive_on_real_new_game(tracer_client, monkeypatch):  # noqa: F811
+def test_exit_close_fail_blocks_archive_on_real_new_game(tracer_client, monkeypatch):
     """真实 exit→new_game：detach close 失败 → 旧主库不被归档（外部文件/campaign 终态）。"""
     client = tracer_client
     _install_canned_minister_factory(monkeypatch)
@@ -554,7 +554,7 @@ def test_exit_close_fail_blocks_archive_on_real_new_game(tracer_client, monkeypa
             web_app._drain_and_close_session(g0)
 
 
-def test_load_save_close_fail_restores_writable_old_game(tracer_client, monkeypatch):  # noqa: F811
+def test_load_save_close_fail_restores_writable_old_game(tracer_client, monkeypatch):
     """真实 load_save 入口：关旧局失败 → 409、恢复指针且玩家写面仍可写；不搬活库。
 
     「仍可写」经玩家现役写入口（chat/stream）验，不经夹具直接写库（#1902 F5）。
