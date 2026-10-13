@@ -156,7 +156,7 @@ def _emit_late_pair(db, state, content, monkeypatch, first, second, *, minister,
             )
             mid = db.chat_messages.insert(minister_name=minister, turn=state.turn, role='user', content=text)
             db.reign.update_chat_turn_messages(ctid, user_message_id=mid)
-            reply = sess.scene_chat(text, chat_turn_id=int(ctid))
+            reply = sess.scene_chat(text, chat_turn_id=int(ctid), write_gate=sess._write_gate)
             fut = persist_and_schedule_scene(sess, db, reply, speaker=minister)
             assert fut is not None
             futures.append(fut)
@@ -336,7 +336,7 @@ def _late_revision_and_approval(
         ctid = db.create_chat_turn(
             state, minister, "s", 0, night_id=night_id, status="active",
         )
-        reply = sess.scene_chat(words, chat_turn_id=ctid)
+        reply = sess.scene_chat(words, chat_turn_id=ctid, write_gate=sess._write_gate)
         return ctid, reply
 
     revision_ctid, revision_reply = _turn("改中旨径发。")
@@ -621,7 +621,7 @@ def test_failed_landing_keeps_the_original_pending_action_retryable(game, monkey
     ctid = db.create_chat_turn(
         state, minister, "s", 0, night_id=night_id, status="active",
     )
-    reply = sess.scene_chat("应允查办。", chat_turn_id=ctid)
+    reply = sess.scene_chat("应允查办。", chat_turn_id=ctid, write_gate=sess._write_gate)
     fut = persist_and_schedule_scene(sess, db, reply, speaker=minister)
     assert fut is not None
     with pytest.raises(sqlite3.DatabaseError if fault == "sqlite" else ValueError):

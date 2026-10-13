@@ -259,7 +259,7 @@ def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(
         "source_chat_turn_id": ctid, "imperial": False,
     }
     db.dossiers.attach_pending_action_endorsement(second, own_endorsement)
-    result = sess.scene_chat("两道都准", chat_turn_id=ctid)
+    result = sess.scene_chat("两道都准", chat_turn_id=ctid, write_gate=sess._write_gate)
     persist_and_schedule_scene(sess, db, result)
     # 有限时排空：真挂死在此报红，不靠 CI job 终线兜底（见 _DRAIN_TIMEOUT_S）。
     wait_pending_writes(sess, timeout_s=_DRAIN_TIMEOUT_S)
@@ -403,7 +403,7 @@ def test_scene_chat_rejection_is_staged_for_later_rescript_not_shown_at_night(
     )
     sess = _sess(db, state, content, monkeypatch, translate_fn)
     ctid = db.create_chat_turn(state, "殿上", "scene", 0, night_id=int(night["id"]))
-    result = sess.scene_chat("准这道", chat_turn_id=ctid)
+    result = sess.scene_chat("准这道", chat_turn_id=ctid, write_gate=sess._write_gate)
     persist_and_schedule_scene(sess, db, result)
     wait_pending_writes(sess, timeout_s=30)
 
@@ -452,7 +452,7 @@ def test_repeat_scene_approval_does_not_rerun_exhausted_forecast(game, monkeypat
     sess = _sess(db, state, content, monkeypatch, translate_fn)
     for message in ("准这道", "再准这道"):
         ctid = db.create_chat_turn(state, "殿上", "scene", 0, night_id=int(night["id"]))
-        result = sess.scene_chat(message, chat_turn_id=ctid)
+        result = sess.scene_chat(message, chat_turn_id=ctid, write_gate=sess._write_gate)
         persist_and_schedule_scene(sess, db, result)
         wait_pending_writes(sess, timeout_s=_DRAIN_TIMEOUT_S)
         assert calls == [1]

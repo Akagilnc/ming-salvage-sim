@@ -108,7 +108,7 @@ def _scene_declaration(db, state, content, monkeypatch, words, declaration, *, m
     )
     mid = db.chat_messages.insert(minister_name=minister_name, turn=state.turn, role='user', content=words)
     db.reign.update_chat_turn_messages(ctid, user_message_id=mid)
-    reply = sess.scene_chat(words, chat_turn_id=ctid)
+    reply = sess.scene_chat(words, chat_turn_id=ctid, write_gate=sess._write_gate)
     future = persist_and_schedule_scene(sess, db, reply, speaker=minister_name)
     assert future is not None
     return future.result()
@@ -424,7 +424,7 @@ def test_repeated_urgent_summons_have_independent_rollback_origins(game, monkeyp
     turns = []
     for words in (f"星夜宣{person}来京", f"加急宣{person}来京"):
         ctid = db.create_chat_turn(state, "殿上", "s", 0, night_id=int(night["id"]), status="active")
-        reply = sess.scene_chat(words, chat_turn_id=ctid)
+        reply = sess.scene_chat(words, chat_turn_id=ctid, write_gate=sess._write_gate)
         future = persist_and_schedule_scene(sess, db, reply)
         assert future is not None
         future.result()
@@ -468,7 +468,7 @@ def test_travel_tone_updates_this_round_summon_ledger(game, monkeypatch):
         origin_chat_turn_id=0,
     )
     ctid = db.create_chat_turn(state, "殿上", "s", 0, night_id=int(night["id"]), status="active")
-    reply = sess.scene_chat(f"星夜宣{person}来京", chat_turn_id=ctid)
+    reply = sess.scene_chat(f"星夜宣{person}来京", chat_turn_id=ctid, write_gate=sess._write_gate)
     future = persist_and_schedule_scene(sess, db, reply)
     assert future is not None
     future.result()
@@ -534,7 +534,7 @@ def test_urgent_summons_cannot_bypass_audience_admission(game, monkeypatch, inel
         "travel_tones": [{"person_name": person, "tone": "星夜兼程"}],
     })
     ctid = db.create_chat_turn(state, "殿上", "s", 0, night_id=int(night["id"]), status="active")
-    reply = sess.scene_chat(f"星夜宣{person}来京", chat_turn_id=ctid)
+    reply = sess.scene_chat(f"星夜宣{person}来京", chat_turn_id=ctid, write_gate=sess._write_gate)
     future = persist_and_schedule_scene(sess, db, reply)
     assert future is not None
     future.result()

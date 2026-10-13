@@ -2661,23 +2661,12 @@ def _accept_settlement_period(
     if blocking:
         gate.acquire()
     else:
-        # Snapshot admission bypasses queue barriers / peer LLM. Recheck entry
-        # count before every try; wait outside entry_lock (O1a-R / O1a-R2).
         while True:
-            with _settlement_entry_lock(game):
-                concurrent = (
-                    int(getattr(game, "_settlement_entry_inflight", 0) or 0) > 1
-                )
-                if not concurrent and gate.acquire(blocking=False):
-                    break
-            if concurrent:
+            if _settlement_entry_inflight(game) > 1:
                 _acquire_web_write_gate_or_409(gate)
                 break
-            with gate._cv:
-                if gate._held:
-                    # Entry registration does not notify this condition. Wake to
-                    # recheck it even if release was missed; no request deadline.
-                    gate._cv.wait(timeout=0.05)
+            if gate.acquire(timeout=0.05):
+                break
     try:
         return accept_settlement_period(db, state)
     finally:
