@@ -1392,7 +1392,6 @@ def _dispatch_commission_items(
         if strategy is not None:
             from ming_sim.strict_types import strict_sqlite_id
             body = _declared_prose(item.get("text"))
-            actor = str(minister_name or "").strip()
             if not isinstance(strategy, Mapping) or any(
                 item.get(key) for key in
                 ("grant", "appointment", "punishment", "pacification", "assignment", "secret_order")
@@ -1405,22 +1404,30 @@ def _dispatch_commission_items(
                 _reject(rejected, item, str(exc), "invalid_shape", source)
                 continue
             target_id = strategy.get("target_id")
+            actor = _declared_prose(strategy.get("proposer"))
             if not body or not actor or not isinstance(target_id, str) or not target_id.strip() or origin_id <= 0:
-                _reject(rejected, item, "点策交办须有正文、目标和陈策源轮", "invalid_shape", source)
+                _reject(rejected, item, "点策交办须有正文、陈策人、目标和陈策源轮", "invalid_shape", source)
                 continue
+            actor = actor.strip()
             origin = db.conn.execute(
                 'SELECT 1 FROM chat_turns earlier JOIN chat_turns current ON '
                 'earlier.night_id=current.night_id AND earlier.turn=current.turn '
                 'WHERE earlier.id=? AND current.id=? AND earlier.id<current.id AND '
-                'earlier.minister_name=? AND current.minister_name=? AND '
                 "earlier.minister_message_id IS NOT NULL AND earlier.status='active' "
                 "AND current.status='active' AND earlier.undone_at IS NULL AND "
                 'current.undone_at IS NULL',
-                (origin_id, int(source_chat_turn_id or 0), actor, actor),
+                (origin_id, int(source_chat_turn_id or 0)),
             ).fetchone()
             if origin is None:
                 _reject(rejected, item, "点策陈策轮不属本夜前序有效召对", "missing_ref", source)
                 continue
+
+            try:
+                _assert_characters_exist(db, [actor])
+            except DeclarationReferenceError as exc:
+                _reject(rejected, item, str(exc), "hallucinated_id", source)
+                continue
+
             payload = {
                 "text": body, "actor": actor,
                 "dossier_action_type": "strategy_selection", "target_kind": "policy",

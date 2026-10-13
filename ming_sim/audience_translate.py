@@ -307,7 +307,8 @@ def build_c0_declaration_shape() -> str:
         + '},\n'
         '      "secret_order_progress": {"order_id": "往期有效密令 id", "note": "本轮具名进展"},\n'
         '      "strategy_selection": {"target_id": "已选方案的政策目标 id", '
-        '"source_chat_turn_id": "本场已说的大臣陈策轮 chat_turn_id（不能填本轮）"},\n'
+        '"source_chat_turn_id": "本场已说的大臣陈策轮 chat_turn_id（不能填本轮）", '
+        '"proposer": "陈策大臣人名（名册人名）"},\n'
         '      "secret_order_update": {"order_id": "承办人现役密令 id", '
         '"title": "新标题（有则填）", "content": "完整新正文（必填）", '
         '"deadline_months": "期限月数（有则填）"},\n'
@@ -407,8 +408,8 @@ def build_audience_translate_prompt(
         "assignee/participant_roster 来自已明确的承办人；续办只在能指向既有候选时填 target_candidate。"
         "不从当场问答推造独立差事。\n"
         "- 皇帝从本场大臣陈策中点选方案时，交办正文由转译明确给出，"
-        "commission.strategy_selection 指向【本场已说的话】中对应陈策轮 chat_turn_id；"
-        "无该源轮不得猜造。\n"
+        "commission.strategy_selection 指向【本场已说的话】中对应陈策轮 chat_turn_id，"
+        "proposer 为陈策大臣人名；无该源轮不得猜造。\n"
         "- 具名秘密差事的新建走 commission.secret_order；必须含 title、content（原样）、"
         "名册里的承办人 assignee 与上面写明的 covert_task 冻结任务契约；"
         "契约字段不全或承办人只说到场景（无具名人）时不要勉强成条。"
@@ -437,7 +438,6 @@ def build_audience_translate_prompt(
         "- 皇帝交代近侍查某事 → inquiries；只有点名【权威目标目录】里某一条密令时才填该行精确 order_id，"
         "未点名则省略 order_id，只记委派、不拉取密令月报；不得从查访散文猜测密令。"
         "催某件分段事或密令 → rushes；传召说明缓急 → travel_tones。\n"
-        "- 皇帝交代近侍查某事 → inquiries；催某件分段事或密令 → rushes；传召说明缓急 → travel_tones。\n"
         "- **本场新交办的拨银自带押解**（「着某人押解护送」）→ 不另立密令，"
         "在该 commissions 项的 grant.escort.escortees 按 ADR 0053 参与人条目写押解人"
         "（character_id／tier 机械档／role 职分／delegator_id 委派人，无委派留空），"
