@@ -2156,25 +2156,7 @@ class DossierStore(RowStore):
                 note,
             ),
         )
-        return (
-            self.reconciliations(
-                int(
-                    (
-                        dossier_id,
-                        turn,
-                        ordered_amount,
-                        arrived_amount,
-                        loss_amount,
-                        escorted,
-                        escort_source_dossier_id,
-                        relation_type,
-                        note,
-                    )[0]
-                )
-            )[-1]
-            if cur.rowcount
-            else None
-        )
+        return self.reconciliations(int(dossier_id))[-1] if cur.rowcount else None
 
     def set_pending_action_status(self, status: object, id: object) -> Any:
         return self._conn.execute(

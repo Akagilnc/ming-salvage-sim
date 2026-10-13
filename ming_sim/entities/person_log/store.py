@@ -369,17 +369,6 @@ class PersonLogStore(RowStore):
         row = self._conn.execute(
             "SELECT id FROM relation_edge_events "
             "WHERE source=? AND target=? AND event_kind=? AND context=? AND origin=?",
-            (
-                source,
-                target,
-                event_kind,
-                context,
-                origin,
-                origin_round,
-                turn,
-                year,
-                period,
-                evidence,
-            )[:5],
+            (source, target, event_kind, context, origin),
         ).fetchone()
         return int(row["id"])
