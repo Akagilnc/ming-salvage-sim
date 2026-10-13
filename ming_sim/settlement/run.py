@@ -434,19 +434,20 @@ def _persist_step_specialized(run, step_extracted: Mapping[str, object]) -> None
 
 def _run_registry(run) -> None:
     """按登记表顺序跑一遍全部段（整批路径）。"""
-    _persist_step_specialized(run, run.extracted)
     for spec in registry.section_specs():
         _capture(run, spec.name, registry.load(spec)(run))
+    _persist_step_specialized(run, run.extracted)
 
 
 def _run_effect_sequence(run) -> None:
-    """C0 effects 数组按交代先后逐笔落账（#1844）。
+    """C0 effects 数组按交代先后逐笔落账（#1844 / #1843 K6R）。
 
     后交代的效果读到先交代的实际落账存量——不按实体段固定类别顺序重排跨类因果。
-    同一笔内先实体后钱：同笔的欠饷加额须先于补饷拨款可见。
-    K6：专属写口（检举等）与改变其前提的效果（案卷结案等）在交错链中按序落账。
+    同一笔内名册→执行格→事件结局→指标→实体→经济→专属写口：
+    名册追加先于执行格，让执行格读到同批先交代的名册；专属写口读本笔已落实体与执行格。
     """
     from ming_sim.entities.army import delta_section as army_section
+    from ming_sim.entities.dossier import delta_section as dossier_section
     from ming_sim.entities.economy import delta_section as economy_section
     from ming_sim.entities.metric import delta_section as metric_section
     from ming_sim.entities.region import delta_section as region_section
@@ -456,9 +457,11 @@ def _run_effect_sequence(run) -> None:
         run.current_extracted = step_extracted
         run.current_ordered = step_ordered
         run.current_event_ids = step_event_ids
-        _persist_step_specialized(run, step_extracted)
+        if "dossier_participants" in step_extracted:
+            _capture(run, "dossier_participants", dossier_section.apply_participants(run))
+        if "secret_dossier_participants" in step_extracted:
+            _capture(run, "secret_dossier_participants", dossier_section.apply_secret_dossier_participants(run))
         if "dossier_executions" in step_extracted:
-            from ming_sim.entities.dossier import delta_section as dossier_section
             _capture(run, "dossier_executions", dossier_section.apply_executions(run))
         # W4: first accepted petition outcome takes effect before later envelopes.
         from ming_sim.entities.issue.event_terminal import apply_petition_event_outcome
@@ -477,6 +480,7 @@ def _run_effect_sequence(run) -> None:
         _capture(run, "army_changes", army_section.apply_deltas(run))
         step_moves = list(step_extracted.get("economy_moves") or [])
         _capture(run, "economy", economy_section.apply(run, step_moves))
+        _persist_step_specialized(run, step_extracted)
     run.current_extracted = run.extracted
     run.current_ordered = run.ordered_deltas
     run.current_event_ids = run.ordered_effect_event_ids
@@ -627,9 +631,12 @@ def settle_delta(
 def _run_registry_after_interleave(run) -> None:
     """逐笔交错跑完后，跑余额外段。
 
-    指标、经济、实体三段已在逐笔路径里跑过——此处不得重跑，否则同笔效果双落。
+    指标、经济、实体、案卷三段已在逐笔路径里跑过——此处不得重跑，否则同笔效果双落。
     """
-    already_run = {"metric", "economy", "new_armies", "region_changes", "army_changes", "dossier_executions"}
+    already_run = {
+        "metric", "economy", "new_armies", "region_changes", "army_changes",
+        "dossier_participants", "secret_dossier_participants", "dossier_executions",
+    }
     run.current_extracted = run.extracted
     run.current_ordered = run.ordered_deltas
     run.current_event_ids = run.ordered_effect_event_ids

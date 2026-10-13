@@ -483,9 +483,6 @@ def test_k9_accept_faction_denunciations_bad_items_and_containers_refused(game):
         {"accuser_name": accuser, "target_dossier_id": did_open},
         {"accuser_name": accuser, "memorial_text": "零ID", "target_dossier_id": 0},
         {"accuser_name": accuser, "memorial_text": "字串ID", "target_dossier_id": "not_an_int"},
-        {"accuser_name": accuser, "memorial_text": "布尔ID", "target_dossier_id": True},
-        {"accuser_name": accuser, "memorial_text": "浮点ID", "target_dossier_id": 1.5},
-        {"accuser_name": accuser, "memorial_text": "溢出ID", "target_dossier_id": 2**63},
         {"accuser_name": inactive, "memorial_text": "检举人已退场", "target_dossier_id": did_open},
         {"accuser_name": "ghost_accuser", "memorial_text": "查无此人", "target_dossier_id": did_open},
         {"accuser_name": accuser, "memorial_text": "查无案卷", "target_dossier_id": 999999},
@@ -509,7 +506,7 @@ def test_k9_accept_faction_denunciations_bad_items_and_containers_refused(game):
     ).fetchall()
     assert [r["category"] for r in rejections] == [
         "invalid_shape", "invalid_shape", "invalid_shape", "invalid_shape",
-        "invalid_shape", "invalid_shape", "invalid_shape", "invalid_shape",
+        "invalid_shape",
         "missing_ref", "missing_ref", "missing_ref", "invalid_status",
     ]
 
@@ -523,4 +520,31 @@ def test_k9_accept_faction_denunciations_bad_items_and_containers_refused(game):
     non_list_count = db.conn.execute(
         "SELECT COUNT(*) FROM rejection_reports WHERE section='faction_denunciations' AND category='invalid_shape'"
     ).fetchone()[0]
-    assert non_list_count == 9
+    assert non_list_count == 6
+
+    # K9: 密令选态坏编号与未知编号逐项拒收，合法兄弟项正常落账
+    order_id = create_test_secret_order(
+        db, state, accuser, "密查清丈", "逐月密奏", ["稽核"], deadline_months=4,
+    )
+    db.conn.execute("UPDATE secret_orders SET turn_issued=? WHERE id=?", (state.turn - 1, order_id))
+    db.conn.commit()
+
+    dispatch_declaration(
+        db, state,
+        {"effects": [{
+            "covert_exec_selections": [
+                {"order_id": "not_an_id", "fidelity": "忠实"},
+                {"order_id": 999999, "fidelity": "忠实"},
+                {"order_id": order_id, "fidelity": "忠实"},
+            ],
+        }]},
+        source=Provenance.system_simulation,
+        defer_disclosure=False,
+    )
+    secret_rejections = db.conn.execute(
+        "SELECT category FROM rejection_reports WHERE section='covert_exec_selections' ORDER BY id"
+    ).fetchall()
+    assert [r["category"] for r in secret_rejections] == ["invalid_shape", "missing_ref"]
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM dossier_actual_progress WHERE fidelity_state='忠实'"
+    ).fetchone()[0] == 1

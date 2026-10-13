@@ -1717,13 +1717,44 @@ def monthly_actual_units(*, fidelity: object, originated_quantity: float) -> flo
     return progress_units_for_state(fidelity) * quantity
 
 
-def _selection_map(raw_selections: object) -> Dict[int, Dict[str, object]]:
+def _selection_map(
+    raw_selections: object,
+    rejections: List[RejectedItem],
+    *,
+    active_oids: set[int],
+    source: Provenance,
+) -> Dict[int, Dict[str, object]]:
+    from ming_sim.strict_types import strict_sqlite_id
+
     mapping: Dict[int, Dict[str, object]] = {}
-    for item in raw_selections or []:
-        if not isinstance(item, dict):
+    if raw_selections is None:
+        return mapping
+    if not isinstance(raw_selections, list):
+        rejections.append(RejectedItem(
+            item=raw_selections if isinstance(raw_selections, dict) else {"raw_value": raw_selections},
+            reason="covert_exec_selections 须为 list", category="invalid_shape", source=source,
+        ))
+        return mapping
+
+    for item in raw_selections:
+        try:
+            if not isinstance(item, dict):
+                raise ValueError("密令选态项须为对象")
+            oid = strict_sqlite_id(item.get("order_id", item.get("密令编号")))
+            if oid <= 0:
+                raise ValueError("密令 order_id 须为正整数")
+        except ValueError as exc:
+            rejections.append(RejectedItem(
+                item=dict(item) if isinstance(item, dict) else {"raw_value": item},
+                reason=str(exc), category="invalid_shape", source=source,
+            ))
             continue
-        raw_id = item.get("order_id", item.get("密令编号"))
-        oid = int(raw_id)
+        if oid not in active_oids:
+            rejections.append(RejectedItem(
+                item=dict(item), reason=f"在办密令 #{oid} 不存在",
+                category="missing_ref", source=source,
+            ))
+            continue
         mapping[oid] = item
     return mapping
 
@@ -1835,7 +1866,10 @@ def apply_monthly_covert_actual_progress(
     """
     rejections: List[RejectedItem] = []
     orders = list(db.character_knowledge.list_secret_orders(status="active"))
-    by_sel = _selection_map(selections)
+    active_oids = {int(order["id"]) for order in orders}
+    by_sel = _selection_map(
+        selections, rejections=rejections, active_oids=active_oids, source=source,
+    )
     applied: List[Dict[str, object]] = []
     turn = int(state.turn)
     for order in orders:

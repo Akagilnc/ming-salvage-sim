@@ -42,8 +42,10 @@ class SectionSpec:
 # 财政必须在局势之后：同批承诺去重要读局势段刚落下的月支载体。
 #
 # 两处顺序约束由编排器而非本表承担，因为它们不是「段序」而是「同批内交错」：
-# ① C0 effects 数组按交代先后逐笔落账（#1844）：逐笔驱动 metric→实体→经济，
-#    同一笔内先实体后钱；不按本表全局段序重排跨类因果。
+# ① C0 effects 数组按交代先后逐笔落账（#1844 / #1843 K6R）：逐笔链内段序为
+#    名册（dossier_participants / secret_dossier_participants）→ 执行格（dossier_executions）
+#    → 事件结局 → metric → 实体（new_armies / region_changes / army_changes）
+#    → 经济（economy_moves）→ 专属写口（检举、密令选态等）；不按本表全局段序重排跨类因果。
 # ② 人口段的「回流/加派」去重依赖同批加派段结果，故编排器在两段之间算
 #    surcharge_claims（见 run.SettlementRun）。
 _SECTIONS: Tuple[SectionSpec, ...] = (

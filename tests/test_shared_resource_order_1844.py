@@ -401,7 +401,7 @@ def test_world_segment_stamps_each_shared_item_once(game):
     assert _invalid_shape_matches(db, "new_issues", "id", "stamp-once-bad-issue") == 1
 
 
-@pytest.mark.parametrize("order", ["denounce_first", "close_first"])
+@pytest.mark.parametrize("order", ["denounce_first", "close_first", "participant_then_failed"])
 def test_k6_specialized_denunciation_and_dossier_execution_order(game, order):
     """K6: 检举等专属写口与改变其前提的效果（案卷结案）按交代先后落账。"""
     from ming_sim.applier import Provenance
@@ -417,7 +417,44 @@ def test_k6_specialized_denunciation_and_dossier_execution_order(game, order):
     )
     db.dossiers.transition(dossier_id, "promulgated")
     db.dossiers.transition(dossier_id, "executing")
+    if order == "participant_then_failed":
+        db.append_decree_dossier_participants(
+            dossier_id,
+            [{"character_id": "徐光启", "tier": "协办", "role": "协助"}],
+        )
     db.conn.commit()
+
+    if order == "participant_then_failed":
+        part_env = {
+            "dossier_participants": [{
+                "dossier_id": dossier_id,
+                "character_id": "倪元璐",
+                "delegator_id": "徐光启",
+                "tier": "主办",
+                "role": "主理",
+            }]
+        }
+        close_env = {
+            "dossier_executions": [{
+                "dossier_id": dossier_id,
+                "outcome": "failed",
+                "note": "办结失败",
+            }]
+        }
+        dispatch_declaration(
+            db, state, {"effects": [part_env, close_env]},
+            source=Provenance.system_simulation,
+            defer_disclosure=True,
+            visible_refs={"dossiers": [dossier_id]},
+        )
+        liabilities = db.conn.execute(
+            "SELECT cost_kind, target_kind, target_id FROM decree_cost_events WHERE dossier_id=?",
+            (dossier_id,),
+        ).fetchall()
+        factions = {row["target_id"] for row in liabilities if row["cost_kind"] == "satisfaction"}
+        assert "东林" in factions
+        assert "西学" in factions
+        return
 
     denounce_env = {
         "faction_denunciations": [{

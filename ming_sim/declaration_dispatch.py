@@ -439,8 +439,8 @@ def _persist_specialized_extraction(
         )
         rejections.extend(("faction_denunciations", item) for item in den_res.rejected)
     if not defer_monthly_secret_supply:
-        selections = extraction.get("covert_exec_selections") or []
-        if isinstance(selections, list) and selections:
+        selections = extraction.get("covert_exec_selections")
+        if selections is not None:
             from ming_sim.covert_progress import apply_monthly_covert_actual_progress
 
             _rows, rows_rejections = apply_monthly_covert_actual_progress(
@@ -1309,7 +1309,8 @@ def _dispatch_rejection_withdrawals(
             _reject(rejected, item, "缺少 rejection_id", "invalid_shape", source)
             continue
         rid = ids[0]
-        decision = str(item.get("decision") or "withdrawn").strip()
+        raw_decision = item.get("decision")
+        decision = "withdrawn" if raw_decision is None else str(raw_decision).strip()
         if decision == "withdrawn":
             resolve_player_rejections(db, [rid], decision="withdrawn", turn=int(state.turn))
             applied.append({"rejection_id": rid, "decision": "withdrawn"})
