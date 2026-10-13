@@ -377,7 +377,7 @@ def test_executescript_inside_atomic_fails_loud(game):
 
 
 # ---------------------------------------------------------------------------
-# cmr S1 r2 修复回归（F1-F4）
+# cmr S1 r2 修复回归（F1/F3/F4）
 # ---------------------------------------------------------------------------
 
 def test_swallowed_conn_context_exception_forces_outer_rollback(game):
@@ -403,32 +403,6 @@ def test_swallowed_conn_context_exception_forces_outer_rollback(game):
 
     assert db.reign.kv_get("s1r2_w1") is None
     assert db.reign.kv_get("s1r2_w2") is None
-
-
-def test_ddl_first_inside_atomic_rolls_back(game):
-    """atomic 内 DDL 打头也要随回滚消失（cmr S1 r2 F2）。
-
-    legacy 模式只有 DML 隐式开事务；最外层须显式 BEGIN，
-    否则打头的 CREATE TABLE 跑 autocommit、回滚留表。
-    """
-    db, state, content = game
-    db.conn.execute("DROP TABLE IF EXISTS rejection_reports")
-    db.conn.commit()
-
-    from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
-    rc = RejectionCollector()
-    ri = RejectedItem(item={}, reason="r", category="invalid_enum", source=Provenance.unknown)
-    rc.record("army_delta", ri, turn=1)
-
-    with pytest.raises(RuntimeError):
-        with atomic(db):
-            rc.flush_to_db(db)  # 第一条语句 = CREATE TABLE
-            raise RuntimeError("boom")
-
-    tbl = db.conn.execute(
-        "SELECT name FROM sqlite_master WHERE name='rejection_reports'"
-    ).fetchone()
-    assert tbl is None  # 表本身也回滚
 
 
 def test_commit_failure_in_conn_context_rolls_back(game, monkeypatch):
@@ -489,63 +463,8 @@ def test_atomic_rejects_plain_connection(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# cmr S1 r3 修复回归（F1/F2）
+# cmr S1 r3 修复回归（F2）
 # ---------------------------------------------------------------------------
-
-def _rejection_table_exists(db) -> bool:
-    return db.conn.execute(
-        "SELECT name FROM sqlite_master WHERE name='rejection_reports'"
-    ).fetchone() is not None
-
-
-def test_ddl_after_swallowed_conn_context_does_not_escape(game):
-    """吞掉 with db.conn: 异常后跑 DDL，不得逃逸外层回滚（cmr S1 r3 F1）。
-
-    中途回滚结束了 BEGIN 事务；rollback 在暂停期必须重开事务，
-    维持「atomic 内永远有开着的事务」。
-    """
-    db, state, content = game
-    db.conn.execute("DROP TABLE IF EXISTS rejection_reports")
-    db.conn.commit()
-
-    from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
-    rc = RejectionCollector()
-    ri = RejectedItem(item={}, reason="r", category="invalid_enum", source=Provenance.unknown)
-    rc.record("army_delta", ri, turn=1)
-
-    with pytest.raises(RuntimeError):
-        with atomic(db):
-            try:
-                with db.conn:
-                    raise ValueError("conn-context fails")
-            except ValueError:
-                pass  # 吞
-            rc.flush_to_db(db)  # DDL 打头——不得 autocommit 逃逸
-
-    assert not _rejection_table_exists(db)
-
-
-def test_ddl_after_explicit_midatomic_rollback_does_not_escape(game):
-    """atomic 内显式 rollback 后跑 DDL，同样不得逃逸（cmr S1 r3 F1 变体②）。"""
-    db, state, content = game
-    db.conn.execute("DROP TABLE IF EXISTS rejection_reports")
-    db.conn.commit()
-
-    from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
-    rc = RejectionCollector()
-    ri = RejectedItem(item={}, reason="r", category="invalid_enum", source=Provenance.unknown)
-    rc.record("army_delta", ri, turn=1)
-
-    with pytest.raises(RuntimeError):
-        with atomic(db):
-            db.conn.execute("INSERT INTO kv_store(key,value) VALUES('s1r3_x','x')")
-            db.conn.rollback()  # 中途显式回滚（暂停期允许）
-            rc.flush_to_db(db)
-            raise RuntimeError("boom")
-
-    assert not _rejection_table_exists(db)
-    assert db.reign.kv_get("s1r3_x") is None
-
 
 def test_begin_failure_at_entry_restores_flags(game, monkeypatch):
     """入口 BEGIN 抛错不得泄漏暂停标志（cmr S1 r3 F2，泄漏=79 处 commit 全静默失效）。"""

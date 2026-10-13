@@ -7028,7 +7028,7 @@ class GameDB:
         去重键=检举人×案卷×真伪类（不含 turn）；案情升级可再落；不写 loophole。
         正文原样落库（零引擎模板）。禁自动转案/改世界状态。
         """
-        from ming_sim.applier import Provenance, RejectedItem, SectionResult
+        from ming_sim.applier import Provenance, RejectedItem, SectionResult, reject_item
         from ming_sim.strict_types import strict_sqlite_id
         from ming_sim.participant_roster import resolve_dossier_owner_name
         from ming_sim.supervision import (
@@ -7042,35 +7042,20 @@ class GameDB:
 
         if entries is None:
             return SectionResult([], [])
+        rejected_list: List[RejectedItem] = []
         if not isinstance(entries, list):
-            payload = entries if isinstance(entries, dict) else {"raw_value": entries}
-            return SectionResult([], [
-                RejectedItem(
-                    item=payload,
-                    reason=f"检举条目容器须为 list: {entries!r}",
-                    category="invalid_shape",
-                    source=effective_source,
-                )
-            ])
+            reject_item(
+                rejected_list, entries, f"检举条目容器须为 list: {entries!r}",
+                "invalid_shape", effective_source,
+            )
+            return SectionResult([], rejected_list)
 
         turn = int(state.turn)
         accepted: List[Dict[str, object]] = []
-        rejected_list: List[RejectedItem] = []
-
-        def _refuse(raw_item: object, reason: str, category: str = "invalid_shape") -> None:
-            payload = raw_item if isinstance(raw_item, dict) else {"raw_value": raw_item}
-            rejected_list.append(
-                RejectedItem(
-                    item=payload,
-                    reason=reason,
-                    category=category,
-                    source=effective_source,
-                )
-            )
 
         for raw in entries:
             if not isinstance(raw, dict):
-                _refuse(raw, f"检举条目非 dict: {raw!r}", "invalid_shape")
+                reject_item(rejected_list, raw, f"检举条目非 dict: {raw!r}", "invalid_shape", effective_source)
                 continue
             # 仅 canonical / ITEM_FIELD_ALIASES 背书键（检举人/被检举人→*_name）
             accuser = str(raw.get("accuser_name") or "").strip()
@@ -7078,10 +7063,10 @@ class GameDB:
                 raw.get("memorial_text") or raw.get("body") or ""
             )
             if not accuser:
-                _refuse(raw, "检举条目缺 accuser_name", "invalid_shape")
+                reject_item(rejected_list, raw, "检举条目缺 accuser_name", "invalid_shape", effective_source)
                 continue
             if not memorial.strip():
-                _refuse(raw, "检举条目缺 memorial_text 或 body", "invalid_shape")
+                reject_item(rejected_list, raw, "检举条目缺 memorial_text 或 body", "invalid_shape", effective_source)
                 continue
             target_val = raw.get("target_dossier_id")
             if target_val is None:
@@ -7089,10 +7074,10 @@ class GameDB:
             try:
                 dossier_id = strict_sqlite_id(target_val)
             except ValueError as exc:
-                _refuse(raw, str(exc), "invalid_shape")
+                reject_item(rejected_list, raw, str(exc), "invalid_shape", effective_source)
                 continue
             if dossier_id <= 0:
-                _refuse(raw, f"检举条目 target_dossier_id 非法 ({target_val!r})", "invalid_shape")
+                reject_item(rejected_list, raw, f"检举条目 target_dossier_id 非法 ({target_val!r})", "invalid_shape", effective_source)
                 continue
 
             # clamp：检举人在场
@@ -7101,17 +7086,17 @@ class GameDB:
                 (accuser,),
             ).fetchone()
             if accuser_row is None or str(accuser_row["status"] or "") != "active":
-                _refuse(raw, f"检举人 '{accuser}' 不在场或非 active", "missing_ref")
+                reject_item(rejected_list, raw, f"检举人 '{accuser}' 不在场或非 active", "missing_ref", effective_source)
                 continue
             accuser_faction = str(accuser_row["faction"] or "").strip()
 
             # clamp：案卷存在且非 closed
             dossier = self.dossiers.get(dossier_id)
             if dossier is None:
-                _refuse(raw, f"案卷 #{dossier_id} 不存在", "missing_ref")
+                reject_item(rejected_list, raw, f"案卷 #{dossier_id} 不存在", "missing_ref", effective_source)
                 continue
             if str(dossier.get("status") or "").strip() == "closed":
-                _refuse(raw, f"案卷 #{dossier_id} 已 closed", "invalid_status")
+                reject_item(rejected_list, raw, f"案卷 #{dossier_id} 已 closed", "invalid_status", effective_source)
                 continue
 
             subject_name = str(raw.get("subject_name") or "").strip()
@@ -12197,10 +12182,6 @@ class GameDB:
         elif table == "rejection_resolutions":
             rows = self.conn.execute("SELECT * FROM rejection_resolutions").fetchall()
         elif table == "rejection_reports":
-            if self.conn.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='rejection_reports'",
-            ).fetchone() is None:
-                return {}
             rows = self.conn.execute("SELECT * FROM rejection_reports").fetchall()
         else:
             raise ValueError(f"不支持回滚表：{table}")
@@ -12266,8 +12247,8 @@ class GameDB:
         if table == "rejection_resolutions":
             self.conn.execute(
                 "INSERT OR REPLACE INTO rejection_resolutions "
-                "(rejection_id, decision, turn, pending_action_id) VALUES (?, ?, ?, ?)",
-                (row["rejection_id"], row["decision"], row["turn"], row["pending_action_id"]),
+                "(rejection_id, decision, turn) VALUES (?, ?, ?)",
+                (row["rejection_id"], row["decision"], row["turn"]),
             )
             return
         raise ValueError(f"不支持回滚表：{table}")

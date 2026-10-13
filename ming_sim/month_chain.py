@@ -530,7 +530,6 @@ def continue_decree_after_answers(
     prepared=None,
 ) -> None:
     from ming_sim.exceptions import LLMUnavailable
-    from ming_sim.declaration_dispatch import finish_rejection_correction
     from ming_sim.month_translate import dispatch_month_segment
     from ming_sim.decree_forecast import dossier_for_decree_ref
 
@@ -569,7 +568,6 @@ def continue_decree_after_answers(
     if not prefix.strip():
         with atomic(db):
             consume()
-            finish_rejection_correction(db, state, decree_ref)
         return
     dispatch_month_segment(
         db, state, segment=prefix,
@@ -994,10 +992,6 @@ def _settle_edicts(
             and bool(db.staged_declarations.staged_for(ref))
         )
         if not pending_judgment and not pending_settle:
-            if (dossier.get("payload") or {}).get("_resolves_rejection_ids"):
-                from ming_sim.declaration_dispatch import finish_rejection_correction
-                with atomic(db):
-                    finish_rejection_correction(db, state, ref)
             continue
         if (
             status == "proposed"
@@ -1920,17 +1914,9 @@ def _consume_rescript_answers(
                     )
             elif event_id.startswith("dossier:"):
                 dossier_id = int(event_id.split(":", 1)[1])
-                from ming_sim.declaration_dispatch import finish_rejection_correction
-                from ming_sim.decree_forecast import decree_ref_for_dossier
-
-                with atomic(db):
-                    apply_dossier_promulgation(
-                        db, state, dossier_id, choice_decision(row.get("choice")), content=session.content,
-                    )
-                    dossier = db.dossiers.get(dossier_id)
-                    ref = decree_ref_for_dossier(db, dossier)
-                    if db.staged_declarations.is_settled(ref) or not db.staged_declarations.staged_for(ref):
-                        finish_rejection_correction(db, state, ref)
+                apply_dossier_promulgation(
+                    db, state, dossier_id, choice_decision(row.get("choice")), content=session.content,
+                )
         # Same eligibility blocks month-tail; only model members enter prepare_answers.
         model_rows = [
             row for row in eligible
@@ -2083,6 +2069,8 @@ def _advance_after_gazette(
         )
         chain = _load_chain(db, turn)
         db.mark_directives_issued(state)
+        from ming_sim.declaration_dispatch import sweep_rejection_corrections
+        sweep_rejection_corrections(db, state)
         # #652：刚结束的月份的执行判定和实付已落定；下月任何吸收前回流。
         from ming_sim.entities.population.recovery import _apply_recovery_driven_transfers
         _apply_recovery_driven_transfers(db, state)

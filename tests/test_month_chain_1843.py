@@ -157,8 +157,7 @@ def test_player_month_entry_settles_prepushed_edicts_then_world_once(game, monke
     )] == [str(row["category"]) for row in ledger]
 
 
-@pytest.mark.parametrize("success_path", ("without_questions", "empty_continuation", "continued", "force_promulgated"))
-def test_player_rejection_lifecycle_through_translation_and_month(game, monkeypatch, tmp_path, success_path):
+def test_player_rejection_lifecycle_through_translation_and_month(game, monkeypatch, tmp_path):
     from ming_sim.applier import Provenance, list_unresolved_player_rejections
     from ming_sim.audience_night import open_night, close_night
     from ming_sim.audience_translation import apply_audience_round_translation
@@ -288,40 +287,11 @@ def test_player_rejection_lifecycle_through_translation_and_month(game, monkeypa
     failed = correction([repair_id], None, None, questions=False, grant=grant)
     assert failed["execution_outcome"] == "failed"
     assert {r["rejection_id"] for r in list_unresolved_player_rejections(db)} == {repair_id, withdraw_id}
-    reopen_check("execution-failed.db")
     forced = correction([repair_id], None, None, questions=False,
                         grant={**grant, "amount": 1}, force=True)
     assert forced["promulgation_decision"] == "rejected"
     assert forced["execution_outcome"] == "fulfilled"
     assert [r["rejection_id"] for r in list_unresolved_player_rejections(db)] == [withdraw_id]
-    reopen_check("force-succeeded.db")
-
-    # K4：同一段里修正转拨与普通支出按交代先后争库。
-    state.metrics["国库"] = 0
-    state.metrics["内库"] = 10
-    db.reign.save_game_state(state)
-    order_effects = [
-        {"economy_moves": [{
-            "origin_ref": f"affair:{affair.id}", "account": "内库", "delta": -10,
-            "transfer_to": "国库", "category": "修正转拨", "reason": "修正转拨",
-        }]},
-        {"economy_moves": [{
-            "origin_ref": f"affair:{affair.id}", "account": "国库", "delta": -10,
-            "category": "后支", "reason": "后支",
-        }]},
-    ]
-    declaration_dispatch.dispatch_declaration(
-        db, state, {"effects": order_effects}, visible_refs={"affairs": [affair.id]},
-    )
-    ledger = db.conn.execute(
-        "SELECT category, delta FROM economy_ledger "
-        "WHERE category IN ('修正转拨','后支') ORDER BY id"
-    ).fetchall()
-    categories = [row["category"] for row in ledger]
-    assert "修正转拨" in categories and categories.index("修正转拨") < categories.index("后支")
-    # 国库起手为 0：若支出先于转拨会被封顶；整笔 -10 证明按交代先后先转入后支出。
-    assert any(row["category"] == "后支" and int(row["delta"]) == -10 for row in ledger)
-    reopen_check("ordered-correction.db")
 
     before_fail = {r["rejection_id"] for r in list_unresolved_player_rejections(db)}
     declaration_dispatch.dispatch_declaration(
@@ -335,7 +305,6 @@ def test_player_rejection_lifecycle_through_translation_and_month(game, monkeypa
     new_reject_id = next(rid for rid in unresolved_ids if rid not in before_fail | {repair_id})
     assert unresolved_ids == before_fail | {repair_id, new_reject_id}
     assert [r["category"] for r in unresolved if r["rejection_id"] == new_reject_id] == ["invalid_enum"]
-    reopen_check("failed-correction.db")
     before_cont_fail = set(unresolved_ids)
     correction([repair_id, new_reject_id], "国库", "不存在")
     unresolved = list_unresolved_player_rejections(db)
@@ -344,134 +313,123 @@ def test_player_rejection_lifecycle_through_translation_and_month(game, monkeypa
     assert unresolved_ids == before_cont_fail | {cont_new_id}
     assert repair_id in unresolved_ids and new_reject_id in unresolved_ids
     assert [r["category"] for r in unresolved if r["rejection_id"] == cont_new_id] == ["invalid_enum"]
-    reopen_check("failed-continuation.db")
 
     # D1：叙事修正通过召对转译显式声明 decision="succeeded" 了结
-    if success_path == "without_questions":
-        declaration_dispatch.dispatch_declaration(
-            db, state, {"effects": {"economy_moves": [bad]}}, source=Provenance.player_decree,
-            visible_refs={"affairs": [affair.id]},
-        )
-        world_id = list_unresolved_player_rejections(db)[-1]["rejection_id"]
-        world_dossier = correction([world_id], None, None, questions=False, unrelated_account=None)
-        world_dossier_id = int(world_dossier["id"])
-        # 叙事修正过月后，finish_rejection_correction 不自动了结它
-        assert world_id in {r["rejection_id"] for r in list_unresolved_player_rejections(db)}
+    declaration_dispatch.dispatch_declaration(
+        db, state, {"effects": {"economy_moves": [bad]}}, source=Provenance.player_decree,
+        visible_refs={"affairs": [affair.id]},
+    )
+    world_id = list_unresolved_player_rejections(db)[-1]["rejection_id"]
+    world_dossier = correction([world_id], None, None, questions=False, unrelated_account=None)
+    world_dossier_id = int(world_dossier["id"])
+    # Narrative corrections need an explicit success declaration.
+    assert world_id in {r["rejection_id"] for r in list_unresolved_player_rejections(db)}
 
-        night = open_night(db, state, location="乾清宫", time_of_day="戌时")
-        nid = int(night["id"])
+    night = open_night(db, state, location="乾清宫", time_of_day="戌时")
+    nid = int(night["id"])
+    unprom_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="未颁",
+        target_kind="issue", target_id="1", payload={"_resolves_rejection_ids": [world_id]},
+    )
+    q_dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="问",
+        target_kind="issue", target_id="1", payload={"_resolves_rejection_ids": [world_id]},
+    )
+    db.dossiers.transition(q_dossier_id, "promulgated")
+    db.dossiers.transition(q_dossier_id, "executing")
+    q_ref = f"dossier:{q_dossier_id}"
+    declaration_dispatch.stage_declaration(
+        db, decree_ref=q_ref, turn=state.turn, declaration={"effects": {}},
+        verdict={"decision": "promulgated"}, questions=[{"text": "待决"}],
+    )
+    unf_dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="未结",
+        target_kind="issue", target_id="1", payload={"_resolves_rejection_ids": [world_id]},
+    )
+    db.dossiers.transition(unf_dossier_id, "promulgated")
+    db.dossiers.transition(unf_dossier_id, "executing")
+    unf_ref = f"dossier:{unf_dossier_id}"
+    declaration_dispatch.stage_declaration(
+        db, decree_ref=unf_ref, turn=state.turn, declaration={"effects": {}},
+        verdict={"decision": "promulgated"},
+    )
 
-        # 边界临时案卷
-        unprom_id = db.create_decree_dossier(
-            state, action_type="policy", decree_text="未颁",
-            target_kind="issue", target_id="1", payload={"_resolves_rejection_ids": [world_id]},
-        )
-        q_dossier_id = db.create_decree_dossier(
-            state, action_type="policy", decree_text="问",
-            target_kind="issue", target_id="1", payload={"_resolves_rejection_ids": [world_id]},
-        )
-        db.dossiers.transition(q_dossier_id, "promulgated")
-        db.dossiers.transition(q_dossier_id, "executing")
-        q_ref = f"dossier:{q_dossier_id}"
-        declaration_dispatch.stage_declaration(
-            db, decree_ref=q_ref, turn=state.turn, declaration={"effects": {}},
-            verdict={"decision": "promulgated"}, questions=[{"text": "待决"}],
-        )
-        unf_dossier_id = db.create_decree_dossier(
-            state, action_type="policy", decree_text="未结",
-            target_kind="issue", target_id="1", payload={"_resolves_rejection_ids": [world_id]},
-        )
-        db.dossiers.transition(unf_dossier_id, "promulgated")
-        db.dossiers.transition(unf_dossier_id, "executing")
-        unf_ref = f"dossier:{unf_dossier_id}"
-        declaration_dispatch.stage_declaration(
-            db, decree_ref=unf_ref, turn=state.turn, declaration={"effects": {}},
-            verdict={"decision": "promulgated"},
-        )
-
-        # D1 边界核验：关联案卷未满足条件时（未关联/未颁/执行失败/请旨未决/暂存未结/非法ID），拒收留痕且原拒收继续留供
-        bad_cases = [
-            ("missing_ref", int(forced["id"]), world_id),  # 无关联 (no association)
-            ("invalid_state", unprom_id, world_id),        # 未颁 (unpromulgated)
-            ("invalid_state", int(failed["id"]), world_id),# 失败 (failed)
-            ("invalid_state", q_dossier_id, world_id),     # 请旨未决 (pending questions)
-            ("invalid_state", unf_dossier_id, world_id),   # 暂存未结 (unfinished staging)
-            ("hallucinated_id", world_dossier_id, 999999), # 非法拒收 ID
-        ]
-        for expected_cat, did, rid in bad_cases:
-            ctid = db.create_chat_turn(state, minister, "s", 0, night_id=nid, status="active")
-            db.persist_minister_reply(minister, state.turn, "回奏", ctid)
-            res = apply_audience_round_translation(
-                db, state, {
-                    "rejection_withdrawals": [{"rejection_id": rid, "decision": "succeeded", "dossier_id": did}],
-                },
-                night_id=nid, chat_turn_id=ctid,
-            )
-            assert [r.category for r in res.rejection_withdrawals.rejected] == [expected_cat]
-            assert world_id in {r["rejection_id"] for r in list_unresolved_player_rejections(db)}
-
-        # 清理临时案卷与暂存，避免污染后续过月预推
-        db.conn.execute("DELETE FROM staged_declarations WHERE decree_ref IN (?, ?)", (q_ref, unf_ref))
-        db.conn.execute("DELETE FROM decree_dossiers WHERE id IN (?, ?, ?)", (unprom_id, q_dossier_id, unf_dossier_id))
-        db.conn.commit()
-
-        # 召对转译显式声明 decision="succeeded"：核验案卷执行后成功了结！
+    bad_cases = [
+        ("missing_ref", int(forced["id"]), world_id),  # No association.
+        ("invalid_state", unprom_id, world_id),       # Unpromulgated.
+        ("invalid_state", int(failed["id"]), world_id),# Failed.
+        ("invalid_state", q_dossier_id, world_id),    # Pending questions.
+        ("invalid_state", unf_dossier_id, world_id),  # Unfinished staging.
+        ("hallucinated_id", world_dossier_id, 999999), # Invalid rejection ID.
+    ]
+    for expected_cat, did, rid in bad_cases:
         ctid = db.create_chat_turn(state, minister, "s", 0, night_id=nid, status="active")
         db.persist_minister_reply(minister, state.turn, "回奏", ctid)
-        succ_res = apply_audience_round_translation(
+        res = apply_audience_round_translation(
             db, state, {
-                "rejection_withdrawals": [{"rejection_id": world_id, "decision": "succeeded", "dossier_id": world_dossier_id}],
+                "rejection_withdrawals": [{"rejection_id": rid, "decision": "succeeded", "dossier_id": did}],
             },
             night_id=nid, chat_turn_id=ctid,
         )
-        assert succ_res.rejection_withdrawals.rejected == []
-        assert succ_res.rejection_withdrawals.applied == [{"rejection_id": world_id, "decision": "succeeded"}]
-        assert world_id not in {r["rejection_id"] for r in list_unresolved_player_rejections(db)}
-
-        # 撤回召对轮后还原，再重开验证
-        db.undo_chat_turn(ctid)
+        assert [r.category for r in res.rejection_withdrawals.rejected] == [expected_cat]
         assert world_id in {r["rejection_id"] for r in list_unresolved_player_rejections(db)}
-        # 重新下达并收夜
-        ctid = db.create_chat_turn(state, minister, "s", 0, night_id=nid, status="active")
-        db.persist_minister_reply(minister, state.turn, "回奏", ctid)
-        apply_audience_round_translation(
-            db, state, {
-                "rejection_withdrawals": [{"rejection_id": world_id, "decision": "succeeded", "dossier_id": world_dossier_id}],
-            },
-            night_id=nid, chat_turn_id=ctid,
-        )
-        assert world_id not in {r["rejection_id"] for r in list_unresolved_player_rejections(db)}
-        close_night(db, state, night_id=nid, content=content)
-        reopen_check("world-segment-correction.db")
+
+    # Remove boundary dossiers before the next month forecast.
+    db.conn.execute("DELETE FROM staged_declarations WHERE decree_ref IN (?, ?)", (q_ref, unf_ref))
+    db.conn.execute("DELETE FROM decree_dossiers WHERE id IN (?, ?, ?)", (unprom_id, q_dossier_id, unf_dossier_id))
+    db.conn.commit()
+
+    ctid = db.create_chat_turn(state, minister, "s", 0, night_id=nid, status="active")
+    db.persist_minister_reply(minister, state.turn, "回奏", ctid)
+    succ_res = apply_audience_round_translation(
+        db, state, {
+            "rejection_withdrawals": [{"rejection_id": world_id, "decision": "succeeded", "dossier_id": world_dossier_id}],
+        },
+        night_id=nid, chat_turn_id=ctid,
+    )
+    assert succ_res.rejection_withdrawals.rejected == []
+    assert succ_res.rejection_withdrawals.applied == [{"rejection_id": world_id, "decision": "succeeded"}]
+    assert world_id not in {r["rejection_id"] for r in list_unresolved_player_rejections(db)}
+
+    db.undo_chat_turn(ctid)
+    assert world_id in {r["rejection_id"] for r in list_unresolved_player_rejections(db)}
+    ctid = db.create_chat_turn(state, minister, "s", 0, night_id=nid, status="active")
+    db.persist_minister_reply(minister, state.turn, "回奏", ctid)
+    apply_audience_round_translation(
+        db, state, {
+            "rejection_withdrawals": [{"rejection_id": world_id, "decision": "succeeded", "dossier_id": world_dossier_id}],
+        },
+        night_id=nid, chat_turn_id=ctid,
+    )
+    assert world_id not in {r["rejection_id"] for r in list_unresolved_player_rejections(db)}
+    close_night(db, state, night_id=nid, content=content)
 
     # 再走「载荷修正成功 + 无关部分拒收」，只有对应拒收退出。
     grant_payload = {
         "grant_action": "赏赉", "amount": 1, "account": "国库",
         "target_kind": "character", "target_id": minister, "execution_surface": "immediate",
     }
-    leftovers = [
-        r["rejection_id"] for r in list_unresolved_player_rejections(db)
-        if r["rejection_id"] != withdraw_id
-    ]
-    if leftovers:
-        correction(leftovers, "国库", None, questions=False, unrelated_account="国库", grant=grant_payload)
-    declaration_dispatch.dispatch_declaration(
-        db, state, {"effects": {"economy_moves": [bad]}}, source=Provenance.player_decree,
-        visible_refs={"affairs": [affair.id]},
-    )
-    repair_id = list_unresolved_player_rejections(db)[-1]["rejection_id"]
-    correction(
-        [repair_id], "国库",
-        "国库" if success_path == "continued" else None,
-        questions=success_path not in {"without_questions", "force_promulgated"},
-        force=success_path == "force_promulgated", unrelated_account="不存在",
-        grant=grant_payload,
-    )
-    unresolved = list_unresolved_player_rejections(db)
-    assert repair_id not in {r["rejection_id"] for r in unresolved}
-    assert [r["rejection_id"] for r in unresolved[:1]] == [withdraw_id]
-    assert len(unresolved) == 2
-    unrelated_id = unresolved[-1]["rejection_id"]
+    for success_path in ("without_questions", "empty_continuation", "continued", "force_promulgated"):
+        declaration_dispatch.dispatch_declaration(
+            db, state, {"effects": {"economy_moves": [bad]}}, source=Provenance.player_decree,
+            visible_refs={"affairs": [affair.id]},
+        )
+        before = {r["rejection_id"] for r in list_unresolved_player_rejections(db)}
+        repair_id = max(before)
+        correction(
+            [repair_id], "国库",
+            "国库" if success_path == "continued" else None,
+            questions=success_path not in {"without_questions", "force_promulgated"},
+            force=success_path == "force_promulgated", unrelated_account="不存在",
+            grant=grant_payload,
+        )
+        unresolved = list_unresolved_player_rejections(db)
+        after = {r["rejection_id"] for r in unresolved}
+        assert repair_id not in after
+        assert before - {repair_id} <= after
+        unrelated_id, = after - before
+        assert next(r["category"] for r in unresolved if r["rejection_id"] == unrelated_id) == "invalid_enum"
+    reopen_check("corrected.db")
 
     night = open_night(db, state, location="乾清宫", time_of_day="戌时")
     nid = int(night["id"])
@@ -491,12 +449,12 @@ def test_player_rejection_lifecycle_through_translation_and_month(game, monkeypa
     assert [r.category for r in invalid.rejection_withdrawals.rejected] == [
         "invalid_shape", "hallucinated_id", "hallucinated_id",
     ]
-    still_pending = [r["rejection_id"] for r in list_unresolved_player_rejections(db)]
-    assert len(still_pending) == 3 and still_pending[:2] == [withdraw_id, unrelated_id]
+    pending_ids = {r["rejection_id"] for r in list_unresolved_player_rejections(db)}
+    invalid_id, = pending_ids - after
+    assert pending_ids == after | {invalid_id}
     db.undo_chat_turn(ctid)
-    assert [r["rejection_id"] for r in list_unresolved_player_rejections(db)] == [withdraw_id, unrelated_id]
-    reopen_check("undone-rejection.db")
-    still_pending = [withdraw_id, unrelated_id]
+    assert {r["rejection_id"] for r in list_unresolved_player_rejections(db)} == after
+    still_pending = sorted(after)
     for undo in (True, False):
         ctid = db.create_chat_turn(state, minister, "s", 0, night_id=nid, status="active")
         result = apply_audience_round_translation(

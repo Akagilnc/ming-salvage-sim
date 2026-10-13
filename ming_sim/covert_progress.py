@@ -12,7 +12,7 @@
 
 from __future__ import annotations
 
-from ming_sim.applier import RejectedItem, Provenance
+from ming_sim.applier import RejectedItem, Provenance, reject_item
 
 import copy
 import json
@@ -1730,10 +1730,10 @@ def _selection_map(
     if raw_selections is None:
         return mapping
     if not isinstance(raw_selections, list):
-        rejections.append(RejectedItem(
-            item=raw_selections if isinstance(raw_selections, dict) else {"raw_value": raw_selections},
-            reason="covert_exec_selections 须为 list", category="invalid_shape", source=source,
-        ))
+        reject_item(
+            rejections, raw_selections, "covert_exec_selections 须为 list",
+            "invalid_shape", source,
+        )
         return mapping
 
     for item in raw_selections:
@@ -1744,16 +1744,13 @@ def _selection_map(
             if oid <= 0:
                 raise ValueError("密令 order_id 须为正整数")
         except ValueError as exc:
-            rejections.append(RejectedItem(
-                item=dict(item) if isinstance(item, dict) else {"raw_value": item},
-                reason=str(exc), category="invalid_shape", source=source,
-            ))
+            reject_item(rejections, item, str(exc), "invalid_shape", source)
             continue
         if oid not in active_oids:
-            rejections.append(RejectedItem(
-                item=dict(item), reason=f"在办密令 #{oid} 不存在",
-                category="missing_ref", source=source,
-            ))
+            reject_item(
+                rejections, item, f"在办密令 #{oid} 不存在",
+                "missing_ref", source,
+            )
             continue
         mapping[oid] = item
     return mapping

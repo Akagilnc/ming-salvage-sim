@@ -218,11 +218,9 @@ def build_translation_target_grounding(db: Any, state: Any = None) -> str:
     unresolved = list_unresolved_player_rejections(db)
     for fact in unresolved:
         lines.append("player_rejection\t" + json.dumps(fact, ensure_ascii=False, sort_keys=True))
-    from ming_sim.declaration_dispatch import _correction_context
-
     unresolved_ids = {fact["rejection_id"] for fact in unresolved}
     for dossier in db.dossiers.list_dossiers():
-        _, _, payload = _correction_context(db, None, dossier=dossier)
+        payload = dossier.get("payload", {})
         ids = [rid for rid in payload.get("_resolves_rejection_ids", []) if rid in unresolved_ids]
         if ids:
             lines.append("rejection_correction\t" + json.dumps({
@@ -263,10 +261,7 @@ def build_c0_declaration_shape() -> str:
     travel_tone_hint = "|".join(TRAVEL_SPEED_BY_TONE)
     effect_shape = "\n".join(
         f"    {line}" for line in json.dumps(
-            {
-                "event_id": "仅属某事件战果时填事件 id；未填即独立",
-                **DECLARATION_EFFECT_FIELDS,
-            },
+            {"event_id": "仅属某事件战果时填事件 id；未填即独立", **DECLARATION_EFFECT_FIELDS},
             ensure_ascii=False, indent=2,
         ).splitlines()
     )

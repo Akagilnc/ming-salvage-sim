@@ -17,7 +17,7 @@ def clean_rejections(game):
     收集器测试用绝对计数断言，必须从已知空表起步（cmr S0 r2 C-R2）。
     """
     db, state, content = game
-    db.conn.execute("DROP TABLE IF EXISTS rejection_reports")
+    db.conn.execute("DELETE FROM rejection_reports")
     return game
 
 

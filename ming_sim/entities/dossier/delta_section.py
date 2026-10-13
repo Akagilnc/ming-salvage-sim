@@ -10,7 +10,7 @@ from ming_sim.exceptions import DeclarationDataError
 
 from typing import List
 
-from ming_sim.applier import RejectedItem, SectionResult
+from ming_sim.applier import RejectedItem, SectionResult, reject_item
 
 
 def apply_participants(run):
@@ -51,17 +51,9 @@ def apply_executions(run):
     rejected: List[RejectedItem] = []
     source = run.ctx.source
 
-    def _refuse(item: object, reason: str, category: str = "invalid_transition") -> None:
-        rejected.append(RejectedItem(
-            item=item if isinstance(item, dict) else {"raw_value": item},
-            reason=reason,
-            category=category,
-            source=source,
-        ))
-
     for item in run.current_extracted.get("dossier_executions") or []:
         if not isinstance(item, dict):
-            _refuse(item, "执行格须为对象", "invalid_shape")
+            reject_item(rejected, item, "执行格须为对象", "invalid_shape", source)
             continue
         try:
             dossier_id = _parse_sqlite_id(item.get("dossier_id"))
@@ -75,17 +67,17 @@ def apply_executions(run):
             has_parties = "affected_parties" in item
             raw_parties = item["affected_parties"] if has_parties else None
         except (TypeError, ValueError, KeyError) as exc:
-            _refuse(item, str(exc))
+            reject_item(rejected, item, str(exc), "invalid_transition", source)
             continue
         dossier = run.db.dossiers.get(dossier_id)
         if dossier is None or dossier["status"] != "executing":
-            _refuse(item, "案卷不存在或不在 executing")
+            reject_item(rejected, item, "案卷不存在或不在 executing", "invalid_transition", source)
             continue
         if raw_parties is not None and outcome in GameDB._JOINT_LIABILITY_TRIGGERS:
             try:
                 run.db.validate_joint_liability_affected_parties(raw_parties, outcome)
             except DeclarationDataError as exc:
-                _refuse(item, str(exc))
+                reject_item(rejected, item, str(exc), "invalid_transition", source)
                 continue
         run.db.dossiers.record_execution(
             dossier_id, outcome, note, run.state.turn, close=True, commit=False,

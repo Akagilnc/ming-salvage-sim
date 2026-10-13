@@ -359,10 +359,7 @@ def test_directive_routing_rejection_rolls_back_with_outer_owner(
     assert db.conn.execute(
         "SELECT COUNT(*) FROM decree_dossiers WHERE directive_id=?", (directive_id,),
     ).fetchone()[0] == 0
-    table = db.conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='rejection_reports'"
-    ).fetchone()
-    assert table is None or db.conn.execute(
+    assert db.conn.execute(
         "SELECT COUNT(*) FROM rejection_reports"
     ).fetchone()[0] == 0
     assert not mirror.exists()

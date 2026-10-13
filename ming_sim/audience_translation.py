@@ -285,18 +285,8 @@ def run_turn_translation_job(
             if not already_done:
                 db.reign.mark_story_extraction_pending(ctid)
         if already_done:
-            from ming_sim.applier import SectionResult
-            from ming_sim.declaration_dispatch import ProtagonistResult
-            empty = SectionResult(applied=[], rejected=[])
-            return DeclarationDispatchResult(
-                commissions=empty, promises=empty, endorsements=empty,
-                textual_facts=empty, public_sayings=empty,
-                on_scene_facts=empty, presence=empty,
-                scene_facts=empty, edge_events=empty,
-                protagonist=ProtagonistResult(validated=None, rejected=[]),
-                registrations=empty, effects=empty,
-                inquiries=empty, rushes=empty, travel_tones=empty,
-            )
+            from ming_sim.declaration_dispatch import empty_dispatch_result
+            return empty_dispatch_result()
 
     try:
         # LLM 在 write_gate 外；声明到手后再短持锁落账。
