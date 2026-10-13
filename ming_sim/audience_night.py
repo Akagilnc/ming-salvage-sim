@@ -31,6 +31,7 @@ from ming_sim.db import normalize_office
 from ming_sim.settlement.views import view
 from ming_sim.error_pack import error_packs_root
 from ming_sim.models import GameState
+from ming_sim.relations import SETTLEMENT_ORIGIN_SENTINEL
 from ming_sim.participant_roster import is_non_person_participant_name
 
 logger = logging.getLogger(__name__)
@@ -1545,7 +1546,7 @@ def commit_fresh_summons_for_night(
                     "行程语气": travel_tone,
                     # Canonical applier only admits its established provenance vocabulary;
                     # the summon origin remains machine-linked in the story ledger.
-                    "origin_ref": "盘面自发",
+                    "origin_ref": SETTLEMENT_ORIGIN_SENTINEL,
                 }],
                 content=content,
             source=Provenance.system_simulation)

@@ -13,6 +13,7 @@ from ming_sim.applier import Provenance, RejectedItem, SectionResult
 from ming_sim.db import GameDB
 from ming_sim.constants import REGION_SCORE_FIELDS, FISCAL_SCORE_FIELDS, REGION_FIELD_ALIASES, ARMY_SCORE_FIELDS, ARMY_FIELD_ALIASES
 from ming_sim.models import Event, GameState
+from ming_sim.relations import SETTLEMENT_ORIGIN_SENTINEL
 from ming_sim.entities.army.delta_section import apply_army_delta_with_cannon_transfer
 
 _ISSUE_PSEUDO_EVENT = Event(
@@ -71,7 +72,7 @@ def _apply_issue_buildings(
     ops: object,
     pseudo_event: Event,
     reason: str,
-    origin_ref: str = "盘面自发",
+    origin_ref: str = SETTLEMENT_ORIGIN_SENTINEL,
     source: Provenance = Provenance.system_simulation,
 ) -> tuple[List[Dict[str, object]], List[RejectedItem]]:
     """落地 issue effect 里的 buildings。不可执行项进入拒收，不记成成功操作。"""
@@ -191,7 +192,7 @@ def _apply_issue_entities(
     applied_buildings: Optional[List[Dict[str, object]]] = None,
     issue_id: Optional[int] = None,
     issue_title: str = "",
-    origin_ref: str = "盘面自发",
+    origin_ref: str = SETTLEMENT_ORIGIN_SENTINEL,
     source: Provenance = Provenance.system_simulation,
 ) -> List[RejectedItem]:
     """落地结案后果；数据逐项拒收，代码及持久故障上抛。"""
@@ -497,7 +498,7 @@ def _apply_monthly_ongoing_entities(
     content=None,
     llm_config: Any = None,
     applied_person_changes: Optional[List[Dict[str, object]]] = None,
-    origin_ref: str = "盘面自发",
+    origin_ref: str = SETTLEMENT_ORIGIN_SENTINEL,
     source: Provenance = Provenance.system_simulation,
 ) -> SectionResult:
     from ming_sim.entities.social_class.apply import _apply_class_dict

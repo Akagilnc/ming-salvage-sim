@@ -21,6 +21,7 @@ from ming_sim.constants import (
 )
 from ming_sim.db import GameDB, _load_durable_json
 from ming_sim.applier import Provenance
+from ming_sim.relations import SETTLEMENT_ORIGIN_SENTINEL
 from ming_sim.entities.population.apply import _apply_population_transfers
 
 # #650/0089 明渠：下旨加派逐省累积账（万两/月，负额停征/蠲免、钳 ≥0）。
@@ -99,7 +100,7 @@ def apply_levy_driven_transfers(
             "amount": amount,
             "reason": "加派",
             # 月度后果来自累积账，不伪归因给最后一道改变账额的旨。
-            "origin_ref": "盘面自发",
+            "origin_ref": SETTLEMENT_ORIGIN_SENTINEL,
         })
     if not records:
         return [], []

@@ -257,8 +257,11 @@ def build_c0_declaration_shape() -> str:
     from ming_sim.covert_progress import describe_covert_task_contract
     covert_contract_shape = describe_covert_task_contract()
     # 案卷关联的合法类型闭集同样只投影 constants 真源，禁手抄分叉。
-    from ming_sim.constants import DOSSIER_LINK_TYPES
+    from ming_sim.constants import DOSSIER_LINK_TYPES, ECONOMY_ACCOUNTS
+    from ming_sim.entities.character.transit import TRAVEL_SPEED_BY_TONE
     dossier_link_types = "|".join(sorted(DOSSIER_LINK_TYPES))
+    account_hint = "|".join(ECONOMY_ACCOUNTS)
+    travel_tone_hint = "|".join(TRAVEL_SPEED_BY_TONE)
     effect_shape = "\n".join(
         f"    {line}" for line in json.dumps(
             {
@@ -281,7 +284,7 @@ def build_c0_declaration_shape() -> str:
         "      },\n"
         '      "grant": {\n'
         '        "grant_action": "赈灾|协饷|赏赉|发内帑|项目经费|…",\n'
-        '        "amount": 正整数万两, "account": "国库|内库",\n'
+        f'        "amount": 正整数万两, "account": "{account_hint}",\n'
         '        "purpose": "补饷（仅协饷）",\n'
         f'        "target_kind": "{target_kind_hint}",\n'
         '        "target_id": "目标 id", "cadence": "一次性|每月",\n'
@@ -334,7 +337,7 @@ def build_c0_declaration_shape() -> str:
         '"order_id": "目录里点名的密令 id（未点名则省略）"}],\n'
         '  "rushes": [{"target_kind": "commitment|secret_order", "target_id": 正整数, '
         '"stage_idx": 0, "deadline_months": 1, "reason": "催办缘由"}],\n'
-        '  "travel_tones": [{"person_name": "人名", "tone": "常行|加急|星夜兼程"}],\n'
+        f'  "travel_tones": [{{"person_name": "人名", "tone": "{travel_tone_hint}"}}],\n'
         '  "rejection_withdrawals": [{"rejection_id": 正整数（皇帝明确说不做或叙事了结的未了结拒收 id）, "decision": "withdrawn|succeeded（默认 withdrawn）", "dossier_id": "叙事了结所援案卷 id（succeeded 时填）"}],\n'
         '  "on_scene_facts": [\n'
         "    {\n"

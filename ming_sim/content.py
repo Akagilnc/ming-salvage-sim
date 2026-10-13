@@ -24,6 +24,7 @@ from ming_sim.constants import (
     ARMY_TEXT_FIELDS,
     BUILDING_CATEGORIES,
     BUILDING_OUTPUT_METRICS,
+    ECONOMY_ACCOUNTS,
     GATE_AGG_FUNCS,
     GATE_METRIC_KEYS,
     GATE_TABLES,
@@ -661,7 +662,7 @@ def load_fiscal_config() -> "List[Dict[str, object]]":
         if role == "fixed" and kind == "base":
             account = str_field(item, "account", path)
             direction = str_field(item, "direction", path)
-            if account not in ("国库", "内库"):
+            if account not in ECONOMY_ACCOUNTS:
                 raise SystemExit(f"{path}: account 必须是 国库/内库，得到 {account}")
             if direction not in ("income", "expense"):
                 raise SystemExit(f"{path}: direction 必须是 income/expense，得到 {direction}")

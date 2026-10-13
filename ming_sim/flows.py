@@ -16,7 +16,7 @@ from ming_sim.army_pay import (
     settle_hub_army_loyalty_tick,
     settle_hub_central_army_pay,
 )
-from ming_sim.constants import TURN_UNIT
+from ming_sim.constants import ECONOMY_ACCOUNTS, TURN_UNIT
 from ming_sim.db import GameDB, _load_durable_json
 from ming_sim.error_pack import settlement_abort_message, write_error_pack
 from ming_sim.exceptions import SettlementAbort
@@ -296,11 +296,11 @@ def compute_budget_lines(
     ).fetchall():
         cond = max(0, min(100, int(r["condition"])))
         metric = str(r["output_metric"] or "")
-        if metric in ("国库", "内库") and r["output_amount"]:
+        if metric in ECONOMY_ACCOUNTS and r["output_amount"]:
             bld_in[metric] += round(int(r["output_amount"]) * cond / 100)
         maint_acc = "内库" if str(r["category"] or "") == "内廷" else "国库"
         bld_out[maint_acc] += max(0, int(r["maintenance"]))
-    for acc in ("国库", "内库"):
+    for acc in ECONOMY_ACCOUNTS:
         if bld_in[acc] > 0:
             budget[acc]["income"].append({"name": "建筑产出", "amount": bld_in[acc], "note": "建筑月产出"})
         if bld_out[acc] > 0:
@@ -662,7 +662,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                 or (skip_substrate_hub_lines and it.get("internal") == "substrate_hub")
             )
 
-        for account in ("国库", "内库"):
+        for account in ECONOMY_ACCOUNTS:
             for it in budget[account]["income"]:
                 if _skip_budget_item(it):
                     continue
@@ -718,7 +718,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
         out_base = max(0, int(row["output_amount"]))
         produced = round(out_base * condition / 100) if metric and out_base else 0
 
-        if metric in ("国库", "内库"):
+        if metric in ECONOMY_ACCOUNTS:
             if produced > 0:
                 db.record_issue_economy_move(state, metric, produced, "建筑产出", f"{name}{TURN_UNIT}产出")
                 flows.append({"dir": "income", "account": metric, "category": "建筑产出",

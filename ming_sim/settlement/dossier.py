@@ -12,6 +12,8 @@ from ming_sim.appointment_tenure import appointment_tenure_from
 from ming_sim.db import require_backing_dossier_id
 from ming_sim.decree_vocabulary import dossier_action_policy
 from ming_sim.exceptions import DeclarationDataError
+from ming_sim.constants import ECONOMY_ACCOUNTS
+from ming_sim.relations import SETTLEMENT_ORIGIN_SENTINEL
 from ming_sim.models import GameState, is_vassal_prince
 from ming_sim.strict_types import (
     strict_int, validate_rejection_verdict, validate_verdict_affected_parties,
@@ -150,7 +152,7 @@ def apply_dossier_promulgation(
                 account = str(
                     payload.get("account") or payload.get("target_account") or ""
                 ).strip()
-                if account not in {"国库", "内库"}:
+                if account not in ECONOMY_ACCOUNTS:
                     raise ValueError("拨帑案卷 account 仅可为国库或内库")
                 db._create_grant_fiscal_item(
                     state, payload, dossier_id,
@@ -351,7 +353,7 @@ def _apply_army_pay_grant_effect(
     account = str(
         payload.get("account") or payload.get("target_account") or ""
     ).strip()
-    if account not in {"国库", "内库"}:
+    if account not in ECONOMY_ACCOUNTS:
         raise DeclarationDataError("拨饷案卷 account 仅可为国库或内库")
     target_id = str(
         payload.get("target_id") or row.get("target_id") or ""
@@ -1189,7 +1191,7 @@ def _commit_office_action(
         person_item = {
             "name": name, "动作": "任命", "office": office,
             "office_type": office_type, "任别": appointment_tenure,
-            "reason": reason, "origin_ref": "盘面自发",
+            "reason": reason, "origin_ref": SETTLEMENT_ORIGIN_SENTINEL,
         }
         seat = str(
             payload.get("region_id")

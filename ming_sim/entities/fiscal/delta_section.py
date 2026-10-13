@@ -16,11 +16,11 @@ from typing import Any, Dict, List, Tuple
 from ming_sim.strict_types import strict_int as _strict_int
 from ming_sim.token_stats import tlog
 
+from ming_sim.constants import ECONOMY_ACCOUNTS
 from ming_sim.applier import SectionResult
 from ming_sim.exceptions import DeclarationDataError
 
 
-_FISCAL_ACCOUNTS = ("国库", "内库")
 _FISCAL_DIRECTIONS = ("income", "expense")
 _DIRECTION_NORMALIZE = {
     "income": "income", "收": "income", "收入": "income", "进账": "income",
@@ -131,7 +131,7 @@ def apply_creates(run) -> SectionResult:
         direction = _DIRECTION_NORMALIZE.get(direction_raw, direction_raw)
         key = str(create.get("key") or "").strip()
         account = str(create.get("account") or "").strip()
-        if not key or account not in _FISCAL_ACCOUNTS or direction not in _FISCAL_DIRECTIONS:
+        if not key or account not in ECONOMY_ACCOUNTS or direction not in _FISCAL_DIRECTIONS:
             rejections.append(RejectedItem(item=create, reason=f"新立项枚举非法（key={key!r} account={account!r} direction={direction!r}）。", category="invalid_enum", source=run.ctx.source))
             continue
         # init_value 缺省/null＝0 合法；在场脏值（字符串/float/bool/负值）显式拒，
