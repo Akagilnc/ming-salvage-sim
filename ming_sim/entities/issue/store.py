@@ -33,7 +33,6 @@ class IssueStore(RowStore):
     PK = "id"
     TABLES = {"turn_directives": "id"}
     TOUCH = True
-    AFFAIR_FIELDS = "id"
 
     def active_rows(self, kind: str | None = None) -> Any:
         sql = "SELECT * FROM issues WHERE status='active'"
