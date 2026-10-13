@@ -1627,6 +1627,7 @@ def merge_investigation_confirmation(
     pending_action_id: int = 0,
     origin_chat_message_ids: Sequence[int] = (),
     fact_key: str = "",
+    resolves_rejection_ids: Optional[Sequence[int]] = None,
 ) -> int:
     """同目标汇案：并案卷。只有带事实指针的来源才留下待消费线索。
 
@@ -1665,6 +1666,10 @@ def merge_investigation_confirmation(
             "credited": False,
         })
         payload[INVESTIGATION_CLUES_KEY] = clues
+    if resolves_rejection_ids:
+        payload["_resolves_rejection_ids"] = list(dict.fromkeys(
+            payload.get("_resolves_rejection_ids", []) + list(resolves_rejection_ids),
+        ))
     db.dossiers.update_payload(did, payload, commit=False)
     return int(order_id)
 

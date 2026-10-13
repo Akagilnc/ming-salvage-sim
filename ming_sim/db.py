@@ -9462,6 +9462,7 @@ class GameDB:
                         if isinstance(payload.get("affair_declaration"), Mapping)
                         else None
                     ),
+                    resolves_rejection_ids=payload.get("_resolves_rejection_ids"),
                 )
                 if order_id is not None and payload.get("dossier_links") is not None:
                     links = payload.get("dossier_links")
@@ -11363,6 +11364,7 @@ class GameDB:
         pending_action_id: int = 0,
         covert_task: Optional[Mapping[str, object]] = None,
         affair_declaration: Optional[Mapping[str, object]] = None,
+        resolves_rejection_ids: Optional[Sequence[int]] = None,
     ) -> int:
         # 宗藩/外藩 非朝堂命官，不可受密令——密令创建的唯一 DB 写口，集中守此一处即覆盖
         # API / 大臣工具 / CLI 自然语言全路（cmr R6 cross-section）。
@@ -11419,6 +11421,7 @@ class GameDB:
                     pending_action_id=int(pending_action_id or 0),
                     origin_chat_message_ids=provenance_message_ids,
                     fact_key=_investigation_fact_of(covert_contract or {}),
+                    resolves_rejection_ids=resolves_rejection_ids,
                 )
         active_count = self.conn.execute(
             "SELECT COUNT(*) FROM secret_orders WHERE status='active'",
@@ -11483,6 +11486,8 @@ class GameDB:
             if affair_declaration is not None:
                 # 事务归属由成案核 _resolve_affair_id_from_payload 消费并落 pointer。
                 payload["affair_declaration"] = dict(affair_declaration)
+            if resolves_rejection_ids is not None:
+                payload["_resolves_rejection_ids"] = list(resolves_rejection_ids)
             # #1896：开案 lane 只由下方 seed_investigation_fact_lanes 写一次并冻结
             # 难度；禁在此预写旧 progress/used 形状（缺 difficulty → 读口填 0 →
             # seed 见 seen 跳过，难度永久钉死为 0）。
