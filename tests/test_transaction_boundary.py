@@ -463,7 +463,7 @@ def test_atomic_rejects_plain_connection(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# cmr S1 r3 修复回归（F1/F2）
+# cmr S1 r3 修复回归（F2）
 # ---------------------------------------------------------------------------
 
 def test_begin_failure_at_entry_restores_flags(game, monkeypatch):
