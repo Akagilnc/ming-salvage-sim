@@ -468,6 +468,50 @@ def test_player_rejection_lifecycle_through_translation_and_month(game, monkeypa
             assert [r["rejection_id"] for r in list_unresolved_player_rejections(db)] == still_pending
     reopen_check("resolved.db")
 
+    # Secret commissions must retain their correction ownership when materialized.
+    declaration_dispatch.dispatch_declaration(
+        db, state, {"effects": {"economy_moves": [bad]}}, source=Provenance.player_decree,
+        visible_refs={"affairs": [affair.id]},
+    )
+    so_repair_id = list_unresolved_player_rejections(db)[-1]["rejection_id"]
+    from tests.dossier_test_helpers import TYPED_COVERT_TASK
+    from ming_sim.decree_forecast import decree_ref_for_dossier
+
+    mid = db.chat_messages.insert(minister_name=minister, turn=int(state.turn), role="user", content="密令交办")
+    ctid = db.create_chat_turn(state, minister, "s", 0, night_id=nid, status="active")
+    db.reign.update_chat_turn_messages(ctid, user_message_id=int(mid))
+    db.persist_minister_reply(minister, state.turn, "奉旨承办", ctid)
+    so_commission = {
+        "text": "密查",
+        "resolves_rejection_ids": [so_repair_id],
+        "secret_order": {
+            "title": "暗查",
+            "content": "密查辽饷",
+            "assignee": minister,
+            "tags": [],
+            "deadline_months": 3,
+            "covert_task": dict(TYPED_COVERT_TASK),
+        },
+    }
+    res = apply_audience_round_translation(
+        db, state, {"commissions": [so_commission]},
+        night_id=nid, chat_turn_id=ctid, minister_name=minister,
+    )
+    assert res.commissions.rejected == []
+    so_pid = int(res.commissions.applied[0]["id"])
+    db.commit_pending_actions(state, content=content, minister_name=minister)
+
+    so_dossier = next(
+        d for d in db.dossiers.list_dossiers()
+        if int(d.get("pending_action_id") or 0) == so_pid
+    )
+    so_ref = decree_ref_for_dossier(db, so_dossier)
+    err = declaration_dispatch.finish_rejection_correction(
+        db, state, so_ref, claimed_rejection_ids=[so_repair_id],
+    )
+    assert err is None
+    assert list_unresolved_player_rejections(db) == []
+
 
 def test_unforecast_edict_is_caught_up_once_and_crash_does_not_double_charge(game, monkeypatch):
     from ming_sim.exceptions import SettlementAbort
