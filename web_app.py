@@ -23,7 +23,6 @@ import sys
 import time
 import threading
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, AsyncIterator, Callable, Dict, Iterator, List, Optional
 

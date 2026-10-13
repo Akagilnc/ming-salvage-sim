@@ -1,7 +1,5 @@
 from __future__ import annotations
 import asyncio
-import time
-from tests.wait_utils import wait_until
 import web_app
 from ming_sim import audience_night as an
 from ming_sim.models import TurnPhase
@@ -9,10 +7,6 @@ from tests.conftest import MONTH_OPEN_KEYS
 from tests.conftest import stub_audience_translate
 from tests.test_court_break_player_lock_1727 import _active_minister
 from tests.test_court_break_player_lock_1727 import _client
-from types import SimpleNamespace
-from concurrent.futures import ThreadPoolExecutor
-import httpx
-import pytest
 from tests.sse_helpers import parse_sse_event_pairs
 """#1235 T2 — 点即入 + 未了续跑 + 真失败另形（ADR 0149）。
 

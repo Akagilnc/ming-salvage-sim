@@ -4,7 +4,6 @@ import json
 import pytest
 from ming_sim.decree_vocabulary import TARGET_KINDS
 from ming_sim.execution_pressure import (
-    normalize_locality_scope,
     resolve_dossier_region_ids,
 )
 """#654 差务属地 oracle：组合矩阵及案卷归属。"""
@@ -235,7 +234,6 @@ def test_revoke_decree_523_producer_durable_oracle_chain(env):
 
     owner A：八值成员、dossier 三格、unknown 拒绝、revoke identity 保留。
     """
-    import ming_sim.action_materialize  # noqa: F401 -- installs package catalog
     from ming_sim.action_materialize import stage_revoke_decree_candidate
 
     db, state, content = env

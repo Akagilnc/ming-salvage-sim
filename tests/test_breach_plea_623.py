@@ -27,8 +27,6 @@ from ming_sim.staged_commitment import (
     TODO_STATUS_PENDING,
 )
 from ming_sim.settlement import SettlementContext, settle_delta
-import pytest
-from ming_sim.due_review import apply_pending_due_reviews, list_due_review_scenes
 """#623 挽留场（0075）——松手检测·哭谏·根基分档。
 
 Seams:

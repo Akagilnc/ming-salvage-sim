@@ -1,5 +1,4 @@
 from __future__ import annotations
-from ming_sim.settlement.dossier import apply_dossier_verdicts
 import ming_sim.settlement.run as settlement_run
 from ming_sim.applier import Provenance
 from tests.conftest import open_hall_turn, wait_for_background_jobs

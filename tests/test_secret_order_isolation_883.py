@@ -7,9 +7,6 @@ from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import view
 from tests.test_month_chain_1843 import _prepare_player_month
 from tests.dossier_test_helpers import create_test_secret_order
-from ming_sim import issues
-from tests.test_due_review_621 import _settle_empty_month
-from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_order
 """契约钉 #883·密令源头隔离 + #976 召对写入接缝结构分流。
 
 密令及一切派生只进 ①密令本体表 ②接令者专用密令简报表；

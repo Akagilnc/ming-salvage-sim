@@ -1,6 +1,5 @@
 from __future__ import annotations
 from ming_sim.models import TurnPhase
-from tests.test_enter_settlement_period_1235 import _click_before
 from fastapi.testclient import TestClient
 from pathlib import Path
 from ming_sim.session_write_queue import ClassifiedWriteGate

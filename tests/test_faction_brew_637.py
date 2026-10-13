@@ -7,17 +7,12 @@ from ming_sim.exceptions import LLMUnavailable
 from ming_sim.faction_brew import (
     STANCE_KEY,
     VIEW_FACTION_STANCE,
-    project_character_factions,
     select_faction_brew_targets,
 )
 from ming_sim.relation_brew import FOUNDINGS_KEY, RECENT_KEY
 from ming_sim.relations import EMPEROR_NODE
 from tests.test_relation_brew_636 import run_month_end_relation_brew
-from ming_sim.faction_brew import (
-    STANCE_KEY,
-    VIEW_FACTION_STANCE,
-)
-from tests.test_relation_brew_636 import _brew_fn_factory, run_month_end_relation_brew
+from tests.test_relation_brew_636 import _brew_fn_factory
 """#637 派系态势摘要 S6：涉派事件驱动的聚合视图（ADR 0084；冻结票面＋庭裁 r1 三修正案）。
 
 验收锚：

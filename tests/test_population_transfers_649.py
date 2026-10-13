@@ -2,7 +2,6 @@ from __future__ import annotations
 from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import section, view
-import pytest
 """#649（[#477 S2]）：人口守恒转移原语＋delta 契约。
 
 canonical＝ADR 0087/0088 + #649 冻结票面（含庭裁修正案 r1-r5；#1843 旧档万人口径已退役）：

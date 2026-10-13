@@ -24,13 +24,6 @@ from ming_sim.urge_lever import (
 )
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import section, view
-from ming_sim.credit_events import (
-    KIND_BACK,
-    KIND_BETRAY,
-    KIND_FULFILL,
-    KIND_SCAPEGOAT,
-    resolve_credit_events_from_extraction,
-)
 """#628 / ADR 0079 信用事件写端。
 
 测试预算 ≤4：

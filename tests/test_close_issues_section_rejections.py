@@ -1,8 +1,5 @@
 from ming_sim.entities.issue.tracker import apply_issue_tracker_output
 from ming_sim.applier import Provenance
-import pytest
-import ming_sim.issues as I
-from tests.section_rejection_helpers import game
 """#63 class 4 / ADR 0008 决定 1：apply_issue_tracker_output 的 close_issues 段迁逐项拒收契约。
 
 原先：坏 issue_id 静默 continue、坏 reason print[WARN]+continue、close_issue 抛异常 print[WARN]+

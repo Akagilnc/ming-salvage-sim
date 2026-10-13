@@ -1,6 +1,5 @@
 import pytest
 import json
-from tests.section_rejection_helpers import game
 
 
 

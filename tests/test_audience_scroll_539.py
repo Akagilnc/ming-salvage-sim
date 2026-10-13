@@ -242,7 +242,6 @@ def test_translation_segments_replace_neutral_reply_in_real_scroll(game, monkeyp
     assert again == segments
 
 def test_unnamed_speaker_cannot_finish_translation(game, monkeypatch):
-    import pytest
     import web_app
     from ming_sim.audience_translation import apply_audience_round_translation
 

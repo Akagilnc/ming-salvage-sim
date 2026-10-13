@@ -14,7 +14,6 @@ from ming_sim.audience_night import (
 from ming_sim.materials import _safe_segment, list_materials, prepare_scene_materials
 from ming_sim.session import GameSession
 from ming_sim.session_write_queue import SessionWriteQueue
-from ming_sim.materials import list_materials, prepare_scene_materials
 """#1836 T1：一个 LLM 演整场召对。
 
 Seams:

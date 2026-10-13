@@ -4,7 +4,6 @@ from ming_sim.structured_decree import (
     StructuredDecreeCombinationError,
     assemble_structured_decree,
 )
-import json
 """#1624 结构化旨意共同契约：真实入口主干（禁 helper 直调冒充入口；禁 prompt 文本锁）。"""
 
 

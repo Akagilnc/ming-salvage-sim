@@ -1,14 +1,7 @@
 from __future__ import annotations
-import threading
-import pytest
 from pathlib import Path
-from types import SimpleNamespace
 from ming_sim import audience_night as an
 from ming_sim.db import GameDB
-from ming_sim.highlight_judge import (
-    run_highlight_judge,
-)
-from typing import Any, Dict, List
 """#544 高亮判官管道：同通道后处理 · 清单落库 · 两通道时序 · 静默降级。
 
 票面 AC（冻结 r2）：

@@ -15,7 +15,6 @@ from ming_sim.public_sayings import list_public_sayings
 from ming_sim.relations import summon_edge_origin
 from ming_sim.session import GameSession
 from tests.conftest import note_queue_until_game_teardown
-from ming_sim.audience_night import AUDIBILITY_PRIVATE, AUDIBILITY_PUBLIC, list_ledger, open_night, person_night_experience, present_names_at
 """#1838 C1b 召对转译：分段 / 可闻性 / 在场进出 / 御前主角 / 边事件 / 公开说法。
 
 受控声明桩（模拟转译 LLM 一次产出）经真实 apply 入口落库，验收：

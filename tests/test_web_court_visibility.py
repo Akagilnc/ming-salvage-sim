@@ -1,9 +1,4 @@
 from __future__ import annotations
-from ming_sim.entities.character.appointment import apply_office_appointment
-from ming_sim.applier import Provenance, RejectedItem
-from types import SimpleNamespace
-import web_app
-from web_app import in_talent_pool, visible_in_court
 import pytest
 from tests.test_qa_c2_settlement_display_lifecycle_1343 import _shell
 """#104: 朝堂大臣列表按 DB 权威状态过滤 offstage（离场/未登场不入列）。

@@ -7,7 +7,6 @@ import pytest
 from ming_sim.applier import atomic
 from ming_sim.constants import (
     BANDIT_ABSORPTION_PERSONS_PER_STRENGTH,
-    RECOVERY_OUTCOME_FACTORS,
     RECOVERY_PERSONS_PER_WAN,
 )
 from ming_sim.db import GameDB

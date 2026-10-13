@@ -1,14 +1,11 @@
 from __future__ import annotations
 import asyncio
-import json
 from types import SimpleNamespace
 import httpx
 import web_app
 from ming_sim import audience_night as an
-from tests.conftest import stub_audience_translate, stub_scene_agent
-from tests.sse_helpers import parse_sse_event_pairs as _parse_sse_chunk
-import pytest
 from tests.conftest import stub_scene_agent
+from tests.sse_helpers import parse_sse_event_pairs as _parse_sse_chunk
 """#1727：court_break 后 done→end 窗口内召对写入口必须落幕。
 
 常绿验收（fix 后一直绿）：

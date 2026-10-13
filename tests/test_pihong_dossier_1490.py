@@ -4,12 +4,7 @@ import json
 import pytest
 from tests.conftest import wait_for_background_jobs
 import ming_sim.decree as decree_mod
-import ming_sim.session as session_mod
 from tests.test_web_audience_night_498 import _fake_settlement_llm
-import asyncio
-import httpx
-import ming_sim.agents as agents_mod
-import web_app
 from ming_sim.models import TurnPhase
 """#1490 / #1492 批红轨契约。
 
@@ -178,7 +173,6 @@ def test_658_routing_rejected_draft_retries_across_real_turn_boundaries(
 
 def test_658_stalled_excluded_from_promulgation_validation(game, monkeypatch):
     """冷场案卷不进过月补跑判官；同月普通案卷仍补跑。"""
-    import ming_sim.decree as decree_mod
     import ming_sim.month_chain as month_chain
     db, state, content = game
     stalled, _ = _658_plant_stalled_deliberation(db, state, title='冷场')
@@ -374,7 +368,6 @@ def test_midzhi_rescript_model_uses_original_key_and_existing_gate(game, monkeyp
 @pytest.mark.parametrize("desk_kind", ["mixed", "decision", "empty"])
 def test_1589_keyless_batch_rejected_without_writes(game, monkeypatch, desk_kind):
     """Stable identity admission survives six-action retirement, including empty desks."""
-    from ming_sim.models import TurnPhase
     from tests.month_chain_helpers import canned_full_settlement, make_light_session
 
     db, state, content = game

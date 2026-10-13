@@ -16,7 +16,7 @@ import json
 import pytest
 
 from tests.section_rejection_helpers import run_declaration as run_settle
-from tests.section_rejection_helpers import game, rejection_rows
+from tests.section_rejection_helpers import rejection_rows
 
 ECO_REJ = "economy_moves"
 

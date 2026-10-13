@@ -12,12 +12,6 @@ from ming_sim.relation_brew import (
     RECENT_KEY,
 )
 from ming_sim.relations import EMPEROR_NODE
-import threading
-from ming_sim.relation_brew import (
-    FOUNDINGS_KEY,
-    RECENT_KEY,
-    MonthEndRelationBrewLeg,
-)
 """#636 关系摘要层 S5：两段式存储＋月末增量重酿腿。
 
 验收锚（冻结票面＋庭裁 r1-r4）：

@@ -5,7 +5,6 @@ import json
 import pytest
 from ming_sim.applier import atomic
 from tests.dossier_test_helpers import _cost_events, _sat
-from ming_sim import issues
 """#564 强颁与毁约的确定性代价轨（ADR 0056）。"""
 
 

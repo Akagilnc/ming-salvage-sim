@@ -309,7 +309,6 @@ def _late_revision_and_approval(
     应允仍用封夜前那一轮，不另开一场冒充源夜。
     """
     import threading
-    from types import SimpleNamespace
 
     from tests.conftest import persist_and_schedule_scene, stub_audience_translate
     from tests.test_audience_translation_1838 import _scene_session

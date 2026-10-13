@@ -1,6 +1,5 @@
 """#484 R4：named-character 史实档案的 loader/DB 契约。"""
 
-import pytest
 
 import ming_sim.content as content_module
 from ming_sim.assets import load_json_asset

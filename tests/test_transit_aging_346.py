@@ -1,13 +1,10 @@
 from __future__ import annotations
-import ming_sim.issues as issues
-from ming_sim.decree import pre_settle, tick_transit_arrivals
+from ming_sim.decree import tick_transit_arrivals
 from ming_sim.distance import DistanceMatrix
-from ming_sim.models import Event, TurnPhase
 from pathlib import Path
 from tests.conftest import active_ming_character
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import section
-from ming_sim.decree import tick_transit_arrivals
 """在途启程账与 #668 倒数 tick 的保留契约（原 #346 旧 ≥2 月硬兜底已拆除）。
 
 覆盖：

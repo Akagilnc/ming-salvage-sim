@@ -1,7 +1,6 @@
 from __future__ import annotations
 """#1195: POST /api/menu/continue 分阶段 SSE 反馈（stage → done/error）。"""
 
-import pytest
 
 from ming_sim.session_write_queue import ClassifiedWriteGate
 

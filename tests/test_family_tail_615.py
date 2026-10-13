@@ -8,7 +8,6 @@ from ming_sim.models import Character
 from tests.dossier_test_helpers import _cost_events, _sat
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import view
-from ming_sim import issues as issue_engine
 """#615 473·S9 族尾收口：贯通 tracer + 密令 0055 豁免 + 接缝核对。"""
 
 

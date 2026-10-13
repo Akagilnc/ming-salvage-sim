@@ -4,7 +4,6 @@ from ming_sim.issues import bind_content
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import section
 import pytest
-from ming_sim.issues import bind_content as issues_bind_content
 """#648（[#477 S1]）：人口单位「人」＋流民第八阶级 seed。
 
 canonical＝ADR 0087/0088 + 票面冻结修正案 r1/r2（#1843 旧档万人双口径已退役）：

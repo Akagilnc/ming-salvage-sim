@@ -1,5 +1,4 @@
 from __future__ import annotations
-import json
 import os
 import sqlite3
 from pathlib import Path
@@ -10,17 +9,11 @@ import web_app
 from ming_sim.session import GameSession
 from tests.test_month_loop_tracer_1468 import (
     _assert_not_bare_500,
-    tracer_client,
+    tracer_client,  # Pytest discovers this fixture by its imported name.
 )
 from tests.sse_helpers import parse_sse_event_pairs as _parse_sse
 from tests.test_session_write_queue_1353 import wait_pending_writes as _wait_pending_writes
 from tests.conftest import offline_empty_audience_translate, stub_audience_translate, stub_scene_agent
-from tests.test_month_loop_tracer_1468 import (
-    _assert_not_bare_500,
-    _pick_active_minister,
-    tracer_client,
-)
-from tests.wait_utils import wait_until
 """#1749 新局写路径：真实 HTTP 入口 tracer。
 
 不 mock WebGame/session/归档链。断言落在 typed campaign / 独立 DB 读 / drain completion。

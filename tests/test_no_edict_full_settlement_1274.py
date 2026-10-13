@@ -3,7 +3,6 @@ import pytest
 from ming_sim.applier import Provenance
 from ming_sim.decree import resolve_directives
 from tests.month_chain_helpers import canned_full_settlement, make_light_session
-import threading
 """#1274 / #1843 — 无旨月走同一过月主链，不走 16ms 快路。
 
 没有旨意只是这个月没有旨意。ADR 0157 把推进放到邸报写成之后，

@@ -3,7 +3,6 @@ import json
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import section, view
 from ming_sim.applier import Provenance
-from copy import deepcopy
 from ming_sim.relations import (
     resolve_relation_edge_events_from_extraction,
     settlement_edge_origin,

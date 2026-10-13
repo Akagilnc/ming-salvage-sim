@@ -3,7 +3,6 @@ import json
 from ming_sim.applier import Provenance
 import pytest
 from tests.section_rejection_helpers import rejection_rows as _rejection_rows, run_declaration
-from tests.section_rejection_helpers import game, rejection_rows as _rejection_rows, run_declaration
 """PR2-S2(ADR 0008 决定 1,#91)——section 4 三条裸奔路迁入逐项拒收契约。
 
 section 4 的 create_armies_from_extraction(new_armies)、apply_region_deltas

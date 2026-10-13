@@ -1,7 +1,6 @@
 from __future__ import annotations
 import pytest
 from ming_sim.decree import pre_settle, reload_state_from_db
-import sqlite3
 """S5 — 内存态与 DB 同源恢复（ADR 0008 决定 3 第三条）。
 
 DB 回滚不还原内存副作用（state.metrics 直加 flows.py:192、turn_phase、next_period）。
@@ -100,7 +99,6 @@ def test_rollback_purges_content_character_ghost(game, monkeypatch):
     任免 commit 先挂 content 再写 DB；回滚删行留幽灵 → 重试走「在册」路因无行被拒，
     合法 pending 任免标 failed = 决策丢失。
     """
-    from ming_sim.decree import pre_settle
     db, state, content = game
     new_name = "赵无忌"
     db.stage_pending_action(
@@ -157,7 +155,6 @@ def test_rollback_restores_existing_character_attributes(game, monkeypatch):
     罢免 commit 改了 content 里现有 Character 的 status/office；回滚还原 DB 行，
     幽灵清理管不到「名字仍在」的脏属性 → content 与 DB 分叉持续整个 session。
     """
-    from ming_sim.decree import pre_settle
     from tests.legacy_staging_helpers import _active_minister_name
     db, state, content = game
     name = _active_minister_name(db, content)

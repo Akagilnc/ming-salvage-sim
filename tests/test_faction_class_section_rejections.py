@@ -14,7 +14,7 @@ class 则只收嵌套字段 dict、扁平 int 逐项拒收。
 import pytest
 
 from tests.section_rejection_helpers import run_declaration as run_settle
-from tests.section_rejection_helpers import game, rejection_rows as _rejection_rows
+from tests.section_rejection_helpers import rejection_rows as _rejection_rows
 
 FACTION_REJ_SECTION = "faction_delta"
 CLASS_REJ_SECTION = "class_delta"

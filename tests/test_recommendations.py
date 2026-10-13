@@ -1,6 +1,4 @@
 from ming_sim.recommendations import list_recommendation_candidates
-import pytest
-from ming_sim.recommendations import build_recommendation_brief, validate_recommendation_snapshot
 from ming_sim.recommendations import validate_recommendation_snapshot
 """#493 大臣荐人：网络/见闻裁切与采纳后的可恢复荐人事件。"""
 

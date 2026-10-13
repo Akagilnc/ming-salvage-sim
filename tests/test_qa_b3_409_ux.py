@@ -1,15 +1,10 @@
 from __future__ import annotations
 import asyncio
 import json
-import threading
 from types import SimpleNamespace
-import pytest
-from fastapi import HTTPException
 import web_app
-from ming_sim import audience_night as an
 from ming_sim.session_write_queue import ClassifiedWriteGate
 from ming_sim.models import TurnPhase
-from concurrent.futures import ThreadPoolExecutor
 """#1274 QA A-新3：409/超时 UX 族（#1301/#1306/#1312/#1319(a)/#1322）。
 
 保留 authority 投影权限与 resolve 锁前准入负向；

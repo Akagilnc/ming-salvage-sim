@@ -4,7 +4,6 @@ import pytest
 from tests.section_rejection_helpers import run_declaration as run_settle
 from tests.section_rejection_helpers import rejection_rows
 from tests.conftest import active_ming_character
-from tests.section_rejection_helpers import game, rejection_rows
 """PR2-S0(ADR 0008 决定 5/8,#91)——拒收收集器接进结算管线。
 
 生命周期与事务对齐:现役声明分派产生的拒收项 → 事务内 flush 进

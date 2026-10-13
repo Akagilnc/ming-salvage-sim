@@ -6,11 +6,6 @@ from __future__ import annotations
 
 
 
-# game：conftest 已改为方案 (c) session 模板 + 每案文件拷贝（#1233）。
-# 本模块不再维护平行 module-cache 池；re-export 供既有
-# ``from tests.section_rejection_helpers import game`` 消费方零改 import。
-from tests.conftest import game as game  # noqa: F401
-
 def run_declaration(db, state, content, raw_delta, *, narrative="", decree_text=""):
     """Enter the current fiscal bracket and atomically dispatch a month declaration."""
     del narrative, decree_text
