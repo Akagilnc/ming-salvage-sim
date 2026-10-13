@@ -438,7 +438,6 @@ def build_audience_translate_prompt(
         "- 皇帝交代近侍查某事 → inquiries；只有点名【权威目标目录】里某一条密令时才填该行精确 order_id，"
         "未点名则省略 order_id，只记委派、不拉取密令月报；不得从查访散文猜测密令。"
         "催某件分段事或密令 → rushes；传召说明缓急 → travel_tones。\n"
-        "- 皇帝交代近侍查某事 → inquiries；催某件分段事或密令 → rushes；传召说明缓急 → travel_tones。\n"
         "- **本场新交办的拨银自带押解**（「着某人押解护送」）→ 不另立密令，"
         "在该 commissions 项的 grant.escort.escortees 按 ADR 0053 参与人条目写押解人"
         "（character_id／tier 机械档／role 职分／delegator_id 委派人，无委派留空），"
