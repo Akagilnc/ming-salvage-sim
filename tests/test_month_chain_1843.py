@@ -269,6 +269,17 @@ def test_player_rejection_lifecycle_through_translation_and_month(game, monkeypa
             return [{"resolves_rejection_ids": ids,
                      "economy_moves": [{**bad, "account": "国库", "category": "经济成功"}],
                      "事件结局": {"无归属事件": "胜"}}]
+        if kind == "specialized_ok":
+            return [{"resolves_rejection_ids": ids, "faction_denunciations": [{
+                "accuser_name": accuser, "target_dossier_id": specialized_dossier_id,
+                "subject_name": minister, "memorial_text": "专属检举落账",
+            }]}]
+        if kind == "mixed_specialized":
+            return [{"resolves_rejection_ids": ids,
+                     "economy_moves": [{**bad, "account": "国库", "category": "经济成功"}],
+                     "covert_exec_selections": [{
+                         "order_id": specialized_order_id, "fidelity": "不是合法态",
+                     }]}]
         correction_move = (
             {"economy_moves": []} if kind == "empty"
             else {"economy_moves": [{**bad, "account": account}]}
@@ -358,6 +369,40 @@ def test_player_rejection_lifecycle_through_translation_and_month(game, monkeypa
 
     # K5：完整信封步结果（仅 without_questions 扫一遍，避免四路径矩阵重复）。
     if success_path == "without_questions":
+        covert_minister = db.conn.execute(
+            "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
+            "AND office_type NOT IN ('后宫','宗藩','未仕') ORDER BY name LIMIT 1",
+        ).fetchone()["name"]
+        accuser = db.conn.execute(
+            "SELECT name FROM characters WHERE status='active' AND name!=? ORDER BY name LIMIT 1",
+            (covert_minister,),
+        ).fetchone()["name"]
+        specialized_order_id = create_test_secret_order(
+            db, state, covert_minister, "修正专属密令", "核验", [],
+        )
+        db.conn.execute(
+            "UPDATE secret_orders SET turn_issued=? WHERE id=?",
+            (int(state.turn) - 1, specialized_order_id),
+        )
+        specialized_dossier_id = int(
+            db.dossiers.get_for_secret_order(specialized_order_id)["id"]
+        )
+        db.conn.commit()
+        # 活跃密令会拉 4a；生命周期夹具无真模型，供料缝回完整密奏+合法执行态。
+        # 修正信封内的专属拒收仍由旨内 effects 落账判定，与 4a 供料分离。
+        monkeypatch.setattr(
+            month_chain, "run_secret_orders_supply",
+            lambda *_a, **_k: {
+                "dossier_progress_reports": [{
+                    "dossier_id": specialized_dossier_id,
+                    "progress_band": "持平",
+                    "memorial_text": "专属夹具密奏",
+                }],
+                "covert_exec_selections": [{
+                    "order_id": specialized_order_id, "fidelity": "忠实",
+                }],
+            },
+        )
         for kind, expect_resolved in (
             ("empty", False),       # 空信封
             ("metric", False),      # 字典指标拒收
@@ -366,6 +411,9 @@ def test_player_rejection_lifecycle_through_translation_and_month(game, monkeypa
             ("mixed_reject", False),  # 经济成功+财政拒收须认失败
             ("stamp", False),       # 前置盖章拒收须进步结果
             ("unowned", False),     # 未归属事件结局须进步结果
+            # 专属拒收须在密令仍 active 时测（成功专属会经 4a 推进密令）。
+            ("mixed_specialized", False),  # 经济成功+专属拒收须认失败
+            ("specialized_ok", True),     # 专属字段落账须认成功
         ):
             declaration_dispatch.dispatch_declaration(
                 db, state, {"effects": {"economy_moves": [bad]}},

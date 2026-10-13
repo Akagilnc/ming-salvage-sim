@@ -120,6 +120,9 @@ class SettlementRun:
     effect_sequence_priors: List[List[RejectedItem]] = field(default_factory=list)
     # 与 effect_sequence 等长：本笔规范化后的人物变更（供逐笔 person_pre/post）。
     effect_sequence_person_changes: List[List[Dict[str, object]]] = field(default_factory=list)
+    # 逐笔交错时指向本笔 step_parts：凡经 _store/_capture 收下的段结果一并叠入步结果
+    # （含局势段内战略从属 extras），整批路径保持 None。
+    active_step_parts: Optional[List[SectionResult]] = None
 
     # ── 段间共享工具（迁自旧单体入口的同名内联件） ──────────────────────
     def origin_ref_from_result_item(self, item: Optional[Mapping[str, object]]) -> str:
@@ -131,14 +134,24 @@ class SettlementRun:
             authorized_ids=self.authorized_open_affairs,
         )
 
+    def current_strategic_delta_ids(self) -> Set[str]:
+        """本笔（或整批）声明里带有战略从属战果的事件 id。"""
+        if self.effect_sequence is None:
+            return set(self.strategic_event_delta_ids)
+        present = {
+            eid for eids in self.current_event_ids.values() for eid in eids if eid
+        }
+        return present & self.strategic_event_delta_ids
+
     def ordered_strategic_items(self, field_name: str, event_id: str) -> List[Tuple[str, object]]:
         from ming_sim.settlement.preflight import _effect_event_ids
 
-        items = self.ordered_deltas.get(field_name) or []
+        # 与实体段一致：逐笔读 current_*，整批时 current_* 即全量。
+        items = self.current_ordered.get(field_name) or []
         return [
             (entity_id, changes) for index, (entity_id, changes) in enumerate(items)
             if event_id in _effect_event_ids(
-                field_name, index, {event_id}, self.ordered_effect_event_ids,
+                field_name, index, {event_id}, self.current_event_ids,
             )
         ]
 
@@ -214,15 +227,14 @@ def _preflight(
     )
 
     # 人物变更挂所属效果 id（战略事件从属后果的归属判定用），读完即摘——
-    # 内部字段不进任何段的可见 delta。
+    # 内部字段不进任何段的可见 delta。就地挂标，保持与 effect_sequence 各笔共享
+    # 同一批对象，供盖章投影 / 拒收 id 映射按对象身份对齐（另建副本会错步）。
     person_event_ids = (ordered_effect_event_ids or {}).get("人物变更", [])
     person_items = clean.get("人物变更")
     if isinstance(person_items, list) and person_event_ids:
-        clean["人物变更"] = [
-            {**item, "_effect_event_id": person_event_ids[index]}
-            if isinstance(item, dict) and index < len(person_event_ids) else item
-            for index, item in enumerate(person_items)
-        ]
+        for index, item in enumerate(person_items):
+            if isinstance(item, dict) and index < len(person_event_ids):
+                item["_effect_event_id"] = person_event_ids[index]
 
     batch_new_identities: Dict[str, Tuple[str, str, str]] = {}
 
@@ -257,8 +269,7 @@ def _preflight(
         return {**item, "affair_declaration": stamped}, None
 
     stamp_fields = ("economy_moves", "new_issues", "人物变更")
-    # step 对象与合并后的列表共享同一批对象，唯人物变更因挂 _effect_event_id
-    # 另建了副本。故只对合并后的对象盖章一次，再把结果投影回 step 副本；
+    # step 与合并列表共享同一批对象；只对合并后的对象盖章一次，再投影回各笔，
     # 二次盖章会重复拒收并另铸一个 birth_key。
     stamped_by_origin: Dict[int, object] = {}
     rejected_origin_ids: Set[int] = set()
@@ -343,12 +354,16 @@ def _preflight(
     for item in person_changes:
         item.pop("_effect_event_id", None)
 
-    # 逐笔人物切片：合并列表＝各 step 人物变更按序拼接（盖章过滤后），按长度切开。
+    # 逐笔人物切片：合并列表＝各 step 人物变更按序拼接（盖章过滤后），按
+    # 能进 normalize 的 dict 项数切开（与 normalize_person_changes 同口径）。
     if effect_sequence is not None:
         offset = 0
         step_people: List[List[Dict[str, object]]] = []
         for step_extracted, _ordered, _eids in effect_sequence:
-            count = len(step_extracted.get("人物变更") or [])
+            count = sum(
+                1 for item in (step_extracted.get("人物变更") or [])
+                if isinstance(item, dict)
+            )
             step_people.append(person_changes[offset:offset + count])
             offset += count
         run.effect_sequence_person_changes = step_people
@@ -418,22 +433,29 @@ def _empty() -> SectionResult:
 
 
 def _store(run, name: str, result: SectionResult) -> None:
-    """按登记名收下段结果。指标同键相加；其余段拼接。"""
+    """按登记名收下段结果。指标同键相加；其余段拼接。
+
+    逐笔交错时若挂了 ``active_step_parts``，同一份 applied/rejected 叠进本笔步结果——
+    局势段内战略从属 extras 也走本口，不另开平行记账。
+    """
     if not isinstance(result, SectionResult):
         raise RuntimeError(f"{name} 段未返回 SectionResult")
     previous = run.outcomes.get(name)
     if previous is None:
         run.outcomes[name] = result
-        return
-    if name == "metric":
+    elif name == "metric":
         totals = dict(previous.applied)
         for key, delta in result.applied:
             totals[key] = int(totals.get(key, 0)) + int(delta)
         run.outcomes[name] = SectionResult(
             list(totals.items()), previous.rejected + result.rejected,
         )
-        return
-    run.outcomes[name] = previous.merge(result)
+    else:
+        run.outcomes[name] = previous.merge(result)
+    if run.active_step_parts is not None:
+        run.active_step_parts.append(
+            SectionResult(list(result.applied), list(result.rejected)),
+        )
 
 
 def _capture(run, name: str, result) -> None:
@@ -477,9 +499,9 @@ def _bind_step_person_changes(run, step_index: int) -> None:
 
 
 def _capture_into_step(run, step_parts: List[SectionResult], name: str, result) -> None:
-    """段结果写入运行态，并叠进本笔步结果（只取 applied/rejected）。"""
+    """段结果写入运行态；步结果由 ``_store`` 经 ``active_step_parts`` 叠入。"""
+    assert run.active_step_parts is step_parts
     _capture(run, name, result)
-    step_parts.append(SectionResult(list(result.applied), list(result.rejected)))
 
 
 def _run_effect_sequence(run) -> None:
@@ -517,26 +539,30 @@ def _run_effect_sequence(run) -> None:
                 if label:
                     apply_petition_event_outcome(run.state, run.db, event_id, label)
         step_parts: List[SectionResult] = []
-        priors = (
-            run.effect_sequence_priors[step_index]
-            if step_index < len(run.effect_sequence_priors) else []
-        )
-        if priors:
-            step_parts.append(SectionResult(applied=[], rejected=list(priors)))
-        _capture_into_step(run, step_parts, "metric", metric_section.apply(run))
-        _capture_into_step(run, step_parts, "new_armies", army_section.apply_new_armies(
-            run, list(step_extracted.get("new_armies") or []),
-        ))
-        _capture_into_step(run, step_parts, "region_changes", region_section.apply(run))
-        _capture_into_step(run, step_parts, "army_changes", army_section.apply_deltas(run))
-        _capture_into_step(
-            run, step_parts, "economy",
-            economy_section.apply(run, list(step_extracted.get("economy_moves") or [])),
-        )
-        for spec in registry.section_specs():
-            if spec.name in interleaved or spec.name in _BATCH_AFTER_INTERLEAVE:
-                continue
-            _capture_into_step(run, step_parts, spec.name, registry.load(spec)(run))
+        run.active_step_parts = step_parts
+        try:
+            priors = (
+                run.effect_sequence_priors[step_index]
+                if step_index < len(run.effect_sequence_priors) else []
+            )
+            if priors:
+                step_parts.append(SectionResult(applied=[], rejected=list(priors)))
+            _capture_into_step(run, step_parts, "metric", metric_section.apply(run))
+            _capture_into_step(run, step_parts, "new_armies", army_section.apply_new_armies(
+                run, list(step_extracted.get("new_armies") or []),
+            ))
+            _capture_into_step(run, step_parts, "region_changes", region_section.apply(run))
+            _capture_into_step(run, step_parts, "army_changes", army_section.apply_deltas(run))
+            _capture_into_step(
+                run, step_parts, "economy",
+                economy_section.apply(run, list(step_extracted.get("economy_moves") or [])),
+            )
+            for spec in registry.section_specs():
+                if spec.name in interleaved or spec.name in _BATCH_AFTER_INTERLEAVE:
+                    continue
+                _capture_into_step(run, step_parts, spec.name, registry.load(spec)(run))
+        finally:
+            run.active_step_parts = None
         step_result = _empty()
         for part in step_parts:
             step_result = step_result.merge(part)

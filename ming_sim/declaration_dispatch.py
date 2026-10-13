@@ -418,35 +418,48 @@ def _persist_specialized_extraction(
     turn: int,
     source: Provenance,
     defer_monthly_secret_supply: bool = False,
-) -> None:
+) -> SectionResult:
     """转译契约仍收的专属案卷字段，交既有写入口，不在通用 applier 里再写一份。
 
     密奏先落本回合稽核在场事实；origin 只承接密奏里已经声明的行动，不按派系补写。
     月度拨帑核账走 ``record_monthly_grant_reconciliations``（引擎中位实抵，#1900），
     本口不接 dossier_reconciliations 提案。
 
-    过月主链（ADR 0157 步骤 4a）整月密奏与执行态由独立供料 run 落账；
-    ``defer_monthly_secret_supply`` 时不把逐段字段拼成整月义务。
+    过月主链（ADR 0157 步骤 4a）整月密奏覆盖由独立供料 run 落账；
+    ``defer_monthly_secret_supply`` 时不在此拼整月密奏义务。信封已声明的
+    ``covert_exec_selections`` 仍按 only_supplied 落本笔（结构化成败回步结果）。
+
+    返回写入口的结构化 applied/rejected（DB rows + RejectedItem），供本笔修正了结
+    并入 ``effect_sequence_results``——不另造平行核算。
     """
+    applied: list[object] = []
+    rejected: list[RejectedItem] = []
+    # 密奏整月覆盖校验仍归 4a；defer 时不在此拼整月密奏义务。
     if not defer_monthly_secret_supply:
         reports = extraction.get("dossier_progress_reports") or []
         if isinstance(reports, list) and reports:
             db.dossiers.record_monthly_supervision_presence(int(turn), commit=False)
-            db.record_monthly_dossier_progress(int(turn), reports)
+            applied.extend(db.record_monthly_dossier_progress(int(turn), reports))
     denunciations = extraction.get("faction_denunciations") or []
     if isinstance(denunciations, list) and denunciations:
-        db.accept_faction_denunciations(state, denunciations, commit=False)
-    if not defer_monthly_secret_supply:
-        selections = extraction.get("covert_exec_selections") or []
-        if isinstance(selections, list) and selections:
-            from ming_sim.covert_progress import apply_monthly_covert_actual_progress
+        applied.extend(
+            db.accept_faction_denunciations(state, denunciations, commit=False)
+        )
+    # 信封显式声明的执行态是本笔效果（only_supplied），不是整月义务；
+    # defer 只挡「无声明却扫全月」，不丢已声明选态的结构化成败。
+    selections = extraction.get("covert_exec_selections") or []
+    if isinstance(selections, list) and selections:
+        from ming_sim.covert_progress import apply_monthly_covert_actual_progress
 
-            rows, rows_rejections = apply_monthly_covert_actual_progress(
-                db, state, selections=selections, only_supplied=True,
-                source=source,
-            )
-            for item in rows_rejections:
-                collector.record("covert_exec_selections", item, int(turn))
+        rows, rows_rejections = apply_monthly_covert_actual_progress(
+            db, state, selections=selections, only_supplied=True,
+            source=source,
+        )
+        applied.extend(rows)
+        rejected.extend(rows_rejections)
+        for item in rows_rejections:
+            collector.record("covert_exec_selections", item, int(turn))
+    return SectionResult(applied=applied, rejected=rejected)
 
 
 def _attempted_rejection_ids(raw_ids: object) -> List[int]:
@@ -732,11 +745,20 @@ def _dispatch_effects(
     # 不放进 effects.rejected：那条会再被记成声明段名 effects。
     for section_name, item in zip(outcome.shape_sections, outcome.shape_rejections):
         collector.record(section_name, item, turn)
-    # Record correction success from effect_sequence step results (settlement source of truth).
+    # 专属字段按笔交既有写口，结构化结果并入该笔 effect_sequence_results，
+    # 再据步结果记修正了结（专属成功可了结；专属拒收不得被实体成功盖过）。
     accepted_index = 0
     for index, (item, event_id, clean, annotation) in enumerate(clean_items):
         if index in rejected_events:
             continue
+        specialized = _persist_specialized_extraction(
+            db, state, clean, collector=collector, turn=turn, source=source,
+            defer_monthly_secret_supply=defer_disclosure,
+        )
+        if specialized.applied or specialized.rejected:
+            outcome.effect_sequence_results[accepted_index] = (
+                outcome.effect_sequence_results[accepted_index].merge(specialized)
+            )
         step_result = outcome.effect_sequence_results[accepted_index]
         accepted_index += 1
         if annotation is None:
@@ -745,10 +767,6 @@ def _dispatch_effects(
         _mark_correction_results(
             db, annotation["pending_id"], annotation["ids"], succeeded=succeeded,
         )
-    _persist_specialized_extraction(
-        db, state, extraction, collector=collector, turn=turn, source=source,
-        defer_monthly_secret_supply=defer_disclosure,
-    )
     # 检举在 specialized extraction 中落库；待办须在它之后扫描。
     from ming_sim.covert_levy import (
         settle_exposure_from_canonical_actions,
