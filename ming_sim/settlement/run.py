@@ -631,7 +631,7 @@ def settle_delta(
 def _run_registry_after_interleave(run) -> None:
     """逐笔交错跑完后，跑余额外段。
 
-    指标、经济、实体、案卷三段已在逐笔路径里跑过——此处不得重跑，否则同笔效果双落。
+    逐笔路径已跑过的段（见 ``already_run``）此处不得重跑，否则同笔效果双落。
     """
     already_run = {
         "metric", "economy", "new_armies", "region_changes", "army_changes",
