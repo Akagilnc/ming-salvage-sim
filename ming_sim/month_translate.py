@@ -103,9 +103,6 @@ class MonthTranslationInput:
     this_decree: Optional[Mapping[str, object]] = None
 
 
-MonthTranslateFn = Callable[[MonthTranslationInput, Any], Mapping[str, object]]
-
-
 def describe_month_effect_fields() -> str:
     """Input guidance for the observed missing accounts; not a second validator.
 
@@ -275,7 +272,6 @@ def translate_month_segment(
     target_grounding: str = "",
     decree_payload: Mapping[str, object],
     llm_config: Any = None,
-    translate_fn: Optional[MonthTranslateFn] = None,
     continuing_dossiers: tuple[Mapping[str, object], ...] | list[Mapping[str, object]] = (),
     candidates: Optional[Mapping[str, object]] = None,
     answered_verdicts: tuple[Mapping[str, object], ...] | list[Mapping[str, object]] = (),
@@ -291,8 +287,7 @@ def translate_month_segment(
         answered_verdicts=tuple(answered_verdicts),
         this_decree=this_decree,
     )
-    runner = translate_fn or _default_month_translate_runner
-    declaration = runner(request, llm_config)
+    declaration = _default_month_translate_runner(request, llm_config)
     if not isinstance(declaration, Mapping):
         raise AudienceTranslateError("转译输出须为 JSON 对象")
     return normalize_audience_declaration(declaration)
@@ -337,7 +332,6 @@ def _translate_month_segment_front(
     state: Any = None,
     decree_payload: Mapping[str, object],
     llm_config: Any = None,
-    translate_fn: Optional[MonthTranslateFn] = None,
     continuing_dossiers: tuple[Mapping[str, object], ...] | list[Mapping[str, object]] = (),
     candidates: Optional[Mapping[str, object]] = None,
     answered_verdicts: tuple[Mapping[str, object], ...] | list[Mapping[str, object]] = (),
@@ -354,7 +348,6 @@ def _translate_month_segment_front(
         ),
         decree_payload=decree_payload,
         llm_config=llm_config,
-        translate_fn=translate_fn,
         continuing_dossiers=continuing_dossiers,
         candidates=candidates,
         answered_verdicts=answered_verdicts,
@@ -370,7 +363,6 @@ def prepare_month_segment(
     segment: str,
     decree_payload: Optional[Mapping[str, object]] = None,
     llm_config: Any = None,
-    translate_fn: Optional[MonthTranslateFn] = None,
     answered_verdicts: tuple[Mapping[str, object], ...] | list[Mapping[str, object]] = (),
     decree_ref: Optional[str] = None,
 ) -> tuple[dict[str, object], dict[str, list[int]]]:
@@ -396,7 +388,7 @@ def prepare_month_segment(
     try:
         declaration, refs = _translate_month_segment_front(
             db, segment=segment, turn=turn, state=state, decree_payload=payload,
-            llm_config=llm_config, translate_fn=translate_fn,
+            llm_config=llm_config,
             continuing_dossiers=continuing_dossier_facts(db, turn),
             candidates=candidate_supply(db, state),
             answered_verdicts=_segment_levy_verdicts.get(),
@@ -412,7 +404,6 @@ def prepare_month_segment(
 def dispatch_month_segment(
     db: Any, state: Any, *, segment: str, minister_name: str = "",
     decree_payload: Optional[Mapping[str, object]] = None, llm_config: Any = None,
-    translate_fn: Optional[MonthTranslateFn] = None,
     source: Provenance = Provenance.system_simulation,
     alongside: Optional[Callable[[DeclarationDispatchResult], None]] = None,
     answered_verdicts: tuple[Mapping[str, object], ...] | list[Mapping[str, object]] = (),
@@ -429,7 +420,7 @@ def dispatch_month_segment(
     try:
         declaration, refs = prepared if prepared is not None else prepare_month_segment(
             db, state, segment=segment, decree_payload=decree_payload,
-            llm_config=llm_config, translate_fn=translate_fn,
+            llm_config=llm_config,
             answered_verdicts=answered_verdicts, decree_ref=decree_ref,
         )
         return dispatch_declaration(

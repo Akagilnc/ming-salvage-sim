@@ -522,6 +522,11 @@ def stub_scene_agent(monkeypatch, agent):
     return adapted
 
 
+def stub_month_translate(monkeypatch, fn):
+    """Inject a monthly translator through the existing runner seam."""
+    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", fn)
+
+
 def stub_audience_translate(monkeypatch, fn=None):
     """#1842：经 `_default_translate_runner` 缝注入转译（禁实例 `_audience_translate_fn`）。"""
     runner = offline_empty_audience_translate if fn is None else fn

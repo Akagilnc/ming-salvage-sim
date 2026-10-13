@@ -16,12 +16,11 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from ming_sim.decree_vocabulary import TARGET_KINDS
 from ming_sim.declaration_dispatch import _SECTION_FIELDS as _DECLARATION_KEYS
 
-TranslateFn = Callable[[str, Any], Mapping[str, object]]
 
 # normalize 与分派器共用 C0 section 真源；未知键仍原样交分派器。
 _ARRAY_SECTIONS = frozenset(
@@ -526,7 +525,6 @@ def translate_audience_turn(
     pending_summaries: Sequence[str] = (),
     target_grounding: str = "",
     llm_config: Any = None,
-    translate_fn: Optional[TranslateFn] = None,
 ) -> Dict[str, object]:
     """一次转译 → 完整声明（C0 全 section）。
 
@@ -540,9 +538,8 @@ def translate_audience_turn(
         pending_summaries=pending_summaries,
         target_grounding=target_grounding,
     )
-    runner = translate_fn or _default_translate_runner
     try:
-        raw = runner(prompt, llm_config)
+        raw = _default_translate_runner(prompt, llm_config)
     except AudienceTranslateError:
         raise
     except Exception as exc:

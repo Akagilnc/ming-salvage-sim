@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests.conftest import stub_audience_translate
 import threading
 import pytest
 import ming_sim.audience_translation as audience_translation
@@ -30,11 +31,11 @@ from tests.conftest import stub_audience_translate
 
 
 
-def _close_with_gate(db, state, *, night_id, translate_fn=None, llm_config=object(), **extra):
+def _close_with_gate(db, state, *, night_id, llm_config=object(), **extra):
     q = SessionWriteQueue()
     return an.close_night(
         db, state, night_id=night_id, llm_config=llm_config,
-        write_gate=q.write_gate, write_queue=q, translate_fn=translate_fn, **extra,
+        write_gate=q.write_gate, write_queue=q, **extra,
     )
 
 def _pending_api(db) -> dict:
@@ -67,7 +68,8 @@ def test_drain_fail_cleanup_does_not_hide_blocking_turn(game, tmp_path, monkeypa
         calls.append(1)
         raise RuntimeError("translate exhausted")
 
-    _close_with_gate(db, state, night_id=nid, translate_fn=boom_translate)
+    stub_audience_translate(monkeypatch, boom_translate)
+    _close_with_gate(db, state, night_id=nid)
     assert len(calls) == 1, calls
     assert an.get_night(db, nid)["status"] == an.NIGHT_STATUS_CLOSED
     row = db.conn.execute(
@@ -93,7 +95,8 @@ def test_drain_fail_concurrent_heal_asks_retry_no_dual_source(
     def boom_translate(prompt, llm_config):
         raise RuntimeError("translate exhausted")
 
-    _close_with_gate(db, state, night_id=nid, translate_fn=boom_translate)
+    stub_audience_translate(monkeypatch, boom_translate)
+    _close_with_gate(db, state, night_id=nid)
     # 外部可见：转译待补仍在；水位未标 done
     assert db.reign.get_story_extract_status(ctid) in ("", "pending")
     assert int(_pending_api(db)["count"]) >= 1
@@ -111,7 +114,8 @@ def test_debt_exhausted_single_source_no_player_cta(game, tmp_path, monkeypatch)
     def boom_translate(prompt, llm_config):
         raise RuntimeError("translate exhausted")
 
-    _close_with_gate(db, state, night_id=nid, translate_fn=boom_translate)
+    stub_audience_translate(monkeypatch, boom_translate)
+    _close_with_gate(db, state, night_id=nid)
     payload = _pending_api(db)
     assert int(payload["count"]) >= 1
     assert any(int(p["chat_turn_id"]) == ctid for p in payload["pending"])
@@ -135,7 +139,8 @@ def test_closing_restore_path_still_catches_up(game, tmp_path, monkeypatch):
             }],
         }
 
-    _close_with_gate(db, state, night_id=nid, translate_fn=translate_fn)
+    stub_audience_translate(monkeypatch, translate_fn)
+    _close_with_gate(db, state, night_id=nid)
 
     assert len(calls) == 1, calls
     assert db.reign.get_story_extract_status(ctid) == "done"
@@ -159,7 +164,8 @@ def test_partial_heal_single_source_pending_only_fresh(
     def boom_translate(prompt, llm_config):
         raise RuntimeError("translate exhausted")
 
-    _close_with_gate(db, state, night_id=nid, translate_fn=boom_translate)
+    stub_audience_translate(monkeypatch, boom_translate)
+    _close_with_gate(db, state, night_id=nid)
     payload = _pending_api(db)
     api_ids = {int(p["chat_turn_id"]) for p in payload.get("pending") or []}
     assert api_ids == {ctid_fresh}, api_ids

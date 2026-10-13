@@ -17,7 +17,7 @@ import contextlib
 import logging
 import threading
 from concurrent.futures import CancelledError, Future, ThreadPoolExecutor
-from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Mapping, Optional, Tuple
 
 from ming_sim.applier import Provenance, atomic
 from ming_sim.audience_night import reproject_night_protagonist, set_night_protagonist
@@ -26,7 +26,6 @@ from ming_sim.declaration_dispatch import (
     dispatch_declaration,
 )
 
-TranslateFn = Callable[[str, Any], Mapping[str, object]]
 logger = logging.getLogger(__name__)
 
 # 同夜 FIFO 只保留 Future tail；在飞/排空/关闭的唯一真源是
@@ -248,7 +247,6 @@ def run_turn_translation_job(
     chat_turn_id: int,
     minister_name: str = "",
     llm_config: Any = None,
-    translate_fn: Optional[TranslateFn] = None,
     write_gate: Any = None,
     source: Provenance = Provenance.system_simulation,
 ) -> DeclarationDispatchResult:
@@ -323,7 +321,6 @@ def run_turn_translation_job(
             pending_summaries=pending,
             target_grounding=target_grounding,
             llm_config=llm_config,
-            translate_fn=translate_fn,
         )
         # 分段是整轮回话的结构化覆盖声明；不完整或改字不得入账并置 done。
         # 失败走既有 pending/retry 路径，原戏文继续中性显示。
@@ -375,7 +372,6 @@ def schedule_audience_turn_translation(
     chat_turn_id: int,
     minister_name: str = "",
     llm_config: Any = None,
-    translate_fn: Optional[TranslateFn] = None,
     write_gate: Any = None,
     write_queue: Any = None,
     admitted_ticket: Any = None,
@@ -404,7 +400,6 @@ def schedule_audience_turn_translation(
             chat_turn_id=ctid,
             minister_name=minister_name,
             llm_config=llm_config,
-            translate_fn=translate_fn,
             write_gate=write_gate,
             source=source,
         )
@@ -542,7 +537,6 @@ def catch_up_pending_translations(
     night_id: Optional[int] = None,
     chat_turn_id: Optional[int] = None,
     llm_config: Any = None,
-    translate_fn: Optional[TranslateFn] = None,
     write_gate: Any = None,
     write_queue: Any = None,
     within_barrier: bool = False,
@@ -581,7 +575,6 @@ def catch_up_pending_translations(
                     chat_turn_id=ctid,
                     minister_name=str(row.get("minister_name") or ""),
                     llm_config=llm_config,
-                    translate_fn=translate_fn,
                     write_gate=write_gate,
                     source=source,
                 )
@@ -607,7 +600,6 @@ def catch_up_pending_translations(
             night_id=nid,
             chat_turn_id=ctid,
             llm_config=llm_config,
-            translate_fn=translate_fn,
             write_gate=write_gate,
             write_queue=write_queue,
             source=source,

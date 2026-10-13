@@ -958,7 +958,7 @@ def commit_late_night_approved(
 
 def _catch_up_night_translations(
     db: Any, night_id: int, *, llm_config: Any, write_gate: Any,
-    game_state: GameState, translate_fn: Any = None, write_queue: Any = None,
+    game_state: GameState, write_queue: Any = None,
 ) -> None:
     """收夜补跑转译待补（#1898：单次收夜只跑一次的唯一实现）。
 
@@ -976,7 +976,6 @@ def _catch_up_night_translations(
     write_gate 必须是调用方原始锁（或 None）——禁传入 _gate_cm(nullcontext)。
     """
     # catch_up 契约：单轮失败标 pending、不抛；代码异常按 ADR 0005 上抛。
-    # translate_fn=None 走默认 runner（#1842：收夜补跑不因缺注入而跳过）。
     if llm_config is None or write_gate is None or write_queue is None:
         return
     from ming_sim.audience_translation import catch_up_pending_translations
@@ -984,7 +983,6 @@ def _catch_up_night_translations(
         db, game_state,
         night_id=int(night_id),
         llm_config=llm_config,
-        translate_fn=translate_fn,
         write_gate=write_gate,
         write_queue=write_queue,
     )
@@ -1009,7 +1007,6 @@ def close_night(
     on_closing: Optional[Callable[[], None]] = None,
     llm_config: Any = None,
     write_gate: Any = None,
-    translate_fn: Any = None,
     write_queue: Any = None,
 ) -> Dict[str, Any]:
     """收夜：待补转译 → 短写前提 → 短写终局（#1842：背书随转译，无夜级批）。
@@ -1053,7 +1050,7 @@ def close_night(
         )
         _catch_up_night_translations(
             db, night_id, llm_config=llm_config, write_gate=write_gate,
-            game_state=state, translate_fn=translate_fn, write_queue=write_queue,
+            game_state=state, write_queue=write_queue,
         )
         with gate:
             _set_night_fields(
@@ -1070,7 +1067,7 @@ def close_night(
             night = get_night(db, night_id) or night
         _catch_up_night_translations(
             db, night_id, llm_config=llm_config, write_gate=write_gate,
-            game_state=state, translate_fn=translate_fn, write_queue=write_queue,
+            game_state=state, write_queue=write_queue,
         )
 
     cursor = int(night["close_commit_cursor"] or 0)

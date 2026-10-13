@@ -1,3 +1,4 @@
+from tests.conftest import stub_month_translate
 import ming_sim.settlement.preflight as settlement_preflight
 from ming_sim.entities.issue.tracker import apply_issue_tracker_output
 from ming_sim.applier import Provenance
@@ -2310,10 +2311,8 @@ def test_huangtaiji_chengdi_lands_only_when_model_picks_it(game, monkeypatch):
         "origin_kind": "event_pool", "id": "huangtaiji_chengdi",
         "title": "皇太极称帝改国号大清",
     }]}}
-    result = dispatch_month_segment(
-        db, state, segment="皇太极称帝",
-        translate_fn=lambda request, config: declaration,
-    )
+    stub_month_translate(monkeypatch, lambda request, config: declaration)
+    result = dispatch_month_segment(db, state, segment="皇太极称帝")
     outcome = result.effects.applied[0]
     assert outcome.issue.new_issues
     assert not section(outcome, "issue_summary").rejected
@@ -2338,10 +2337,7 @@ def test_huangtaiji_chengdi_lands_only_when_model_picks_it(game, monkeypatch):
     assert "huangtaiji_chengdi" not in {
         ev.id for ev in issues.gather_candidate_events(state, db)
     }
-    again = dispatch_month_segment(
-        db, state, segment="再说称帝",
-        translate_fn=lambda request, config: declaration,
-    )
+    again = dispatch_month_segment(db, state, segment="再说称帝")
     again_outcome = again.effects.applied[0]
     assert section(again_outcome, "issue_summary").rejected or not again_outcome.issue.new_issues
     assert db.conn.execute(

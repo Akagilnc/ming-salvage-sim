@@ -254,6 +254,9 @@ def test_translation_entry_preserves_unknown_rejection(
     }
 
     from ming_sim.audience_translation import apply_audience_round_translation
+    stub_audience_translate(monkeypatch, lambda prompt, config: {
+        **offline_empty_audience_translate(prompt, config), **declaration,
+    })
     decl = audience_translate.translate_audience_turn(
         emperor_message="本轮问",
         reply="本轮答",
@@ -261,9 +264,6 @@ def test_translation_entry_preserves_unknown_rejection(
         pending_summaries=audience_translate.build_pending_summaries(
             db, int(state.turn), night_id=night_id,
         ),
-        translate_fn=lambda prompt, config: {
-            **offline_empty_audience_translate(prompt, config), **declaration,
-        },
     )
     applied = apply_audience_round_translation(
         db, state, decl,

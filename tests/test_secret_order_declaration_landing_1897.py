@@ -647,10 +647,10 @@ def test_failed_landing_keeps_the_original_pending_action_retryable(game, monkey
     try:
         waiting = reopened.reign.list_unextracted_replies(night_id=night_id)
         assert any(int(row["chat_turn_id"]) == ctid for row in waiting)
+        stub_audience_translate(monkeypatch, translate)
         caught = catch_up_pending_translations(
             reopened, state,
             chat_turn_id=ctid,
-            translate_fn=translate,
             write_gate=ClassifiedWriteGate(),
             within_barrier=True,
         )
@@ -843,6 +843,7 @@ def test_late_translated_rush_lands_under_its_source_night(game, monkeypatch):
 @pytest.mark.parametrize("seal", ["closing", "closed"])
 def test_late_translated_appointment_hit_keeps_its_source_night(game, monkeypatch, seal):
     """补译既有任免：收夜窗口与已封夜都落在源夜源轮，应允后成案，撤回不复活。"""
+    from tests.conftest import stub_audience_translate
     db, state, content = game
     minister = _minister(db)
     appointee = _summonable_name(db)
@@ -915,6 +916,7 @@ def test_late_translated_appointment_hit_keeps_its_source_night(game, monkeypatc
     ).fetchone()["n"]
     assert int(gone) == 0
     with pytest.raises(AudienceTranslateError):
+        stub_audience_translate(monkeypatch, lambda prompt, config: _scene_payload(revision))
         run_turn_translation_job(
             db, state,
             emperor_message="改中旨径发。",
@@ -922,7 +924,6 @@ def test_late_translated_appointment_hit_keeps_its_source_night(game, monkeypatc
             night_id=night_id,
             chat_turn_id=revision_ctid,
             minister_name=minister,
-            translate_fn=lambda prompt, config: _scene_payload(revision),
             write_gate=ClassifiedWriteGate(),
         )
     still_gone = db.conn.execute(

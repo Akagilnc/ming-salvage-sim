@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests.conftest import stub_month_translate
 from ming_sim.settlement.dossier import apply_dossier_promulgation
 import pytest
 from tests.dossier_test_helpers import TYPED_COVERT_TASK
@@ -142,7 +143,7 @@ def test_s2_private_field_rejects_non_batch_and_public_ids(game):
     assert rows[0]["character_id"] == worker
 
 
-def test_month_segment_dispatch_uses_secret_order_dossier_ids_authority(game):
+def test_month_segment_dispatch_uses_secret_order_dossier_ids_authority(game, monkeypatch):
     """#1862 reopen：月段翻译→dispatch 以案卷自身密令指向为唯一写权。"""
     from ming_sim.month_translate import dispatch_month_segment
 
@@ -186,9 +187,8 @@ def test_month_segment_dispatch_uses_secret_order_dossier_ids_authority(game):
             },
         }
 
-    result = dispatch_month_segment(
-        db, state, segment="密令参与人月段", translate_fn=translate,
-    )
+    stub_month_translate(monkeypatch, translate)
+    result = dispatch_month_segment(db, state, segment="密令参与人月段")
     assert result.effects.applied, result.effects.rejected
     outcome = result.effects.applied[0]
     landed = view(outcome, "secret_dossier_participants")
