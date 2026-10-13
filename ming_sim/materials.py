@@ -253,16 +253,11 @@ def read_material(root: Path, path: str) -> str:
         return stream.read()
 
 
-def material_tools(root: Any) -> list:
-    """API-channel list/read tools bound to the live materials root.
-
-    ``root`` may be a Path/str or a zero-arg callable returning the current
-    path so refresh can point CLI cwd and API tools at the same latest tree.
-    """
+def material_tools(root: Path | str) -> list:
+    """API-channel list/read tools bound to the prepared materials root."""
 
     def current_root() -> Path:
-        value = root() if callable(root) else root
-        text = str(value or "").strip()
+        text = str(root or "").strip()
         if not text:
             # Empty/cleared root must not resolve Path("") → CWD.
             raise DeclarationDataError("材料目录未就绪")
