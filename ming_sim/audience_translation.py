@@ -606,6 +606,7 @@ def catch_up_pending_translations(
             reply=reply,
             night_id=nid,
             chat_turn_id=ctid,
+            minister_name=str(row.get("minister_name") or ""),
             llm_config=llm_config,
             translate_fn=translate_fn,
             write_gate=write_gate,

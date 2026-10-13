@@ -962,3 +962,86 @@ def test_appointment_region_id_stages_into_pending_payload(game):
     )
     assert payload.get("text") == edict
     assert payload.get("region_id") == region
+
+
+@pytest.mark.parametrize("scene_name,record_speaker", [("殿上", True), ("", False)])
+def test_strategy_selection_actor_bound_to_minister_not_scene(game, scene_name, record_speaker):
+    """The declared proposer owns the strategy, independent of scene metadata."""
+    db, state, content = game
+    from ming_sim.audience_translation import apply_audience_round_translation
+    night = open_night(db, state, location="乾清宫", time_of_day="夜")
+    nid = int(night["id"])
+    minister = _hong_name(db, content)
+    ctid1 = _persist_night_chat(db, state, nid, "卿有何策？", "臣请平辽。")
+    decl1 = {
+        "scene_facts": [{
+            "body": "臣请平辽。",
+            "role": "minister",
+            "person_names": [minister],
+            "tags": [],
+        }]
+    }
+    apply_audience_round_translation(
+        db, state, decl1 if record_speaker else {},
+        night_id=nid, chat_turn_id=ctid1, minister_name=scene_name,
+    )
+    ctid2 = _persist_night_chat(db, state, nid, "准卿平辽之策", "谢皇上。")
+    decl2 = {
+        "commissions": [{
+            "text": "准卿平辽之策",
+            "strategy_selection": {
+                "target_id": "policy_pingliao",
+                "source_chat_turn_id": ctid1,
+                "proposer": minister,
+            },
+        }]
+    }
+    res = apply_audience_round_translation(
+        db, state, decl2, night_id=nid, chat_turn_id=ctid2, minister_name=scene_name,
+    )
+    assert len(res.commissions.applied) == 1
+    assert not res.commissions.rejected
+    aid = int(res.commissions.applied[0]["id"])
+    row = db.conn.execute(
+        "SELECT minister_name, payload_json FROM pending_actions WHERE id=?",
+        (aid,),
+    ).fetchone()
+    assert row is not None
+    assert row["minister_name"] == minister
+    payload = json.loads(row["payload_json"])
+    assert payload.get("actor") == minister
+    assert payload.get("source_chat_turn_id") == ctid1
+
+
+@pytest.mark.parametrize("proposer,category", [
+    ("查无此人_虚构大臣", "hallucinated_id"),
+    ("殿上", "hallucinated_id"),
+    (None, "invalid_shape"),
+])
+def test_strategy_selection_invalid_proposer_rejected(game, proposer, category):
+    """Invalid identities are durably rejected without staging a directive."""
+    db, state, _ = game
+    from ming_sim.audience_translation import apply_audience_round_translation
+    night = open_night(db, state, location="乾清宫", time_of_day="夜")
+    nid = int(night["id"])
+    ctid1 = _persist_night_chat(db, state, nid, "卿有何策？", "臣有一策。")
+    ctid2 = _persist_night_chat(db, state, nid, "准所奏", "谢皇上。")
+    decl2 = {
+        "commissions": [{
+            "text": "准所奏",
+            "strategy_selection": {
+                "target_id": "policy_pingliao",
+                "source_chat_turn_id": ctid1,
+                "proposer": proposer,
+            },
+        }]
+    }
+    res = apply_audience_round_translation(
+        db, state, decl2, night_id=nid, chat_turn_id=ctid2, minister_name="殿上",
+    )
+    assert len(res.commissions.applied) == 0
+    assert len(res.commissions.rejected) == 1
+    assert res.commissions.rejected[0].category == category
+    assert db.conn.execute("SELECT COUNT(*) FROM pending_actions").fetchone()[0] == 0
+    reports = db.conn.execute("SELECT category FROM rejection_reports").fetchall()
+    assert [row["category"] for row in reports] == [category]
