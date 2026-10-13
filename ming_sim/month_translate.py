@@ -103,9 +103,6 @@ class MonthTranslationInput:
     this_decree: Optional[Mapping[str, object]] = None
 
 
-MonthTranslateFn = Callable[[MonthTranslationInput, Any], Mapping[str, object]]
-
-
 def describe_month_effect_fields() -> str:
     """Input guidance for the observed missing accounts; not a second validator.
 
@@ -114,8 +111,11 @@ def describe_month_effect_fields() -> str:
     """
     from ming_sim.constants import (
         ARMY_SCORE_FIELDS, ARMY_TEXT_FIELDS, BANDIT_ABSORPTION_FIELDS,
+        ECONOMY_ACCOUNTS,
     )
+    from ming_sim.entities.character.transit import TRAVEL_SPEED_BY_TONE
     from ming_sim.person_archive_contract import format_person_actions
+    from ming_sim.relations import SETTLEMENT_ORIGIN_SENTINEL
 
     scores = "、".join(
         field for field in ARMY_SCORE_FIELDS if field not in {"arrears", "cannon_equipment"}
@@ -129,19 +129,19 @@ def describe_month_effect_fields() -> str:
         "cannon_equipment（随军大炮）是整数门数增减，上限 12 门。"
         f"{'、'.join(ARMY_TEXT_FIELDS)} 是文字新值；"
         "调防给 station 细地点和 station_region 在册地区id。来源 origin_ref 按本旨事实"
-        "或已授权回指填；非旨意自然变化填盘面自发。只把有数值依据的变化记成数值，"
+        f"或已授权回指填；非旨意自然变化填{SETTLEMENT_ORIGIN_SENTINEL}。只把有数值依据的变化记成数值，"
         "点兵情况、尚未出畿等叙述在 textual_facts 按 subject_kind、subject_id、body 留原文。\n"
         "- 成对调拨只声明来源一项：缴获随军炮在败军 army_delta 值里写负数"
         "cannon_equipment 和 cannon_transfer_to=胜军id，胜军正数由引擎按共同实转门数记账；"
         "独立造炮或损耗只写自身炮增减。钱库互拨在 economy_moves 写 account=来源库、"
-        "负数 delta（整数万两）、transfer_to=另一库（国库或内库），目标正数由引擎"
+        f"负数 delta（整数万两）、transfer_to=另一库（{'或'.join(ECONOMY_ACCOUNTS)}），目标正数由引擎"
         "按来源实扣数记账；独立收入只写收入项。库间互拨与 purpose=补饷 是两种事项。\n"
         f"- bandit_absorptions 是对象数组，每项字段仅 {'、'.join(sorted(BANDIT_ABSORPTION_FIELDS))}。"
         "region_id 是流民来源明控省id；power_id 是已入库流寇股id（bandits 或 bandit_*）；"
         "requested_count 是拟吸纳的正整数人数；origin_ref 是真实来源。引擎按省内流民"
         "实有量扣池并增加该股实力；这份吸纳只写此请求，不另写 power_updates 正实力。\n"
         f"- 人物变更 是对象数组，每项给名册 name 和 动作（{format_person_actions()}）。"
-        "行止另给非空 transit_to=目的地地区id，可给 行程语气=常行/加急/星夜兼程；"
+        f"行止另给非空 transit_to=目的地地区id，可给 行程语气={'/'.join(TRAVEL_SPEED_BY_TONE)}；"
         "任免与启程是两条不同动作。已在路上只记本段新发生的启程，不伪报抵达或重开行程。\n"
         "- issue_advances 是对象数组：issue_id 用既有事项编号，delta_bar 给本月整数"
         "进度增减，narrative 留本月实况；阶段变化另给 stage_text 新阶段文字。"
@@ -272,7 +272,6 @@ def translate_month_segment(
     target_grounding: str = "",
     decree_payload: Mapping[str, object],
     llm_config: Any = None,
-    translate_fn: Optional[MonthTranslateFn] = None,
     continuing_dossiers: tuple[Mapping[str, object], ...] | list[Mapping[str, object]] = (),
     candidates: Optional[Mapping[str, object]] = None,
     answered_verdicts: tuple[Mapping[str, object], ...] | list[Mapping[str, object]] = (),
@@ -288,8 +287,7 @@ def translate_month_segment(
         answered_verdicts=tuple(answered_verdicts),
         this_decree=this_decree,
     )
-    runner = translate_fn or _default_month_translate_runner
-    declaration = runner(request, llm_config)
+    declaration = _default_month_translate_runner(request, llm_config)
     if not isinstance(declaration, Mapping):
         raise AudienceTranslateError("转译输出须为 JSON 对象")
     return normalize_audience_declaration(declaration)
@@ -334,7 +332,6 @@ def _translate_month_segment_front(
     state: Any = None,
     decree_payload: Mapping[str, object],
     llm_config: Any = None,
-    translate_fn: Optional[MonthTranslateFn] = None,
     continuing_dossiers: tuple[Mapping[str, object], ...] | list[Mapping[str, object]] = (),
     candidates: Optional[Mapping[str, object]] = None,
     answered_verdicts: tuple[Mapping[str, object], ...] | list[Mapping[str, object]] = (),
@@ -351,7 +348,6 @@ def _translate_month_segment_front(
         ),
         decree_payload=decree_payload,
         llm_config=llm_config,
-        translate_fn=translate_fn,
         continuing_dossiers=continuing_dossiers,
         candidates=candidates,
         answered_verdicts=answered_verdicts,
@@ -367,7 +363,6 @@ def prepare_month_segment(
     segment: str,
     decree_payload: Optional[Mapping[str, object]] = None,
     llm_config: Any = None,
-    translate_fn: Optional[MonthTranslateFn] = None,
     answered_verdicts: tuple[Mapping[str, object], ...] | list[Mapping[str, object]] = (),
     decree_ref: Optional[str] = None,
 ) -> tuple[dict[str, object], dict[str, list[int]]]:
@@ -393,7 +388,7 @@ def prepare_month_segment(
     try:
         declaration, refs = _translate_month_segment_front(
             db, segment=segment, turn=turn, state=state, decree_payload=payload,
-            llm_config=llm_config, translate_fn=translate_fn,
+            llm_config=llm_config,
             continuing_dossiers=continuing_dossier_facts(db, turn),
             candidates=candidate_supply(db, state),
             answered_verdicts=_segment_levy_verdicts.get(),
@@ -409,7 +404,6 @@ def prepare_month_segment(
 def dispatch_month_segment(
     db: Any, state: Any, *, segment: str, minister_name: str = "",
     decree_payload: Optional[Mapping[str, object]] = None, llm_config: Any = None,
-    translate_fn: Optional[MonthTranslateFn] = None,
     source: Provenance = Provenance.system_simulation,
     alongside: Optional[Callable[[DeclarationDispatchResult], None]] = None,
     answered_verdicts: tuple[Mapping[str, object], ...] | list[Mapping[str, object]] = (),
@@ -426,7 +420,7 @@ def dispatch_month_segment(
     try:
         declaration, refs = prepared if prepared is not None else prepare_month_segment(
             db, state, segment=segment, decree_payload=decree_payload,
-            llm_config=llm_config, translate_fn=translate_fn,
+            llm_config=llm_config,
             answered_verdicts=answered_verdicts, decree_ref=decree_ref,
         )
         return dispatch_declaration(

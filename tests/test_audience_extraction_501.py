@@ -2,6 +2,7 @@ from __future__ import annotations
 """#501 仍现役的召对转译补跑边界。"""
 
 
+from tests.conftest import stub_audience_translate
 from ming_sim import audience_night as an
 
 
@@ -43,10 +44,10 @@ def test_engine_close_night_drains_pending_success(game, monkeypatch):
 
     from ming_sim.session_write_queue import SessionWriteQueue
     write_queue = SessionWriteQueue()
+    stub_audience_translate(monkeypatch, translate_fn)
     result = an.close_night(
         db, state, night_id=nid, llm_config=object(),
         write_gate=write_queue.write_gate, write_queue=write_queue,
-        translate_fn=translate_fn,
     )
     assert result["closed"] is True
     assert an.get_night(db, nid)["status"] == an.NIGHT_STATUS_CLOSED

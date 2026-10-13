@@ -1,5 +1,5 @@
 from __future__ import annotations
-from tests.conftest import wait_for_background_jobs
+from tests.conftest import stub_month_translate, wait_for_background_jobs
 import json
 import sqlite3
 import pytest
@@ -239,7 +239,7 @@ def test_player_decrees_sequential_army_station_reads_updated_roster(game, monke
         ("pay_then_arrears", 10),
     ],
 )
-def test_world_segment_cross_category_order_by_declaration(game, order, expected_arrears):
+def test_world_segment_cross_category_order_by_declaration(game, order, expected_arrears, monkeypatch):
     """先加欠饷再拨款清欠按交代先后；对调先后时按当时存量，不因类别段序颠倒。"""
     db, state, _ = game
     db.conn.execute("UPDATE armies SET  province_pay_arrears=0, central_pay_arrears=0 WHERE id='jingying'")
@@ -257,10 +257,8 @@ def test_world_segment_cross_category_order_by_declaration(game, order, expected
         [arrears_effect, pay_effect] if order == "arrears_then_pay"
         else [pay_effect, arrears_effect]
     )
-    dispatch_month_segment(
-        db, state, segment="跨类欠饷与拨款",
-        translate_fn=lambda _request, _config: {"effects": effects},
-    )
+    stub_month_translate(monkeypatch, lambda _request, _config: {"effects": effects})
+    dispatch_month_segment(db, state, segment="跨类欠饷与拨款")
     arrears = float(db.conn.execute(
         "SELECT arrears FROM armies WHERE id='jingying'"
     ).fetchone()[0])
@@ -278,15 +276,13 @@ def test_world_segment_cross_category_order_by_declaration(game, order, expected
         ).fetchone()[0] == 0
 
 
-def test_world_segment_cross_category_order_survives_reopen(game, tmp_path):
+def test_world_segment_cross_category_order_survives_reopen(game, tmp_path, monkeypatch):
     """过月落账后重开：欠饷已清与拒收一致性仍在。"""
     db, state, _ = game
     db.conn.execute("UPDATE armies SET  province_pay_arrears=0, central_pay_arrears=0 WHERE id='jingying'")
     db.conn.commit()
     state.metrics["国库"] = 50
-    dispatch_month_segment(
-        db, state, segment="先欠后清后重开",
-        translate_fn=lambda _r, _c: {"effects": [
+    stub_month_translate(monkeypatch, lambda _r, _c: {"effects": [
             {"army_delta": {"jingying": {
                 "origin_ref": "盘面自发", "arrears": 10, "reason": "加欠",
             }}},
@@ -300,8 +296,8 @@ def test_world_segment_cross_category_order_survives_reopen(game, tmp_path):
                 "category": "坏项", "reason": "查无",
                 "purpose": "补饷", "target_kind": "army", "target_id": "ghost-army-1844",
             }]},
-        ]},
-    )
+        ]})
+    dispatch_month_segment(db, state, segment="先欠后清后重开")
     assert float(db.conn.execute(
         "SELECT arrears FROM armies WHERE id='jingying'"
     ).fetchone()[0]) == pytest.approx(0)
@@ -352,7 +348,7 @@ def _missing_ref_target_matches(conn, target_id: str) -> int:
     return matched
 
 
-def test_world_segment_stamps_each_shared_item_once(game):
+def test_world_segment_stamps_each_shared_item_once(game, monkeypatch):
     """合并 extraction 与逐笔 sequence 共用原条目：坏项只拒一次，合法先后仍按交代落账。"""
     from ming_sim.month_translate import dispatch_month_segment
 
@@ -369,9 +365,7 @@ def test_world_segment_stamps_each_shared_item_once(game):
             "affair_declaration": declaration,
         }
 
-    dispatch_month_segment(
-        db, state, segment="逐笔只拒一次",
-        translate_fn=lambda _request, _config: {"effects": [
+    stub_month_translate(monkeypatch, lambda _request, _config: {"effects": [
             {"economy_moves": [_move("先笔", shared)]},
             {"economy_moves": [_move("冲突笔", {
                 "attach": "new", "identity": "同批一印",
@@ -385,8 +379,8 @@ def test_world_segment_stamps_each_shared_item_once(game):
                 }],
             },
             {"economy_moves": [_move("坏声明", {"attach": "new"})]},
-        ]},
-    )
+        ]})
+    dispatch_month_segment(db, state, segment="逐笔只拒一次")
 
     ledger = db.conn.execute(
         "SELECT category, origin_ref FROM economy_ledger "

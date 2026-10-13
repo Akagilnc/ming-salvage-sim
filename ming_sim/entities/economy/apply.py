@@ -39,7 +39,7 @@ def _apply_economy_list(
         _pay_single_army_arrears,
     )
     from ming_sim.assets import format_wanliang_amount
-    from ming_sim.constants import ECONOMY_PURPOSES, ECONOMY_TARGET_KINDS
+    from ming_sim.constants import ECONOMY_ACCOUNTS, ECONOMY_PURPOSES, ECONOMY_TARGET_KINDS
     applied: List[Dict[str, object]] = []
     # Guard non-list input for all callers, including economy delta and dossier (#117).
     if not isinstance(economy, list):
@@ -60,7 +60,7 @@ def _apply_economy_list(
         if delta_error is None and delta == 0:
             continue
         account = str(move.get("account") or "")
-        if account not in ("国库", "内库"):
+        if account not in ECONOMY_ACCOUNTS:
             # 账户非法不再静默丢——逐项拒收留痕（#14 ADR0008 决定1，统一拒收契约）。
             rejections.append(RejectedItem(item=move, reason=f"economy_moves 账户非法（须 国库/内库）：{account!r}", category="invalid_enum", source=source))
             continue
@@ -97,7 +97,7 @@ def _apply_economy_list(
         target_kind = raw_target_kind if raw_target_kind in ECONOMY_TARGET_KINDS else None
         if "transfer_to" in move:
             destination = move["transfer_to"]
-            if (delta >= 0 or destination not in ("国库", "内库")
+            if (delta >= 0 or destination not in ECONOMY_ACCOUNTS
                     or destination == account or raw_purpose not in ("", "其它")
                     or raw_target_kind or raw_target_id):
                 rejections.append(RejectedItem(item=move, reason="转库须从一账户扣款并指定另一账户", category="invalid_enum", source=source))

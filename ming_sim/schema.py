@@ -18,6 +18,7 @@ authority-privilege DDL each stay with the code that defines its shape.
 from __future__ import annotations
 
 from ming_sim.authority_privileges import AUTHORITY_PRIVILEGE_SQL_IN
+from ming_sim.constants import ECONOMY_ACCOUNTS
 from ming_sim.entities.dossier.store import DOSSIER_SCHEMA_SQL
 
 
@@ -351,7 +352,7 @@ CORE_SCHEMA_SQL = """
             ELSE ''
         END AS note
     FROM metrics m
-    WHERE m.key IN ('国库', '内库');
+    WHERE m.key IN (__ECONOMY_ACCOUNTS__);
 
     -- #1889：account ∈ ECONOMY_ACCOUNTS 的原 FK(account)→economy_accounts 已随
     -- 该表降级为 metrics 的派生视图移除（SQLite 不支持外键指向视图）；同一约束
@@ -1044,4 +1045,5 @@ def ensure_core_schema(conn) -> None:
         CORE_SCHEMA_SQL
         .replace("__AUTHORITY_PRIVILEGES__", AUTHORITY_PRIVILEGE_SQL_IN)
         .replace("__DOSSIER_SCHEMA__", DOSSIER_SCHEMA_SQL)
+        .replace("__ECONOMY_ACCOUNTS__", ", ".join(repr(account) for account in ECONOMY_ACCOUNTS))
     )

@@ -25,6 +25,7 @@ from ming_sim.applier import (
     SectionResult,
     item_savepoint_scope,
 )
+from ming_sim.relations import SETTLEMENT_ORIGIN_SENTINEL
 from ming_sim.settlement import registry
 from ming_sim.settlement.outcome import (
     FiscalSectionResult,
@@ -738,7 +739,7 @@ def apply_person_changes_only(
     *,
     content=None,
     llm_config: Any = None,
-    origin_ref: str = "盘面自发",
+    origin_ref: str = SETTLEMENT_ORIGIN_SENTINEL,
     require_origin: bool = False,
     source: Provenance = Provenance.system_simulation,
 ) -> SectionResult:

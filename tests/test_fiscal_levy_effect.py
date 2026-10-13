@@ -1,3 +1,4 @@
+from tests.conftest import stub_month_translate
 import json
 import math
 import pytest
@@ -1120,7 +1121,7 @@ def _liao_terminal(db):
 
 
 @pytest.mark.parametrize('later_outcome', ["已准", "乱写"])
-def test_same_batch_keeps_the_first_event_outcome(game, later_outcome):
+def test_same_batch_keeps_the_first_event_outcome(game, later_outcome, monkeypatch):
     from ming_sim.month_translate import dispatch_month_segment
 
     db, state, content = game
@@ -1136,9 +1137,10 @@ def test_same_batch_keeps_the_first_event_outcome(game, later_outcome):
             "事件结局": {"liao_levy_rise_1631": later_outcome},
         },
     ]}
+    stub_month_translate(monkeypatch, lambda request, config: declaration)
     result = dispatch_month_segment(
         db, state, segment=_CONTINUATION_SEGMENT,
-        translate_fn=lambda request, config: declaration, answered_verdicts=verdicts,
+        answered_verdicts=verdicts,
     )
     assert result.effects.rejected == []
     assert _liao_terminal(db) == {"terminal_state": "triggered", "terminal_reason": "已驳"}
@@ -1152,7 +1154,7 @@ def _outcome_rejection_rows(db):
     ]
 
 
-def test_unbound_envelope_does_not_overwrite_the_first_event_outcome(game):
+def test_unbound_envelope_does_not_overwrite_the_first_event_outcome(game, monkeypatch):
     """归属非法的结局不写入、留下结构化拒收；合法兄弟效果与首次裁定仍在。"""
     from ming_sim.month_translate import dispatch_month_segment
 
@@ -1169,9 +1171,10 @@ def test_unbound_envelope_does_not_overwrite_the_first_event_outcome(game):
         "事件结局": {"liao_levy_rise_1631": "已准"},
         "metric_delta": {"民心": 1},
     }, {"metric_delta": {"民心": 1}}]}
+    stub_month_translate(monkeypatch, lambda request, config: cross_declaration)
     cross = dispatch_month_segment(
         db, state, segment=_CONTINUATION_SEGMENT,
-        translate_fn=lambda request, config: cross_declaration, answered_verdicts=verdicts,
+        answered_verdicts=verdicts,
     )
     assert len(cross.effects.rejected) == 1
     assert cross.effects.rejected[0].category == "event_rejected"
@@ -1194,9 +1197,10 @@ def test_unbound_envelope_does_not_overwrite_the_first_event_outcome(game):
         },
         {"metric_delta": {"民心": 1}},
     ]}
+    stub_month_translate(monkeypatch, lambda request, config: declaration)
     result = dispatch_month_segment(
         db, state, segment=_CONTINUATION_SEGMENT,
-        translate_fn=lambda request, config: declaration, answered_verdicts=verdicts,
+        answered_verdicts=verdicts,
     )
     assert len(result.effects.rejected) == 1
     assert result.effects.rejected[0].category == "event_rejected"

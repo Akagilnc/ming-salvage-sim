@@ -13,6 +13,7 @@ import json
 import re
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
+from ming_sim.constants import ECONOMY_ACCOUNTS
 from ming_sim.decree_vocabulary import TARGET_KINDS
 from ming_sim.executor_routing import duty_route_categories
 
@@ -391,9 +392,9 @@ def resolve_grant_account(*, grant_action: object = None, account: object = None
     if ga == "协饷":
         return raw_account
     if ga in GRANT_MONEY_ACTIONS:
-        if raw_account and raw_account not in {"国库", "内库"}:
+        if raw_account and raw_account not in ECONOMY_ACCOUNTS:
             raise ValueError(f"grant 非法 account：{raw_account!r}")
-        return raw_account if raw_account in {"国库", "内库"} else "国库"
+        return raw_account if raw_account in ECONOMY_ACCOUNTS else "国库"
     return ""
 
 
@@ -547,8 +548,8 @@ def require_explicit_xiexang_fields(
         _note("amount", current=amount, expected={"type": "positive_int"})
     # #1620：太仓→国库唯一权威 resolve_grant_account；此处不再平行 if。
     canonical_account = resolve_grant_account(grant_action="协饷", account=account)
-    if canonical_account not in {"国库", "内库"}:
-        _note("account", current=account, expected=["国库", "内库"])
+    if canonical_account not in ECONOMY_ACCOUNTS:
+        _note("account", current=account, expected=list(ECONOMY_ACCOUNTS))
     purpose_cur = str(purpose or "").strip()
     if purpose_cur != "补饷":
         _note("purpose", current=purpose_cur or purpose, expected="补饷")
@@ -1362,7 +1363,7 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 ),
                 FieldSpec(
                     "account", "账户",
-                    frozenset({"国库", "内库", "太仓"}), "",
+                    frozenset((*ECONOMY_ACCOUNTS, "太仓")), "",
                 ),
                 FieldSpec(
                     "purpose", "用途", frozenset({"补饷"}), "",

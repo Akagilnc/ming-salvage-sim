@@ -31,6 +31,7 @@ from ming_sim.db import normalize_office
 from ming_sim.settlement.views import view
 from ming_sim.error_pack import error_packs_root
 from ming_sim.models import GameState
+from ming_sim.relations import SETTLEMENT_ORIGIN_SENTINEL
 from ming_sim.participant_roster import is_non_person_participant_name
 
 logger = logging.getLogger(__name__)
@@ -957,7 +958,7 @@ def commit_late_night_approved(
 
 def _catch_up_night_translations(
     db: Any, night_id: int, *, llm_config: Any, write_gate: Any,
-    game_state: GameState, translate_fn: Any = None, write_queue: Any = None,
+    game_state: GameState, write_queue: Any = None,
 ) -> None:
     """收夜补跑转译待补（#1898：单次收夜只跑一次的唯一实现）。
 
@@ -975,7 +976,6 @@ def _catch_up_night_translations(
     write_gate 必须是调用方原始锁（或 None）——禁传入 _gate_cm(nullcontext)。
     """
     # catch_up 契约：单轮失败标 pending、不抛；代码异常按 ADR 0005 上抛。
-    # translate_fn=None 走默认 runner（#1842：收夜补跑不因缺注入而跳过）。
     if llm_config is None or write_gate is None or write_queue is None:
         return
     from ming_sim.audience_translation import catch_up_pending_translations
@@ -983,7 +983,6 @@ def _catch_up_night_translations(
         db, game_state,
         night_id=int(night_id),
         llm_config=llm_config,
-        translate_fn=translate_fn,
         write_gate=write_gate,
         write_queue=write_queue,
     )
@@ -1003,12 +1002,9 @@ def close_night(
     night_id: Optional[int] = None,
     content: Any = None,
     auto: bool = False,
-    crash_after_step: Optional[int] = None,
-    on_step: Optional[Callable[[int, Dict[str, Any]], None]] = None,
     on_closing: Optional[Callable[[], None]] = None,
     llm_config: Any = None,
     write_gate: Any = None,
-    translate_fn: Any = None,
     write_queue: Any = None,
 ) -> Dict[str, Any]:
     """收夜：待补转译 → 短写前提 → 短写终局（#1842：背书随转译，无夜级批）。
@@ -1052,7 +1048,7 @@ def close_night(
         )
         _catch_up_night_translations(
             db, night_id, llm_config=llm_config, write_gate=write_gate,
-            game_state=state, translate_fn=translate_fn, write_queue=write_queue,
+            game_state=state, write_queue=write_queue,
         )
         with gate:
             _set_night_fields(
@@ -1069,7 +1065,7 @@ def close_night(
             night = get_night(db, night_id) or night
         _catch_up_night_translations(
             db, night_id, llm_config=llm_config, write_gate=write_gate,
-            game_state=state, translate_fn=translate_fn, write_queue=write_queue,
+            game_state=state, write_queue=write_queue,
         )
 
     cursor = int(night["close_commit_cursor"] or 0)
@@ -1078,14 +1074,6 @@ def close_night(
         nonlocal cursor
         _set_night_fields(db, night_id, close_commit_cursor=step)
         cursor = step
-        if on_step is not None:
-            on_step(step, get_night(db, night_id) or {})
-        if crash_after_step is not None and int(crash_after_step) == step:
-            raise AudienceNightError(
-                f"收夜提交崩溃注入：step={step}",
-                code="close_crash",
-                detail={"night_id": night_id, "step": step},
-            )
 
     # ── Phase 1: short writes for draft-dossier prerequisites only ─────────
     with gate:
@@ -1149,10 +1137,8 @@ def auto_close_open_night(
     state: GameState,
     *,
     content: Any = None,
-    crash_after_step: Optional[int] = None,
     llm_config: Any = None,
     write_gate: Any = None,
-    on_closing: Optional[Callable[[], None]] = None,
 ) -> Optional[Dict[str, Any]]:
     """颁诏/过回合前：有开夜则顺势收夜；无开夜返回 None。
 
@@ -1168,10 +1154,8 @@ def auto_close_open_night(
         night_id=int(open_n["id"]),
         content=content,
         auto=True,
-        crash_after_step=crash_after_step,
         llm_config=llm_config,
         write_gate=write_gate,
-        on_closing=on_closing,
     )
 
 
@@ -1545,7 +1529,7 @@ def commit_fresh_summons_for_night(
                     "行程语气": travel_tone,
                     # Canonical applier only admits its established provenance vocabulary;
                     # the summon origin remains machine-linked in the story ledger.
-                    "origin_ref": "盘面自发",
+                    "origin_ref": SETTLEMENT_ORIGIN_SENTINEL,
                 }],
                 content=content,
             source=Provenance.system_simulation)

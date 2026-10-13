@@ -21,6 +21,7 @@ from ming_sim.db import (
 from ming_sim.applier import Provenance, RejectionCollector
 from ming_sim.strict_types import strict_int as _strict_int
 from ming_sim.models import Event, GameState, effect_dict_has_work, loads_effect_dict
+from ming_sim.relations import SETTLEMENT_ORIGIN_SENTINEL
 
 
 COMMITMENT_KIND_UNTIL_STOP = "until_stop"
@@ -91,7 +92,7 @@ def _canonical_issue_origin(db: GameDB, row: sqlite3.Row) -> str:
     if affair_id:
         origin_ref = db.affairs.origin_ref(affair_id)
     else:
-        origin_ref = "盘面自发"
+        origin_ref = SETTLEMENT_ORIGIN_SENTINEL
     rejection = db.effect_origin_rejection(origin_ref)
     if rejection:
         raise ValueError(

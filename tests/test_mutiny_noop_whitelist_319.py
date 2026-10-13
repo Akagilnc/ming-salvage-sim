@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests.conftest import stub_month_translate
 from ming_sim.applier import Provenance
 from types import SimpleNamespace
 import pytest
@@ -215,7 +216,7 @@ def test_latched_loyalty_raw_positive_noop_when_legacy_flips_effect_sign(game):
     ).fetchone()[0] == 0
 
 
-def test_latched_loyalty_legacy_flip_preflight_rejects_strategic_envelope(game):
+def test_latched_loyalty_legacy_flip_preflight_rejects_strategic_envelope(game, monkeypatch):
     """#319 P2 预检同口径：legacy 翻负的 latched loyalty 不得靠 material 门半落兄弟结果。"""
     db, state, content = game
     issue_engine.bind_content(content)
@@ -234,7 +235,7 @@ def test_latched_loyalty_legacy_flip_preflight_rejects_strategic_envelope(game):
 
     from ming_sim.month_translate import dispatch_month_segment
 
-    dispatch_month_segment(db, state, segment="哗变军预检", translate_fn=lambda _request, _config: {
+    stub_month_translate(monkeypatch, lambda _request, _config: {
         "effects": [{"region_delta": {"beizhili": {
             "origin_ref": "盘面自发", "military_pressure": 2,
         }}}, {
@@ -249,6 +250,7 @@ def test_latched_loyalty_legacy_flip_preflight_rejects_strategic_envelope(game):
             }},
         }],
     })
+    dispatch_month_segment(db, state, segment="哗变军预检")
 
     assert not db.issues.has_event_terminal_state('jisi_lubian', "triggered")
     assert db.conn.execute(
@@ -257,7 +259,7 @@ def test_latched_loyalty_legacy_flip_preflight_rejects_strategic_envelope(game):
     assert _row(db, "loyalty")["loyalty"] == before_loyalty
 
 
-def test_latched_loyalty_at_mutiny_cap_preflight_rejects_strategic_envelope(game):
+def test_latched_loyalty_at_mutiny_cap_preflight_rejects_strategic_envelope(game, monkeypatch):
     """#319：loyalty 已贴 mutiny_loyalty_cap 时，正 delta 预检须拒整封，防兄弟结果半落。"""
     db, state, content = game
     issue_engine.bind_content(content)
@@ -276,7 +278,7 @@ def test_latched_loyalty_at_mutiny_cap_preflight_rejects_strategic_envelope(game
 
     from ming_sim.month_translate import dispatch_month_segment
 
-    dispatch_month_segment(db, state, segment="哗变军上限预检", translate_fn=lambda _request, _config: {
+    stub_month_translate(monkeypatch, lambda _request, _config: {
         "effects": [{
             "event_id": "jisi_lubian",
             "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
@@ -289,6 +291,7 @@ def test_latched_loyalty_at_mutiny_cap_preflight_rejects_strategic_envelope(game
             }},
         }],
     })
+    dispatch_month_segment(db, state, segment="哗变军上限预检")
 
     assert not db.issues.has_event_terminal_state('jisi_lubian', "triggered")
     assert db.conn.execute(
@@ -497,7 +500,7 @@ def test_non_latched_cutover_pay_source_fields_still_write(game, pay_delta):
         else:
             assert after[key] == expected
 
-def test_latched_loyalty_cap_mixed_manpower_preflight_rejects_whole_envelope(game):
+def test_latched_loyalty_cap_mixed_manpower_preflight_rejects_whole_envelope(game, monkeypatch):
     """#1835 S2 R2：同军 loyalty 贴 cap 的 noop 不得靠 manpower 实变 + 地区压力半落整封。"""
     db, state, content = game
     issue_engine.bind_content(content)
@@ -513,7 +516,7 @@ def test_latched_loyalty_cap_mixed_manpower_preflight_rejects_whole_envelope(gam
 
     from ming_sim.month_translate import dispatch_month_segment
 
-    dispatch_month_segment(db, state, segment="哗变军混合 noop 预检", translate_fn=lambda _request, _config: {
+    stub_month_translate(monkeypatch, lambda _request, _config: {
         "effects": [{
             "event_id": "jisi_lubian",
             "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
@@ -526,6 +529,7 @@ def test_latched_loyalty_cap_mixed_manpower_preflight_rejects_whole_envelope(gam
             }},
         }],
     })
+    dispatch_month_segment(db, state, segment="哗变军混合 noop 预检")
 
     assert not db.issues.has_event_terminal_state('jisi_lubian', "triggered")
     assert db.conn.execute(
@@ -536,7 +540,7 @@ def test_latched_loyalty_cap_mixed_manpower_preflight_rejects_whole_envelope(gam
     assert row["manpower"] == 10000
 
 
-def test_strategic_event_cannon_transfer_preflight_reuses_transfer_write_path(game):
+def test_strategic_event_cannon_transfer_preflight_reuses_transfer_write_path(game, monkeypatch):
     """#1835 S2 R1：合法随军炮转移须走 apply_army_delta_with_cannon_transfer，不得因转移键误拒。"""
     db, state, content = game
     issue_engine.bind_content(content)
@@ -561,7 +565,7 @@ def test_strategic_event_cannon_transfer_preflight_reuses_transfer_write_path(ga
 
     from ming_sim.month_translate import dispatch_month_segment
 
-    dispatch_month_segment(db, state, segment="战略随军炮转移预检", translate_fn=lambda _request, _config: {
+    stub_month_translate(monkeypatch, lambda _request, _config: {
         "effects": [{
             "event_id": "jisi_lubian",
             "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
@@ -574,6 +578,7 @@ def test_strategic_event_cannon_transfer_preflight_reuses_transfer_write_path(ga
             }},
         }],
     })
+    dispatch_month_segment(db, state, segment="战略随军炮转移预检")
 
     assert db.issues.has_event_terminal_state('jisi_lubian', "triggered")
     cannons = {
@@ -587,7 +592,7 @@ def test_strategic_event_cannon_transfer_preflight_reuses_transfer_write_path(ga
     assert cannons[target] == 3
 
 
-def test_strategic_same_value_text_with_numeric_change_preflight_allows(game):
+def test_strategic_same_value_text_with_numeric_change_preflight_allows(game, monkeypatch):
     """#1835 S2 R3：同值文本不计 noop；数值实变须过预检（region controlled_by + army station）。"""
     db, state, content = game
     issue_engine.bind_content(content)
@@ -612,11 +617,7 @@ def test_strategic_same_value_text_with_numeric_change_preflight_allows(game):
 
     from ming_sim.month_translate import dispatch_month_segment
 
-    dispatch_month_segment(
-        db,
-        state,
-        segment="战略同值文本实变预检",
-        translate_fn=lambda _request, _config: {
+    stub_month_translate(monkeypatch, lambda _request, _config: {
             "effects": [{
                 "event_id": "jisi_lubian",
                 "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
@@ -636,8 +637,8 @@ def test_strategic_same_value_text_with_numeric_change_preflight_allows(game):
                     }
                 },
             }],
-        },
-    )
+        })
+    dispatch_month_segment(db, state, segment="战略同值文本实变预检")
 
     assert db.issues.has_event_terminal_state('jisi_lubian', "triggered")
     region = db.conn.execute(

@@ -16,6 +16,7 @@ from __future__ import annotations
 """
 
 
+from tests.conftest import stub_month_translate
 import json
 
 from ming_sim.db import GameDB
@@ -142,7 +143,7 @@ def _secret_surge_world(db, state, owner):
     return secret_did
 
 
-def test_surge_candidate_offered_by_world_segment_is_declared_and_lands(game, tmp_path):
+def test_surge_candidate_offered_by_world_segment_is_declared_and_lands(game, tmp_path, monkeypatch):
     """F1：世界段目录里供到的候选，转译就能声明、写口就收——三处同一读侧口径。
 
     旧断链：世界段材料目录不筛密令案卷，转译请求却无条件排除，于是模型在
@@ -179,7 +180,8 @@ def test_surge_candidate_offered_by_world_segment_is_declared_and_lands(game, tm
             "stage_text": "探针案情。",
         }]}}
 
-    dispatch_month_segment(db, state, segment="派系发难", translate_fn=_capture)
+    stub_month_translate(monkeypatch, _capture)
+    dispatch_month_segment(db, state, segment="派系发难")
 
     row = db.conn.execute(
         "SELECT origin_ref FROM issues WHERE origin_kind='impeachment_surge'",
@@ -191,7 +193,7 @@ def test_surge_candidate_offered_by_world_segment_is_declared_and_lands(game, tm
 # --- 断链类：候选事实必须随转译请求送到（目录此时已释放）---
 
 
-def test_translate_request_carries_current_candidate_facts(game, content):
+def test_translate_request_carries_current_candidate_facts(game, content, monkeypatch):
     """经真实 dispatch_month_segment 入口：转译请求里带着当月合格候选事实。"""
     from ming_sim.month_translate import dispatch_month_segment
 
@@ -204,7 +206,8 @@ def test_translate_request_carries_current_candidate_facts(game, content):
             captured["request"] = request
             return {"effects": {}}
 
-        dispatch_month_segment(db, state, segment="本月无事", translate_fn=_capture)
+        stub_month_translate(monkeypatch, _capture)
+        dispatch_month_segment(db, state, segment="本月无事")
 
         request = captured["request"]
         facts = {item["id"]: item for item in request.candidates["events"]}
@@ -215,7 +218,7 @@ def test_translate_request_carries_current_candidate_facts(game, content):
         _drop_event(content, ev)
 
 
-def test_translate_request_omits_ineligible_candidate(game, content):
+def test_translate_request_omits_ineligible_candidate(game, content, monkeypatch):
     """资格门不合格者既不进供料目录，也不进转译请求（同一读侧硬门两处一致）。"""
     from ming_sim.month_translate import dispatch_month_segment
     from ming_sim.models import Event
@@ -236,7 +239,8 @@ def test_translate_request_omits_ineligible_candidate(game, content):
             captured["request"] = request
             return {"effects": {}}
 
-        dispatch_month_segment(db, state, segment="本月无事", translate_fn=_capture)
+        stub_month_translate(monkeypatch, _capture)
+        dispatch_month_segment(db, state, segment="本月无事")
 
         assert later.id not in {
             item["id"] for item in captured["request"].candidates["events"]
@@ -248,7 +252,7 @@ def test_translate_request_omits_ineligible_candidate(game, content):
 # --- 落账侧：模型选了就只落一次，不选 / 读档续跑不重发 ---
 
 
-def test_selected_event_lands_once_via_existing_new_issues_write(game, content):
+def test_selected_event_lands_once_via_existing_new_issues_write(game, content, monkeypatch):
     from ming_sim.month_translate import dispatch_month_segment
 
     db, state, _ = game
@@ -257,9 +261,8 @@ def test_selected_event_lands_once_via_existing_new_issues_write(game, content):
         declaration = {"effects": {"new_issues": [
             {"origin_kind": "event_pool", "id": ev.id, "title": ev.title},
         ]}}
-        result = dispatch_month_segment(
-            db, state, segment="探针段文", translate_fn=lambda rq, cfg: declaration,
-        )
+        stub_month_translate(monkeypatch, lambda rq, cfg: declaration)
+        result = dispatch_month_segment(db, state, segment="探针段文")
         applied = result.effects.applied[0].issue.new_issues
         assert len(applied) == 1
         assert result.effects.applied[0].issue.rejected == []
@@ -269,9 +272,7 @@ def test_selected_event_lands_once_via_existing_new_issues_write(game, content):
         ).fetchone()[0] == 1
         assert db.issues.event_terminal_state(ev.id) == "triggered"
         # 读档续跑：同一段再落一次不重发（终态已在候选硬门里排掉）。
-        again = dispatch_month_segment(
-            db, state, segment="探针段文", translate_fn=lambda rq, cfg: declaration,
-        )
+        again = dispatch_month_segment(db, state, segment="探针段文")
         assert again.effects.applied[0].issue.new_issues == []
         assert len(again.effects.applied[0].issue.rejected) == 1
         assert db.conn.execute(
@@ -282,22 +283,21 @@ def test_selected_event_lands_once_via_existing_new_issues_write(game, content):
         _drop_event(content, ev)
 
 
-def test_not_selected_candidate_leaves_no_terminal_state(game, content):
+def test_not_selected_candidate_leaves_no_terminal_state(game, content, monkeypatch):
     db, state, _ = game
     ev = _open_window_event(content)
     try:
         from ming_sim.month_translate import dispatch_month_segment
 
-        dispatch_month_segment(
-            db, state, segment="本月无事", translate_fn=lambda rq, cfg: {"effects": {}},
-        )
+        stub_month_translate(monkeypatch, lambda rq, cfg: {"effects": {}})
+        dispatch_month_segment(db, state, segment="本月无事")
         assert db.issues.event_terminal_state(ev.id) is None
         assert ev.id in {item["id"] for item in candidate_supply(db, state)["events"]}
     finally:
         _drop_event(content, ev)
 
 
-def test_non_strategic_candidate_effects_land_without_event_id_binding(game, content):
+def test_non_strategic_candidate_effects_land_without_event_id_binding(game, content, monkeypatch):
     """F3：非 strategic_foreign 的人物候选不绑 event_id，其效果照样落账。
 
     战果声明的 event_id 归属只属 strategic_foreign 的 node/ending 既有契约；
@@ -313,9 +313,8 @@ def test_non_strategic_candidate_effects_land_without_event_id_binding(game, con
             "new_issues": [{"origin_kind": "event_pool", "id": ev.id, "title": ev.title}],
             "metric_delta": {"民心": -3},
         }}
-        result = dispatch_month_segment(
-            db, state, segment="探针段文", translate_fn=lambda rq, cfg: declaration,
-        )
+        stub_month_translate(monkeypatch, lambda rq, cfg: declaration)
+        result = dispatch_month_segment(db, state, segment="探针段文")
         assert len(result.effects.applied[0].issue.new_issues) == 1
         assert result.effects.applied[0].issue.rejected == []
         assert int(state.metrics["民心"]) == before - 3
@@ -323,7 +322,7 @@ def test_non_strategic_candidate_effects_land_without_event_id_binding(game, con
         _drop_event(content, ev)
 
 
-def test_supplied_outcome_labels_match_writer_whitelist(game, content):
+def test_supplied_outcome_labels_match_writer_whitelist(game, content, monkeypatch):
     """F3：候选事实里的结局标签就是写口那一份，不另立第二张标签表。
 
     旧断链：指令让模型从 Event.terminal_reason_labels 取标签，而该字段对
@@ -343,7 +342,8 @@ def test_supplied_outcome_labels_match_writer_whitelist(game, content):
         captured["request"] = request
         return {"effects": {}}
 
-    dispatch_month_segment(db, state, segment="本月无事", translate_fn=_capture)
+    stub_month_translate(monkeypatch, _capture)
+    dispatch_month_segment(db, state, segment="本月无事")
 
     by_id = {item["id"]: item for item in captured["request"].candidates["events"]}
     assert "jisi_lubian" in by_id, "本用例须有战略战事候选可验，否则空转"
@@ -357,7 +357,7 @@ def test_supplied_outcome_labels_match_writer_whitelist(game, content):
             assert item["outcome_labels"] == [], f"{eid} 无白名单却供了标签"
 
 
-def test_impeachment_surge_lands_only_when_faction_actually_impeaches(game):
+def test_impeachment_surge_lands_only_when_faction_actually_impeaches(game, monkeypatch):
     """派系硬门合格时：发难才立项（只一次），不发难则不立。"""
     from tests.test_impeachment_surge_655 import _candidate_world
 
@@ -371,10 +371,8 @@ def test_impeachment_surge_lands_only_when_faction_actually_impeaches(game):
     from ming_sim.month_translate import dispatch_month_segment
 
     # 不发难：只给别的效果，不声明该候选 → 不立项。
-    dispatch_month_segment(
-        db, state, segment="派系按兵不动",
-        translate_fn=lambda rq, cfg: {"effects": {"metric_delta": {}}},
-    )
+    stub_month_translate(monkeypatch, lambda rq, cfg: {"effects": {"metric_delta": {}}})
+    dispatch_month_segment(db, state, segment="派系按兵不动")
     assert db.conn.execute(
         "SELECT COUNT(*) FROM issues WHERE origin_kind='impeachment_surge'"
     ).fetchone()[0] == 0
@@ -388,9 +386,8 @@ def test_impeachment_surge_lands_only_when_faction_actually_impeaches(game):
         "title": "弹劾潮探针",
         "stage_text": "探针案情。",
     }]}}
-    result = dispatch_month_segment(
-        db, state, segment="派系发难", translate_fn=lambda rq, cfg: declaration,
-    )
+    stub_month_translate(monkeypatch, lambda rq, cfg: declaration)
+    result = dispatch_month_segment(db, state, segment="派系发难")
     applied = result.effects.applied[0].issue.new_issues
     assert len(applied) == 1
     assert result.effects.applied[0].issue.rejected == []
@@ -404,15 +401,13 @@ def test_impeachment_surge_lands_only_when_faction_actually_impeaches(game):
     assert json.loads(row["target_roster"]) == [owner]
 
     # 再发一次同一候选：同源已立，不重复。
-    dispatch_month_segment(
-        db, state, segment="派系再奏", translate_fn=lambda rq, cfg: declaration,
-    )
+    dispatch_month_segment(db, state, segment="派系再奏")
     assert db.conn.execute(
         "SELECT COUNT(*) FROM issues WHERE origin_kind='impeachment_surge'"
     ).fetchone()[0] == 1
 
 
-def test_impeachment_surge_candidate_survives_restore(game, content):
+def test_impeachment_surge_candidate_survives_restore(game, content, monkeypatch):
     """读档续跑：候选资格与既有立账都从 DB 读，restore 后不重发。"""
     from tests.test_impeachment_surge_655 import _candidate_world
     from ming_sim.month_translate import dispatch_month_segment
@@ -428,9 +423,8 @@ def test_impeachment_surge_candidate_survives_restore(game, content):
         "title": "恢复弹劾潮",
         "stage_text": "关库后仍可读",
     }]}}
-    dispatch_month_segment(
-        db, state, segment="发难", translate_fn=lambda rq, cfg: declaration,
-    )
+    stub_month_translate(monkeypatch, lambda rq, cfg: declaration)
+    dispatch_month_segment(db, state, segment="发难")
     path = db.conn.execute("PRAGMA database_list").fetchone()[2]
     db.conn.close()
 
@@ -441,9 +435,7 @@ def test_impeachment_surge_candidate_survives_restore(game, content):
         assert candidate["id"] not in {
             item["id"] for item in candidate_supply(restored, state2)["impeachment_surge"]
         }
-        dispatch_month_segment(
-            restored, state2, segment="续跑", translate_fn=lambda rq, cfg: declaration,
-        )
+        dispatch_month_segment(restored, state2, segment="续跑")
         assert restored.conn.execute(
             "SELECT COUNT(*) FROM issues WHERE origin_kind='impeachment_surge'"
         ).fetchone()[0] == 1

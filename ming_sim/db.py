@@ -3461,8 +3461,10 @@ class GameDB:
         Only identity-shape faults are absorbed as invalid_origin_ref. Durable
         getter / store decode errors propagate loud (#1897 E1).
         """
+        from ming_sim.relations import SETTLEMENT_ORIGIN_SENTINEL
+
         value = str(origin_ref or "").strip()
-        valid = value == "盘面自发"
+        valid = value == SETTLEMENT_ORIGIN_SENTINEL
         unauthorized_batch = False
         reason = None
         if value.startswith("dossier:"):

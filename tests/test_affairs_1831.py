@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests.conftest import stub_month_translate
 from ming_sim.entities.issue.tracker import apply_issue_tracker_output
 from ming_sim.applier import Provenance, atomic
 import pytest
@@ -138,7 +139,7 @@ def test_typed_affair_new_issues_share_provenance(game):
     assert db.affairs.get(existing.id).status == "open"
 
 
-def test_strategic_event_unauthorized_person_origin_reaches_final_projection(game):
+def test_strategic_event_unauthorized_person_origin_reaches_final_projection(game, monkeypatch):
     """战略人物越权来源逐项拒收；已声明的合法同批战果仍落账。"""
     db, state, content = game
     issues_mod.bind_content(content)
@@ -178,7 +179,8 @@ def test_strategic_event_unauthorized_person_origin_reaches_final_projection(gam
             }],
         }]}
 
-    dispatch_month_segment(db, state, segment="戊寅虏变战果", translate_fn=translate)
+    stub_month_translate(monkeypatch, translate)
+    dispatch_month_segment(db, state, segment="戊寅虏变战果")
     assert db.issues.has_event_terminal_state('wuyin_lubian', "triggered")
     assert db.conn.execute(
         "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",),

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests.conftest import stub_month_translate
 import sqlite3
 import pytest
 from ming_sim.settlement.views import section, view
@@ -22,7 +23,7 @@ from tests.test_declaration_dispatch_1835 import _minister as _character_name
     ("ongoing", 1, 0, 10, 1, 0, 0),
 ])
 def test_world_segment_explicit_stock_transfers_share_actual_amount(
-    game, route, source_cannon, target_cannon, treasury, actual_cannon, source_latched, target_latched,
+    game, route, source_cannon, target_cannon, treasury, actual_cannon, source_latched, target_latched, monkeypatch,
 ):
     from ming_sim.month_translate import dispatch_month_segment
 
@@ -65,9 +66,8 @@ def test_world_segment_explicit_stock_transfers_share_actual_amount(
                 "issue_id": issue_id, "reason": route,
                 f"effect_on_{'resolve' if route == 'resolved' else 'fail'}": army_effect,
             }]
-    result = dispatch_month_segment(
-        db, state, segment="调拨和缴获", translate_fn=lambda request, config: declaration,
-    )
+    stub_month_translate(monkeypatch, lambda request, config: declaration)
+    result = dispatch_month_segment(db, state, segment="调拨和缴获")
     if route == "ongoing":
         from ming_sim.situation_drift import apply_situation_monthly_drift
         assert apply_situation_monthly_drift(db, state) == []
@@ -119,7 +119,7 @@ def test_world_segment_explicit_stock_transfers_share_actual_amount(
     ("new_failed", "region_delta", None, "section"),
     ("new_failed", "metrics", "bad", "section"),
 ])
-def test_world_segment_nested_entity_effects_reject_bad_items(game, route, field, bad_value, level):
+def test_world_segment_nested_entity_effects_reject_bad_items(game, route, field, bad_value, level, monkeypatch):
     from ming_sim.month_translate import dispatch_month_segment
     import json
 
@@ -169,14 +169,13 @@ def test_world_segment_nested_entity_effects_reject_bad_items(game, route, field
             state, action_type="policy", decree_text="调炮", target_kind="issue", target_id="test",
         )
         db.dossiers.record_dossier_decision(dossier_id, "promulgated")
-        created = dispatch_month_segment(
-            db, state, segment="立项", translate_fn=lambda request, config: {"effects": {
-                "new_issues": [{
-                    "origin_kind": "decree", "origin_ref": f"dossier:{dossier_id}",
-                    "kind": "situation", "title": "调炮", effect_field: effect,
-                }],
-            }},
-        )
+        stub_month_translate(monkeypatch, lambda request, config: {"effects": {
+            "new_issues": [{
+                "origin_kind": "decree", "origin_ref": f"dossier:{dossier_id}",
+                "kind": "situation", "title": "调炮", effect_field: effect,
+            }],
+        }})
+        created = dispatch_month_segment(db, state, segment="立项")
         creation = section(created.effects.applied[0], "issue_summary")
         issue_id = creation.new_issues[0]["issue_id"]
         creation_rejected = creation.rejected
@@ -207,9 +206,8 @@ def test_world_segment_nested_entity_effects_reject_bad_items(game, route, field
         expected_status = terminal_route
     if fresh_issue:
         declaration["effects"]["army_delta"] = {winner: {"origin_ref": "盘面自发", "manpower": 2}}
-    result = dispatch_month_segment(
-        db, state, segment="调炮", translate_fn=lambda request, config: declaration,
-    )
+    stub_month_translate(monkeypatch, lambda request, config: declaration)
+    result = dispatch_month_segment(db, state, segment="调炮")
     rejected = section(result.effects.applied[0], "issue_summary").rejected
     if fresh_issue:
         assert rejected == []
@@ -240,7 +238,7 @@ def test_world_segment_nested_entity_effects_reject_bad_items(game, route, field
     assert db.issues.row(issue_id)["status"] == expected_status
 
 
-def test_world_segment_rejects_transfer_with_pay_arrears_claim(game):
+def test_world_segment_rejects_transfer_with_pay_arrears_claim(game, monkeypatch):
     from ming_sim.month_translate import dispatch_month_segment
 
     db, state, _ = game
@@ -251,10 +249,8 @@ def test_world_segment_rejects_transfer_with_pay_arrears_claim(game):
         "transfer_to": "内库", "category": "调拨", "reason": "反例",
         "purpose": "补饷", "target_kind": "army", "target_id": "jingying",
     }
-    result = dispatch_month_segment(
-        db, state, segment="矛盾钱库声明",
-        translate_fn=lambda request, config: {"effects": {"economy_moves": [move]}},
-    )
+    stub_month_translate(monkeypatch, lambda request, config: {"effects": {"economy_moves": [move]}})
+    result = dispatch_month_segment(db, state, segment="矛盾钱库声明")
 
     outcome = result.effects.applied[0]
     assert view(outcome, "economy_moves") == []
@@ -330,7 +326,7 @@ def test_world_segment_translates_once_and_persists_repeated_subject_facts_in_or
     ]
 
 
-def test_world_segment_applies_domain_effects_and_reports_rejected_effects(game):
+def test_world_segment_applies_domain_effects_and_reports_rejected_effects(game, monkeypatch):
     from ming_sim.month_translate import dispatch_month_segment
 
     db, state, content = game
@@ -397,10 +393,8 @@ def test_world_segment_applies_domain_effects_and_reports_rejected_effects(game)
         },
     }
 
-    result = dispatch_month_segment(
-        db, state, segment="军队士气和地方民心变化，国库支出。",
-        translate_fn=lambda request, config: declaration,
-    )
+    stub_month_translate(monkeypatch, lambda request, config: declaration)
+    result = dispatch_month_segment(db, state, segment="军队士气和地方民心变化，国库支出。")
 
     assert result.effects.applied
     person_change = view(result.effects.applied[0], "applied_person_changes")[0]
@@ -457,21 +451,17 @@ def test_world_segment_applies_domain_effects_and_reports_rejected_effects(game)
 
 
 
-def test_world_segment_failure_rolls_back_only_current_segment(game):
+def test_world_segment_failure_rolls_back_only_current_segment(game, monkeypatch):
     from ming_sim.month_translate import dispatch_month_segment
 
     db, state, _ = game
     person = _character_name(db)
-    dispatch_month_segment(
-        db,
-        state,
-        segment="前一段",
-        translate_fn=lambda prompt, config: {
-            "textual_facts": [{
-                "subject_kind": "character", "subject_id": person, "body": "前一段已落",
-            }],
-        },
-    )
+    stub_month_translate(monkeypatch, lambda prompt, config: {
+        "textual_facts": [{
+            "subject_kind": "character", "subject_id": person, "body": "前一段已落",
+        }],
+    })
+    dispatch_month_segment(db, state, segment="前一段")
     db.conn.execute(
         "CREATE TEMP TRIGGER fail_month_segment_fact "
         "BEFORE INSERT ON textual_facts WHEN NEW.body='阻断本段' "
@@ -480,17 +470,13 @@ def test_world_segment_failure_rolls_back_only_current_segment(game):
     db.conn.commit()
 
     with pytest.raises(sqlite3.IntegrityError):
-        dispatch_month_segment(
-            db,
-            state,
-            segment="发生代码侧落账异常的当前段",
-            translate_fn=lambda prompt, config: {
-                "textual_facts": [
-                    {"subject_kind": "character", "subject_id": person, "body": "本段先写"},
-                    {"subject_kind": "character", "subject_id": person, "body": "阻断本段"},
-                ],
-            },
-        )
+        stub_month_translate(monkeypatch, lambda prompt, config: {
+            "textual_facts": [
+                {"subject_kind": "character", "subject_id": person, "body": "本段先写"},
+                {"subject_kind": "character", "subject_id": person, "body": "阻断本段"},
+            ],
+        })
+        dispatch_month_segment(db, state, segment="发生代码侧落账异常的当前段")
 
     facts = db.textual_facts.readable_materials(
         subject_kind="character", subject_id=person,
@@ -498,7 +484,7 @@ def test_world_segment_failure_rolls_back_only_current_segment(game):
     assert [fact.body for fact in facts] == ["前一段已落"]
 
 
-def test_world_segment_effects_use_frozen_visible_affairs(game):
+def test_world_segment_effects_use_frozen_visible_affairs(game, monkeypatch):
     from ming_sim.month_translate import dispatch_month_segment
 
     db, state, _ = game
@@ -513,15 +499,13 @@ def test_world_segment_effects_use_frozen_visible_affairs(game):
     db.conn.commit()
     before = state.metrics["国库"]
     # 真实入口供料只含未了事务；已了结事务不在本批输入。
-    result = dispatch_month_segment(
-        db, state, segment="两笔事务回指",
-        translate_fn=lambda request, config: {"effects": {"economy_moves": [
-            {"origin_ref": f"affair:{visible.id}", "account": "国库", "delta": -1,
-             "category": "过月支出", "reason": "合法支出"},
-            {"origin_ref": f"affair:{hidden.id}", "account": "国库", "delta": -1,
-             "category": "过月支出", "reason": "越权支出"},
-        ]}},
-    )
+    stub_month_translate(monkeypatch, lambda request, config: {"effects": {"economy_moves": [
+        {"origin_ref": f"affair:{visible.id}", "account": "国库", "delta": -1,
+         "category": "过月支出", "reason": "合法支出"},
+        {"origin_ref": f"affair:{hidden.id}", "account": "国库", "delta": -1,
+         "category": "过月支出", "reason": "越权支出"},
+    ]}})
+    result = dispatch_month_segment(db, state, segment="两笔事务回指")
     assert state.metrics["国库"] == before - 1
     assert result.effects.applied
     assert db.conn.execute(
@@ -533,7 +517,7 @@ def test_world_segment_effects_use_frozen_visible_affairs(game):
 
 
 
-def test_world_segment_repeated_entity_effects_apply_in_order(game):
+def test_world_segment_repeated_entity_effects_apply_in_order(game, monkeypatch):
     from ming_sim.month_translate import dispatch_month_segment
     from tests.test_refugee_loop_652 import _pop, _recovery_grant
 
@@ -546,7 +530,7 @@ def test_world_segment_repeated_entity_effects_apply_in_order(game):
     db.conn.execute("UPDATE armies SET morale=58 WHERE id=?", (army,))
     db.conn.execute("UPDATE regions SET public_support=38 WHERE id=?", (region,))
     db.conn.commit()
-    dispatch_month_segment(db, state, segment="先振奋后受挫", translate_fn=lambda r, c: {
+    stub_month_translate(monkeypatch, lambda r, c: {
         "effects": [
             {"new_issues": None,
              "army_delta": {army: {"origin_ref": "盘面自发", "morale": 90}},
@@ -561,6 +545,7 @@ def test_world_segment_repeated_entity_effects_apply_in_order(game):
                                     "attach": "new", "identity": "同段一事", "name": "同段一事", "origin": "世界段"}}]},
         ],
     })
+    dispatch_month_segment(db, state, segment="先振奋后受挫")
     assert db.conn.execute("SELECT morale FROM armies WHERE id=?", (army,)).fetchone()[0] == 70
     assert db.conn.execute("SELECT public_support FROM regions WHERE id=?", (region,)).fetchone()[0] == 39
     assert db.conn.execute("SELECT COUNT(*) FROM affairs").fetchone()[0] == affairs_before + 1
@@ -585,7 +570,7 @@ def test_world_segment_repeated_entity_effects_apply_in_order(game):
 )
 def test_world_segment_repeated_strategic_results_apply_in_order(
     game, initial_pressure, first_pressure, second_pressure, second_morale, second_reason, second_army_event,
-    triggered, pressure, morale, first_reason,
+    triggered, pressure, morale, first_reason, monkeypatch,
 ):
     from ming_sim.month_translate import dispatch_month_segment
     from tests.test_refugee_loop_652 import _pop
@@ -662,9 +647,8 @@ def test_world_segment_repeated_strategic_results_apply_in_order(
         effects.append({"metric_delta": {"民心": 1}})
     elif metric_before == 100:
         effects.append({"metric_delta": {"民心": 5}})
-    dispatch_month_segment(db, state, segment="己巳之变两笔战果", translate_fn=lambda r, c: {
-        "effects": effects,
-    })
+    stub_month_translate(monkeypatch, lambda r, c: {"effects": effects})
+    dispatch_month_segment(db, state, segment="己巳之变两笔战果")
     assert db.issues.has_event_terminal_state('jisi_lubian', "triggered") is triggered
     assert db.conn.execute("SELECT military_pressure FROM regions WHERE id='beizhili'").fetchone()[0] == pressure
     assert db.conn.execute("SELECT morale FROM armies WHERE id='jingying'").fetchone()[0] == morale
@@ -691,19 +675,20 @@ def test_world_segment_repeated_strategic_results_apply_in_order(
     if first_pressure == 35 and second_pressure == -5:
         before = (state.metrics["民心"], _pop(db, "流民", "shaanxi"))
         pressure_before = db.conn.execute("SELECT military_pressure FROM regions WHERE id='beizhili'").fetchone()[0]
-        dispatch_month_segment(db, state, segment="未知归属", translate_fn=lambda r, c: {
+        stub_month_translate(monkeypatch, lambda r, c: {
             "effects": [{"event_id": "not_an_event", "metric_delta": {"民心": -1},
                          "population_transfers": [{"origin_ref": "盘面自发", "source": "农民@shaanxi",
                                                    "target": "流民@shaanxi", "amount": 100, "reason": "灾害"}],
                          "region_delta": {"beizhili": {"origin_ref": "盘面自发", "military_pressure": 1}}},
                         {"metric_delta": {"民心": -1}}],
         })
+        dispatch_month_segment(db, state, segment="未知归属")
         assert (state.metrics["民心"], _pop(db, "流民", "shaanxi")) == (before[0] - 1, before[1])
         assert db.conn.execute("SELECT military_pressure FROM regions WHERE id='beizhili'").fetchone()[0] == pressure_before
         assert db.conn.execute("SELECT military_pressure FROM regions WHERE id='beizhili'").fetchone()[0] == pressure
 
 
-def test_hidden_affair_strategic_result_does_not_trigger_or_land(game):
+def test_hidden_affair_strategic_result_does_not_trigger_or_land(game, monkeypatch):
     from ming_sim.month_translate import dispatch_month_segment
 
     db, state, _ = game
@@ -720,7 +705,7 @@ def test_hidden_affair_strategic_result_does_not_trigger_or_land(game):
     db.conn.commit()
     metric_before = state.metrics["民心"]
     treasury_before = state.metrics["国库"]
-    dispatch_month_segment(db, state, segment="不可见事务战果", translate_fn=lambda _request, _config: {
+    stub_month_translate(monkeypatch, lambda _request, _config: {
         "effects": [{
             "event_id": "jisi_lubian",
             "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
@@ -735,6 +720,7 @@ def test_hidden_affair_strategic_result_does_not_trigger_or_land(game):
             }],
         }],
     })
+    dispatch_month_segment(db, state, segment="不可见事务战果")
     assert db.issues.has_event_terminal_state('jisi_lubian', "triggered") is False
     assert state.metrics["民心"] == metric_before
     assert state.metrics["国库"] == treasury_before
@@ -780,7 +766,7 @@ def _army_rejection_categories(db, army_id: str) -> set[str]:
     (None, "unauthorized_affair_origin"),
     ("no-such-region", "invalid_enum"),
 ])
-def test_hidden_affair_new_army_does_not_block_sibling_result(game, station_region, category):
+def test_hidden_affair_new_army_does_not_block_sibling_result(game, station_region, category, monkeypatch):
     from ming_sim.month_translate import dispatch_month_segment
 
     db, state, _ = game
@@ -799,7 +785,7 @@ def test_hidden_affair_new_army_does_not_block_sibling_result(game, station_regi
     }
     if station_region is not None:
         new_army["station_region"] = station_region
-    dispatch_month_segment(db, state, segment="好坏新军混装", translate_fn=lambda _request, _config: {
+    stub_month_translate(monkeypatch, lambda _request, _config: {
         "effects": [{
             "event_id": "jisi_lubian",
             "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
@@ -813,6 +799,7 @@ def test_hidden_affair_new_army_does_not_block_sibling_result(game, station_regi
             }],
         }],
     })
+    dispatch_month_segment(db, state, segment="好坏新军混装")
     assert db.issues.has_event_terminal_state('jisi_lubian', "triggered") is True
     assert db.conn.execute(
         "SELECT military_pressure FROM regions WHERE id='beizhili'"
@@ -824,7 +811,7 @@ def test_hidden_affair_new_army_does_not_block_sibling_result(game, station_regi
 
 
 @pytest.mark.parametrize("station_region", [None, "no-such-region"])
-def test_hidden_affair_new_army_alone_does_not_trigger(game, station_region):
+def test_hidden_affair_new_army_alone_does_not_trigger(game, station_region, monkeypatch):
     from ming_sim.month_translate import dispatch_month_segment
 
     db, state, _ = game
@@ -840,7 +827,7 @@ def test_hidden_affair_new_army_alone_does_not_trigger(game, station_region):
     }
     if station_region is not None:
         new_army["station_region"] = station_region
-    dispatch_month_segment(db, state, segment="全坏新军", translate_fn=lambda _request, _config: {
+    stub_month_translate(monkeypatch, lambda _request, _config: {
         "effects": [{
             "event_id": "jisi_lubian",
             "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
@@ -853,6 +840,7 @@ def test_hidden_affair_new_army_alone_does_not_trigger(game, station_region):
             }],
         }],
     })
+    dispatch_month_segment(db, state, segment="全坏新军")
     assert db.issues.has_event_terminal_state('jisi_lubian', "triggered") is False
     assert state.metrics["民心"] == metric_before
     assert state.metrics["国库"] == treasury_before
@@ -860,7 +848,7 @@ def test_hidden_affair_new_army_alone_does_not_trigger(game, station_region):
     assert _army_rejection_categories(db, "jisi_hidden_only_1840") == {"event_rejected"}
 
 
-def test_unknown_station_region_new_army_does_not_trigger_or_land(game):
+def test_unknown_station_region_new_army_does_not_trigger_or_land(game, monkeypatch):
     from ming_sim.month_translate import dispatch_month_segment
 
     db, state, _ = game
@@ -869,7 +857,7 @@ def test_unknown_station_region_new_army_does_not_trigger_or_land(game):
     metric_before = state.metrics["民心"]
     treasury_before = state.metrics["国库"]
     armies_before = db.conn.execute("SELECT COUNT(*) FROM armies").fetchone()[0]
-    dispatch_month_segment(db, state, segment="未知驻地新军", translate_fn=lambda _request, _config: {
+    stub_month_translate(monkeypatch, lambda _request, _config: {
         "effects": [{
             "event_id": "jisi_lubian",
             "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
@@ -886,13 +874,14 @@ def test_unknown_station_region_new_army_does_not_trigger_or_land(game):
             }],
         }],
     })
+    dispatch_month_segment(db, state, segment="未知驻地新军")
     assert db.issues.has_event_terminal_state('jisi_lubian', "triggered") is False
     assert state.metrics["民心"] == metric_before
     assert state.metrics["国库"] == treasury_before
     assert db.conn.execute("SELECT COUNT(*) FROM armies").fetchone()[0] == armies_before
 
 
-def test_final_strategic_rejection_leaves_no_owned_effects(game):
+def test_final_strategic_rejection_leaves_no_owned_effects(game, monkeypatch):
     """Owned fields and the event ledger stay one envelope.
 
     An independent same-kind delta may move the board before the event is
@@ -908,7 +897,7 @@ def test_final_strategic_rejection_leaves_no_owned_effects(game):
     db.conn.commit()
     metric_before = state.metrics["民心"]
     treasury_before = state.metrics["国库"]
-    dispatch_month_segment(db, state, segment="独立军压后事件战果", translate_fn=lambda _request, _config: {
+    stub_month_translate(monkeypatch, lambda _request, _config: {
         "effects": [
             {"region_delta": {"beizhili": {
                 "origin_ref": "盘面自发", "military_pressure": 10,
@@ -929,6 +918,7 @@ def test_final_strategic_rejection_leaves_no_owned_effects(game):
             },
         ],
     })
+    dispatch_month_segment(db, state, segment="独立军压后事件战果")
     triggered = db.issues.has_event_terminal_state('jisi_lubian', "triggered")
     assert state.metrics["民心"] == metric_before + (-3 if triggered else 0)
     assert state.metrics["国库"] == treasury_before + (-1 if triggered else 0)
@@ -940,9 +930,10 @@ def test_final_strategic_rejection_leaves_no_owned_effects(game):
 
 
 
-def test_null_emperor_fate_does_not_end_the_month(game):
+def test_null_emperor_fate_does_not_end_the_month(game, monkeypatch):
     from ming_sim.month_translate import dispatch_month_segment
     db, state, _ = game
-    result = dispatch_month_segment(db, state, segment="本月", translate_fn=lambda request, config: {"effects": {"emperor_fate": None}})
+    stub_month_translate(monkeypatch, lambda request, config: {"effects": {"emperor_fate": None}})
+    result = dispatch_month_segment(db, state, segment="本月")
     assert not state.ended and not state.ending_status
     assert all(not view(applied, "victory_status") for applied in result.effects.applied)

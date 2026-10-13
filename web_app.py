@@ -54,7 +54,7 @@ from ming_sim.save_slots import (
     delete_sqlite_db_files_or_raise,
 )
 from ming_sim.exceptions import DependencyMismatch, LLMUnavailable, SettlementAbort
-from ming_sim.constants import GATE_METRIC_KEYS
+from ming_sim.constants import ECONOMY_ACCOUNTS, GATE_METRIC_KEYS
 from ming_sim.llm_config import (
     CLI_DEFAULT_TIMEOUT_SECONDS,
     VALID_CHANNELS,
@@ -1497,9 +1497,9 @@ class WebGame:
         budget = compute_budget_lines(self.db, self.state)
         # #1234：户部余额与顶栏同缝——核账期读月初快照四键。
         display = self._display_metrics()
-        budget["国库"]["balance"] = int(display["国库"])
-        budget["内库"]["balance"] = int(display["内库"])
-        for account in (budget["国库"], budget["内库"]):
+        for name in ECONOMY_ACCOUNTS:
+            account = budget[name]
+            account["balance"] = int(display[name])
             # #1471：玩家 HUD 定额精确投影 {name, amount}；flows/fiscal_config 工程 note·internal 留源侧。
             for direction in ("income", "expense"):
                 account[direction] = [
