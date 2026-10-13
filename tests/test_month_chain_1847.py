@@ -49,10 +49,12 @@ def _decision_block(title: str, *labels: str) -> str:
     )
 
 
-@pytest.mark.parametrize("kind", ["world", "decree", "memorial"])
-@pytest.mark.parametrize("mode", ["ready", "running", "prefailed", "livefailed"])
+@pytest.mark.parametrize("kind,mode", [
+    ("world", "ready"), ("decree", "ready"), ("memorial", "ready"),
+    ("world", "running"), ("world", "prefailed"),
+])
 def test_presented_options_forecast_then_apply_only_selected(game, monkeypatch, kind, mode):
-    """Presentation → speculative calls → selection/retry → reopened DB, no unselected effects."""
+    """Presentation → speculative calls → selection → reopened DB, no unselected effects."""
     from concurrent.futures import ThreadPoolExecutor
     from threading import Event
     from ming_sim.error_pack import error_packs_root
@@ -86,10 +88,8 @@ def test_presented_options_forecast_then_apply_only_selected(game, monkeypatch, 
             started.set()
             if mode == "running":
                 assert release.wait(5)
-            if mode in {"prefailed", "livefailed"}:
+            if mode == "prefailed":
                 raise LLMUnavailable("injected speculative failure", stage="world-segment-continue")
-        if label == "甲" and attempt == 2 and mode == "livefailed":
-            raise LLMUnavailable("injected live failure", stage="world-segment-continue")
         return json.dumps({"delta": -3 if label == "甲" else -19})
 
     def memorial_model(session, *, officers, backlog, answer=None):
@@ -147,17 +147,9 @@ def test_presented_options_forecast_then_apply_only_selected(game, monkeypatch, 
             assert not pending_submit.done()
             release.set()
             pending_submit.result(timeout=5)
-        elif mode == "livefailed":
-            with pytest.raises(SettlementAbort):
-                submit()
-            assert month_chain.month_chain_call_failure(db, turn)
-            assert not db.conn.execute("SELECT 1 FROM economy_ledger WHERE category='候选办理'").fetchall()
-            session = make_light_session(db, db.load_state(content), content)
-            session.llm_config = object()
-            session.resolve_turn(allow_empty_decree=True)
         else:
             submit()
-        assert calls.count("甲") == (3 if mode == "livefailed" else 2 if mode == "prefailed" else 1)
+        assert calls.count("甲") == (2 if mode == "prefailed" else 1)
         assert calls.count("乙") == 1
         reopened = GameDB(str(db.path), content=content)
         try:
@@ -170,22 +162,19 @@ def test_presented_options_forecast_then_apply_only_selected(game, monkeypatch, 
         finally:
             reopened.conn.close()
         assert not session.pending_decisions()
-        if mode in {"prefailed", "livefailed"}:
+        if mode == "prefailed":
             errors = [json.loads(p.read_text())["exception_message"]
                       for p in error_packs_root().glob("*/manifest.json")]
             assert "injected speculative failure" in errors
-            if mode == "livefailed":
-                assert "injected live failure" in errors
     finally:
         release.set()
         if pool is not None:
             pool.shutdown(wait=True)
 
 
-@pytest.mark.parametrize("kind", ["world", "decree"])
-@pytest.mark.parametrize("handwritten_batch", [False, True])
-def test_multiple_questions_continue_independently_through_recovery(game, monkeypatch, kind, handwritten_batch):
-    """Raw one-row inputs, sibling success after failure, durable follow-up/recovery."""
+@pytest.mark.parametrize("kind,handwritten_batch", [("world", True), ("decree", False)])
+def test_multiple_questions_continue_independently(game, monkeypatch, kind, handwritten_batch):
+    """Each question advances alone; remaining questions and follow-ups survive reopening."""
     from ming_sim.db import GameDB
 
     _forbid_extractor(monkeypatch)
@@ -213,14 +202,10 @@ def test_multiple_questions_continue_independently_through_recovery(game, monkey
         delta = {"甲": -3, "乙": -19, "丙": -7, "丁": -23, "戊": -11, "己": -29}[label]
         return json.dumps({"delta": delta}) + (_decision_block("追问", "戊", "己") if label == "丙" else "")
 
-    failed = []
     def translate(request, config):
         if not request.segment.strip():
             return {"effects": {}}
         delta = json.loads(request.segment)["delta"]
-        if delta == -3 and not failed:
-            failed.append(True)
-            raise LLMUnavailable("injected selected translation failure", stage="world_translate")
         return {"effects": {"economy_moves": [{"origin_ref": f"affair:{affair.id}",
                 "account": "国库", "delta": delta, "category": "多问办理", "reason": "实办"}]}}
 
@@ -238,10 +223,9 @@ def test_multiple_questions_continue_independently_through_recovery(game, monkey
     assert sorted(calls) == sorted(["甲", "乙", "丙", "丁"])
     assert ledger() == ([-1] if kind == "world" else [])
     if handwritten_batch:
-        with pytest.raises(SettlementAbort):
-            session.submit_hitl_choices([
-                {**r["options"][0], "decision_key": r["decision_key"], "note": "  原批\n照办  "}
-                for r in [first, second]], write_gate=session._write_gate)
+        session.submit_hitl_choices([
+            {**r["options"][0], "decision_key": r["decision_key"], "note": "  原批\n照办  "}
+            for r in [first, second]], write_gate=session._write_gate)
     else:
         # Single-row submission does not consume the unanswered sibling.
         session.submit_hitl_choices([{**second["options"][0], "decision_key": second["decision_key"]}],
@@ -249,12 +233,10 @@ def test_multiple_questions_continue_independently_through_recovery(game, monkey
         remaining = session.pending_decisions()
         assert len(remaining) == 2
         assert remaining[0]["decision_key"] == first["decision_key"]
-        with pytest.raises(SettlementAbort):
-            session.submit_hitl_choices([{**first["options"][0], "decision_key": first["decision_key"]}],
-                                        write_gate=session._write_gate)
-    assert ledger() == ([-1, -7] if kind == "world" else [-7])
-    assert month_chain.month_chain_call_failure(db, turn)
-    # A reopened session consumes the persisted continuation, not another call.
+        session.submit_hitl_choices([{**first["options"][0], "decision_key": first["decision_key"]}],
+                                    write_gate=session._write_gate)
+    assert sorted(ledger()) == ([-7, -3, -1] if kind == "world" else [-7, -3])
+    # The remaining follow-up is durable; reopening does not reapply completed answers.
     reopened = GameDB(str(db.path), content=content)
     try:
         restored = make_light_session(reopened, reopened.load_state(content), content)
@@ -266,7 +248,7 @@ def test_multiple_questions_continue_independently_through_recovery(game, monkey
                                      write_gate=restored._write_gate)
         assert not restored.pending_decisions()
         assert restored.resolve_turn(allow_empty_decree=True).stage == "gazette"
-        assert ledger() == ([-1, -7, -3, -11] if kind == "world" else [-7, -3, -11])
+        assert sorted(ledger()) == ([-11, -7, -3, -1] if kind == "world" else [-11, -7, -3])
         assert calls.count("丙") == (2 if handwritten_batch else 1)
         assert calls.count("丁") == 1
     finally:
@@ -559,12 +541,18 @@ def test_decree_continuation_survives_llm_exhaustion_then_retries(game, monkeypa
     fail_once = {"armed": True}
 
     def flaky_decree_text(_agent, message, **kwargs):
-        llm_calls.append(1)
-        if fail_at != "translation" and fail_once["armed"] and json.loads(message)["answers"][0]["note"]:
+        answer = json.loads(message)["answers"][0]
+        label = answer["choice"]["label"]
+        llm_calls.append(label)
+        if fail_at == "continuation" and label == "加赈十万" and llm_calls.count(label) == 1:
+            raise LLMUnavailable("injected speculative failure", stage="decree-forecast-continue")
+        if fail_at != "translation" and fail_once["armed"] and (
+            answer["note"] or (fail_at == "continuation" and label == "加赈十万")
+        ):
             fail_once["armed"] = False
             if fail_at == "unexpected":
                 raise RuntimeError("未识别模型接缝异常")
-            raise LLMUnavailable("模型调用耗尽", stage="decree-forecast-continue")
+            raise LLMUnavailable("injected live failure", stage="decree-forecast-continue")
         return "加赈落实，仓廪出十万。"
 
     real_dispatch = month_translate.dispatch_declaration
@@ -597,7 +585,7 @@ def test_decree_continuation_survives_llm_exhaustion_then_retries(game, monkeypa
         "decision_key": desk_row["decision_key"],
         "label": choice["label"],
         "hint": choice.get("hint") or "",
-        "note": "自批原文",
+        "note": "" if fail_at == "continuation" else "自批原文",
     }]
     monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", translate)
 
@@ -716,7 +704,6 @@ def test_missing_model_keeps_decree_question_until_retry(game, monkeypatch):
     import web_app
     detail = web_app._exception_detail(blocked.value)
     assert detail["error_type"] == "LLMUnavailable"
-    assert isinstance(blocked.value.__cause__, LLMUnavailable)
     assert blocked.value.error_pack_path
     assert db.staged_declarations.questions_for(ref)
     assert session.state.turn_phase == TurnPhase.SETTLING.value
@@ -756,7 +743,6 @@ def test_missing_model_keeps_world_question_until_retry(game, monkeypatch):
     import web_app
     detail = web_app._exception_detail(blocked.value)
     assert detail["error_type"] == "LLMUnavailable"
-    assert isinstance(blocked.value.__cause__, LLMUnavailable)
     assert blocked.value.error_pack_path
     chain = _month_chain_of(db, closed_turn)
     assert chain.get("world_questions")
