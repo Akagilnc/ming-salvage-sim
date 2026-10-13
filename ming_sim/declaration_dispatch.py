@@ -425,16 +425,13 @@ def _persist_specialized_extraction(
     月度拨帑核账走 ``record_monthly_grant_reconciliations``（引擎中位实抵，#1900），
     本口不接 dossier_reconciliations 提案。
 
-    过月主链（ADR 0157 步骤 4a）整月密奏覆盖由独立供料 run 落账；
-    ``defer_monthly_secret_supply`` 时不在此拼整月密奏义务。信封已声明的
-    ``covert_exec_selections`` 仍按 only_supplied 落本笔（结构化成败回步结果）。
-
-    返回写入口的结构化 applied/rejected（DB rows + RejectedItem），供本笔修正了结
-    并入 ``effect_sequence_results``——不另造平行核算。
+    过月主链（ADR 0157 步骤 4a）整月密奏与执行态由独立供料 run 落账；
+    ``defer_monthly_secret_supply`` 时不把逐段字段拼成整月义务（密奏与
+    ``covert_exec_selections`` 两类均 defer）。结构化返回只含本口实际落账的
+    applied/rejected——defer 未落账不得冒称已应用。
     """
     applied: list[object] = []
     rejected: list[RejectedItem] = []
-    # 密奏整月覆盖校验仍归 4a；defer 时不在此拼整月密奏义务。
     if not defer_monthly_secret_supply:
         reports = extraction.get("dossier_progress_reports") or []
         if isinstance(reports, list) and reports:
@@ -445,20 +442,19 @@ def _persist_specialized_extraction(
         applied.extend(
             db.accept_faction_denunciations(state, denunciations, commit=False)
         )
-    # 信封显式声明的执行态是本笔效果（only_supplied），不是整月义务；
-    # defer 只挡「无声明却扫全月」，不丢已声明选态的结构化成败。
-    selections = extraction.get("covert_exec_selections") or []
-    if isinstance(selections, list) and selections:
-        from ming_sim.covert_progress import apply_monthly_covert_actual_progress
+    if not defer_monthly_secret_supply:
+        selections = extraction.get("covert_exec_selections") or []
+        if isinstance(selections, list) and selections:
+            from ming_sim.covert_progress import apply_monthly_covert_actual_progress
 
-        rows, rows_rejections = apply_monthly_covert_actual_progress(
-            db, state, selections=selections, only_supplied=True,
-            source=source,
-        )
-        applied.extend(rows)
-        rejected.extend(rows_rejections)
-        for item in rows_rejections:
-            collector.record("covert_exec_selections", item, int(turn))
+            rows, rows_rejections = apply_monthly_covert_actual_progress(
+                db, state, selections=selections, only_supplied=True,
+                source=source,
+            )
+            applied.extend(rows)
+            rejected.extend(rows_rejections)
+            for item in rows_rejections:
+                collector.record("covert_exec_selections", item, int(turn))
     return SectionResult(applied=applied, rejected=rejected)
 
 
@@ -533,9 +529,9 @@ def _mark_correction_results(
     db.dossiers.set_pending_payload(pending_id, json.dumps(payload, ensure_ascii=False))
 
 
-def _step_correction_succeeded(step_result: Any) -> bool:
+def _step_correction_succeeded(step_result: SectionResult) -> bool:
     """Success = this effect_sequence step actually applied something and had no structured rejection."""
-    return bool(getattr(step_result, "applied", None)) and not getattr(step_result, "rejected", None)
+    return bool(step_result.applied) and not step_result.rejected
 
 
 def _dispatch_effects(
@@ -654,9 +650,7 @@ def _dispatch_effects(
                     item=dict(item), reason=str(exc), category=category, source=source,
                 ))
                 continue
-            annotation = {
-                "ids": ids, "decree_ref": owner_ref, "pending_id": pending_id,
-            }
+            annotation = {"ids": ids, "pending_id": pending_id}
             if correction_refs is not None and owner_ref:
                 correction_refs.append(owner_ref)
         has_effect = True

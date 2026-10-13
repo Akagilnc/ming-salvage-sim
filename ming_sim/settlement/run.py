@@ -33,9 +33,19 @@ from ming_sim.settlement.outcome import (
 )
 
 # C0 effects 数组的一笔：
-# (声明效果, 有序字段, 效果归属 id) 或附加第 4 元：进入核算前已确定的本笔拒收
-# （如未归属事件结局），合并进 effect_sequence_results。
-EffectStep = Tuple[Dict[str, object], Dict[str, List[Tuple[str, object]]], Dict[str, List[str]]]
+# (声明效果, 有序字段, 效果归属 id) 或附加第 4 元 List[RejectedItem]：
+# 进入核算前已确定的本笔拒收（如未归属事件结局），合并进 effect_sequence_results。
+EffectStepCore = Tuple[
+    Dict[str, object],
+    Dict[str, List[Tuple[str, object]]],
+    Dict[str, List[str]],
+]
+EffectStep = EffectStepCore | Tuple[
+    Dict[str, object],
+    Dict[str, List[Tuple[str, object]]],
+    Dict[str, List[str]],
+    List[RejectedItem],
+]
 EffectSequence = List[EffectStep]
 
 # 逐笔交错后仍只跑一次的段：无声明字段、只消费同批已落 applied（批次副作用）。
@@ -498,12 +508,6 @@ def _bind_step_person_changes(run, step_index: int) -> None:
     run.post_issue_person_changes = post_issue
 
 
-def _capture_into_step(run, step_parts: List[SectionResult], name: str, result) -> None:
-    """段结果写入运行态；步结果由 ``_store`` 经 ``active_step_parts`` 叠入。"""
-    assert run.active_step_parts is step_parts
-    _capture(run, name, result)
-
-
 def _run_effect_sequence(run) -> None:
     """C0 effects 数组按交代先后逐笔落账（#1844 / #1843）。
 
@@ -547,20 +551,20 @@ def _run_effect_sequence(run) -> None:
             )
             if priors:
                 step_parts.append(SectionResult(applied=[], rejected=list(priors)))
-            _capture_into_step(run, step_parts, "metric", metric_section.apply(run))
-            _capture_into_step(run, step_parts, "new_armies", army_section.apply_new_armies(
+            _capture(run, "metric", metric_section.apply(run))
+            _capture(run, "new_armies", army_section.apply_new_armies(
                 run, list(step_extracted.get("new_armies") or []),
             ))
-            _capture_into_step(run, step_parts, "region_changes", region_section.apply(run))
-            _capture_into_step(run, step_parts, "army_changes", army_section.apply_deltas(run))
-            _capture_into_step(
-                run, step_parts, "economy",
+            _capture(run, "region_changes", region_section.apply(run))
+            _capture(run, "army_changes", army_section.apply_deltas(run))
+            _capture(
+                run, "economy",
                 economy_section.apply(run, list(step_extracted.get("economy_moves") or [])),
             )
             for spec in registry.section_specs():
                 if spec.name in interleaved or spec.name in _BATCH_AFTER_INTERLEAVE:
                     continue
-                _capture_into_step(run, step_parts, spec.name, registry.load(spec)(run))
+                _capture(run, spec.name, registry.load(spec)(run))
         finally:
             run.active_step_parts = None
         step_result = _empty()

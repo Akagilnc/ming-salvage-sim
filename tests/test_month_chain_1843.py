@@ -270,16 +270,21 @@ def test_player_rejection_lifecycle_through_translation_and_month(game, monkeypa
                      "economy_moves": [{**bad, "account": "国库", "category": "经济成功"}],
                      "事件结局": {"无归属事件": "胜"}}]
         if kind == "specialized_ok":
+            # 检举非 4a defer 字段：过月 effects 路径可当回合落账并回步结果。
             return [{"resolves_rejection_ids": ids, "faction_denunciations": [{
                 "accuser_name": accuser, "target_dossier_id": specialized_dossier_id,
                 "subject_name": minister, "memorial_text": "专属检举落账",
             }]}]
         if kind == "mixed_specialized":
+            # 密奏/执行态整月 defer（SETTLEMENT_FLOW 4a）；不得借旨内提前落账造专属拒收。
+            # 契约正确失败路径＝专属检举已落 + 同笔实体拒收，专属成功不得盖过拒收。
             return [{"resolves_rejection_ids": ids,
-                     "economy_moves": [{**bad, "account": "国库", "category": "经济成功"}],
-                     "covert_exec_selections": [{
-                         "order_id": specialized_order_id, "fidelity": "不是合法态",
-                     }]}]
+                     "faction_denunciations": [{
+                         "accuser_name": accuser, "target_dossier_id": specialized_dossier_id,
+                         "subject_name": minister, "memorial_text": "专属检举已落",
+                     }],
+                     "fiscal_removes": [{"key": "查无此税项", "origin_ref": origin,
+                                        "reason": "实体拒收"}]}]
         correction_move = (
             {"economy_moves": []} if kind == "empty"
             else {"economy_moves": [{**bad, "account": account}]}
@@ -388,8 +393,7 @@ def test_player_rejection_lifecycle_through_translation_and_month(game, monkeypa
             db.dossiers.get_for_secret_order(specialized_order_id)["id"]
         )
         db.conn.commit()
-        # 活跃密令会拉 4a；生命周期夹具无真模型，供料缝回完整密奏+合法执行态。
-        # 修正信封内的专属拒收仍由旨内 effects 落账判定，与 4a 供料分离。
+        # 活跃密令会拉 4a；生命周期夹具无真模型，整月密奏+执行态由独立供料缝回（非旨内提前落）。
         monkeypatch.setattr(
             month_chain, "run_secret_orders_supply",
             lambda *_a, **_k: {
@@ -411,9 +415,8 @@ def test_player_rejection_lifecycle_through_translation_and_month(game, monkeypa
             ("mixed_reject", False),  # 经济成功+财政拒收须认失败
             ("stamp", False),       # 前置盖章拒收须进步结果
             ("unowned", False),     # 未归属事件结局须进步结果
-            # 专属拒收须在密令仍 active 时测（成功专属会经 4a 推进密令）。
-            ("mixed_specialized", False),  # 经济成功+专属拒收须认失败
-            ("specialized_ok", True),     # 专属字段落账须认成功
+            ("specialized_ok", True),     # 专属检举落账须认成功（须先于同案卷再检举）
+            ("mixed_specialized", False),  # 专属已落+实体拒收须认失败
         ):
             declaration_dispatch.dispatch_declaration(
                 db, state, {"effects": {"economy_moves": [bad]}},
