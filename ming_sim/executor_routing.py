@@ -14,6 +14,7 @@
 """
 
 from __future__ import annotations
+from ming_sim.exceptions import DeclarationDataError
 
 from typing import Any, Dict, List, Mapping, Optional
 
@@ -63,10 +64,11 @@ def _duty_table() -> Mapping[str, Any]:
 
 def duty_route_categories() -> frozenset[str]:
     """职司路由事务类别闭集唯一派生（offices.json duty_routes；禁手抄第二份）。"""
+    from ming_sim.assets import require_dict, require_list
+
     cats: set[str] = set()
-    for entry in _duty_table().get("routes", []) or []:
-        if not isinstance(entry, dict):
-            continue
+    for raw in require_list(_duty_table().get("routes", []), "offices.json.duty_routes.routes"):
+        entry = require_dict(raw, "offices.json.duty_routes.routes[]")
         token = str(entry.get("category") or "").strip()
         if token:
             cats.add(token)
@@ -117,12 +119,11 @@ def resolve_lead_executors(
             "coverage": coverage, "route": "named",
             "leads": [assignee], "signal": None,
         }
-    roster = participant_roster if isinstance(participant_roster, list) else []
+    from ming_sim.participant_roster import decode_durable_participant_roster
+
     named: List[str] = []
     seen: set = set()
-    for entry in roster:
-        if not isinstance(entry, dict):
-            continue
+    for entry in decode_durable_participant_roster(participant_roster):
         if str(entry.get("tier") or "").strip() != "主办":
             continue
         name = str(entry.get("character_id") or "").strip()
@@ -148,4 +149,4 @@ def require_execution_lead_or_raise(route: Mapping[str, object]) -> None:
         and not list(route.get("leads") or [])
         and str(route.get("coverage") or "") == "multi_month"
     ):
-        raise ValueError("案卷缺少主办（route=unassigned）")
+        raise DeclarationDataError("案卷缺少主办（route=unassigned）")

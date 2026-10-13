@@ -13,8 +13,14 @@
 from __future__ import annotations
 
 import json
-import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Sequence
+
+from ming_sim.strict_types import strict_int, strict_sqlite_id
+
+from ming_sim.applier import (
+    StoredDocumentError,
+    load_stored_list,
+)
 
 ENTRY_KIND_STAGED = "staged_commitment"
 # #624 / ADR 0078：反催谏 / 求宽限（0075 同款 next_audience_todos 通道；不进 due-review 白名单）
@@ -24,240 +30,196 @@ TODO_STATUS_PENDING = "pending"
 TODO_STATUS_CONSUMED = "consumed"
 # rolled 写口仍由 mark_next_audience_todo_status 接受（P3 契约）；常量待 #623 超额滚存启用再导出。
 
-_CN_YEAR_DIGITS = {
-    "零": 0, "〇": 0,
-    "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
-    "五": 5, "六": 6, "七": 7, "八": 8, "九": 9,
-    "十": 10,
-}
 
-# 「三年火器见眉目」「五年新历成」「七八年农政见效」
-_STAGE_YEAR_RE = re.compile(
-    r"(?P<years>[一二三四五六七八九十两〇零]+)年"
-    r"(?P<body>[^，。；;、\n]*?)"
-    r"(?=(?:[一二三四五六七八九十两〇零]+年)|[，。；;、\n]|$)"
-)
+def _stage_text_fields(item: Dict[str, object]) -> tuple[str, str] | None:
+    """写口前置正文归一化（criterion/origin 别名与回填）——只在写口调用。
 
-
-def _cn_years_to_int(token: str) -> int:
-    raw = str(token or "").strip()
-    if not raw:
-        raise ValueError("年数为空")
-    if raw == "十":
-        return 10
-    if raw.startswith("十") and len(raw) == 2 and raw[1] in _CN_YEAR_DIGITS:
-        return 10 + _CN_YEAR_DIGITS[raw[1]]
-    if raw.endswith("十") and len(raw) == 2 and raw[0] in _CN_YEAR_DIGITS:
-        return _CN_YEAR_DIGITS[raw[0]] * 10
-    # 「七八」取首数（约数年取下界）
-    if all(ch in _CN_YEAR_DIGITS for ch in raw):
-        if len(raw) == 1:
-            return _CN_YEAR_DIGITS[raw]
-        if "十" not in raw:
-            return _CN_YEAR_DIGITS[raw[0]]
-    raise ValueError(f"无法解析年数：{raw!r}")
+    返回 (criterion_text, origin_context)；缺正文或纯空白返回 None，坏类型拒收。
+    #1897 / ADR0142：自由正文原样入载体，禁 strip 规范化；``strip`` 只用于空判。
+    持久读口不走此面，只认 ``stages_to_json`` 写出的规范四字段（#1897 G）。
+    """
+    for field in ("criterion_text", "criterion", "origin_context", "origin"):
+        if field in item and not isinstance(item[field], str):
+            raise TypeError(f"stages.{field} 须为字符串")
+    criterion = item.get("criterion_text") or item.get("criterion") or ""
+    origin_context = item.get("origin_context") or item.get("origin") or criterion
+    if not criterion and origin_context:
+        criterion = origin_context
+    if not isinstance(criterion, str) or not criterion.strip():
+        return None
+    if not isinstance(origin_context, str) or not origin_context.strip():
+        return None
+    return criterion, origin_context
 
 
-def parse_staged_year_promise(text: str, *, origin_turn: int) -> List[Dict[str, object]]:
-    """从「三年X五年Y」文案抽出分段（scripted 捕获；禁 live-LLM 作唯一验收）。"""
-    src = str(text or "").strip()
-    if not src:
-        return []
-    stages: List[Dict[str, object]] = []
-    for match in _STAGE_YEAR_RE.finditer(src):
-        years_tok = match.group("years")
-        body = str(match.group("body") or "").strip(" ，。；;、")
-        if not body:
+def _stage_record(
+    *, stage_idx: int, due_turn: int, criterion_text: str, origin_context: str,
+) -> Dict[str, object]:
+    """四字段分段记录形状——读/写共用。"""
+    return {
+        "stage_idx": stage_idx,
+        "due_turn": due_turn,
+        "criterion_text": criterion_text,
+        "origin_context": origin_context,
+    }
+
+
+def _prepare_stages_for_write(data: Sequence[object]) -> List[object]:
+    """写口专用前置归一化：别名／正文回填／已出现值的数字串 → 规范草稿。
+
+    不发明 ``stage_idx``；缺失／空值／非对象原样交给唯一成员门拒收（#1897 G/G2）。
+    成员规则只在 ``_commitment_stages_members``，此处不复制拒收。
+    """
+    prepared: List[object] = []
+    for idx, item in enumerate(data):
+        if not isinstance(item, dict):
+            prepared.append(item)
             continue
+        draft = dict(item)
+        # TypeError（坏类型）仍从写口前置响亮；缺／空白正文不在此拒，交成员门。
+        texts = _stage_text_fields(item)
+        if texts is not None:
+            draft["criterion_text"], draft["origin_context"] = texts
+        # due_turn／stage_idx 同形：仅对已出现非空值做数字串→int；空缺原样交成员门。
+        # 复用同一 strict_int 调用，不另抽 helper（SQLite 范围仍只在成员门）。
+        for field in ("due_turn", "stage_idx"):
+            if field not in draft or draft[field] in (None, ""):
+                continue
+            try:
+                draft[field] = strict_int(
+                    draft[field], accept_numeric_strings=True,
+                )
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"stages[{idx}].{field} 须为有限整数") from exc
+        prepared.append(draft)
+    return prepared
+
+
+def _commitment_stages_members(data: Sequence[object]) -> List[Dict[str, object]]:
+    """分段成员准入唯一权威：写口（前置归一化后）与全部持久读口共用此面。
+
+    只认规范形：四字段齐全，``stage_idx``／``due_turn`` 为真整数（拒数字串），
+    正文非空字符串，同一承诺内 ``stage_idx`` 不重复。不设缺省、别名、回填。
+    已持久腐坏不得洗成合法身份（#1897 G；函数自身 docstring 旧约同向）。
+    ``due_turn`` 复用 ``strict_int``；``stage_idx`` 复用 ``strict_sqlite_id``
+    （SQLite UNIQUE 绑定键，#1897 D′）。
+    Raises ValueError/TypeError on bad members. Write seam keeps those;
+    durable load wraps as StoredDocumentError.
+    """
+    out: List[Dict[str, object]] = []
+    seen: set[int] = set()
+    for idx, item in enumerate(data):
+        if not isinstance(item, dict):
+            raise ValueError(f"stages[{idx}] 须为对象")
+        if "stage_idx" not in item or item["stage_idx"] in (None, ""):
+            raise ValueError(f"stages[{idx}] 缺 stage_idx")
+        if "due_turn" not in item or item["due_turn"] in (None, ""):
+            raise ValueError(f"stages[{idx}] 缺 due_turn")
         try:
-            years = _cn_years_to_int(years_tok)
-        except ValueError:
-            continue
-        if years <= 0:
-            continue
-        origin_context = f"{years_tok}年{body}"
-        stages.append({
-            "stage_idx": len(stages),
-            "due_turn": int(origin_turn) + years * 12,
-            "criterion_text": body,
-            "origin_context": origin_context,
-        })
-    return stages
+            stage_idx = strict_sqlite_id(
+                item["stage_idx"], accept_numeric_strings=False,
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"stages[{idx}].stage_idx 须为有限整数") from exc
+        if stage_idx < 0:
+            raise ValueError(f"stages[{idx}].stage_idx 须为非负整数")
+        if stage_idx in seen:
+            raise ValueError(f"stages[{idx}].stage_idx 重复")
+        seen.add(stage_idx)
+        try:
+            due_turn = strict_int(item["due_turn"], accept_numeric_strings=False)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"stages[{idx}].due_turn 须为有限整数") from exc
+        if due_turn <= 0:
+            raise ValueError(f"stages[{idx}].due_turn 须为正")
+        for field in ("criterion_text", "origin_context"):
+            if field not in item:
+                raise ValueError(f"stages[{idx}] 缺非空 {field}")
+            val = item[field]
+            if not isinstance(val, str):
+                raise TypeError(f"stages.{field} 须为字符串")
+            if not val.strip():
+                raise ValueError(f"stages[{idx}] 缺非空 {field}")
+        out.append(_stage_record(
+            stage_idx=stage_idx, due_turn=due_turn,
+            criterion_text=item["criterion_text"],  # type: ignore[arg-type]
+            origin_context=item["origin_context"],  # type: ignore[arg-type]
+        ))
+    out.sort(key=lambda s: (s["stage_idx"], s["due_turn"]))
+    return out
 
 
 def normalize_commitment_stages(raw: object) -> List[Dict[str, object]]:
-    """Normalize structured stages payload → durable list.
+    """Normalize structured stages payload → durable list（写口／声明入口）。
 
-    Accepts list/tuple of dicts, or a JSON array string. Non-JSON free text
-    returns [] here — production CN-year capture goes through
-    ``capture_commitment_stages`` (does not silently treat char-iterated strings
-    as stage rows; that hole is closed in ``stages_to_json``).
+    缺省（None/""/[]/"[]"）→ 空列表；顶层 JSON/schema 坏形 → ValueError。
+    写口可做别名／正文回填／数字串前置归一化，再交唯一成员准入
+    ``_commitment_stages_members``（#1897 D／G；ADR0005）。不发明 ``stage_idx``。
+
+    分段承诺是机械事实（到期判账），只认显式结构化字段。引擎不得从 LLM 自由
+    散文正则反推语义（ADR 0142 / #1897 / #1890）。原 ``parse_staged_year_promise``
+    中文数词年诺捕获已删。自由正文原样入载体，禁 strip／截断规范化（#1897）。
     """
     if raw in (None, "", [], ()):
         return []
     data = raw
     if isinstance(raw, str):
         text = raw.strip()
-        if not text or text in ("[]", "{}"):
+        if not text or text == "[]":
             return []
         try:
             data = json.loads(text)
-        except (TypeError, ValueError):
-            return []
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"stages_json 须为 JSON 数组字符串，解析失败：{exc}；原值 {text!r}"
+            ) from exc
     if not isinstance(data, (list, tuple)):
+        raise ValueError(f"stages_json 须为 JSON 数组，得 {type(data).__name__}")
+    if len(data) == 0:
         return []
-    out: List[Dict[str, object]] = []
-    for idx, item in enumerate(data):
-        if not isinstance(item, dict):
-            continue
-        try:
-            due_turn = int(item.get("due_turn") or 0)
-        except (TypeError, ValueError):
-            continue
-        if due_turn <= 0:
-            continue
-        try:
-            stage_idx = int(item.get("stage_idx", idx))
-        except (TypeError, ValueError):
-            stage_idx = idx
-        criterion = str(
-            item.get("criterion_text") or item.get("criterion") or ""
-        ).strip()
-        origin_context = str(
-            item.get("origin_context") or item.get("origin") or criterion or ""
-        ).strip()
-        if not criterion and origin_context:
-            criterion = origin_context
-        if not criterion:
-            continue
-        out.append({
-            "stage_idx": stage_idx,
-            "due_turn": due_turn,
-            "criterion_text": criterion[:200],
-            "origin_context": (origin_context or criterion)[:240],
-        })
-    out.sort(key=lambda s: (int(s["stage_idx"]), int(s["due_turn"])))
-    return out
+    return _commitment_stages_members(_prepare_stages_for_write(data))
+
+
+def load_commitment_stages(raw: object) -> List[Dict[str, object]]:
+    """持久 stages_json 唯一真实加载口。
+
+    顶层与成员形状故障一律 StoredDocumentError；成员准入与写口共用
+    ``_commitment_stages_members``，但不跑写口前置归一化（#1897 G）。
+    """
+    data = load_stored_list(raw, label="stages_json")
+    try:
+        return _commitment_stages_members(data)
+    except (TypeError, ValueError) as exc:
+        raise StoredDocumentError(str(exc)) from exc
 
 
 def stages_to_json(stages: object) -> str:
     """Serialize stages for durable DB write.
 
-    Designed string surface: JSON array string is parsed, not char-iterated.
-    Invalid non-empty strings raise ValueError (never silently store ``[]``).
-    ``None`` / empty / ``[]`` → ``"[]"``.
+    顶层缺省／JSON 解码／数组准入 = ``normalize_commitment_stages``（成员面同上）；
+    本口只序列化其结果。``None`` / empty / ``[]`` → ``"[]"``。
     """
-    if stages is None:
+    normalized = normalize_commitment_stages(stages)
+    if not normalized:
         return "[]"
-    if isinstance(stages, str):
-        text = stages.strip()
-        if not text or text in ("[]", "{}"):
-            return "[]"
-        try:
-            data = json.loads(text)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(
-                f"stages_json 须为 JSON 数组字符串，解析失败：{text[:80]!r}"
-            ) from exc
-        if not isinstance(data, (list, tuple)):
-            raise ValueError(
-                f"stages_json 须为 JSON 数组，得 {type(data).__name__}"
-            )
-        if len(data) == 0:
-            return "[]"
-        normalized = normalize_commitment_stages(data)
-        if not normalized:
-            raise ValueError(
-                "stages_json 无有效段（每段须 due_turn>0 与 criterion_text）"
-            )
-        return json.dumps(normalized, ensure_ascii=False, separators=(",", ":"))
-    if isinstance(stages, (list, tuple)):
-        if not stages:
-            return "[]"
-        normalized = normalize_commitment_stages(list(stages))
-        # 非空 list 归一后无有效段：与 str 支同响亮拒绝，禁静默存 []
-        if not normalized:
-            raise ValueError(
-                "stages_json 无有效段（每段须 due_turn>0 与 criterion_text）"
-            )
-        return json.dumps(normalized, ensure_ascii=False, separators=(",", ":"))
-    raise ValueError(f"stages_json 类型非法：{type(stages).__name__}")
+    return json.dumps(normalized, ensure_ascii=False, separators=(",", ":"))
 
 
-# sentinel：显式 stages 字符串 json.loads 失败（与成功解析到的 None 区分）
-_CAPTURE_JSON_MISS = object()
-
-
-def capture_commitment_stages(
-    raw: object = None,
-    *,
-    narrative_text: str = "",
-    origin_turn: int,
-) -> List[Dict[str, object]]:
-    """生产捕获：结构化 stages / JSON 字符串 / 「三年X五年Y」文案 → 绝对 due 段表。
-
-    召对 materializer 与邸报/score new_issues 共用此入口，避免 CN year 解析只停在测试。
-    - 显式 stages 字段：JSON 数组优先；否则对字段文本跑 scripted 年诺解析
-    - 显式 stages 字符串若 JSON-ish 坏形 → ValueError（与 stages_to_json 同响亮口径，禁静默 []）
-    - 无显式 stages：对 narrative（召对正文 / stage_text）解析；≥2 段才自动落
-      （对齐 AC2「三年X五年Y」，避免单次「三年后复试」误收成分段）
-    """
-    if raw not in (None, "", [], (), {}):
-        if isinstance(raw, str):
-            text = raw.strip()
-            if text and text not in ("[]", "{}"):
-                try:
-                    data = json.loads(text)
-                except (TypeError, ValueError):
-                    data = _CAPTURE_JSON_MISS
-                if data is not _CAPTURE_JSON_MISS:
-                    # JSON 已解析：坏形响亮拒绝（同 stages_to_json），勿静默 []
-                    if not isinstance(data, (list, tuple)):
-                        raise ValueError(
-                            f"stages 须为 JSON 数组，得 {type(data).__name__}"
-                        )
-                    if len(data) == 0:
-                        return []
-                    structured = normalize_commitment_stages(data)
-                    if not structured:
-                        raise ValueError(
-                            "stages 无有效段（每段须 due_turn>0 与 criterion_text）"
-                        )
-                    return structured
-                # 非 JSON：scripted 年诺；JSON-ish 起首坏串响亮拒绝
-                parsed = parse_staged_year_promise(text, origin_turn=int(origin_turn))
-                if parsed:
-                    return parsed
-                if text[:1] in "[{":
-                    raise ValueError(
-                        f"stages 须为 JSON 数组字符串，解析失败：{text[:80]!r}"
-                    )
-        else:
-            # 非 str 正式面（list/dict）：与 str 支同响亮口径，勿静默 []
-            # 空 list/tuple 已由入口 raw not in (…, [], ()) 排除，此处无空支
-            if not isinstance(raw, (list, tuple)):
-                raise ValueError(
-                    f"stages 须为 JSON 数组，得 {type(raw).__name__}"
-                )
-            structured = normalize_commitment_stages(raw)
-            if not structured:
-                raise ValueError(
-                    "stages 无有效段（每段须 due_turn>0 与 criterion_text）"
-                )
-            return structured
-    narrative = str(narrative_text or "").strip()
-    if narrative:
-        parsed = parse_staged_year_promise(narrative, origin_turn=int(origin_turn))
-        # 叙事回落仅收多段（三年X五年Y）；单段不抢 form③ 单值 end_turn 语义
-        if len(parsed) >= 2:
-            return parsed
-    return []
+def stages_list_from_source(stages: object) -> List[Dict[str, object]]:
+    """Strict serial capture: reuse ``stages_to_json``, never a parallel parser."""
+    return json.loads(stages_to_json(stages))
 
 
 def stages_source_from_issue_item(ni: Dict[str, object]) -> object:
-    """Single stages key fallback for new_issues items (stages | stages_json)."""
+    """Single stages key fallback for new_issues items (stages | stages_json).
+
+    仅真正缺省（None/""）与合法空数组回落 stages_json；显式 ``{}`` 等坏形
+    原样交给 ``stages_to_json`` 拒收，不得当缺省洗白（#1897 C1）。
+    """
     stages = ni.get("stages")
-    if stages not in (None, "", [], (), {}):
+    if stages not in (None, "", [], ()):
+        return stages
+    if stages in ([], ()):
         return stages
     return ni.get("stages_json")
 
@@ -267,13 +229,10 @@ def is_stage_derived_end_turn(
     end_turn: int,
 ) -> bool:
     """True when end_turn is purely max(stages.due_turn) display-compat (no independent due)."""
-    norm = normalize_commitment_stages(stages)
+    norm = load_commitment_stages(stages)
     if not norm:
         return False
-    try:
-        et = int(end_turn or 0)
-    except (TypeError, ValueError):
-        return False
+    et = int(end_turn or 0)
     if et <= 0:
         return False
     return et == max(int(s["due_turn"]) for s in norm)
@@ -284,13 +243,10 @@ def should_skip_form3_due_for_staged(
     end_turn: int,
 ) -> bool:
     """form③ due_commitments 跳过面：仅段派生 end_turn 改道；独立 end_turn 待裁不吞。"""
-    norm = normalize_commitment_stages(stages_raw)
+    norm = load_commitment_stages(stages_raw)
     if not norm:
         return False
-    try:
-        et = int(end_turn or 0)
-    except (TypeError, ValueError):
-        et = 0
+    et = int(end_turn or 0)
     # 无独立 end_turn：分段只走 next_audience_todos
     if et <= 0:
         return True
@@ -313,19 +269,20 @@ def list_due_stages_for_scan(db: Any, turn: int) -> List[Dict[str, object]]:
           AND stages_json != ''
           AND stages_json != '[]'
         ORDER BY id
-        """
+        """,
+        (),
     ).fetchall()
     due: List[Dict[str, object]] = []
     for row in rows:
-        stages = normalize_commitment_stages(row["stages_json"])
+        stages = load_commitment_stages(row["stages_json"])
         for stage in stages:
             if int(stage["due_turn"]) <= int(turn):
                 due.append({
                     "commitment_ref": int(row["id"]),
                     "stage_idx": int(stage["stage_idx"]),
                     "due_turn": int(stage["due_turn"]),
-                    "criterion_text": str(stage["criterion_text"]),
-                    "origin_context": str(stage["origin_context"]),
+                    "criterion_text": stage["criterion_text"],
+                    "origin_context": stage["origin_context"],
                     "title": str(row["title"] or ""),
                     "origin_ref": str(row["origin_ref"] or ""),
                 })
@@ -339,12 +296,11 @@ def list_due_grant_report_dossiers_for_scan(
 
     commitment_ref=0；stage_idx=dossier_id 作 UNIQUE 去重键；
     payload 携带 dossier_id/origin_ref 供 due_review 桥接。
+    复用 DossierStore.get 响亮读口，不平行宽容腐坏 payload（#1897 E1/K2）。
     """
-    import json as _json
-
     rows = db.conn.execute(
         """
-        SELECT id, decree_text, payload_json, due_turn, execution_outcome, status
+        SELECT id, due_turn, execution_outcome
         FROM decree_dossiers
         WHERE status='executing'
           AND action_type='grant_allocation'
@@ -358,25 +314,24 @@ def list_due_grant_report_dossiers_for_scan(
     for row in rows:
         if str(row["execution_outcome"] or "").strip():
             continue
-        try:
-            payload = _json.loads(str(row["payload_json"] or "{}"))
-        except (TypeError, ValueError):
-            payload = {}
-        if not isinstance(payload, dict):
-            payload = {}
-        # due_turn 单源：有未来 due 且仍 executing 即到期候选（不另滤 cadence/grant_action）
         did = int(row["id"])
+        dossier = db.dossiers.get(did)
+        if dossier is None:
+            raise ValueError(f"案卷不存在：{did}")
+        payload = dossier["payload"]  # DossierStore.get 经权威解码，必为 dict
+        # due_turn 单源：有未来 due 且仍 executing 即到期候选（不另滤 cadence/grant_action）
         due_turn = int(row["due_turn"] or 0)
-        title = str(payload.get("title") or payload.get("purpose") or "").strip()
-        criterion = str(payload.get("ongoing_effects") or "").strip() or title or "依限奏报"
-        origin = str(row["decree_text"] or payload.get("text") or criterion).strip()
+        # #1897：due 扫描写入待办的自由字段原样透传，禁 strip。
+        title = str(payload.get("title") or payload.get("purpose") or "")
+        criterion = str(payload.get("ongoing_effects") or "") or title
+        origin = str(dossier.get("decree_text") or payload.get("text") or criterion)
         due.append({
             "commitment_ref": 0,
             "stage_idx": did,  # UNIQUE(commitment_ref, stage_idx, entry_kind)
             "due_turn": due_turn,
-            "criterion_text": criterion[:120],
-            "origin_context": origin[:120],
-            "title": title or criterion[:40],
+            "criterion_text": criterion,
+            "origin_context": origin,
+            "title": title if title.strip() else criterion,
             "origin_ref": f"dossier:{did}",
             "payload_json": {
                 "dossier_id": did,
@@ -387,7 +342,7 @@ def list_due_grant_report_dossiers_for_scan(
     return due
 
 
-def write_due_staged_commitment_todos(db: Any, state: Any, *, commit: bool = True) -> int:
+def write_due_staged_commitment_todos(db: Any, state: Any) -> int:
     """结算内确定性写入次回合召对待办。返回新写入条数。
 
     待裁载体改道 next_audience_todos；不置 TurnPhase.AWAITING_DECISION，
@@ -401,12 +356,12 @@ def write_due_staged_commitment_todos(db: Any, state: Any, *, commit: bool = Tru
         return 0
     written = 0
     for item in due_stages:
-        created = db.insert_next_audience_todo(
+        created = db.dossiers.insert_next_audience_todo(
             commitment_ref=int(item["commitment_ref"]),
             stage_idx=int(item["stage_idx"]),
             due_turn=int(item["due_turn"]),
-            criterion_text=str(item["criterion_text"]),
-            origin_context=str(item["origin_context"]),
+            criterion_text=item["criterion_text"],
+            origin_context=item["origin_context"],
             status=TODO_STATUS_PENDING,
             entry_kind=ENTRY_KIND_STAGED,
             created_turn=turn,
@@ -415,6 +370,4 @@ def write_due_staged_commitment_todos(db: Any, state: Any, *, commit: bool = Tru
         )
         if created:
             written += 1
-    if commit and written:
-        db.conn.commit()
     return written

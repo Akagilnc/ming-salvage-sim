@@ -22,7 +22,14 @@ CHARACTER_AXIS_LABELS = {
     "courage": "胆略",
 }
 
-INTRIGUE_QUALITATIVE_PLACEHOLDER = "阴谋能力未详，暂以查案行事表现推知"
+_INTRIGUE_BANDS = (
+    "毫无城府", "心思疏浅", "善藏行迹", "机权深沉", "鬼蜮难测",
+)
+
+
+def intrigue_band(value: object) -> str:
+    """Render 0108 阴谋能力 through the one shared qualitative vocabulary."""
+    return qualitative_band(value, _INTRIGUE_BANDS, default=50)
 
 
 def qualitative_character_axes(character: object) -> Mapping[str, str]:
@@ -34,7 +41,7 @@ def qualitative_character_axes(character: object) -> Mapping[str, str]:
         for field in CHARACTER_QUALITATIVE_BANDS
     }
     projected["党派认同"] = identity_band(getattr(character, "identity"))
-    projected["阴谋"] = INTRIGUE_QUALITATIVE_PLACEHOLDER
+    projected["阴谋"] = f"阴谋{intrigue_band(getattr(character, 'intrigue', None))}"
     return projected
 
 
@@ -43,20 +50,13 @@ def qualitative_character_axis(field: str, value: object) -> str:
     return qualitative_band(value, CHARACTER_QUALITATIVE_BANDS[field])
 
 
-def qualitative_character_attribute(field: str, value: object) -> str:
-    """Render one canonical 0122 character attribute band for a player."""
-    return qualitative_character_axis(field, value)
-
 def qualitative_bucket(
     value: object,
     cutoffs: tuple[int, ...],
     default: int = 0,
 ) -> int:
     """Return the zero-based bucket for a score, preserving valid zeroes."""
-    try:
-        score = int(default if value is None else value)
-    except (TypeError, ValueError):
-        score = default
+    score = int(default if value is None else value)
     return sum(score >= cutoff for cutoff in cutoffs)
 
 
@@ -76,12 +76,7 @@ def qualitative_band(value: object, words: tuple[str, ...], default: int = 0) ->
     if value is None:
         index = qualitative_bucket(default, (20, 40, 60, 80), 0) - (1 if default else 0)
     else:
-        try:
-            int(value)
-        except (TypeError, ValueError):
-            index = qualitative_bucket(default, (20, 40, 60, 80), 0) - (1 if default else 0)
-        else:
-            index = qualitative_bucket(value, (20, 40, 60, 80), default)
+        index = qualitative_bucket(value, (20, 40, 60, 80), default)
     index = max(0, index)
     index = min(index, len(words) - 1)
     return words[index]
@@ -114,10 +109,7 @@ def building_risk_description(value: object) -> str:
 
 def city_defense_description(value: object) -> str:
     """Describe the discrete 0–5 city-defense level without exposing its score."""
-    try:
-        level = int(0 if value is None else value)
-    except (TypeError, ValueError):
-        level = 0
+    level = int(0 if value is None else value)
     level = max(0, min(level, 5))
     return ("初设", "简陋", "成形", "坚固", "重镇", "雄城")[level]
 
@@ -136,10 +128,7 @@ def building_output_effect(metric: str, amount: object, prefix: str = "") -> str
     if not metric:
         return ""
     if metric in ("民心", "皇威"):
-        try:
-            output = int(0 if amount is None else amount)
-        except (TypeError, ValueError):
-            output = 0
+        output = int(0 if amount is None else amount)
         effect = "略有裨益" if output < 10 else "颇有裨益" if output < 30 else "有显著裨益"
         return f"{prefix}对{metric}{effect}"
     return f"{prefix}产出{metric}{amount}"
@@ -151,13 +140,9 @@ def building_output_effect(metric: str, amount: object, prefix: str = "") -> str
 PUBLIC_SUPPORT_BANDS = ("堪忧", "偏弱", "起伏", "尚可", "稳固")
 POWER_BANDS = ("极弱", "偏弱", "中等", "偏强", "强盛")  # also 皇威
 SATISFACTION_BANDS = ("怨愤", "不满", "平常", "顺应", "拥戴")
-# Issue/dossier bar progress — single vocabulary (was tools._progress_band).
-PROGRESS_BANDS = ("未见起色", "略有起色", "进展过半", "进展顺利", "近于收束")
 # Region resistance / military pressure — single vocabulary (db.region_report + #652 two_axis).
 GENTRY_RESISTANCE_BANDS = ("极弱", "偏弱", "中等", "偏强", "强")
 MILITARY_PRESSURE_BANDS = ("极低", "偏低", "中等", "偏高", "极高")
-DISASTER_SEVERITY_BANDS = ("轻微", "偏轻", "中等", "偏重", "极重")
-
 
 def public_support_band(value: object) -> str:
     """Present 民心 / region public_support without exposing the score."""
@@ -179,11 +164,6 @@ def satisfaction_band(value: object) -> str:
     return qualitative_band(value, SATISFACTION_BANDS)
 
 
-def progress_band(value: object) -> str:
-    """Present issue bar_value / 局势进度 without exposing the score."""
-    return qualitative_band(value, PROGRESS_BANDS)
-
-
 def gentry_resistance_band(value: object) -> str:
     """Present region gentry_resistance without exposing the score."""
     return qualitative_band(value, GENTRY_RESISTANCE_BANDS)
@@ -194,17 +174,9 @@ def military_pressure_band(value: object) -> str:
     return qualitative_band(value, MILITARY_PRESSURE_BANDS)
 
 
-def disaster_severity_band(value: object) -> str:
-    """Present issue/disaster severity without exposing the score."""
-    return qualitative_band(value, DISASTER_SEVERITY_BANDS)
-
-
 def population_wan_kou_label(persons: object) -> str:
     """ADR 0088/#648：裸人数 → 「约N万口」定性（P4 玩家可感 LLM 输入）。"""
-    try:
-        n = int(0 if persons is None else persons)
-    except (TypeError, ValueError):
-        n = 0
+    n = int(0 if persons is None else persons)
     wan = n // 10000
     if wan <= 0:
         return "不足一万口"

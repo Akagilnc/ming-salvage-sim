@@ -1,33 +1,33 @@
-"""Affair records: identity, birth, close-by-declaration, pointers (ADR 0154)."""
+"""Affair records: identity, birth, pointers (ADR 0154).
+
+ADR 0154（2026-09-30）：不设「宣布了结」动作；closed 态由世界记录自然承接。
+"""
 
 from __future__ import annotations
 
-import json
+from ming_sim.strict_types import strict_sqlite_id
+from ming_sim.exceptions import DeclarationDataError, DeclarationReferenceError
+
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from ming_sim.applier import connection_owns_transaction, sanitize_sqlite_text
-from ming_sim.strict_types import strict_int
+from ming_sim.applier import connection_owns_transaction
+from ming_sim.entities.dossier import DossierStore
+from ming_sim.entities.issue import IssueStore
+from ming_sim.entities.character.store import CharacterStore
+from ming_sim.entities.person_log.store import PersonLogStore
 
 _ATTACH_NEW = "new"
 _ATTACH_EXISTING = "existing"
-_ATTACH_CLOSE = "close"
 ATTACH_BIRTH = frozenset({_ATTACH_NEW, _ATTACH_EXISTING})
-ATTACH_RESULT_CLOSE = frozenset({_ATTACH_CLOSE})
 ATTACH_EXPERIENCE = frozenset({_ATTACH_EXISTING})
 _ORIGIN_AFFAIR = "affair"
 _ORIGIN_DOSSIER = "dossier"
 _POINTER_TABLES = {
-    "decree_dossiers": "案卷",
-    "issues": "局势",
-    "relation_edge_events": "边事件",
-    "characters": "人物",
-}
-# 各表指针绑定用的主键列；未列出的默认整数 `id`。`characters` 主键是 name
-# （非整数 id），指针语义（未绑可绑一次/同值幂等/异值拒绝）与其它表完全一致，
-# 只是主键列不同，故此处配置而非另实现一份（#1812/#1831）。
-_POINTER_KEY_COLUMNS = {
-    "characters": "name",
+    "decree_dossiers": ("案卷", DossierStore),
+    "issues": ("局势", IssueStore),
+    "relation_edge_events": ("边事件", PersonLogStore),
+    "characters": ("人物", CharacterStore),
 }
 _UNAUTHORIZED_AFFAIR_ORIGIN = "事务不在本批可见输入"
 
@@ -75,7 +75,7 @@ class Affair:
 
 
 class AffairStore:
-    """World-record home for affairs. Close only by explicit declaration."""
+    """World-record home for affairs. Status becomes closed only via world archive."""
 
     def __init__(self, conn: Any) -> None:
         self._conn = conn
@@ -94,11 +94,11 @@ class AffairStore:
         turn: int,
         birth_key: str = "",
     ) -> Affair:
-        title = str(name or "").strip()
-        cause = str(origin or "").strip()
-        if not title:
+        title = str(name or "")
+        cause = str(origin or "")
+        if not title.strip():
             raise ValueError("事务名字不能为空")
-        if not cause:
+        if not cause.strip():
             raise ValueError("事务起因不能为空")
         key = str(birth_key or "").strip()
         owns = connection_owns_transaction(self._conn)
@@ -107,9 +107,9 @@ class AffairStore:
             "created_turn, created_year, created_period) "
             "VALUES (?, ?, 'open', ?, ?, ?, ?)",
             (
-                sanitize_sqlite_text(title),
-                sanitize_sqlite_text(cause),
-                sanitize_sqlite_text(key),
+                title,
+                cause,
+                key,
                 int(turn),
                 int(year),
                 int(period),
@@ -127,8 +127,13 @@ class AffairStore:
             (int(affair_id),),
         ).fetchone()
         if row is None:
-            raise KeyError(f"事务不存在：{affair_id}")
+            raise DeclarationReferenceError(f"事务不存在：{affair_id}")
         return _row_to_affair(row)
+
+    def list_all(self) -> tuple[Affair, ...]:
+        """Durable matters remain readable after closure."""
+        rows = self._conn.execute("SELECT * FROM affairs ORDER BY id").fetchall()
+        return tuple(_row_to_affair(row) for row in rows)
 
     def list_open(self) -> tuple[Affair, ...]:
         rows = self._conn.execute(
@@ -137,18 +142,6 @@ class AffairStore:
             "FROM affairs WHERE status='open' ORDER BY id"
         ).fetchall()
         return tuple(_row_to_affair(row) for row in rows)
-
-    def declare_closed(self, affair_id: int, *, turn: int) -> Affair:
-        """LLM-declared close. No conditions, no dossier-status checks."""
-        self.get(affair_id)
-        owns = connection_owns_transaction(self._conn)
-        self._conn.execute(
-            "UPDATE affairs SET status='closed', closed_turn=? WHERE id=?",
-            (int(turn), int(affair_id)),
-        )
-        if owns:
-            self._conn.commit()
-        return self.get(affair_id)
 
     def resolve_declaration(
         self,
@@ -166,12 +159,9 @@ class AffairStore:
             return affair_id
         key = str(parsed.get("birth_key") or "").strip()
         if key:
-            existing = self._conn.execute(
-                "SELECT id FROM affairs WHERE birth_key=?",
-                (key,),
-            ).fetchone()
-            if existing is not None:
-                return int(existing["id"])
+            existing_id = self.peek_declared_id(declaration, allowed=allowed)
+            if existing_id is not None:
+                return existing_id
         return self.open(
             name=str(parsed["name"]),
             origin=str(parsed["origin"]),
@@ -201,28 +191,6 @@ class AffairStore:
         ).fetchone()
         return None if row is None else int(row["id"])
 
-    def close_from_declaration(
-        self,
-        declaration: Mapping[str, object],
-        *,
-        turn: int,
-        authorized_ids: set[int],
-    ) -> int:
-        """Close only a visible affair without an active linked issue."""
-        parsed = parse_affair_declaration(
-            declaration, allowed=ATTACH_RESULT_CLOSE,
-        )
-        affair_id = int(parsed["affair_id"])
-        if affair_id not in authorized_ids:
-            raise UnauthorizedAffairOriginRef()
-        active_issue = self._conn.execute(
-            "SELECT 1 FROM issues WHERE affair_id=? AND status='active' LIMIT 1",
-            (affair_id,),
-        ).fetchone()
-        if active_issue is not None:
-            raise ValueError("事务尚有未了局势")
-        return self.declare_closed(affair_id, turn=turn).id
-
     def attach_from_declaration(
         self,
         table: str,
@@ -244,7 +212,7 @@ class AffairStore:
         if current:
             if peeked != current:
                 raise ValueError(
-                    f"{_POINTER_TABLES[table]}已指向事务 {current}，"
+                    f"{_POINTER_TABLES[table][0]}已指向事务 {current}，"
                     f"不能改指 {peeked or '新事务'}"
                 )
             return current
@@ -260,61 +228,28 @@ class AffairStore:
     def attach_pointer(self, table: str, row_id: int | str, affair_id: int) -> None:
         """Unbound may bind once; same id is idempotent; a different id fails loud."""
         self.get(affair_id)
-        key_column = _POINTER_KEY_COLUMNS.get(table, "id")
+
         current = self._current_pointer(table, row_id)
         want = int(affair_id)
         if current == want:
             return
         if current != 0:
-            raise ValueError(
-                f"{_POINTER_TABLES[table]}已指向事务 {current}，不能改指 {want}"
+            raise DeclarationDataError(
+                f"{_POINTER_TABLES[table][0]}已指向事务 {current}，不能改指 {want}"
             )
-        owns = connection_owns_transaction(self._conn)
-        cur = self._conn.execute(
-            f"UPDATE {table} SET affair_id=? WHERE {key_column}=? AND affair_id=0",
-            (want, row_id),
-        )
-        if int(cur.rowcount or 0) != 1:
-            raise ValueError(
-                f"{_POINTER_TABLES[table]}已指向其它事务，不能改指 {want}"
-            )
-        if owns:
-            self._conn.commit()
-
-    def point_dossier(self, dossier_id: int, affair_id: int) -> None:
-        self.attach_pointer("decree_dossiers", dossier_id, affair_id)
+        store = _POINTER_TABLES[table][1](self._conn)
+        store.set_affair_id_if_unbound(row_id, want)
 
     def _current_pointer(self, table: str, row_id: int | str) -> int:
-        label = _POINTER_TABLES.get(table)
-        if label is None:
-            raise ValueError(f"事务指针表非法：{table}")
-        key_column = _POINTER_KEY_COLUMNS.get(table, "id")
-        row = self._conn.execute(
-            f"SELECT affair_id FROM {table} WHERE {key_column}=?",
-            (row_id if key_column != "id" else int(row_id),),
-        ).fetchone()
-        if row is None:
-            raise KeyError(f"{label}不存在：{row_id}")
-        return int(row["affair_id"] or 0)
-
-    def dossiers(self, affair_id: int) -> tuple[dict[str, object], ...]:
-        self.get(affair_id)
-        rows = self._conn.execute(
-            "SELECT id, action_type, affair_id FROM decree_dossiers "
-            "WHERE affair_id=? ORDER BY id",
-            (int(affair_id),),
-        ).fetchall()
-        return tuple(
-            {
-                "id": int(row["id"]),
-                "action_type": str(row["action_type"]),
-                "affair_id": int(row["affair_id"] or 0),
-            }
-            for row in rows
-        )
-
-    def point_issue(self, issue_id: int, affair_id: int) -> None:
-        self.attach_pointer("issues", issue_id, affair_id)
+        pointer = _POINTER_TABLES.get(table)
+        if pointer is None:
+            raise DeclarationDataError(f"事务指针表非法：{table}")
+        label, store_type = pointer
+        store = store_type(self._conn)
+        try:
+            return store.affair_id_of(row_id)
+        except KeyError as exc:
+            raise DeclarationReferenceError(f"{label}不存在：{row_id}") from exc
 
     def assert_origin_matches_declaration(
         self, origin_ref: str, declaration: Mapping[str, object]
@@ -326,7 +261,7 @@ class AffairStore:
         dossier_affair = self._current_pointer("decree_dossiers", int(target))
         declared = self.peek_declared_id(declaration, allowed=ATTACH_BIRTH)
         if dossier_affair and declared != dossier_affair:
-            raise ValueError(
+            raise DeclarationDataError(
                 f"案卷已指向事务 {dossier_affair}，不能同时声明 {declared or '新事务'}"
             )
 
@@ -338,13 +273,10 @@ class AffairStore:
             return
         if kind != _ORIGIN_DOSSIER:
             return
-        row = self._conn.execute(
-            "SELECT affair_id FROM decree_dossiers WHERE id=?",
-            (int(target),),
-        ).fetchone()
-        if row is None:
+        try:
+            current = DossierStore(self._conn).affair_id_of(int(target))
+        except KeyError:
             return
-        current = int(row["affair_id"] or 0)
         if current:
             self.attach_pointer(table, row_id, current)
 
@@ -352,25 +284,6 @@ class AffairStore:
     def origin_ref(affair_id: int) -> str:
         return f"{_ORIGIN_AFFAIR}:{int(affair_id)}"
 
-    def origin_refs(self, affair_id: int) -> tuple[str, ...]:
-        self.get(affair_id)
-        refs = [self.origin_ref(affair_id)]
-        refs.extend(f"{_ORIGIN_DOSSIER}:{int(row['id'])}" for row in self.dossiers(affair_id))
-        return tuple(refs)
-
-    def affair_id_for_issue(self, issue_id: int) -> int:
-        row = self._conn.execute(
-            "SELECT affair_id FROM issues WHERE id=?", (int(issue_id),)
-        ).fetchone()
-        if row is None:
-            raise KeyError(f"局势不存在：{issue_id}")
-        return int(row["affair_id"] or 0)
-
-    @staticmethod
-    def current_situation(textual_facts: Any, affair_id: int):
-        return textual_facts.readable_materials(
-            subject_kind="affair", subject_id=str(int(affair_id)),
-        )
 
     def input_brief(self, textual_facts: Any = None) -> list[dict[str, object]]:
         """Default LLM input: identity plus one current-situation line. No full experiences."""
@@ -378,7 +291,7 @@ class AffairStore:
         for affair in self.list_open():
             situation = ""
             if textual_facts is not None:
-                facts = self.current_situation(textual_facts, affair.id)
+                facts = textual_facts.readable_materials(subject_kind="affair", subject_id=str(int(affair.id)))
                 if facts:
                     situation = str(facts[-1].body or "")
             brief.append({
@@ -426,49 +339,12 @@ class AffairStore:
             authorized_ids.add(int(affair_id))
         return self.origin_ref(affair_id)
 
-    def experiences(self, affair_id: int) -> tuple[dict[str, object], ...]:
-        """Read-time projection: story-ledger rows whose origin_ref points at this affair."""
-        self.get(affair_id)
-        refs = self.origin_refs(affair_id)
-        affair_ref = self.origin_ref(affair_id)
-        placeholders = ",".join("?" for _ in refs)
-        rows = self._conn.execute(
-            "SELECT id, person_names, tags, body, origin_ref "
-            "FROM story_ledger_entries WHERE origin_ref IN ("
-            + placeholders
-            + ") OR origin_ref LIKE ? ORDER BY id",
-            (*refs, f"{affair_ref}/%"),
-        ).fetchall()
-        out: list[dict[str, object]] = []
-        for row in rows:
-            origin = str(row["origin_ref"] or "").strip()
-            try:
-                tags = json.loads(row["tags"] or "[]")
-            except (TypeError, ValueError):
-                tags = []
-            if not isinstance(tags, list):
-                tags = []
-            try:
-                people = json.loads(row["person_names"] or "[]")
-            except (TypeError, ValueError):
-                people = []
-            if not isinstance(people, list):
-                people = []
-            out.append({
-                "id": int(row["id"]),
-                "body": str(row["body"] or ""),
-                "origin_ref": origin,
-                "person_names": [str(name) for name in people if str(name).strip()],
-                "tags": [str(tag) for tag in tags if str(tag).strip()],
-            })
-        return tuple(out)
-
 
 def parse_positive_affair_id(raw: object) -> int:
-    """Affair identity: reject bool/float, keep integer-string compat, require >0."""
-    value = strict_int(raw, accept_numeric_strings=True)
+    """Affair identity: reject bool/float/超 SQLite 界, keep integer-string compat, require >0."""
+    value = strict_sqlite_id(raw, accept_numeric_strings=True)
     if value <= 0:
-        raise ValueError("affair_id must be a positive integer")
+        raise DeclarationDataError("affair_id must be a positive integer")
     return value
 
 
@@ -479,22 +355,18 @@ def parse_affair_declaration(
 ) -> dict[str, object]:
     """Typed LLM declaration only. No prose parsing."""
     if not isinstance(raw, Mapping):
-        raise ValueError("事务声明须为对象")
+        raise DeclarationDataError("事务声明须为对象")
     attach = str(raw.get("attach") or "").strip()
-    permitted = ATTACH_BIRTH | ATTACH_RESULT_CLOSE if allowed is None else allowed
+    permitted = ATTACH_BIRTH if allowed is None else allowed
     if attach not in permitted:
-        if attach == _ATTACH_CLOSE:
-            raise ValueError("本阶段不能了结事务")
-        if attach in ATTACH_BIRTH and permitted == ATTACH_RESULT_CLOSE:
-            raise ValueError("顶层事务声明只接受了结")
-        raise ValueError("事务声明 attach 不在本阶段")
+        raise DeclarationDataError("事务声明 attach 不在本阶段")
     if attach == _ATTACH_NEW:
-        name = str(raw.get("name") or "").strip()
-        origin = str(raw.get("origin") or "").strip()
-        if not name or not origin:
-            raise ValueError("新事务声明须有名字与起因")
+        name = str(raw.get("name") or "")
+        origin = str(raw.get("origin") or "")
+        if not name.strip() or not origin.strip():
+            raise DeclarationDataError("新事务声明须有名字与起因")
         key = str(raw.get("birth_key") or "").strip()
-        identity = str(raw.get("identity") or "").strip()
+        identity = str(raw.get("identity") or "")
         out: dict[str, object] = {"attach": _ATTACH_NEW, "name": name, "origin": origin}
         if key:
             out["birth_key"] = key
@@ -504,9 +376,7 @@ def parse_affair_declaration(
     try:
         affair_id = parse_positive_affair_id(raw.get("affair_id"))
     except (TypeError, ValueError) as exc:
-        raise ValueError(
-            "了结须有 affair_id" if attach == _ATTACH_CLOSE else "接到已开事务须有 affair_id"
-        ) from exc
+        raise DeclarationDataError("接到已开事务须有 affair_id") from exc
     return {"attach": attach, "affair_id": affair_id}
 
 
@@ -548,14 +418,18 @@ def parse_origin_ref(origin_ref: object) -> tuple[str, int] | tuple[None, None]:
 
 
 def _row_to_affair(row: Any) -> Affair:
-    return Affair(
-        id=int(row["id"]),
-        name=str(row["name"]),
-        origin=str(row["origin"]),
-        status=str(row["status"]),
-        birth_key=str(row["birth_key"] or ""),
-        created_turn=int(row["created_turn"]),
-        created_year=int(row["created_year"]),
-        created_period=int(row["created_period"]),
-        closed_turn=int(row["closed_turn"] or 0),
-    )
+    """持久行解码：列损坏是账本故障（RuntimeError），不得被外层收成模型产物错。"""
+    try:
+        return Affair(
+            id=int(row["id"]),
+            name=str(row["name"]),
+            origin=str(row["origin"]),
+            status=str(row["status"]),
+            birth_key=str(row["birth_key"] or ""),
+            created_turn=int(row["created_turn"]),
+            created_year=int(row["created_year"]),
+            created_period=int(row["created_period"]),
+            closed_turn=int(row["closed_turn"] or 0),
+        )
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("affairs 持久行解码失败") from exc

@@ -20,18 +20,14 @@ def _number(value: object, path: str) -> float:
 def _graph_edges(graph: Mapping[str, object]) -> dict[str, list[tuple[str, float]]]:
     raw_nodes = graph.get("nodes")
     raw_edges = graph.get("edges")
-    if not isinstance(raw_nodes, Mapping) or not isinstance(raw_edges, list):
-        raise ValueError("distance graph must contain nodes object and edges array")
+    if not isinstance(raw_edges, list):
+        raise ValueError("distance graph must contain edges array")
 
     nodes = set(raw_nodes)
     adjacency = {node: [] for node in nodes}
     for index, raw_edge in enumerate(raw_edges):
-        if not isinstance(raw_edge, Mapping):
-            raise ValueError(f"edges[{index}] must be an object")
         start = raw_edge.get("from")
         end = raw_edge.get("to")
-        if not isinstance(start, str) or not isinstance(end, str):
-            raise ValueError(f"edges[{index}] endpoints must be strings")
         if start not in nodes or end not in nodes:
             raise ValueError(f"edges[{index}] references an unknown node")
         cost = _number(raw_edge.get("cost"), f"edges[{index}].cost")
@@ -49,7 +45,7 @@ def bake_distance_matrix(graph: Mapping[str, object]) -> dict[str, dict[str, flo
     """
 
     raw_nodes = graph.get("nodes")
-    if not isinstance(raw_nodes, Mapping) or not raw_nodes:
+    if not raw_nodes:
         raise ValueError("distance graph must contain a non-empty nodes object")
     node_weights = {
         node: _number(config.get("weight") if isinstance(config, Mapping) else None, f"nodes.{node}.weight")
@@ -108,7 +104,7 @@ class DistanceMatrix:
 
     def __init__(self, matrix: Mapping[str, Mapping[str, object]]):
         self._matrix = {
-            str(start): {str(end): float(value) for end, value in row.items()}
+            start: {end: float(value) for end, value in row.items()}
             for start, row in matrix.items()
         }
 
@@ -116,8 +112,6 @@ class DistanceMatrix:
     def from_file(cls, path: str | Path) -> "DistanceMatrix":
         with Path(path).open(encoding="utf-8") as file:
             data = json.load(file)
-        if not isinstance(data, Mapping) or not isinstance(data.get("matrix"), Mapping):
-            raise ValueError("distance matrix asset must contain a matrix object")
         return cls(data["matrix"])
 
     def travel_time(self, origin: str, destination: str) -> float:

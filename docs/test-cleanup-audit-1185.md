@@ -1148,16 +1148,17 @@
 
 ### `tests/test_decision_event_binding_389.py`
 
-- 规模：64 行 / 6 函数 / 6 节点 · 处置分布：`{'keep': 6}` · 主注：④ 绑定纯函数真源，单元可留
+- 规模：现行绑定闸 · 处置分布见下 · 主注：④ 显式 id 真源；**标题猜绑已退休**（#1897 K2／ADR0142，2026-10-05）
+- 历史过程：曾 keep「唯一标题补绑／重绑」案；现役代码已删 `title_to_ids`，下列为**现行**名称与处置（保留过程史，明确退休）。
 
 | 测试 | 节点 | 处置 | 理由 |
 |---|---:|---|---|
-| `test_missing_event_id_binds_from_unique_title` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
-| `test_valid_echoed_event_id_is_trusted_unchanged` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
-| `test_offsnapshot_echoed_event_id_does_not_win_over_snapshot` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
-| `test_offsnapshot_id_with_no_title_match_is_unbound` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
-| `test_ambiguous_title_remains_unbound` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
-| `test_no_snapshot_returns_decisions_unchanged` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
+| `test_missing_event_id_stays_unbound_without_title_guess`（原 `test_missing_event_id_binds_from_unique_title`） | 1 | **keep（负向闸）** | 缺 id 不解绑靠标题；锁定「不得标题猜绑」 |
+| `test_valid_echoed_event_id_is_trusted_unchanged` | 1 | **keep** | 显式 id 在快照内采信 |
+| `test_offsnapshot_echoed_event_id_is_unbound`（原标题重绑案已改） | 1 | **keep（负向闸）** | off-snapshot 解绑；不得按同标题重绑 |
+| `test_offsnapshot_id_with_unrelated_title_is_unbound`（原 `test_offsnapshot_id_with_no_title_match_is_unbound`） | 1 | **keep** | 非候选 id 不解绑污染终态账 |
+| ~~`test_ambiguous_title_remains_unbound`~~ | — | **退休删除** | 标题歧义分支随猜绑路径删除 |
+| `test_no_snapshot_returns_decisions_unchanged` | 1 | **keep** | 无快照不臆测 |
 
 ### `tests/test_decree_commitment_creation_136.py`
 
@@ -1228,7 +1229,7 @@
 |---|---:|---|---|
 | `test_created_future_limited_duration_commitment_applies_first_month` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
 | `test_character_loyalty_commitment_ongoing_applies_monthly_and_records_progress` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
-| `test_legacy_character_resolve_condition_commitment_settles_when_threshold_reached` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
+| `test_legacy_character_resolve_condition_commitment_settles_when_threshold_reached` | 1 | **retired (#1835 S3)** | 旧 resolve_condition→stop 兼容专属测；兼容链已删 |
 | `test_faction_class_commitment_ongoing_applies_monthly_when_counted` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
 | `test_commitment_ongoing_malformed_entity_payloads_are_rejected_without_crashing` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
 | `test_commitment_stop_gate_resolve_respects_outer_transaction_rollback` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
@@ -2130,7 +2131,7 @@
 | `test_bad_status_raises` | 1 | **keep** | 🔒 闸类/负向或主契约，默认保留 |
 | `test_empty_effect_noop` | 1 | **keep** | 🔒 闸类/负向或主契约，默认保留 |
 | `test_apply_score_extraction_splits_bad_nested_entity` | 1 | **keep** | 🔒 闸类/负向或主契约，默认保留 |
-| `test_apply_score_extraction_accepts_flat_faction_scalar` | 1 | **keep** | 🔒 闸类/负向或主契约，默认保留 |
+| `test_apply_score_extraction_accepts_flat_faction_scalar` | 1 | **retired (#1835 S3)** | 失去所称契约检出能力；已删 |
 | `test_apply_score_extraction_rejects_nondict_power_second_level_per_entity` | 1 | **keep** | 🔒 闸类/负向或主契约，默认保留 |
 | `test_apply_score_extraction_rejects_nondict_list_item_per_item` | 1 | **keep** | 🔒 闸类/负向或主契约，默认保留 |
 | `test_apply_score_extraction_tolerates_null_field` | 1 | **keep** | 🔒 闸类/负向或主契约，默认保留 |
@@ -2139,9 +2140,9 @@
 | `test_army_delta_unknown_army_raises` | 1 | **keep** | 🔒 闸类/负向或主契约，默认保留 |
 | `test_non_dict_character_status_item_raises` | 1 | **keep** | 🔒 闸类/负向或主契约，默认保留 |
 | `test_new_issue_nondict_effect_fields_do_not_crash` | 1 | **keep** | 🔒 闸类/负向或主契约，默认保留 |
-| `test_initiative_floor_applies_when_enrich_empty` | 1 | **keep** | 🔒 闸类/负向或主契约，默认保留 |
-| `test_runtime_cli_initiative_floor_applies_without_backend_env` | 1 | **keep** | 🔒 闸类/负向或主契约，默认保留 |
-| `test_api_channel_initiative_does_not_use_backend_env_floor` | 1 | **keep** | 🔒 闸类/负向或主契约，默认保留 |
+| `test_initiative_floor_applies_when_enrich_empty` | 1 | **retired (#1835 S4)** | 保活民心+1 floor；floor 已删 |
+| `test_runtime_cli_initiative_floor_applies_without_backend_env` | 1 | **retired (#1835 S4)** | 保活 floor；已删 |
+| `test_api_channel_initiative_does_not_use_backend_env_enrich` | 1 | **keep** | API 通道不得误触 CLI enrich（改名后保留） |
 | `test_inertia_natural_resolve_applies_entities` | 1 | **keep** | 🔒 闸类/负向或主契约，默认保留 |
 | `test_inertia_natural_resolve_applies_unified_person_change_with_bound_content` | 1 | **keep** | 🔒 闸类/负向或主契约，默认保留 |
 | `test_issue_resolve_person_effect_is_visible_to_effect_brief` | 1 | **keep** | 🔒 闸类/负向或主契约，默认保留 |
@@ -2432,7 +2433,7 @@
 | `test_new_issue_bad_kind_rejected` | 3 | **keep** | 🔒 闸类/负向或主契约，默认保留 |
 | `test_new_issue_dirty_inertia_rejected` | 1 | **keep** | 🔒 闸类/负向或主契约，默认保留 |
 | `test_new_issue_oversized_severity_clamped_not_abort` | 1 | **keep** | 🔒 闸类/负向或主契约，默认保留 |
-| `test_new_issue_whitespace_resolve_condition_falls_back_to_stop_condition` | 1 | **keep** | 🔒 闸类/负向或主契约，默认保留 |
+| `test_new_issue_whitespace_resolve_condition_falls_back_to_stop_condition` | 1 | **retired (#1835 S3)** | 旧 fallback 专属测；兼容链已删 |
 | `test_new_issue_infinity_field_rejected_not_abort` | 1 | **keep** | 🔒 闸类/负向或主契约，默认保留 |
 | `test_new_issue_infinity_expected_months_rejected_not_abort` | 1 | **keep** | 🔒 闸类/负向或主契约，默认保留 |
 | `test_new_issue_severity_zero_preserved` | 1 | **keep** | 🔒 闸类/负向或主契约，默认保留 |
@@ -3947,4 +3948,3 @@ net_node_reduction_if_executed=-24  # move does not reduce
 - 本文件：二阶段 **逐测试处置清单** + 泄漏复核（样本级）+ 净增减账 + 判官七类修订，路径 `docs/test-cleanup-audit-1185.md`
 - 冲突时：以本文件处置列为执行票面；计时数字仍以冻结件为基线直至收尾全量复测
 - 处置枚举：`keep` / `rewrite` / `move` / `delete`（**无**笼统 `merge`）
-

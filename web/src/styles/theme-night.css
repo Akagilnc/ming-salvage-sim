@@ -67,6 +67,10 @@
 .modal-bg-gazette .gazette-dismiss {
   background: rgba(6, 6, 9, 0.94);
 }
+/* #1852：本面邸报落位的 dismiss 实底（同 #1486 分层意图，宿主非 modal-bg） */
+.settlement-gazette-panel .gazette-dismiss {
+  background: rgba(18, 12, 6, 0.96);
+}
 .gazette-dismiss-btn {
   min-width: 9.5em;
   min-height: 44px;

@@ -5,9 +5,12 @@
 """
 from __future__ import annotations
 
+from ming_sim.applier import coerce_beyond_intent_flag
+
 from typing import Any, Dict, List, Mapping
 
 from ming_sim.population_pressure import is_actual_population_transfer
+from ming_sim.settlement.views import view as _view
 
 ENTRY_KIND = "covert_levy_exposure"
 PROHIBITION_ACTION = "prohibit_covert_levy"
@@ -15,16 +18,10 @@ PROHIBITION_ACTION = "prohibit_covert_levy"
 
 def active_prohibition_dossier(db: Any, exposed_dossier_id: int) -> Dict[str, object] | None:
     """Return the first canonical dossier which authorizes this prohibition."""
-    rows = db.conn.execute(
-        """SELECT * FROM decree_dossiers
-           WHERE action_type=? AND target_kind='dossier' AND target_id=?
-             AND status IN ('promulgated','closed')
-           ORDER BY id""",
-        (PROHIBITION_ACTION, str(int(exposed_dossier_id))),
-    ).fetchall()
+    rows = db.dossiers.prohibition_dossiers(PROHIBITION_ACTION, int(exposed_dossier_id))
     for row in rows:
         item = dict(row)
-        if db.dossier_authorizes_effects(int(item["id"])):
+        if db.dossiers.authorizes_effects(int(item["id"])):
             return item
     return None
 
@@ -38,8 +35,9 @@ def canonical_fiscal_result(
 
     origin = source.get("origin_ref") if effective_origin_ref is None else effective_origin_ref
     result["origin_ref"] = str(origin or "").strip()
+    result["source_item"] = source
     result["beyond_intent"] = bool(
-        db.coerce_beyond_intent_flag(read_beyond_intent_raw(source))
+        coerce_beyond_intent_flag(read_beyond_intent_raw(source))
     )
     result["applied"] = bool(applied)
     return result
@@ -56,7 +54,7 @@ def stopped_covert_effect(
     if not raw_id.isdigit():
         return False
     from ming_sim.simulation import read_beyond_intent_raw
-    beyond = db.coerce_beyond_intent_flag(read_beyond_intent_raw({"beyond_intent": beyond_intent}))
+    beyond = coerce_beyond_intent_flag(read_beyond_intent_raw({"beyond_intent": beyond_intent}))
     if not beyond:
         return False
     return active_prohibition_dossier(db, int(raw_id)) is not None
@@ -64,20 +62,15 @@ def stopped_covert_effect(
 
 def _issue_for_dossier(db: Any, dossier_id: int) -> int:
     row = db.conn.execute(
-        "SELECT id FROM issues WHERE origin_ref=? ORDER BY id LIMIT 1",
-        (f"dossier:{int(dossier_id)}",),
+        'SELECT id FROM issues WHERE origin_ref=? ORDER BY id LIMIT 1',
+        (f'dossier:{int(dossier_id)}',),
     ).fetchone()
     return int(row["id"]) if row is not None else 0
 
 
 def army_pay_fact_for_dossier(db: Any, dossier_id: int) -> Dict[str, object] | None:
     """把月结真值附在既有案卷判官输入，不另造 simulator payload。"""
-    row = db.conn.execute(
-        """SELECT d.target_id army_id,a.arrears,a.consecutive_pay_shortfall_months
-           FROM decree_dossiers d JOIN armies a ON a.id=d.target_id
-           WHERE d.id=? AND d.target_kind='army'""",
-        (int(dossier_id),),
-    ).fetchone()
+    row = db.dossiers.army_pay_row(int(dossier_id))
     if row is None:
         return None
     return {
@@ -87,31 +80,35 @@ def army_pay_fact_for_dossier(db: Any, dossier_id: int) -> Dict[str, object] | N
     }
 
 
-def settle_exposure_from_canonical_actions(db: Any, state: Any, applied: Mapping[str, object]) -> int:
+def settle_exposure_from_canonical_actions(db: Any, state: Any, applied: Any) -> int:
     """只凭 canonical applier 已成功落库的结果消费待办。"""
     consumed = 0
-    for todo in db.list_next_audience_todos(status="pending"):
+    for todo in db.dossiers.list_next_audience_todos(status="pending"):
         if todo.get("entry_kind") != ENTRY_KIND:
             continue
-        payload = todo.get("payload_json") or {}
+        payload = todo["payload_json"]
         did = int(payload.get("dossier_id") or 0)
         # The same row remains the durable reminder only while the real gap exists.
         if payload.get("decision") == "禁摊派":
             pay_fact = army_pay_fact_for_dossier(db, did) or {}
             if float(pay_fact.get("arrears") or 0) <= 0:
-                db.mark_next_audience_todo_status(int(todo["id"]), "consumed", commit=False)
+                db.dossiers.mark_next_audience_todo_status(int(todo["id"]), "consumed", commit=False)
                 consumed += 1
             continue
         if payload.get("decision"):
             continue
         origin = f"dossier:{did}"
-        dossier = db.get_decree_dossier(did) or {}
+        from ming_sim.participant_roster import decode_durable_participant_roster
+
+        dossier = db.dossiers.get(did) or {}
         actors = {str(dossier.get("executor_id") or "").strip()}
-        for participant in dossier.get("participant_roster") or []:
-            if isinstance(participant, Mapping) and participant.get("tier") in {"主办", "协办"}:
+        for participant in decode_durable_participant_roster(
+            dossier.get("participant_roster") or [],
+        ):
+            if participant.get("tier") in {"主办", "协办"}:
                 actors.add(str(participant.get("character_id") or "").strip())
         actors.discard("")
-        successful = lambda x: isinstance(x, Mapping) and not x.get("rejected")
+        successful = lambda x: isinstance(x, Mapping)
         # Identity is the successfully promulgated case-bound dossier, never an
         # unrelated fiscal receipt with a convenient shape.
         pay_fact = army_pay_fact_for_dossier(db, did) or {}
@@ -119,7 +116,7 @@ def settle_exposure_from_canonical_actions(db: Any, state: Any, applied: Mapping
         stopped = prohibition is not None
         if prohibition is not None:
             # The canonical prohibition owns the durable, idempotent rollback receipt.
-            from ming_sim.issues import neutralize_covert_fiscal_effects
+            from ming_sim.entities.fiscal.covert_neutralize import neutralize_covert_fiscal_effects
             neutralize_covert_fiscal_effects(
                 db, state, exposed_dossier_id=did,
                 prohibition_dossier_id=int(prohibition["id"]),
@@ -127,16 +124,15 @@ def settle_exposure_from_canonical_actions(db: Any, state: Any, applied: Mapping
         levy_transfer = any(
             is_actual_population_transfer(x)
             and x.get("origin_ref") == origin and x.get("reason") == "摊派"
-            for x in applied.get("population_transfers") or []
+            for x in _view(applied, "population_transfers")
         )
         covert_effect = any(
             successful(x) and x.get("applied") is True
             and x.get("origin_ref") == origin and x.get("beyond_intent") is True
             for key in ("economy_moves", "fiscal_changes", "fiscal_creates", "fiscal_removes")
-            for x in applied.get(key) or []
+            for x in _view(applied, key)
         )
-        person_changes = list(applied.get("applied_person_changes") or [])
-        person_changes += list((applied.get("issue_summary") or {}).get("applied_person_changes") or [])
+        person_changes = list(_view(applied, "applied_person_changes"))
         punished = any(
             successful(x) and x.get("动作") in {"处置", "罢黜"}
             and str(x.get("name") or "") in actors for x in person_changes
@@ -145,7 +141,7 @@ def settle_exposure_from_canonical_actions(db: Any, state: Any, applied: Mapping
             successful(x)
             and str(x.get("origin") or "").startswith(f"{origin}:relation:")
             and ({str(x.get("source") or ""), str(x.get("target") or "")} & actors)
-            for x in applied.get("relation_edge_event_resolutions") or []
+            for x in _view(applied, "relation_edge_event_resolutions")
         )
         decisions = [
             name for name, matched in (
@@ -161,7 +157,7 @@ def settle_exposure_from_canonical_actions(db: Any, state: Any, applied: Mapping
             decision == "禁摊派" and float(pay_fact.get("arrears") or 0) > 0
         )
         status = "pending" if reopened else "consumed"
-        db.mark_next_audience_todo_status(
+        db.dossiers.mark_next_audience_todo_status(
             int(todo["id"]), status,
             payload_patch={"decision": decision, "decided_turn": int(state.turn),
                            "shortfall_reopened": reopened}, commit=False,
@@ -170,16 +166,17 @@ def settle_exposure_from_canonical_actions(db: Any, state: Any, applied: Mapping
     return consumed
 
 
-def write_exposure_todos(
-    db: Any, state: Any, applied: Mapping[str, object] | None = None,
-) -> int:
+def write_exposure_todos(db: Any, state: Any, applied: Any = None) -> int:
     """由稽核、检举、已成功落库的 #649 民变实况三路写同一待办。"""
     transfers = [
-        item for item in (applied or {}).get("population_transfers") or []
+        item for item in _view(applied, "population_transfers")
         if is_actual_population_transfer(item)
     ]
     written = 0
-    for row in db.conn.execute("SELECT id FROM decree_dossiers ORDER BY id").fetchall():
+    for row in db.conn.execute(
+        'SELECT id FROM decree_dossiers ORDER BY id',
+        (),
+    ).fetchall():
         did = int(row["id"])
         fork = db.read_dossier_fork_state(did)
         # #651's covert channel is narrower than the shared #622/#627 fork:
@@ -193,14 +190,20 @@ def write_exposure_todos(
         ):
             continue
         channels: List[str] = []
-        if db.conn.execute(
-            "SELECT 1 FROM decree_dossier_links WHERE target_dossier_id=? AND relation_type='稽核' LIMIT 1",
-            (did,),
-        ).fetchone() is not None:
+        if (
+            db.conn.execute(
+                'SELECT 1 FROM decree_dossier_links WHERE target_dossier_id=? AND '
+                "relation_type='稽核' LIMIT 1",
+                (did,),
+            ).fetchone()
+            is not None
+        ):
             channels.append("稽核")
         from ming_sim.supervision import ORIGIN_MARK_DENUNCIATION_TRUE, origin_has_mark
+
         denunciations = db.conn.execute(
-            "SELECT origin FROM faction_denunciations WHERE target_dossier_id=?", (did,)
+            'SELECT origin FROM faction_denunciations WHERE target_dossier_id=?',
+            (did,),
         ).fetchall()
         if any(origin_has_mark(row["origin"], ORIGIN_MARK_DENUNCIATION_TRUE) for row in denunciations):
             channels.append("检举")
@@ -217,7 +220,7 @@ def write_exposure_todos(
         issue_id = _issue_for_dossier(db, did)
         if issue_id <= 0:
             continue
-        created = db.insert_next_audience_todo(
+        created = db.dossiers.insert_next_audience_todo(
             commitment_ref=issue_id, stage_idx=did, due_turn=int(state.turn),
             criterion_text="暗渠摊派揭破待裁", origin_context="案卷实况与奏报有异",
             entry_kind=ENTRY_KIND, created_turn=int(state.turn),

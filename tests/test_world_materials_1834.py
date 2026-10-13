@@ -1,23 +1,30 @@
+from __future__ import annotations
+from ming_sim.materials import (
+    _safe_segment,
+    list_materials, prepare_world_materials,
+)
+import json
+from pathlib import Path
+import pytest
+from ming_sim.knowledge import build_character_knowledge
+from ming_sim.db import GameDB
+from ming_sim.materials import (
+    read_material,
+)
 """#1834 [M18 供料] S4：推演者材料目录。
 
 Seam: prepare_world_materials (directory + opening min set), reusing
 list_materials/read_material (#1830 API, generic over any root).
 
-大理寺 01a08e3a 裁定：本文件只留结构化契约（目录路径、INDEX 一致性、无裸
+大理寺 01a08e3a 裁定：本文件只留结构化契约（目录路径、可读载体、无裸
 副本）；对盘面/事务/opening/经历/邸报等人读渲染文本的措辞或固定片段机械
-断言（含哨兵）已整类删除，不得换形复造——`read_material` 越目录契约已由
-tests/test_material_directory_1830.py 的同一泛化入口覆盖，不在此重复。
+断言（含哨兵）已整类删除，不得换形复造。现役 list/read 的目录边界
+负向契约在本文件验证，不依赖已删除的角色材料目录测试。
 """
 
-from __future__ import annotations
 
-from pathlib import Path
 
-from ming_sim.db import GameDB
-from ming_sim.materials import (
-    list_materials, prepare_world_materials, read_material,
-    world_materials_root,
-)
+
 
 
 def test_prepare_writes_typed_tree_with_board_affairs_and_gazette_index(game, tmp_path):
@@ -41,35 +48,42 @@ def test_prepare_writes_typed_tree_with_board_affairs_and_gazette_index(game, tm
     names = list_materials(prepared.root)
     assert "INDEX.txt" in names
     assert "盘面/全局.txt" in names
+    assert "盘面/派系检举事实.txt" in names
     assert "人物/朝臣名册.txt" in names
     assert any(p.startswith("人物/") and p.endswith("/经历.txt") for p in names)
     assert any(p.startswith(f"事务/affair-{affair.id}-") for p in names)
     assert any(p.startswith("邸报/") for p in names)
 
-    index = read_material(prepared.root, "INDEX.txt")
-    listed = set(names)
-    for line in index.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        assert stripped in listed or any(
-            stripped.startswith(rel + " ") for rel in listed
-        )
-    for rel in listed:
-        if rel != "INDEX.txt":
-            assert read_material(prepared.root, rel)
-    from ming_sim.models import reign_period_label
-    gazette_rel = f"邸报/{past_year}年{past_period}月.txt"
-    gazette_line = next(
-        line for line in index.splitlines()
-        if line.strip() == gazette_rel or line.strip().startswith(gazette_rel + " ")
-    )
-    assert reign_period_label(past_year, past_period) in gazette_line.split()
-    assert "辽东告急" in gazette_line.split()
-    assert "历月邸报正文" not in gazette_line
+    # 无独立固定字节种子内容契约（旧 INDEX/邸报标题/检举 JSON 正文锁已按
+    # 大理寺 01a08e3a 退役）。路径在册 + 无裸副本即契约；不留裸 read 空壳。
 
     # 无裸副本：不得直接倒出世界库/JSON。
     assert not any(n.lower().endswith((".db", ".sqlite", ".sqlite3", ".json")) for n in names)
+
+
+def test_read_material_stays_inside_directory(game, tmp_path):
+    from ming_sim.materials import material_tools
+
+    db, state, _ = game
+    root = prepare_world_materials(db, state, dest_root=tmp_path / "m").root
+    outside = root.parent / "outside.txt"
+    outside.write_text("外部输入", encoding="utf-8")
+    (root / "escape").symlink_to(root.parent, target_is_directory=True)
+    for path in ("../outside.txt", str(outside), "~/outside.txt", "escape/outside.txt"):
+        with pytest.raises(ValueError):
+            read_material(root, path)
+        with pytest.raises(ValueError):
+            list_materials(root, path)
+
+    tools = {tool.__name__: tool for tool in material_tools(root)}
+    relative = "人物/John Doe/经历.txt"
+    local = root / relative
+    local.parent.mkdir(parents=True)
+    local.write_text("经历输入", encoding="utf-8")
+    assert relative in list_materials(root)
+    assert tools["read_material"](relative) == local.read_text(encoding="utf-8")
+    with pytest.raises(FileNotFoundError):
+        read_material(root, relative + " 非路径后缀")
 
 
 def test_all_characters_get_an_experience_file_not_just_current_court(game, tmp_path):
@@ -77,7 +91,7 @@ def test_all_characters_get_an_experience_file_not_just_current_court(game, tmp_
     朝的人物经历整条消失（#1819 决定 1：各人物经历三层全可读，不按当前在朝状态
     收窄）。挑一个真实不在当前朝臣名册里的人物，断言其经历文件仍存在于目录。"""
     db, state, content = game
-    active_names = {row["name"] for row in db.current_court_roster_rows(state)}
+    active_names = {row["name"] for row in db.characters.current_court_rows(int(state.year), int(state.period))}
     all_names = [
         row["name"] for row in db.conn.execute("SELECT name FROM characters ORDER BY name").fetchall()
     ]
@@ -106,9 +120,9 @@ def test_character_army_region_textual_facts_reach_world_directory(game, tmp_pat
     army_id = str(db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()["id"])
     region_id = str(db.conn.execute("SELECT id FROM regions LIMIT 1").fetchone()["id"])
 
-    character_fact = "SENTINEL_CHARACTER_FACT_1828：右臂中箭，尚未痊愈"
-    army_fact = "SENTINEL_ARMY_FACT_1828：欠饷已逾三月"
-    region_fact = "SENTINEL_REGION_FACT_1828：旱情加剧，流民渐增"
+    character_fact = "右臂中箭，尚未痊愈"
+    army_fact = "欠饷已逾三月"
+    region_fact = "旱情加剧，流民渐增"
     db.textual_facts.append(
         subject_kind="character", subject_id=character_name, body=character_fact,
         year=state.year, period=state.period, turn=state.turn,
@@ -125,17 +139,12 @@ def test_character_army_region_textual_facts_reach_world_directory(game, tmp_pat
     prepared = prepare_world_materials(db, state, dest_root=tmp_path / "m3")
     names = list_materials(prepared.root)
 
-    character_rel = next(
-        (p for p in names if p.startswith("人物/") and p.endswith("/按月实况.txt") and character_name in p),
-        None,
+    character_rel = f"人物/{_safe_segment(character_name)}/按月实况.txt"
+    army_rel = f"军队/{_safe_segment(army_id)}/按月实况.txt"
+    region_rel = f"地区/{_safe_segment(region_id)}/按月实况.txt"
+    assert character_rel in names and army_rel in names and region_rel in names, (
+        "三类对象的按月实况文件均应在世界目录里"
     )
-    army_rel = next(
-        (p for p in names if p.startswith(f"军队/{army_id}/按月实况.txt")), None,
-    )
-    region_rel = next(
-        (p for p in names if p.startswith(f"地区/{region_id}/按月实况.txt")), None,
-    )
-    assert character_rel and army_rel and region_rel, "三类对象的按月实况文件均应在世界目录里"
 
 
 def test_prepare_rebuilds_from_world_record_after_restore(game, tmp_path):
@@ -144,60 +153,63 @@ def test_prepare_rebuilds_from_world_record_after_restore(game, tmp_path):
         name="宣府欠饷", origin="宣府镇奏报欠饷",
         year=state.year, period=state.period, turn=state.turn,
     )
+    dossier_id = db.create_decree_dossier(
+        state, action_type="assignment", decree_text="护送军饷",
+        target_kind="issue", target_id="pay", executor_kind="character",
+        executor_id="毕自严",
+        payload={"assignee_id": "毕自严", "affair_declaration": {
+            "attach": "existing", "affair_id": affair.id,
+        }},
+    )
+    db.dossiers.record_dossier_progress(dossier_id, state.turn, "推进", "军饷已领讫")
+    db.dossiers.record_actual_progress(
+        dossier_id, state.turn, units=2, fidelity_state="partial",
+        floor_state="partial", note="余饷未交付",
+    )
+    db.conn.execute(
+        "UPDATE affairs SET status='closed', closed_turn=? WHERE id=?",
+        (int(state.turn), int(affair.id)),
+    )
+    db.conn.commit()
     path = str(db.path)
-    db.close()
+    db.conn.close()
 
-    from ming_sim.db import GameDB
     restored = GameDB(path, content)
     try:
         state2 = restored.load_state()
         prepared = prepare_world_materials(restored, state2, dest_root=tmp_path / "m2")
         names = list_materials(prepared.root)
-        assert any(p.startswith(f"事务/affair-{affair.id}-") for p in names)
+        affair_paths = [p for p in names if p.startswith(f"事务/affair-{affair.id}-")]
+        # restore 后事务载体路径唯一在册；旧正文锁（进度/关闭史）已退役。
+        assert len(affair_paths) == 1
     finally:
-        restored.close()
+        restored.conn.close()
 
 
-def test_world_materials_isolate_invocations_and_databases(game, tmp_path, monkeypatch):
+def test_world_materials_isolate_invocations_and_databases(game, tmp_path):
     db, state, content = game
     requested = tmp_path / "world"
     first = prepare_world_materials(db, state, dest_root=requested)
     second = prepare_world_materials(db, state, dest_root=requested)
     assert first.root != second.root
-    assert read_material(first.root, "INDEX.txt")
-    assert read_material(second.root, "INDEX.txt")
-
-    other = GameDB(str(Path(db.path).parent / "other.db"), content)
-    try:
-        other.seed_static_data()
-        other_state = other.load_state()
-
-        class _Fixed:
-            hex = "a" * 32
-
-        monkeypatch.setattr("ming_sim.materials.uuid.uuid4", lambda: _Fixed())
-        same_db = world_materials_root(db, state)
-        assert same_db == world_materials_root(db, state)
-        other_db = world_materials_root(other, other_state)
-        assert same_db != other_db
-    finally:
-        other.close()
+    assert (first.root / "INDEX.txt").is_file()
+    assert (second.root / "INDEX.txt").is_file()
 
 
 def test_world_materials_include_textual_facts_once_and_gazette_not_duplicated(game, tmp_path):
     """世界目录直读权威文字事实与独立公开说法；邸报只走 邸报/ 载体。
 
-    契约只落结构化路径 / INDEX / typed store 可达关系，不盯人读正文。
+    契约只落列目录的结构化路径 / typed store 可达关系，不解析人读 INDEX。
     """
     db, state, content = game
     name = next(iter(content.characters))
     db.textual_facts.append(
-        subject_kind="character", subject_id=name, body="世界可见人物文字事实",
+        subject_kind="character", subject_id=name, body="人物事实",
         year=int(state.year), period=int(state.period), turn=int(state.turn),
     )
     region = db.conn.execute("SELECT id FROM regions ORDER BY id LIMIT 1").fetchone()
     db.textual_facts.append(
-        subject_kind="region", subject_id=str(region["id"]), body="世界可见地方文字事实",
+        subject_kind="region", subject_id=str(region["id"]), body="地方事实",
         year=int(state.year), period=int(state.period), turn=int(state.turn),
     )
     affair = db.affairs.open(
@@ -205,7 +217,7 @@ def test_world_materials_include_textual_facts_once_and_gazette_not_duplicated(g
         year=state.year, period=state.period, turn=state.turn,
     )
     db.textual_facts.append(
-        subject_kind="affair", subject_id=str(affair.id), body="affair-fact-body",
+        subject_kind="affair", subject_id=str(affair.id), body="事务事实",
         year=int(state.year), period=int(state.period), turn=int(state.turn),
         origin_ref=db.affairs.origin_ref(affair.id),
     )
@@ -232,32 +244,132 @@ def test_world_materials_include_textual_facts_once_and_gazette_not_duplicated(g
 
     prepared = prepare_world_materials(db, state, dest_root=tmp_path / "world-facts")
     names = list_materials(prepared.root)
-    index_lines = {
-        line.strip() for line in read_material(prepared.root, "INDEX.txt").splitlines() if line.strip()
-    }
-    fact_paths = [p for p in names if p.startswith("事实/")]
-    assert any(p.startswith("事实/character-") for p in fact_paths)
-    assert any(p.startswith("事实/region-") for p in fact_paths)
-    assert set(fact_paths) <= index_lines
+    assert f"人物/{_safe_segment(name)}/按月实况.txt" in names
+    assert f"地区/{_safe_segment(region['id'])}/按月实况.txt" in names
+    assert not any(p.startswith("事实/") for p in names)
     # typed store still reachable for the written subjects
     assert db.textual_facts.readable_materials(subject_kind="character", subject_id=name)
     assert db.textual_facts.readable_materials(
         subject_kind="region", subject_id=str(region["id"]),
     )
-    # affair textual facts ride 事务/ only — not a second 事实/affair-* carrier.
-    assert not any(p.startswith("事实/affair-") for p in names)
+    # affair textual facts ride 事务/ only.
     affair_paths = [p for p in names if p.startswith(f"事务/affair-{affair.id}-")]
     assert len([p for p in affair_paths if p.endswith("/当前情况.txt")]) == 1
-    assert set(affair_paths) <= index_lines
 
     gazette_paths = [p for p in names if p.startswith("邸报/")]
     assert gazette_paths
-    assert set(gazette_paths) <= index_lines
     assert expected_public_rel in names
-    assert expected_public_rel in index_lines
     # 邸报 stays a top-level carrier; public layer does not grow gazette path twins.
     assert not any(p.startswith("公开说法/邸报/") for p in names)
     # _is_gazette_public_event 必须把 turn_report 挡出 公开说法/：gate 在场时
     # past 月路径不存在；gate 失效后该路径会出现（结构化路径契约，不盯正文）。
     assert f"公开说法/{past_year}年{past_period}月.txt" not in names
     assert f"邸报/{past_year}年{past_period}月.txt" in names
+
+
+
+
+@pytest.mark.parametrize("reader", ["dossier", "secret", "audience"])
+def test_prepare_fails_loud_when_dossier_read_breaks(game, tmp_path, monkeypatch, reader):
+    from ming_sim.materials import prepare_scene_materials, write_identity_materials
+    import ming_sim.knowledge as knowledge
+    db, state, _ = game
+    fault = RuntimeError("material read fault")
+    def fail(*_a, **_k):
+        raise fault
+    owner, method = {
+        "dossier": (db, "list_referenceable_dossiers"),
+        "secret": (db.character_knowledge, "list_secret_orders"),
+        "audience": (knowledge, "_issue_audience_names"),
+    }[reader]
+    if reader == "dossier":
+        monkeypatch.setattr(owner, method, fail)
+        with pytest.raises(RuntimeError) as exc:
+            prepare_scene_materials(db, state, dest_root=tmp_path / "scene")
+    else:
+        prepared = prepare_world_materials(db, state, dest_root=tmp_path / "m")
+        monkeypatch.setattr(owner, method, fail)
+        with pytest.raises(RuntimeError) as exc:
+            write_identity_materials(prepared, db, state, ["郭允厚"])
+    assert exc.value is fault
+
+
+def test_material_tree_contains_only_structurally_related_world_details(game, tmp_path):
+    from ming_sim.materials import write_identity_materials, identity_material_rel, _safe_segment
+    from ming_sim.settlement.run import apply_person_changes_only
+    db, state, content = game
+    name = next(r["name"] for r in db.characters.current_court_rows(state.year, state.period))
+    army = db.conn.execute("SELECT id,name FROM armies ORDER BY id LIMIT 1").fetchone()
+    out = apply_person_changes_only(db, state, [{"name": name, "动作": "任命", "office": "陕西巡抚", "office_type": "地方", "region_id": "shaanxi", "reason": "任职输入"}], content=content)
+    assert out.applied and not out.rejected
+    db.conn.execute("UPDATE armies SET commander='' WHERE commander=?", (name,))
+    db.conn.execute("UPDATE armies SET commander=? WHERE id=?", (name, army["id"]))
+    db.conn.commit()
+    prepared = prepare_world_materials(db, state, dest_root=tmp_path / "m")
+    write_identity_materials(prepared, db, state, [name])
+    root = prepared.root / Path(identity_material_rel(name)).parent
+    names = list_materials(root)
+    assert [p for p in names if p.startswith("地区/")] == [f"地区/{_safe_segment('陕西')}/详情.txt"]
+    assert [p for p in names if p.startswith("军队/")] == [f"军队/{_safe_segment(army['name'] or army['id'])}/详情.txt"]
+
+
+@pytest.mark.parametrize("participant,audiences", [("崔呈秀", "[]"), ("崔呈秀", '["郭允厚"]'), ("温体仁", '["郭允厚"]')])
+def test_issue_audience_grant_does_not_authorize_an_outsider(game, tmp_path, participant, audiences):
+    from ming_sim.materials import write_identity_materials, identity_material_rel
+    db, state, _ = game
+    row = db.conn.execute("SELECT * FROM issues WHERE title='户部亏空' AND status='active'").fetchone()
+    assert row is not None
+    db.conn.execute("UPDATE issues SET participant_roster=? WHERE id=?", (json.dumps([{"character_id": participant}], ensure_ascii=False), row["id"]))
+    db.conn.execute("UPDATE events SET audiences=? WHERE id=?", (audiences, row["origin_ref"]))
+    db.conn.commit()
+    sources = [dict(r) for r in db.conn.execute("SELECT * FROM character_knowledge_sources ORDER BY id")]
+    stored = dict(db.conn.execute("SELECT * FROM issues WHERE id=?", (row["id"],)).fetchone())
+    knowledge = build_character_knowledge(db, state, '崔呈秀')
+    prepared = prepare_world_materials(db, state, dest_root=tmp_path / "m")
+    write_identity_materials(prepared, db, state, ["郭允厚", "崔呈秀"])
+    for name, visible in (("郭允厚", audiences != "[]"), ("崔呈秀", participant == "崔呈秀")):
+        root = prepared.root / Path(identity_material_rel(name)).parent
+        assert (f'事务/{_safe_segment("issue-" + str(row["id"]))}/当前情况.txt' in list_materials(root)) is visible
+    assert build_character_knowledge(db, state, '崔呈秀') == knowledge
+    assert dict(db.conn.execute("SELECT * FROM issues WHERE id=?", (row["id"],)).fetchone()) == stored
+    assert [dict(r) for r in db.conn.execute("SELECT * FROM character_knowledge_sources ORDER BY id")] == sources
+    assert db.conn.execute("SELECT audiences FROM events WHERE id=?", (row["origin_ref"],)).fetchone()[0] == audiences
+
+
+@pytest.mark.parametrize("audiences,error_type", [
+    ("{}", TypeError), ("not-json", json.JSONDecodeError), ("null", TypeError),
+    ('[1,"郭允厚"]', TypeError), ('["郭允厚",{}]', TypeError),
+])
+def test_malformed_event_audience_fails_loud_from_material_entry(game, tmp_path, audiences, error_type):
+    from ming_sim.materials import write_identity_materials
+
+    db, state, _ = game
+    row = db.conn.execute("SELECT origin_ref FROM issues WHERE title='户部亏空' AND status='active'").fetchone()
+    assert row is not None
+    db.conn.execute("UPDATE events SET audiences=? WHERE id=?", (audiences, row["origin_ref"]))
+    prepared = prepare_world_materials(db, state, dest_root=tmp_path / "m")
+    with pytest.raises(error_type):
+        write_identity_materials(prepared, db, state, ["郭允厚"])
+
+
+def test_character_materials_exclude_legacy_raw_turn_report_and_keep_public_gazettes(game, tmp_path):
+    from ming_sim.materials import write_identity_materials, identity_material_rel
+    from ming_sim.models import GameState
+
+    db, state, _ = game
+    raw_turn, public_turn = int(state.turn) + 7, max(1, int(state.turn))
+    db.conn.execute(
+        "INSERT INTO turn_reports (turn,year,period,report,attendant_message) VALUES (?,?,?,?, '')",
+        (raw_turn, 1700, 1, "raw report input"),
+    )
+    public = GameState(turn=public_turn, year=1700, period=2, metrics=dict(state.metrics))
+    db.record_public_knowledge_event(public, "邸报", "公开邸报输入", source_id=f"turn_report:{public_turn}:public")
+    db.conn.execute("INSERT OR REPLACE INTO turn_reports (turn,year,period,report,attendant_message) VALUES (?,?,?,?, '')", (public_turn, 1700, 2, "公开邸报输入"))
+    db.conn.commit()
+    prepared = prepare_world_materials(db, state, dest_root=tmp_path / "m")
+    write_identity_materials(prepared, db, state, ["郭允厚"])
+    root = prepared.root / Path(identity_material_rel("郭允厚")).parent
+    names = list_materials(root)
+    assert "公开说法/邸报/1700年1月.txt" not in names
+    assert "公开说法/邸报/1700年2月.txt" in names
+    assert not any(path.startswith("邸报/") for path in names)

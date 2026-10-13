@@ -33,7 +33,6 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import os
 import sys
 import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -44,6 +43,7 @@ sys.path.insert(0, str(ROOT))
 
 from agno.db.sqlite import SqliteDb
 
+from ming_sim.opening_seed import seed_opening_world
 from ming_sim.agents import bind_content as bind_agent_content
 from ming_sim.content import GameContent
 from ming_sim.context import bind_content
@@ -112,21 +112,16 @@ def _plant_force_history(db: GameDB, state, count: int) -> list[int]:
         # Closed historical force row: decision rejected + rescript force.
         # History loader joins decisions×payload; marker=批红强颁 when rescript_action set.
         db.conn.execute(
-            """
-            UPDATE decree_dossiers
-            SET status='closed', promulgation_decision='rejected',
-                rescript_pending=0, closed_turn=?
-            WHERE id=?
-            """,
+            "UPDATE decree_dossiers SET status='closed', "
+            "promulgation_decision='rejected', rescript_pending=0, closed_turn=? "
+            "WHERE id=?",
             (int(state.turn), int(did)),
         )
         db.conn.execute(
-            """
-            INSERT INTO decree_dossier_decisions
-                (dossier_id, turn, decision, rescript_action, reason, legal_reason_code)
-            VALUES (?, ?, 'rejected', 'force_promulgated', '批红强颁', '')
-            """,
-            (int(did), max(1, int(state.turn) - 1)),
+            """INSERT INTO decree_dossier_decisions
+                   (dossier_id, turn, decision, rescript_action, reason, legal_reason_code)
+               VALUES (?, ?, 'rejected', 'force_promulgated', ?, '')""",
+            (int(did), max(1, int(state.turn) - 1), "批红强颁"),
         )
         ids.append(did)
     db.conn.commit()
@@ -149,7 +144,7 @@ def _run_arm(
         target_id=target_id,
         payload={"mode": "midzhi"},
     )
-    rows = [db.get_decree_dossier(test_id)]
+    rows = [db.dossiers.get(test_id)]
     context = build_promulgation_judge_context(db, state, rows)
     history_markers = [
         item.get("marker") for item in context.get("promulgation_history") or []
@@ -184,7 +179,7 @@ def _open_pair(root: str, index: int, content: GameContent) -> tuple:
         arm_dir = pair_dir / arm
         arm_dir.mkdir()
         db = GameDB(str(arm_dir / "game.db"), content)
-        db.seed_static_data()
+        seed_opening_world(db)
         state = db.load_state()
         # Moderate authority: admin midzhi should clear on clean arm (#561 path).
         state.metrics["皇威"] = 55
@@ -192,7 +187,7 @@ def _open_pair(root: str, index: int, content: GameContent) -> tuple:
             "UPDATE factions SET leverage=70, agenda=? WHERE name='东林'",
             (BOARD_DONGLIN_AGENDA,),
         )
-        db.save_state(state)
+        db.reign.save_game_state(state)
         db.conn.commit()
         agno = SqliteDb(db_file=str(arm_dir / "agno.db"))
         dbs.append((db, state, agno))
@@ -261,8 +256,8 @@ def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> 
             },
         }
     finally:
-        db_a.close()
-        db_b.close()
+        db_a.conn.close()
+        db_b.conn.close()
 
 
 def main() -> int:

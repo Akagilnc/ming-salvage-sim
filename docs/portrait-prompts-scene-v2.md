@@ -1,6 +1,6 @@
 # 暗色场景化人物立绘提示词 v2
 
-本文件是本轮暗色场景化人物立绘 prompt 的唯一真源，不沿用已删除的旧白底全身画像规格。旧脚本 `scripts/gen_portraits.py` 只服务已废弃规格，本轮不作为生成入口；`docs/portrait-prompts-local-south1-review.md` 只作 12 人试生成留档，不再作为生成真源。
+本文件是本轮暗色场景化人物立绘 prompt 的唯一真源，不沿用已删除的旧白底全身画像规格。旧白底生成入口已删除；`docs/portrait-prompts-local-south1-review.md` 只作 12 人试生成留档，不再作为生成真源。
 
 ## 本轮范围
 

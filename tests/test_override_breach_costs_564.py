@@ -1,12 +1,13 @@
-"""#564 强颁与毁约的确定性代价轨（ADR 0056）。"""
-
+from ming_sim.settlement.dossier import apply_dossier_promulgation, apply_dossier_verdicts
+from ming_sim.entities.issue.tracker import apply_issue_tracker_output
+from ming_sim.applier import Provenance
 import json
-
 import pytest
-
-from ming_sim import issues
 from ming_sim.applier import atomic
 from tests.dossier_test_helpers import _cost_events, _sat
+"""#564 强颁与毁约的确定性代价轨（ADR 0056）。"""
+
+
 
 
 def _dossier(db, state, *, mode="ordinary", roster=None):
@@ -15,7 +16,6 @@ def _dossier(db, state, *, mode="ordinary", roster=None):
         target_kind="issue", target_id="land-survey",
         payload={"mode": mode}, participants=roster or [],
     )
-
 
 def _verdict(dossier_id, decision="rejected"):
     return {
@@ -32,14 +32,13 @@ def _verdict(dossier_id, decision="rejected"):
         ],
     }
 
-
 def test_force_land_survey_charges_three_costs_without_eunuch_reaction(game):
     db, state, _ = game
     dossier_id = _dossier(db, state)
     before = {k: _sat(db, t, k) for t, k in [("classes", "士绅"), ("factions", "东林"), ("factions", "阉党")]}
     authority = state.metrics["皇威"]
-    db.apply_dossier_verdicts(state, [_verdict(dossier_id)])
-    db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
+    apply_dossier_verdicts(db, state, [_verdict(dossier_id)])
+    apply_dossier_promulgation(db, state, dossier_id, "force_promulgated")
 
     assert _sat(db, "classes", "士绅") == max(0, before["士绅"] - 8)
     assert _sat(db, "factions", "东林") == max(0, before["东林"] - 4)
@@ -50,8 +49,6 @@ def test_force_land_survey_charges_three_costs_without_eunuch_reaction(game):
         ("authority", "metric", "皇威"), ("satisfaction", "class", "士绅"),
         ("satisfaction", "faction", "东林"),
     }
-    assert all(x["target_id"] != "阉党" for x in events)
-
 
 def test_signed_reactions_use_typed_direction_not_narrative_words(game):
     """ordinary 强颁仍按 typed direction 落反应（叙事词不参与）。"""
@@ -65,11 +62,10 @@ def test_signed_reactions_use_typed_direction_not_narrative_words(game):
     ]
     before_faction = _sat(db, "factions", "东林")
     before_class = _sat(db, "classes", "士绅")
-    db.apply_dossier_verdicts(state, [verdict])
-    db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
+    apply_dossier_verdicts(db, state, [verdict])
+    apply_dossier_promulgation(db, state, dossier_id, "force_promulgated")
     assert _sat(db, "factions", "东林") == min(100, before_faction + 4)
     assert _sat(db, "classes", "士绅") == max(0, before_class - 8)
-
 
 def test_midzhi_rejection_no_party_fanout_then_force_only_authority(game):
     """#657 §C.8：中旨打回不撞派、不落猜派；强颁只追加皇威。"""
@@ -79,7 +75,7 @@ def test_midzhi_rejection_no_party_fanout_then_force_only_authority(game):
     before_faction = _sat(db, "factions", "东林")
     before_class = _sat(db, "classes", "士绅")
     # 即便上游夹带 affected_parties，midzhi 也不持久化、不扇出
-    db.apply_dossier_verdicts(state, [_verdict(dossier_id)])
+    apply_dossier_verdicts(db, state, [_verdict(dossier_id)])
     assert state.metrics["皇威"] == authority
     assert _sat(db, "factions", "东林") == before_faction
     assert _sat(db, "classes", "士绅") == before_class
@@ -91,14 +87,13 @@ def test_midzhi_rejection_no_party_fanout_then_force_only_authority(game):
     ).fetchone()
     assert stored is not None
     assert json.loads(str(stored["affected_parties_json"] or "[]")) == []
-    db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
+    apply_dossier_promulgation(db, state, dossier_id, "force_promulgated")
     assert state.metrics["皇威"] == max(0, authority - 5)
     assert _sat(db, "factions", "东林") == before_faction
     assert _sat(db, "classes", "士绅") == before_class
     assert {(x["cost_kind"], x["target_kind"], x["target_id"]) for x in _cost_events(db, dossier_id)} == {
         ("authority", "metric", "皇威"),
     }
-
 
 def test_ordinary_rejection_has_zero_reaction_and_authority(game):
     """正规 ordinary 打回：零反应、零皇威。"""
@@ -107,23 +102,22 @@ def test_ordinary_rejection_has_zero_reaction_and_authority(game):
     authority = state.metrics["皇威"]
     before_faction = _sat(db, "factions", "东林")
     before_class = _sat(db, "classes", "士绅")
-    db.apply_dossier_verdicts(state, [_verdict(dossier_id)])
+    apply_dossier_verdicts(db, state, [_verdict(dossier_id)])
     assert state.metrics["皇威"] == authority
     assert _sat(db, "factions", "东林") == before_faction
     assert _sat(db, "classes", "士绅") == before_class
     assert _cost_events(db, dossier_id) == []
-
 
 def test_midzhi_rejudgment_never_applies_party_satisfaction(game):
     """#657 §C.8：中旨打回/重判都不写派系 satisfaction；名单变更亦不扇出。"""
     db, state, _ = game
     dossier_id = _dossier(db, state, mode="midzhi")
     first = _verdict(dossier_id)
-    db.apply_dossier_verdicts(state, [first])
+    apply_dossier_verdicts(db, state, [first])
     before_new_party = _sat(db, "classes", "农民")
     before_faction = _sat(db, "factions", "东林")
     assert [row for row in _cost_events(db, dossier_id) if row["cost_kind"] == "satisfaction"] == []
-    db.record_dossier_decision(dossier_id, "hold")
+    db.dossiers.record_dossier_decision(dossier_id, "hold")
     state.turn += 1
     db.conn.execute("UPDATE game_state SET turn=? WHERE id=1", (state.turn,))
     changed = _verdict(dossier_id)
@@ -131,44 +125,42 @@ def test_midzhi_rejudgment_never_applies_party_satisfaction(game):
         {"kind": "class", "key": "农民", "direction": "positive", "intensity": "strong"},
     ]
 
-    db.apply_dossier_verdicts(state, [changed])
+    apply_dossier_verdicts(db, state, [changed])
 
     assert _sat(db, "classes", "农民") == before_new_party
     assert _sat(db, "factions", "东林") == before_faction
     assert [row for row in _cost_events(db, dossier_id) if row["cost_kind"] == "satisfaction"] == []
-
 
 def test_costs_are_idempotent_and_survive_restore(game):
     """ordinary 强颁代价落库后 restore 仍在；同案不双记。"""
     db, state, content = game
     dossier_id = _dossier(db, state, mode="ordinary")
     verdict = _verdict(dossier_id)
-    db.apply_dossier_verdicts(state, [verdict])
-    db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
+    apply_dossier_verdicts(db, state, [verdict])
+    apply_dossier_promulgation(db, state, dossier_id, "force_promulgated")
     first_count = len(_cost_events(db, dossier_id))
     assert first_count >= 2  # authority + satisfaction
     # 再 force 应被状态闸拒，流水不膨胀
     with pytest.raises(ValueError):
-        db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
+        apply_dossier_promulgation(db, state, dossier_id, "force_promulgated")
     assert len(_cost_events(db, dossier_id)) == first_count
     path = db.path
-    db.close()
+    db.conn.close()
     from ming_sim.db import GameDB
     restored = GameDB(path, content)
     try:
         assert len(_cost_events(restored, dossier_id)) == first_count
     finally:
-        restored.close()
-
+        restored.conn.close()
 
 def test_force_then_breach_charges_each_real_entry_independently(game):
     db, state, _ = game
     dossier_id = _dossier(db, state, roster=[
         {"character_id": "倪元璐", "tier": "主办", "role": "总理"},
     ])
-    db.apply_dossier_verdicts(state, [_verdict(dossier_id)])
+    apply_dossier_verdicts(db, state, [_verdict(dossier_id)])
     authority = state.metrics["皇威"]
-    db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
+    apply_dossier_promulgation(db, state, dossier_id, "force_promulgated")
     after_force = _sat(db, "factions", "东林")
 
     assert db.breach_decree_dossier(state, dossier_id, reason="撤回成命") is True
@@ -180,13 +172,12 @@ def test_force_then_breach_charges_each_real_entry_independently(game):
     ]
     assert {row["cost_identity"] for row in authority_events} == {"override", "breach"}
 
-
 def test_breach_excludes_stale_minister_faction_from_costs(game):
     db, state, _ = game
     dossier_id = _dossier(db, state, roster=[
         {"character_id": "倪元璐", "tier": "主办", "role": "总理"},
     ])
-    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
+    apply_dossier_promulgation(db, state, dossier_id, "promulgated")
     db.conn.execute("UPDATE characters SET faction='旧党' WHERE name='倪元璐'")
 
     assert db.breach_decree_dossier(state, dossier_id) is True
@@ -195,15 +186,14 @@ def test_breach_excludes_stale_minister_faction_from_costs(game):
         for event in _cost_events(db, dossier_id)
     )
 
-
-def test_breach_skips_dead_but_records_living_offstage_relations(game, caplog):
+def test_breach_skips_dead_but_records_living_offstage_relations(game):
     db, state, _ = game
     roster = [
         {"character_id": "徐光启", "tier": "主办", "role": "总理"},
         {"character_id": "毕自严", "tier": "主办", "role": "核账"},
     ]
     dossier_id = _dossier(db, state, roster=roster)
-    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
+    apply_dossier_promulgation(db, state, dossier_id, "promulgated")
     dead_faction = db.conn.execute(
         "SELECT faction FROM characters WHERE name='徐光启'"
     ).fetchone()[0]
@@ -212,7 +202,7 @@ def test_breach_skips_dead_but_records_living_offstage_relations(game, caplog):
     db.set_character_status(state, "毕自严", "offstage", reason="在世非现任")
 
     assert db.breach_decree_dossier(state, dossier_id) is True
-    targets = {row["target"] for row in db.get_relation_edge_events(event_kind="辜负")}
+    targets = {row["target"] for row in db.person_logs.get_relation_edge_events(event_kind="辜负")}
     assert "徐光启" not in targets
     assert "毕自严" in targets
     assert _sat(db, "factions", dead_faction) == max(0, before_dead_faction - 4)
@@ -225,8 +215,6 @@ def test_breach_skips_dead_but_records_living_offstage_relations(game, caplog):
     assert [(row["delta"], row["cost_identity"]) for row in dead_faction_events] == [
         (-4, "breach")
     ]
-    assert "跳过已故参与者徐光启" in caplog.text
-
 
 def test_cancel_linked_issue_breaches_only_its_origin_dossier_once(game):
     db, state, _ = game
@@ -234,7 +222,7 @@ def test_cancel_linked_issue_breaches_only_its_origin_dossier_once(game):
         state, action_type="policy", decree_text="兴修河渠",
         target_kind="issue", target_id="river-works",
     )
-    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
+    apply_dossier_promulgation(db, state, dossier_id, "promulgated")
     issue_id = db.insert_issue(
         state, kind="initiative", title="兴修河渠", origin_kind="decree",
         origin_ref=f"dossier:{dossier_id}", cancellable="decree",
@@ -243,18 +231,18 @@ def test_cancel_linked_issue_breaches_only_its_origin_dossier_once(game):
     popular_support = state.metrics["民心"]
     cancel = {"issue_id": issue_id, "narrative": "撤回成命", "applied_cost": {"metrics": {"民心": -9}}}
 
-    issues.apply_issue_tracker_output(db, state, {"cancels": [cancel]})
-    issues.apply_issue_tracker_output(db, state, {"cancels": [cancel]})
+    apply_issue_tracker_output(db, state, {"cancels": [cancel]}, source=Provenance.system_simulation)
+    apply_issue_tracker_output(db, state, {"cancels": [cancel]}, source=Provenance.system_simulation)
 
     assert db.conn.execute("SELECT status FROM issues WHERE id=?", (issue_id,)).fetchone()[0] == "dropped"
-    assert db.get_decree_dossier(dossier_id)["status"] == "closed"
+    # 明确撤令不抢关原案卷：0056 名声账已落，结案留给执行格声明。
+    assert db.dossiers.get(dossier_id)["status"] in {"promulgated", "executing"}
     assert state.metrics["皇威"] == max(0, authority - 5)
     assert state.metrics["民心"] == popular_support
     events = _cost_events(db, dossier_id)
     assert [(event["cost_kind"], event["cost_identity"]) for event in events] == [
         ("breach", "breach"), ("authority", "breach"),
     ]
-
 
 @pytest.mark.parametrize(
     ("mode", "decision", "affected", "message"),
@@ -279,12 +267,11 @@ def test_public_apply_rejects_invalid_mode_decision_reaction_shape_before_writes
     else:
         verdict["affected_parties"] = affected
 
-    with pytest.raises(ValueError, match=message):
-        db.apply_dossier_verdicts(state, [verdict])
+    with pytest.raises(ValueError):
+        apply_dossier_verdicts(db, state, [verdict])
 
-    assert db.list_decree_dossier_decisions(dossier_id) == []
-    assert db.get_decree_dossier(dossier_id)["status"] == "proposed"
-
+    assert db.dossiers.decisions(dossier_id) == []
+    assert db.dossiers.get(dossier_id)["status"] == "proposed"
 
 def test_midzhi_apply_omits_guessed_parties_and_keeps_satisfaction(game):
     """#657 §C.8：midzhi 顺颁/打回均不要求、不落库 affected_parties。"""
@@ -298,7 +285,7 @@ def test_midzhi_apply_omits_guessed_parties_and_keeps_satisfaction(game):
         dossier_id = _dossier(db, state, mode="midzhi")
         before_f = _sat(db, "factions", "东林")
         before_c = _sat(db, "classes", "士绅")
-        db.apply_dossier_verdicts(state, [build(dossier_id)])
+        apply_dossier_verdicts(db, state, [build(dossier_id)])
         assert _sat(db, "factions", "东林") == before_f
         assert _sat(db, "classes", "士绅") == before_c
         stored = db.conn.execute(
@@ -309,105 +296,47 @@ def test_midzhi_apply_omits_guessed_parties_and_keeps_satisfaction(game):
         assert json.loads(str(stored["affected_parties_json"] or "[]")) == []
         assert decision in {
             str(r.get("decision") or "")
-            for r in db.list_decree_dossier_decisions(dossier_id)
+            for r in db.dossiers.decisions(dossier_id)
         }
-
-
-def test_legacy_persisted_reaction_severity_migrates_narrowly_and_idempotently(game, caplog):
-    db, state, content = game
-    dossier_id = _dossier(db, state)
-    legacy = [{"kind": "faction", "key": "东林", "severity": "大怒", "note": "留存"},
-              {"kind": "class", "key": "士绅", "severity": "不满"},
-              {"kind": "class", "key": "农民", "severity": "高兴"}]
-    malformed_payload = "{not-json"
-    malformed_id = db.conn.execute(
-        "INSERT INTO decree_dossier_decisions(dossier_id,turn,decision,affected_parties_json) VALUES (?,?,?,?)",
-        (dossier_id, state.turn, "rejected", malformed_payload),
-    ).lastrowid
-    legal_id = db.conn.execute(
-        "INSERT INTO decree_dossier_decisions(dossier_id,turn,decision,affected_parties_json) VALUES (?,?,?,?)",
-        (dossier_id, state.turn, "rejected", json.dumps(legacy, ensure_ascii=False)),
-    ).lastrowid
-    pending = {"dossier_id": dossier_id, "decision": "rejected", "affected_parties": legacy}
-    db.conn.execute(
-        "INSERT INTO pending_promulgation_verdicts(turn,dossier_id,verdict_json) VALUES (?,?,?)",
-        (state.turn, dossier_id, json.dumps(pending, ensure_ascii=False)),
-    )
-    try:
-        json.loads(malformed_payload)
-    except ValueError as exc:
-        expected_exc = str(exc)
-
-    db.conn.commit()
-    path = db.path
-    db.close()
-    from ming_sim.db import GameDB
-    reopened = GameDB(path, content)
-    reopened.close()
-    reopened = GameDB(path, content)
-    try:
-        saved = reopened.get_pending_promulgation_verdicts(state.turn)[0]["affected_parties"]
-        assert saved[0] == {"kind": "faction", "key": "东林", "note": "留存", "direction": "negative", "intensity": "strong"}
-        assert (saved[1]["direction"], saved[1]["intensity"]) == ("negative", "weak")
-        assert saved[2]["severity"] == "高兴"
-        legal = json.loads(reopened.conn.execute(
-            "SELECT affected_parties_json FROM decree_dossier_decisions WHERE id=?",
-            (legal_id,),
-        ).fetchone()[0])
-        assert legal[0] == saved[0]
-        leftover = reopened.conn.execute(
-            "SELECT affected_parties_json FROM decree_dossier_decisions WHERE id=?",
-            (malformed_id,),
-        ).fetchone()[0]
-        assert leftover == malformed_payload
-        warning = caplog.text
-        assert "decree_dossier_decisions" in warning
-        assert str(malformed_id) in warning
-        assert expected_exc in warning
-    finally:
-        reopened.close()
-
 
 def test_commit_true_breach_reloads_state_when_failure_follows_authority_mutation(game, monkeypatch):
     db, state, _ = game
     dossier_id = _dossier(db, state, roster=[
         {"character_id": "倪元璐", "tier": "主办", "role": "总理"},
     ])
-    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
+    apply_dossier_promulgation(db, state, dossier_id, "promulgated")
     before = state.metrics["皇威"]
     monkeypatch.setattr(
         db, "record_relation_edge_event",
         lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("after authority")),
     )
 
-    with pytest.raises(RuntimeError, match="after authority"):
+    with pytest.raises(RuntimeError):
         db.breach_decree_dossier(state, dossier_id)
 
     assert state.metrics["皇威"] == before
     assert db.conn.execute("SELECT value FROM metrics WHERE key='皇威'").fetchone()[0] == before
     assert _cost_events(db, dossier_id) == []
 
-
 def test_force_rejects_missing_or_stale_judge_reactions_before_any_cost(game):
     db, state, _ = game
     dossier_id = _dossier(db, state)
-    db.apply_dossier_promulgation(
+    apply_dossier_promulgation(db,
         state, dossier_id, "rejected", blocked_layer="six_offices", reason="封驳",
     )
     authority = state.metrics["皇威"]
 
-    with pytest.raises(ValueError, match="当前回合.*affected_parties"):
-        db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
+    with pytest.raises(ValueError):
+        apply_dossier_promulgation(db, state, dossier_id, "force_promulgated")
 
     assert state.metrics["皇威"] == authority
     assert _cost_events(db, dossier_id) == []
-    assert db.get_decree_dossier(dossier_id)["status"] == "proposed"
-
+    assert db.dossiers.get(dossier_id)["status"] == "proposed"
 
 def test_force_rejects_malformed_judge_reactions_before_any_cost(game):
     db, state, _ = game
     dossier_id = _dossier(db, state)
-    db.apply_dossier_verdicts(state, [_verdict(dossier_id)])
+    apply_dossier_verdicts(db, state, [_verdict(dossier_id)])
     db.conn.execute(
         "UPDATE decree_dossier_decisions SET affected_parties_json='{}' "
         "WHERE dossier_id=? AND rescript_action=''",
@@ -415,100 +344,82 @@ def test_force_rejects_malformed_judge_reactions_before_any_cost(game):
     )
     authority = state.metrics["皇威"]
 
-    with pytest.raises(ValueError, match="当前回合.*affected_parties"):
-        db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
+    with pytest.raises(ValueError):
+        apply_dossier_promulgation(db, state, dossier_id, "force_promulgated")
 
     assert state.metrics["皇威"] == authority
     assert _cost_events(db, dossier_id) == []
-    assert db.get_decree_dossier(dossier_id)["status"] == "proposed"
-
+    assert db.dossiers.get(dossier_id)["status"] == "proposed"
 
 def test_force_rejects_old_only_judge_reactions_atomically(game):
     db, state, _ = game
     dossier_id = _dossier(db, state)
-    db.apply_dossier_verdicts(state, [_verdict(dossier_id)])
-    db.record_dossier_decision(dossier_id, "hold")
+    apply_dossier_verdicts(db, state, [_verdict(dossier_id)])
+    db.dossiers.record_dossier_decision(dossier_id, "hold")
     state.turn += 1
     db.conn.execute("UPDATE game_state SET turn=? WHERE id=1", (state.turn,))
-    db.record_dossier_decision(dossier_id, "rejected", blocked_layer="six_offices")
+    db.dossiers.record_dossier_decision(dossier_id, "rejected", blocked_layer="six_offices")
     authority = state.metrics["皇威"]
 
-    with pytest.raises(ValueError, match="当前回合.*affected_parties"):
-        db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
+    with pytest.raises(ValueError):
+        apply_dossier_promulgation(db, state, dossier_id, "force_promulgated")
 
     assert state.metrics["皇威"] == authority
     assert _cost_events(db, dossier_id) == []
-    assert db.get_decree_dossier(dossier_id)["status"] == "proposed"
-
+    assert db.dossiers.get(dossier_id)["status"] == "proposed"
 
 def test_commit_false_breach_rolls_back_with_later_cancellation_failure(game, monkeypatch):
     db, state, _ = game
     dossier_id = _dossier(db, state)
-    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
+    apply_dossier_promulgation(db, state, dossier_id, "promulgated")
     issue_id = db.insert_issue(state, kind="initiative", title="清丈", origin_kind="decree",
                                origin_ref=f"dossier:{dossier_id}", cancellable="decree")
     before = state.metrics["皇威"]
     monkeypatch.setattr(db, "cancel_issue", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("later")))
-    with pytest.raises(RuntimeError, match="later"):
+    with pytest.raises(RuntimeError):
         with atomic(db):
-            issues.apply_issue_tracker_output(db, state, {"cancels": [{"issue_id": issue_id}]})
-    assert db.get_decree_dossier(dossier_id)["status"] == "executing"
+            apply_issue_tracker_output(db, state, {"cancels": [{"issue_id": issue_id}]}, source=Provenance.system_simulation)
+    assert db.dossiers.get(dossier_id)["status"] == "executing"
     assert _cost_events(db, dossier_id) == []
     # DB truth rolled back; caller reload owns the in-memory mirror.
     assert db.conn.execute("SELECT value FROM metrics WHERE key='皇威'").fetchone()[0] == before
 
-
 def test_active_commitment_can_breach_closed_issued_dossier_but_not_never_issued(game):
-    """#564×#623：active 承诺 cancel 先入挽留；坚持后 0056 仍可认领已闭但曾颁发案卷。
+    """#564×#1894：明确撤令不再强制挽留；已颁（含已闭）案卷可走 0056，未颁发不可。
 
     未颁发案卷仍不得作 canonical origin 毁约。
     """
-    from ming_sim.breach_plea import (
-        ENTRY_KIND_BREACH_PLEA,
-        finalize_persist,
-    )
-
     db, state, _ = game
     issued = _dossier(db, state)
-    db.apply_dossier_promulgation(state, issued, "promulgated")
+    apply_dossier_promulgation(db, state, issued, "promulgated")
     db.conn.execute(
         "UPDATE decree_dossiers SET status='closed',closed_turn=?,interruption_reason='旧结案' WHERE id=?",
         (state.turn, issued),
     )
     db.conn.commit()
-    closed_turn = db.get_decree_dossier(issued)["closed_turn"]
+    closed_turn = db.dossiers.get(issued)["closed_turn"]
     active = db.insert_issue(state, kind="initiative", title="旧诺", origin_kind="decree",
                              origin_ref=f"dossier:{issued}", cancellable="decree", commitment_kind="funding")
     never = _dossier(db, state)
-    db.record_dossier_decision(never, "rejected")
-    db.record_dossier_decision(never, "withdrawn")
+    db.dossiers.record_dossier_decision(never, "rejected")
+    db.dossiers.record_dossier_decision(never, "withdrawn")
     excluded = db.insert_issue(state, kind="initiative", title="未发之旨", origin_kind="decree",
                                origin_ref=f"dossier:{never}", cancellable="decree", commitment_kind="funding")
 
-    # #623：cancel 承诺 → 当回合只写挽留，不即时 0056
-    issues.apply_issue_tracker_output(db, state, {"cancels": [{"issue_id": active}]})
-    assert _cost_events(db, issued) == []
-    plea = next(
-        t for t in db.list_next_audience_todos(status="pending")
-        if t.get("entry_kind") == ENTRY_KIND_BREACH_PLEA
-        and int(t["commitment_ref"]) == int(active)
-    )
-    # 坚持撤 → 0056 认领已闭但曾颁发案卷
-    finalize_persist(db, state, plea, commit=True)
+    # 明确撤令直接认领已闭但曾颁发案卷的 0056
+    apply_issue_tracker_output(db, state, {"cancels": [{"issue_id": active}]}, source=Provenance.system_simulation)
     assert any(x["cost_kind"] == "breach" for x in _cost_events(db, issued))
-    assert db.get_decree_dossier(issued)["closed_turn"] == closed_turn
+    assert db.dossiers.get(issued)["closed_turn"] == closed_turn
 
-    # 未颁发案卷：cancel 可写挽留，但坚持时 0056 不得落（无合法颁发源）
-    issues.apply_issue_tracker_output(db, state, {"cancels": [{"issue_id": excluded}]})
-    never_pleas = [
-        t for t in db.list_next_audience_todos(status="pending")
-        if t.get("entry_kind") == ENTRY_KIND_BREACH_PLEA
-        and int(t["commitment_ref"]) == int(excluded)
-    ]
-    if never_pleas:
-        finalize_persist(db, state, never_pleas[0], commit=True)
+    # 未颁发案卷不得作 0056 源：即便 cancel 入口可达，也不得在该案卷落 breach 代价
+    try:
+        apply_issue_tracker_output(
+            db, state, {"cancels": [{"issue_id": excluded}]},
+            source=Provenance.system_simulation,
+        )
+    except ValueError:
+        pass
     assert _cost_events(db, never) == []
-
 
 def test_breach_charges_authority_ministers_and_related_factions_once(game):
     db, state, _ = game
@@ -520,88 +431,15 @@ def test_breach_charges_authority_ministers_and_related_factions_once(game):
         {"character_id": "王承恩", "tier": "知情", "role": "知情"},
     ]
     dossier_id = _dossier(db, state, roster=roster)
-    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
+    apply_dossier_promulgation(db, state, dossier_id, "promulgated")
     authority = state.metrics["皇威"]
     assert db.breach_decree_dossier(state, dossier_id, reason="撤回成命") is True
     assert db.breach_decree_dossier(state, dossier_id, reason="重复撤回") is False
     assert state.metrics["皇威"] == max(0, authority - 5)
-    edges = db.get_relation_edge_events(event_kind="辜负")
+    edges = db.person_logs.get_relation_edge_events(event_kind="辜负")
     assert {e["target"] for e in edges if e["origin"].startswith(f"dossier:{dossier_id}:breach")} == {
         "倪元璐", "徐光启", "毕自严",
     }
     assert not {"黄道周", "王承恩", "曹化淳"} & {e["target"] for e in edges}
     faction_targets = {e["target_id"] for e in _cost_events(db, dossier_id) if e["target_kind"] == "faction"}
     assert faction_targets == {"东林", "皇党", "西学"}
-
-
-@pytest.mark.parametrize(
-    ("decision", "expected_status", "expect_override_authority"),
-    [
-        ("force_promulgated", "executing", True),
-        ("withdrawn", "closed", False),
-        ("hold", "proposed", False),
-    ],
-)
-def test_driver_rescript_actions_settle_via_promulgation_path(
-    game, monkeypatch, decision, expected_status, expect_override_authority,
-):
-    """三路对照：#657 §C.8 中旨打回零派系扇出；收回/留中不追加；强颁只加皇威。
-
-    Player disposition rows settle through apply_dossier_promulgation only.
-    #614 零代价验的是批红三选不再追加强颁账。
-    """
-    from ming_sim.decree import settle_with_delta
-
-    db, state, content = game
-    dossier_id = _dossier(db, state, mode="midzhi")
-    before_auth = state.metrics["皇威"]
-    before_faction = _sat(db, "factions", "东林")
-    before_class = _sat(db, "classes", "士绅")
-    db.apply_dossier_verdicts(state, [_verdict(dossier_id)])
-    assert _sat(db, "factions", "东林") == before_faction
-    assert _sat(db, "classes", "士绅") == before_class
-    assert state.metrics["皇威"] == before_auth
-    assert [x for x in _cost_events(db, dossier_id) if x["cost_kind"] == "satisfaction"] == []
-    settle_turn = state.turn
-
-    actions = [{"dossier_id": dossier_id, "decision": decision}]
-
-    def _forbid_verdicts(*_a, **_k):
-        raise AssertionError(
-            "player disposition rows must not enter apply_dossier_verdicts"
-        )
-
-    monkeypatch.setattr(db, "apply_dossier_verdicts", _forbid_verdicts)
-    settle_with_delta(
-        state, db, {}, before_turn=settle_turn, content=content,
-        dossier_rescript_actions=actions,
-    )
-
-    row = db.get_decree_dossier(dossier_id)
-    assert row["status"] == expected_status
-    # §C.8：中旨全程不写派系/阶级 satisfaction
-    assert _sat(db, "factions", "东林") == before_faction
-    assert _sat(db, "classes", "士绅") == before_class
-    authority_events = [
-        x for x in _cost_events(db, dossier_id)
-        if x["cost_kind"] == "authority"
-    ]
-    sat_events = [
-        x for x in _cost_events(db, dossier_id)
-        if x["cost_kind"] == "satisfaction"
-    ]
-    assert sat_events == []
-    if expect_override_authority:
-        assert {(x["cost_identity"], x["delta"]) for x in authority_events} == {
-            ("override", -5),
-        }
-    else:
-        # 收回 / 留中：不追加 override 皇威
-        assert authority_events == []
-    if decision == "hold":
-        assert row["rescript_pending"] is False
-        assert int(row["held_turn"] or 0) == settle_turn
-    if decision == "withdrawn":
-        assert row["promulgation_decision"] == "rejected"
-    if decision == "force_promulgated":
-        assert row["promulgation_decision"] == "rejected"

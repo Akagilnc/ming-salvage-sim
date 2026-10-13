@@ -1,14 +1,16 @@
+from __future__ import annotations
+from ming_sim.settlement.dossier import apply_dossier_promulgation
+from ming_sim.session_write_queue import ClassifiedWriteGate
+from ming_sim.db import GameDB
+from ming_sim.models import TurnPhase
 """#1726：奏疏收件箱 — 读取端接通 + 未读模型。
 
 验收入口：state_payload → 面板同源计数；已读随存档持久化。
 """
 
-from __future__ import annotations
 
-import threading
 
-from ming_sim.db import GameDB
-from ming_sim.models import TurnPhase
+
 
 
 def _executing_with_owner(db, state, *, owner: str, token: str = "m1726"):
@@ -22,7 +24,7 @@ def _executing_with_owner(db, state, *, owner: str, token: str = "m1726"):
         executor_id=owner,
         participants=[{"character_id": owner, "tier": "主办"}],
     )
-    db.apply_dossier_promulgation(state, did, "promulgated")
+    apply_dossier_promulgation(db, state, did, "promulgated")
     db.conn.execute(
         "UPDATE decree_dossiers SET status='executing' WHERE id=?", (did,),
     )
@@ -40,9 +42,9 @@ def test_new_game_memorial_inbox_empty(game):
     """新局首月无奏报 → 0 件；不得拿局势条数充数。"""
     db, state, _content = game
     assert db.list_player_memorials() == []
-    assert db.unread_memorial_count() == 0
+    assert _unread_count(db) == 0
     # 开局常有局势，但奏疏计数必须与之脱钩
-    assert len(db.list_active_issues()) >= 1
+    assert len(db.issues.active_rows()) >= 1
 
 
 def test_progress_and_denunciation_project_as_memorials(game):
@@ -51,7 +53,7 @@ def test_progress_and_denunciation_project_as_memorials(game):
     owner = _active_name(db)
     did = _executing_with_owner(db, state, owner=owner, token="prog")
     body_progress = "臣已拨银十万两，库藏尚可周转。"
-    pid = db.record_dossier_progress(
+    pid = db.dossiers.record_dossier_progress(
         did, state.turn, "在办", body_progress,
         origin="dossier-report:monthly_errand", commit=True,
     )
@@ -70,7 +72,7 @@ def test_progress_and_denunciation_project_as_memorials(game):
             "memorial_text": body_den,
         }],
         commit=True,
-    )
+    ).applied
     assert len(hits) == 1
     den_id = int(hits[0]["id"])
 
@@ -93,7 +95,7 @@ def test_progress_and_denunciation_project_as_memorials(game):
     assert den["memorial_text"] == body_den
     assert den["unread"] is True
 
-    assert db.unread_memorial_count() == 2
+    assert _unread_count(db) == 2
 
 
 def test_mark_read_binds_to_row_not_dossier_and_persists(game):
@@ -102,43 +104,43 @@ def test_mark_read_binds_to_row_not_dossier_and_persists(game):
     owner = _active_name(db)
     did = _executing_with_owner(db, state, owner=owner, token="read")
 
-    pid1 = db.record_dossier_progress(
+    pid1 = db.dossiers.record_dossier_progress(
         did, state.turn, "在途", "首批已出京",
         origin="dossier-report:monthly_errand", commit=True,
     )
     key1 = f"progress:{pid1}"
-    assert db.unread_memorial_count() == 1
+    assert _unread_count(db) == 1
 
-    db.mark_memorials_read([key1])
-    assert db.unread_memorial_count() == 0
+    db.reign.mark_memorials_read([key1])
+    assert _unread_count(db) == 0
     rows = db.list_player_memorials()
     assert rows[0]["key"] == key1
     assert rows[0]["unread"] is False
 
     # 同案卷再来新奏报 → 新 key 未读，旧 key 仍已读
-    pid2 = db.record_dossier_progress(
+    pid2 = db.dossiers.record_dossier_progress(
         did, state.turn + 1, "在办", "次月续报已至",
         origin="dossier-report:monthly_errand", commit=True,
     )
     key2 = f"progress:{pid2}"
-    assert db.unread_memorial_count() == 1
+    assert _unread_count(db) == 1
     by_key = {r["key"]: r for r in db.list_player_memorials()}
     assert by_key[key1]["unread"] is False
     assert by_key[key2]["unread"] is True
 
     # 持久化：重开同一库路径后已读仍在
     path = db.path
-    db.close()
+    db.conn.close()
     restored = GameDB(path, content)
     try:
-        assert restored.unread_memorial_count() == 1
+        assert _unread_count(restored) == 1
         by_key = {r["key"]: r for r in restored.list_player_memorials()}
         assert by_key[key1]["unread"] is False
         assert by_key[key2]["unread"] is True
-        restored.mark_memorials_read([key2])
-        assert restored.unread_memorial_count() == 0
+        restored.reign.mark_memorials_read([key2])
+        assert _unread_count(restored) == 0
     finally:
-        restored.close()
+        restored.conn.close()
 
 
 def test_state_payload_memorials_and_mark_read_api(game, monkeypatch):
@@ -152,7 +154,7 @@ def test_state_payload_memorials_and_mark_read_api(game, monkeypatch):
     owner = _active_name(db)
     did = _executing_with_owner(db, state, owner=owner, token="api")
     body = "臣工本月办理进度奏报。"
-    pid = db.record_dossier_progress(
+    pid = db.dossiers.record_dossier_progress(
         did, state.turn, "在办", body,
         origin="dossier-report:monthly_errand", commit=True,
     )
@@ -180,7 +182,7 @@ def test_state_payload_memorials_and_mark_read_api(game, monkeypatch):
     runtime.ending_payload = lambda: None
     runtime.public_character = lambda c: {"name": getattr(c, "name", "")}
     runtime.character_power_id = lambda c: "ming"
-    runtime._write_gate = threading.Lock()
+    runtime._write_gate = ClassifiedWriteGate()
     runtime._runtime_write_gate = lambda: runtime._write_gate
 
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
@@ -202,7 +204,7 @@ def test_state_payload_memorials_and_mark_read_api(game, monkeypatch):
         state.turn_phase = phase
         blocked = client.post("/api/memorials/read", json={"keys": [key]})
         assert blocked.status_code == 409
-        assert db.unread_memorial_count() == 1
+        assert _unread_count(db) == 1
 
     state.turn_phase = TurnPhase.SUMMONING.value
     resp = client.post("/api/memorials/read", json={"keys": [key]})
@@ -210,7 +212,7 @@ def test_state_payload_memorials_and_mark_read_api(game, monkeypatch):
     payload = resp.json()
     assert payload["unread_memorial_count"] == 0
     assert all(not m["unread"] for m in payload["memorials"])
-    assert db.unread_memorial_count() == 0
+    assert _unread_count(db) == 0
 
 
 def test_progress_without_owner_uses_diegetic_fallback(game):
@@ -223,14 +225,14 @@ def test_progress_without_owner_uses_diegetic_fallback(game):
         target_kind="issue",
         target_id="land-orphan-1726",
     )
-    db.apply_dossier_promulgation(state, did, "promulgated")
+    apply_dossier_promulgation(db, state, did, "promulgated")
     db.conn.execute(
         "UPDATE decree_dossiers SET status='executing', executor_id='', executor_kind='', "
         "participant_roster='[]' WHERE id=?",
         (did,),
     )
     db.conn.commit()
-    pid = db.record_dossier_progress(
+    pid = db.dossiers.record_dossier_progress(
         did, state.turn, "在办", "无主名奏报正文",
         origin="dossier-report:monthly_errand", commit=True,
     )
@@ -238,3 +240,6 @@ def test_progress_without_owner_uses_diegetic_fallback(game):
     assert row["author_name"]
     assert row["author_name"] != str(did)
     assert not row["author_name"].isdigit()
+
+def _unread_count(db):
+    return sum(1 for row in db.list_player_memorials() if row["unread"])

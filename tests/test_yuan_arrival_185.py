@@ -1,14 +1,15 @@
+from __future__ import annotations
 """#185 e2e：人物启程后，由引擎倒数 tick 落 location 并清空在途账。
 
 `人物变更.行止` 只接受非空 `transit_to` 启程；抵达唯一由 `tick_transit_arrivals`
 处理。测试同时核对 DB 与 content 镜像。
 """
 
-from __future__ import annotations
 
-import ming_sim.issues as issues
 from ming_sim.decree import tick_transit_arrivals
 from tests.conftest import active_ming_character
+from ming_sim.settlement import SettlementContext, settle_delta
+from ming_sim.settlement.views import view
 
 DEST = "liaodong"
 ARMY_ID = "guanning"  # 关宁军 / 宁锦防线 = 袁崇焕镇守的辽东防线，seed arrears=60
@@ -25,12 +26,7 @@ def test_yuan_arrears_paid_then_arrives_e2e(game):
     try:
         db.conn.execute("UPDATE characters SET location='beizhili' WHERE name=?", (name,))
         content.characters[name].location = "beizhili"
-        issues.apply_score_extraction(
-            db,
-            state,
-            {"人物变更": [{"origin_ref": "盘面自发", "name": name, "动作": "行止", "transit_to": DEST}]},
-            content=content,
-        )
+        settle_delta(state, db, {'人物变更': [{'origin_ref': '盘面自发', 'name': name, '动作': '行止', 'transit_to': DEST}]}, SettlementContext(content=content))
         row = db.conn.execute(
             "SELECT location, transit_to, transit_distance_remaining, transit_speed_factor "
             "FROM characters WHERE name=?", (name,)
@@ -50,24 +46,7 @@ def test_yuan_arrears_paid_then_arrives_e2e(game):
 
         assert row["transit_to"] == DEST and row["location"] != DEST
 
-        applied = issues.apply_score_extraction(
-            db,
-            state,
-            {
-                "economy_moves": [
-                    {
-                        "origin_ref": "盘面自发", "account": "国库",
-                        "delta": -arrears0,
-                        "reason": "诏拨关宁补饷，欠饷一次补齐",
-                        "purpose": "补饷",
-                        "target_kind": "army",
-                        "target_id": ARMY_ID,
-                    }
-                ],
-                "人物变更": [],
-            },
-            content=content,
-        )
+        applied = settle_delta(state, db, {'economy_moves': [{'origin_ref': '盘面自发', 'account': '国库', 'delta': -arrears0, 'reason': '诏拨关宁补饷，欠饷一次补齐', 'purpose': '补饷', 'target_kind': 'army', 'target_id': ARMY_ID}], '人物变更': []}, SettlementContext(content=content))
 
         # 构造本 tick 必抵达：remaining 一步内，且 start_turn < 当前 turn（F2 次月首减）
         db.set_character_transit(
@@ -89,9 +68,7 @@ def test_yuan_arrears_paid_then_arrives_e2e(game):
         assert new_arrears == 0, (
             f"补饷未真扣减欠饷：arrears0={arrears0} → new={new_arrears}（前置条件没经引擎满足）"
         )
-        assert any(
-            not m.get("rejected") for m in applied.get("economy_moves", [])
-        ), "补饷 economy_move 应被落库应用"
+        assert view(applied, "economy_moves"), "补饷 economy_move 应被落库应用"
 
         arrived = db.conn.execute(
             "SELECT status, location, transit_to, transit_distance_remaining, "
@@ -111,7 +88,7 @@ def test_yuan_arrears_paid_then_arrives_e2e(game):
             "到任后 content 镜像 transit_to 应同步清空"
         )
 
-        assert applied.get("applied_person_changes", []) == []
+        assert view(applied, "applied_person_changes") == []
     finally:
         content.characters[name].location = old_location
         if has_transit_to:
@@ -131,12 +108,7 @@ def test_arrival_clearing_is_not_noop_negative_control(game):
     try:
         db.conn.execute("UPDATE characters SET location='beizhili' WHERE name=?", (name,))
         content.characters[name].location = "beizhili"
-        issues.apply_score_extraction(
-            db,
-            state,
-            {"人物变更": [{"origin_ref": "盘面自发", "name": name, "动作": "行止", "transit_to": DEST}]},
-            content=content,
-        )
+        settle_delta(state, db, {'人物变更': [{'origin_ref': '盘面自发', 'name': name, '动作': '行止', 'transit_to': DEST}]}, SettlementContext(content=content))
         arrears0 = int(
             db.conn.execute("SELECT arrears FROM armies WHERE id=?", (ARMY_ID,)).fetchone()[
                 "arrears"
@@ -144,23 +116,7 @@ def test_arrival_clearing_is_not_noop_negative_control(game):
         )
 
         # 只补饷，不调用 tick_transit_arrivals。
-        issues.apply_score_extraction(
-            db,
-            state,
-            {
-                "economy_moves": [
-                    {
-                        "origin_ref": "盘面自发", "account": "国库",
-                        "delta": -arrears0,
-                        "reason": "补饷",
-                        "purpose": "补饷",
-                        "target_kind": "army",
-                        "target_id": ARMY_ID,
-                    }
-                ]
-            },
-            content=content,
-        )
+        settle_delta(state, db, {'economy_moves': [{'origin_ref': '盘面自发', 'account': '国库', 'delta': -arrears0, 'reason': '补饷', 'purpose': '补饷', 'target_kind': 'army', 'target_id': ARMY_ID}]}, SettlementContext(content=content))
 
         still = db.conn.execute(
             "SELECT location, transit_to FROM characters WHERE name=?", (name,)

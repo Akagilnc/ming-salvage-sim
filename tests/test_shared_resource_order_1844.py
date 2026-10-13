@@ -1,15 +1,16 @@
-"""#1844：共同资源先交代先扣、跨类按交代先后、有账封顶、拒收进供料。"""
-
 from __future__ import annotations
-
+from tests.conftest import stub_month_translate, wait_for_background_jobs
 import json
 import sqlite3
-
 import pytest
-
 from ming_sim.declaration_dispatch import pending_action_decree_ref
 from ming_sim.month_translate import dispatch_month_segment
 from tests.test_month_chain_1843 import _prepare_player_month
+"""#1844：共同资源先交代先扣、跨类按交代先后、有账封顶、拒收进供料。"""
+
+
+
+
 
 
 def _settled_declaration(db, decree_ref: str) -> dict:
@@ -44,7 +45,9 @@ def _stage_player_edict(db, state, minister, affair_id, effects, text):
 
 def _resolve_player_month(db, state, content, monkeypatch):
     session = _prepare_player_month(db, state, content, monkeypatch)
-    return session.resolve_turn(allow_empty_decree=True)
+    result = session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
+    return result
 
 
 def _quiesce_treasury_tick(db):
@@ -102,7 +105,7 @@ def test_player_decrees_soft_cap_shared_treasury_in_order(game, monkeypatch):
     )
     _quiesce_treasury_tick(db)
     state.metrics["国库"] = 120
-    db.save_state(state)
+    db.reign.save_game_state(state)
     first_ref = _stage_player_edict(
         db, state, minister, affair.id,
         {"economy_moves": [{
@@ -153,17 +156,25 @@ def test_player_decree_missing_entity_rejection_persists_for_feed(game, monkeypa
     assert db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE category='补饷坏目标' AND delta != 0"
     ).fetchone()[0] == 0
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM rejection_reports WHERE category='missing_ref' AND item_json LIKE '%no-such-army-1844%'"
-    ).fetchone()[0] >= 1
+    rej = db.conn.execute(
+        "SELECT item_json, category FROM rejection_reports WHERE category='missing_ref'"
+    ).fetchall()
+    assert any(
+        json.loads(row["item_json"]).get("target_id") == "no-such-army-1844"
+        for row in rej
+    ), rej
 
     db_path = tmp_path / "reject-reopen.db"
     db.conn.execute("VACUUM INTO ?", (str(db_path),))
     reopened = sqlite3.connect(str(db_path))
     reopened.row_factory = sqlite3.Row
-    assert reopened.execute(
-        "SELECT COUNT(*) FROM rejection_reports WHERE category='missing_ref' AND item_json LIKE '%no-such-army-1844%'"
-    ).fetchone()[0] >= 1
+    rej2 = reopened.execute(
+        "SELECT item_json, category FROM rejection_reports WHERE category='missing_ref'"
+    ).fetchall()
+    assert any(
+        json.loads(row["item_json"]).get("target_id") == "no-such-army-1844"
+        for row in rej2
+    ), rej2
     assert reopened.execute(
         "SELECT status FROM staged_declarations WHERE decree_ref=?",
         (ref,),
@@ -228,10 +239,10 @@ def test_player_decrees_sequential_army_station_reads_updated_roster(game, monke
         ("pay_then_arrears", 10),
     ],
 )
-def test_world_segment_cross_category_order_by_declaration(game, order, expected_arrears):
+def test_world_segment_cross_category_order_by_declaration(game, order, expected_arrears, monkeypatch):
     """先加欠饷再拨款清欠按交代先后；对调先后时按当时存量，不因类别段序颠倒。"""
     db, state, _ = game
-    db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE id='jingying'")
+    db.conn.execute("UPDATE armies SET  province_pay_arrears=0, central_pay_arrears=0 WHERE id='jingying'")
     db.conn.commit()
     state.metrics["国库"] = 100
     arrears_effect = {"army_delta": {"jingying": {
@@ -246,10 +257,8 @@ def test_world_segment_cross_category_order_by_declaration(game, order, expected
         [arrears_effect, pay_effect] if order == "arrears_then_pay"
         else [pay_effect, arrears_effect]
     )
-    dispatch_month_segment(
-        db, state, segment="跨类欠饷与拨款",
-        translate_fn=lambda _request, _config: {"effects": effects},
-    )
+    stub_month_translate(monkeypatch, lambda _request, _config: {"effects": effects})
+    dispatch_month_segment(db, state, segment="跨类欠饷与拨款")
     arrears = float(db.conn.execute(
         "SELECT arrears FROM armies WHERE id='jingying'"
     ).fetchone()[0])
@@ -267,15 +276,13 @@ def test_world_segment_cross_category_order_by_declaration(game, order, expected
         ).fetchone()[0] == 0
 
 
-def test_world_segment_cross_category_order_survives_reopen(game, tmp_path):
+def test_world_segment_cross_category_order_survives_reopen(game, tmp_path, monkeypatch):
     """过月落账后重开：欠饷已清与拒收一致性仍在。"""
     db, state, _ = game
-    db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE id='jingying'")
+    db.conn.execute("UPDATE armies SET  province_pay_arrears=0, central_pay_arrears=0 WHERE id='jingying'")
     db.conn.commit()
     state.metrics["国库"] = 50
-    dispatch_month_segment(
-        db, state, segment="先欠后清后重开",
-        translate_fn=lambda _r, _c: {"effects": [
+    stub_month_translate(monkeypatch, lambda _r, _c: {"effects": [
             {"army_delta": {"jingying": {
                 "origin_ref": "盘面自发", "arrears": 10, "reason": "加欠",
             }}},
@@ -289,8 +296,8 @@ def test_world_segment_cross_category_order_survives_reopen(game, tmp_path):
                 "category": "坏项", "reason": "查无",
                 "purpose": "补饷", "target_kind": "army", "target_id": "ghost-army-1844",
             }]},
-        ]},
-    )
+        ]})
+    dispatch_month_segment(db, state, segment="先欠后清后重开")
     assert float(db.conn.execute(
         "SELECT arrears FROM armies WHERE id='jingying'"
     ).fetchone()[0]) == pytest.approx(0)
@@ -329,7 +336,19 @@ def _invalid_shape_matches(db, section: str, key: str, value: str) -> int:
     return matched
 
 
-def test_world_segment_stamps_each_shared_item_once(game):
+def _missing_ref_target_matches(conn, target_id: str) -> int:
+    """Count missing_ref rows whose decoded item carries target_id."""
+    matched = 0
+    for row in conn.execute(
+        "SELECT item_json FROM rejection_reports WHERE category='missing_ref'"
+    ):
+        item = json.loads(row["item_json"])
+        if isinstance(item, dict) and item.get("target_id") == target_id:
+            matched += 1
+    return matched
+
+
+def test_world_segment_stamps_each_shared_item_once(game, monkeypatch):
     """合并 extraction 与逐笔 sequence 共用原条目：坏项只拒一次，合法先后仍按交代落账。"""
     from ming_sim.month_translate import dispatch_month_segment
 
@@ -346,9 +365,7 @@ def test_world_segment_stamps_each_shared_item_once(game):
             "affair_declaration": declaration,
         }
 
-    dispatch_month_segment(
-        db, state, segment="逐笔只拒一次",
-        translate_fn=lambda _request, _config: {"effects": [
+    stub_month_translate(monkeypatch, lambda _request, _config: {"effects": [
             {"economy_moves": [_move("先笔", shared)]},
             {"economy_moves": [_move("冲突笔", {
                 "attach": "new", "identity": "同批一印",
@@ -362,8 +379,8 @@ def test_world_segment_stamps_each_shared_item_once(game):
                 }],
             },
             {"economy_moves": [_move("坏声明", {"attach": "new"})]},
-        ]},
-    )
+        ]})
+    dispatch_month_segment(db, state, segment="逐笔只拒一次")
 
     ledger = db.conn.execute(
         "SELECT category, origin_ref FROM economy_ledger "
@@ -376,3 +393,93 @@ def test_world_segment_stamps_each_shared_item_once(game):
     assert _invalid_shape_matches(db, "economy_moves", "category", "冲突笔") == 1
     assert _invalid_shape_matches(db, "economy_moves", "category", "坏声明") == 1
     assert _invalid_shape_matches(db, "new_issues", "id", "stamp-once-bad-issue") == 1
+
+
+@pytest.mark.parametrize("order", ["denounce_first", "close_first", "participant_then_failed"])
+def test_k6_specialized_denunciation_and_dossier_execution_order(game, order):
+    """K6: 检举等专属写口与改变其前提的效果（案卷结案）按交代先后落账。"""
+    from ming_sim.applier import Provenance
+    from ming_sim.declaration_dispatch import dispatch_declaration
+
+    db, state, _ = game
+    accuser = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' ORDER BY name LIMIT 1"
+    ).fetchone()["name"]
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="在途案卷",
+        target_kind="issue", target_id="1", payload={},
+    )
+    db.dossiers.transition(dossier_id, "promulgated")
+    db.dossiers.transition(dossier_id, "executing")
+    if order == "participant_then_failed":
+        db.append_decree_dossier_participants(
+            dossier_id,
+            [{"character_id": "徐光启", "tier": "协办", "role": "协助"}],
+        )
+    db.conn.commit()
+
+    if order == "participant_then_failed":
+        part_env = {
+            "dossier_participants": [{
+                "dossier_id": dossier_id,
+                "character_id": "倪元璐",
+                "delegator_id": "徐光启",
+                "tier": "主办",
+                "role": "主理",
+            }]
+        }
+        close_env = {
+            "dossier_executions": [{
+                "dossier_id": dossier_id,
+                "outcome": "failed",
+                "note": "办结失败",
+            }]
+        }
+        dispatch_declaration(
+            db, state, {"effects": [part_env, close_env]},
+            source=Provenance.system_simulation,
+            defer_disclosure=True,
+            visible_refs={"dossiers": [dossier_id]},
+        )
+        liabilities = db.conn.execute(
+            "SELECT cost_kind, target_kind, target_id FROM decree_cost_events WHERE dossier_id=?",
+            (dossier_id,),
+        ).fetchall()
+        factions = {row["target_id"] for row in liabilities if row["cost_kind"] == "satisfaction"}
+        assert "东林" in factions
+        assert "西学" in factions
+        return
+
+    denounce_env = {
+        "faction_denunciations": [{
+            "accuser_name": accuser,
+            "target_dossier_id": dossier_id,
+            "memorial_text": "侵冒有据",
+        }]
+    }
+    close_env = {
+        "dossier_executions": [{
+            "dossier_id": dossier_id,
+            "outcome": "fulfilled",
+            "note": "结案",
+        }]
+    }
+    effects = [denounce_env, close_env] if order == "denounce_first" else [close_env, denounce_env]
+    dispatch_declaration(
+        db, state, {"effects": effects},
+        source=Provenance.system_simulation,
+        defer_disclosure=True,
+    )
+    denounce_count = db.conn.execute(
+        "SELECT COUNT(*) FROM faction_denunciations WHERE target_dossier_id=?",
+        (dossier_id,),
+    ).fetchone()[0]
+    if order == "denounce_first":
+        assert denounce_count == 1
+    else:
+        assert denounce_count == 0
+        rejections = db.conn.execute(
+            "SELECT category, section FROM rejection_reports WHERE section='faction_denunciations'"
+        ).fetchall()
+        assert len(rejections) == 1
+        assert rejections[0]["category"] == "invalid_status"

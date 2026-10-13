@@ -1,8 +1,9 @@
 """大臣荐人读取与审计写入（#493）。"""
 
 from __future__ import annotations
+from ming_sim.entities.character.store import CharacterStore
 
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, List
 
 from .knowledge import knowledge_row_visible_to
 from .participant_roster import participant_roster_names
@@ -10,66 +11,18 @@ from .relations import EMPEROR_NODE
 
 
 def _known_names(db: Any, recommender: str) -> set[str]:
-    """Return names in the recommender's visible private/public event rosters."""
+    """Read independently recorded source rosters once, without event mirrors."""
     names: set[str] = set()
-    conn = getattr(db, "conn", None)
-    if conn is None:
-        return names
-    def add_visible_roster(source: Any, event: Any = None) -> None:
-        if source is None:
-            return
-        if event is not None and not knowledge_row_visible_to(db, event, recommender):
-            return
-        if not knowledge_row_visible_to(db, source, recommender):
-            return
-        for name in participant_roster_names(source["participant_roster"]):
-            target = conn.execute(
-                "SELECT name, office, office_type FROM characters WHERE name=?", (name,)
-            ).fetchone()
-            if target is not None and knowledge_row_visible_to(
-                db, source, recommender, target=target,
-            ):
-                if event is None or knowledge_row_visible_to(db, event, recommender, target=target):
-                    names.add(name)
-
-    for source, event in _visible_sources(db, recommender):
-        add_visible_roster(source, event)
+    for source in db.conn.execute(
+        'SELECT source_id, participant_roster, kind FROM character_knowledge_sources',
+        (),
+    ).fetchall():
+        roster = participant_roster_names(source["participant_roster"])
+        if (source["kind"] == "public" or recommender in roster) and knowledge_row_visible_to(
+            db, source, recommender,
+        ):
+            names.update(roster)
     return names
-
-
-def _visible_sources(db: Any, recommender: str) -> Iterable[tuple[Any, Any]]:
-    """Yield sources the recommender may read, with their participation event."""
-    conn = db.conn
-    rows = conn.execute(
-        "SELECT source_id, excluded_names FROM character_knowledge_events WHERE character_name=?",
-        (recommender,),
-    ).fetchall()
-    for row in rows:
-        source = conn.execute(
-            "SELECT source_id, participant_roster, excluded_names, excluded_targets "
-            "FROM character_knowledge_sources WHERE source_id=?",
-            (row["source_id"],),
-        ).fetchone()
-        yield source, row
-
-    # A durable source is sufficient evidence of direct participation.  The
-    # audience event mirror may not have been materialized yet (for example,
-    # immediately after a source is written), and recommendations must not
-    # lose an otherwise reachable candidate in that interval.
-    for source in conn.execute(
-        "SELECT source_id, participant_roster, excluded_names, excluded_targets "
-        "FROM character_knowledge_sources"
-    ).fetchall():
-        if recommender in participant_roster_names(source["participant_roster"]):
-            yield source, None
-
-    # Public sources are visible without a direct participation row.  Their
-    # structured roster is the public-event side of the #459 read projection.
-    for source in conn.execute(
-        "SELECT source_id, participant_roster, excluded_names, excluded_targets "
-        "FROM character_knowledge_sources WHERE kind='public'"
-    ).fetchall():
-        yield source, None
 
 
 def list_recommendation_candidates(db: Any, state: Any, recommender: str) -> List[Dict[str, object]]:
@@ -79,24 +32,18 @@ def list_recommendation_candidates(db: Any, state: Any, recommender: str) -> Lis
     form the minister-specific knowledge rail.  No global roster fallback is
     allowed, so an unrelated person remains invisible.
     """
-    conn = getattr(db, "conn", None)
-    if conn is None:
-        return []
-    source = conn.execute(
-        "SELECT faction FROM characters WHERE name=?", (recommender,)
-    ).fetchone()
+    conn = db.conn
+    source = CharacterStore(conn).row(recommender, fields="faction")
     if source is None:
         return []
     faction = str(source["faction"] or "")
     known = _known_names(db, recommender)
     rows = conn.execute(
-        "SELECT name, office, office_type, faction, status, reason_code, status_reason "
-        "FROM characters WHERE name != ? AND power_id='ming' "
-        "AND faction != '流寇' AND office_type NOT IN ('后宫','宗藩','未仕') "
-        "AND status IN ('active','offstage','retired','dismissed') "
-        "AND NOT (debut_year > 0 AND "
-        "(debut_year > ? OR (debut_year = ? AND debut_month > ?))) "
-        "ORDER BY name",
+        'SELECT name, office, office_type, faction, status, reason_code, '
+        "status_reason FROM characters WHERE name != ? AND power_id='ming' AND "
+        "faction != '流寇' AND office_type NOT IN ('后宫','宗藩','未仕') AND status IN "
+        "('active','offstage','retired','dismissed') AND NOT (debut_year > 0 AND "
+        '(debut_year > ? OR (debut_year = ? AND debut_month > ?))) ORDER BY name',
         (recommender, int(state.year), int(state.year), int(state.period)),
     ).fetchall()
     result: List[Dict[str, object]] = []
@@ -175,12 +122,22 @@ def record_recommendation(db: Any, state: Any, recommender: str,
         str(candidate.get("candidate_kind") or ""), str(candidate.get("candidate_kind") or "")
     )
     cur = db.conn.execute(
-        """INSERT INTO recommendation_events
-           (turn,year,period,recommender,candidate,candidate_kind,target_office,basis,reason,status)
-           VALUES (?,?,?,?,?,?,?,?,?,'adopted')""",
-        (int(state.turn), int(state.year), int(state.period), recommender,
-         str(candidate.get("name") or ""), event_kind,
-         target_office, str(candidate.get("basis") or ""), reason),
+        """
+        INSERT INTO recommendation_events
+                   (turn,year,period,recommender,candidate,candidate_kind,target_office,basis,reason,status)
+                   VALUES (?,?,?,?,?,?,?,?,?,'adopted')
+        """,
+        (
+            int(state.turn),
+            int(state.year),
+            int(state.period),
+            recommender,
+            str(candidate.get('name') or ''),
+            event_kind,
+            target_office,
+            str(candidate.get('basis') or ''),
+            reason,
+        ),
     )
     return int(cur.lastrowid)
 
@@ -211,15 +168,9 @@ def record_recommendation_edges(db: Any, state: Any, recommender: str,
         """荐人专属幂等：稳定 origin（|round 后缀前）+端点+腿别，跨回合、
         忽略可变 context；命中即返回原 id，不重写。"""
         base = f"recommendation:{int(event_id)}:{leg_kind}"
-        row = db.conn.execute(
-            """
-            SELECT id FROM relation_edge_events
-            WHERE source = ? AND target = ? AND event_kind = ?
-              AND (origin = ? OR origin LIKE ?)
-            ORDER BY id LIMIT 1
-            """,
-            (leg_source, leg_target, leg_kind, base, f"{base}|%"),
-        ).fetchone()
+        row = db.person_logs.relation_by_origin(
+            leg_source, leg_target, leg_kind, base, f"{base}|%"
+        )
         return int(row["id"]) if row is not None else None
 
     grace = _existing_leg_id("恩义", source, target)
@@ -237,13 +188,3 @@ def record_recommendation_edges(db: Any, state: Any, recommender: str,
             turn=turn, year=year, period=period,
         )
     return grace, zhiyu
-
-
-def list_recommendation_events(db: Any, state: Any, recommender: str | None = None) -> List[Dict[str, object]]:
-    sql = "SELECT * FROM recommendation_events WHERE turn <= ?"
-    params: list[object] = [int(state.turn)]
-    if recommender:
-        sql += " AND recommender=?"
-        params.append(recommender)
-    sql += " ORDER BY turn, id"
-    return [dict(row) for row in db.conn.execute(sql, params).fetchall()]

@@ -19,3 +19,4 @@ Status: Accepted（2026-07-02：本地 cmr 十轮收敛（codex xhigh + agy + Op
 - **死枚举事件类型 + 固定字段 schema**：LLM 编出新戏就要改结构，违背「特征化不约束」（ADR 0033）的精神——约束把戏压扁。
 
 后出注记（2026-09-09，决策票 [#1821](https://github.com/Akagilnc/ming-salvage-sim/issues/1821) owner 拍）：「LLM 叙事演完后抽取落账」的抽取 = 每轮回话后一次转译 LLM（[0155](0155-v2-single-scene-llm-with-complete-perspectives.md) 场中承接段），同时给出在场效果标识、说话人分段与可闻性；转译是后台任务、前台不等，收夜对它不等（[0036](0036-audience-night-restore-resume-at-last-entry.md) 后出注记）。开放标签、落账不许可、玩家口令确定性落账均不变。
+〔2026-09-28 后出注记（#1838 reopen）：开场/收夜 beat 取消；开夜账、收夜账删除，收讫以夜状态为准；时地仍为夜容器属性。〕

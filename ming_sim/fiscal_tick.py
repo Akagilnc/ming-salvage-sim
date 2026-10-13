@@ -24,12 +24,14 @@ import math
 from dataclasses import dataclass
 from typing import Any, Dict, List
 
+from ming_sim.pay_order import ARREARS_SUBJECTS, DUE_SUBJECTS
+
 EPS = 1e-6
 CASH_KEYS = ["省库库银", "C_地方截留", "C_中饱", "C_漂没", "C_eff损耗"]
 CLAIM_KEYS = ["民欠旧赋", "军饷欠", "官俸欠", "宗禄欠"]
 KNOWN_ACTIONS = {"补饷", "清丈", "挪借火耗", "追赃", "清欠", "蠲免", "营建"}
-_DUE_KEYS = ("军饷", "官俸", "宗禄", "赈济")
-_ARREARS_KEYS = ("军饷欠", "官俸欠", "宗禄欠")
+_DUE_KEYS = DUE_SUBJECTS  # #14 single source with pay_order
+_ARREARS_KEYS = ARREARS_SUBJECTS
 _DEBT_OF_DUE = {"军饷": "军饷欠", "官俸": "官俸欠", "宗禄": "宗禄欠"}
 
 
@@ -42,16 +44,15 @@ def regular_assessment(official_land: float, p: Dict[str, Any]) -> float:
 
 
 def _resolve_order_param(p: Dict[str, Any], key: str, default: tuple) -> tuple:
-    """#653 override 序参（p[key]）验形：缺省=祖制默认序；在位必须是合法排列，
-    否则 ValueError（fail-loud）。返回定长 tuple 供结算与 oracle 同源消费。"""
+    """#653 override 序参：缺省为祖制默认序，否则须为合法排列。"""
     raw = p.get(key)
     if raw is None:
         return default
-    if isinstance(raw, str) or not isinstance(raw, (list, tuple)):
+    if not isinstance(raw, (list, tuple)):
         raise ValueError(f"param {key} 非 list/tuple")
     if any(not isinstance(item, str) for item in raw):
         raise ValueError(f"param {key} 须为 {default} 的完整无重复排列：{raw!r}")
-    if len(raw) != len(default) or set(raw) != set(default) or len(set(raw)) != len(raw):
+    if len(raw) != len(default) or set(raw) != set(default):
         raise ValueError(f"param {key} 须为 {default} 的完整无重复排列：{raw!r}")
     return tuple(raw)
 
@@ -62,8 +63,6 @@ def _resolve_haircut_param(p: Dict[str, Any]) -> Dict[str, int]:
     raw = p.get("due_haircut_bp")
     if raw is None:
         return {}
-    if not isinstance(raw, dict):
-        raise ValueError(f"param due_haircut_bp 非字典：{raw!r}")
     out: Dict[str, int] = {}
     for hk, bp in raw.items():
         if hk not in _DUE_KEYS:
@@ -78,11 +77,8 @@ def _resolve_haircut_param(p: Dict[str, Any]) -> Dict[str, int]:
 
 
 def _raw_due(p: Dict[str, Any], h: str) -> float:
-    """原始 Due 读数（坏 Due 验形归既有 ValueError，此处防 AttributeError 逃逸隔离）。"""
-    _due = p["Due"]
-    if not isinstance(_due, dict):
-        return 0.0
-    return float(_due.get(h, 0.0))
+    """原始 Due 读数；settle_tick 已逐项消费 Due。"""
+    return float(p["Due"].get(h, 0.0))
 
 
 def _effective_dues(p: Dict[str, Any]) -> Dict[str, float]:
@@ -114,12 +110,12 @@ def _oracle_order(p: Dict[str, Any], key: str, default: tuple) -> tuple:
     raw = p.get(key)
     if raw is None:
         return tuple(default)
-    if isinstance(raw, str) or not isinstance(raw, (list, tuple)):
+    if not isinstance(raw, (list, tuple)):
         raise ValueError(f"param {key} 非 list/tuple")
     if any(not isinstance(item, str) for item in raw):
         raise ValueError(f"param {key} 须为 {default} 的完整无重复排列：{raw!r}")
     items = tuple(raw)
-    if len(items) != len(default) or set(items) != set(default) or len(set(items)) != len(items):
+    if len(items) != len(default) or set(items) != set(default):
         raise ValueError(f"param {key} 须为 {default} 的完整无重复排列：{raw!r}")
     return items
 
@@ -130,8 +126,6 @@ def _oracle_effective_dues(p: Dict[str, Any]) -> Dict[str, float]:
     raw_h = p.get("due_haircut_bp")
     haircuts: Dict[str, int] = {}
     if raw_h is not None:
-        if not isinstance(raw_h, dict):
-            raise ValueError(f"param due_haircut_bp 非字典：{raw_h!r}")
         for hk, bp in raw_h.items():
             if hk not in _DUE_KEYS:
                 raise ValueError(f"due_haircut_bp 含未知科目 {hk}")
@@ -143,8 +137,7 @@ def _oracle_effective_dues(p: Dict[str, Any]) -> Dict[str, float]:
                 haircuts[hk] = bp
     out: Dict[str, float] = {}
     for h in _DUE_KEYS:
-        _due = p["Due"]
-        d = float(_due.get(h, 0.0)) if isinstance(_due, dict) else 0.0
+        d = float(p["Due"].get(h, 0.0))
         bp = haircuts.get(h)
         out[h] = float(math.floor(d * bp / 10000)) if bp is not None else d
     return out
@@ -162,30 +155,21 @@ def settle_tick(
 ) -> FiscalTickResult:
     """单省单月财政 tick。st=开账(CASH/CLAIM/官民田/隐田)，p=本月参数(率/额/Due)，
     actions=本月动作(玩家旨意/事件灌入)。返回新末态 + 流水分解；坏输入/守恒破一律 raise。"""
-    # ── 容器型验形（最前置）：st/p 非 dict、actions 非 list/tuple → ValueError，否则下方
-    #    `sk in st` / `rq in p` / `for a in actions` 抛 TypeError 逃逸调用方隔离（cmr R3 concur）──
-    if not isinstance(st, dict):
-        raise ValueError("st 非字典")
-    if not isinstance(p, dict):
-        raise ValueError("p 非字典")
+    # 动作名单不能把空对象或字符串消费成合法空/字符名单。
     if not isinstance(actions, (list, tuple)):
         raise ValueError("actions 非 list/tuple")
     # ── 必填参数 presence（缺省不默认 0——火耗率缺省成 0 = 静默改经济学）──
     for rq in ("三饷应征", "火耗率", "逋赋率", "起运定额", "Due"):
         if rq not in p:
             raise ValueError(f"param {rq} 缺失")
-    # ── 开账 stock 全面验形（前置于下方 float 构造：float([]) 等非数值会 TypeError 早于守门、
-    #    逃逸调用方 (ValueError/守恒破) 隔离炸 pre_settle，cmr ship-pre R1/R2；CLAIM 也拦——
-    #    负军饷欠→偿还环凭空生钱）──
+    # 开账金额须为有限非负数，拒 bool 和数字串；负欠额会凭空生钱。
     for sk in (*CASH_KEYS, *CLAIM_KEYS, "官民田", "隐田"):
-        if sk in st and st[sk] is None:
-            raise ValueError(f"开账 stock {sk} 为 None")
         _sraw = st.get(sk, 0)
         if isinstance(_sraw, bool) or not isinstance(_sraw, (int, float)):
             raise ValueError(f"开账 stock {sk} 非数值")
-        if not math.isfinite(float(_sraw)):
+        if not math.isfinite(_sraw):
             raise ValueError(f"开账 stock {sk} 非有限值(NaN/inf)")
-        if float(_sraw) < 0:
+        if _sraw < 0:
             raise ValueError(f"开账 stock {sk} 为负")
 
     cash = {k: float(st.get(k, 0)) for k in CASH_KEYS}
@@ -197,31 +181,27 @@ def settle_tick(
     C0 = {k: cash[k] for k in CASH_KEYS if k.startswith("C_")}
     claim0 = dict(claim)
     cash_in = cash_out = 0.0
-    # Due 在任何折算消费前验形，避免坏容器先逃成 TypeError/AttributeError。
     _due = p["Due"]
-    if isinstance(_due, bool) or not isinstance(_due, dict):
-        raise ValueError("Due 非字典")
     for hk, dv in _due.items():
         if hk not in _DUE_KEYS:
             raise ValueError(f"Due 含未知科目 {hk}")
         if isinstance(dv, bool) or not isinstance(dv, (int, float)):
             raise ValueError(f"Due[{hk}] 非数值")
-        if not math.isfinite(float(dv)):
+        if not math.isfinite(dv):
             raise ValueError(f"Due[{hk}] 非有限值(NaN/inf)")
-        if float(dv) < 0:
+        if dv < 0:
             raise ValueError(f"Due[{hk}] 为负")
 
     # ── #653 偿还序 override ＋ Due 折发系数（ADR 0090）：缺省=祖制默认序、无折 ──
     due_order = _resolve_order_param(p, "due_order", _DUE_KEYS)
     arrears_order = _resolve_order_param(p, "arrears_order", _ARREARS_KEYS)
-    _haircut_bp = _resolve_haircut_param(p)  # 验形 fail-loud；实际折算走 _effective_dues
     eff_due = _effective_dues(p)
 
     r: Dict[str, Any] = dict(
         实征=0, 火耗实收=0, 清欠=0, 拨付gross=0, 起运到京=0, 实付=0, 偿旧欠=0, 行政补饷=0,
         漂没=0, 中饱=0, 民欠新增=0, 蠲免=0, unmet_relief=0,
-        NewDebt={"军饷欠": 0, "官俸欠": 0, "宗禄欠": 0},
-        Repaid={"军饷欠": 0, "官俸欠": 0, "宗禄欠": 0},
+        NewDebt={c: 0 for c in _ARREARS_KEYS},
+        Repaid={c: 0 for c in _ARREARS_KEYS},
         action还={"军饷欠": 0},
         # #653 流水分解新字段：per-科目实付分账（TSV 断言实付序）＋折发免除额
         实付分账={h: 0.0 for h in _DUE_KEYS},
@@ -241,21 +221,15 @@ def settle_tick(
 
     # ── 输入校验 fail-loud（NaN/inf/非数/负/未知 action/越界 eff/语义违例）──
     for a in actions:
-        if not isinstance(a, dict):  # 非 dict action（含「误传单 dict→迭代出 key 串」）→ ValueError，
-            raise ValueError(f"action 非字典: {a!r}")  # 否则 a.get/a["type"] 抛 AttributeError 逃逸隔离（cmr R2 codex）
         if "type" not in a:
             raise ValueError(f"action 缺 type: {a}")
-        if not isinstance(a["type"], str):  # 非 str type（如 list）unhashable → `not in SET` 抛 TypeError 逃逸（cmr R3 gemini）
-            raise ValueError(f"action type 非字符串: {a}")
         for nf in ("cost", "amount", "挖隐田", "eff"):
             if nf not in a:
                 continue  # 字段可选，缺省走默认值
             v = a[nf]
-            if v is None:  # 显式 None（非缺省）→ ValueError；否则下方 < / 乘法对 None 抛 TypeError（cmr R2 codex）
-                raise ValueError(f"{nf} 为 None: {a}")
             if isinstance(v, bool) or not isinstance(v, (int, float)):
                 raise ValueError(f"{nf} 非数值: {a}")
-            if not math.isfinite(float(v)):
+            if not math.isfinite(v):
                 raise ValueError(f"{nf} 非有限值(NaN/inf): {a}")
         if a["type"] not in KNOWN_ACTIONS:
             raise ValueError(f"unknown action: {a['type']}")
@@ -280,7 +254,7 @@ def settle_tick(
         if v is not None:
             if isinstance(v, bool) or not isinstance(v, (int, float)):
                 raise ValueError(f"param {pk} 非数值")
-            if not math.isfinite(float(v)):
+            if not math.isfinite(v):
                 raise ValueError(f"param {pk} 非有限值(NaN/inf)")
             if v < 0:
                 raise ValueError(f"param {pk} 为负")
@@ -398,7 +372,7 @@ def settle_tick(
     # ── 守恒 oracle（4 类，独立重算，破即 raise）──
     _assert_conservation(
         st, p, actions, cash, claim, cash0, cash_in, cash_out, C0, claim0,
-        官民田, 隐田, 地0, 省内可支, fh, bf, g, zb, k, 正赋, r,
+        官民田, 隐田, 地0, 省内可支, fh, bf, g, zb,
     )
 
     new_st: Dict[str, float] = dict(cash)
@@ -417,7 +391,7 @@ def settle_tick(
 
 def _assert_conservation(
     st, p, actions, cash, claim, cash0, cash_in, cash_out, C0, claim0,
-    官民田, 隐田, 地0, 省内可支, fh, bf, g, zb, k, 正赋, r,
+    官民田, 隐田, 地0, 省内可支, fh, bf, g, zb,
 ) -> None:
     """4 类独立守恒 oracle：现金 / 债务 per-account / C 分账 per-account / 土地。
     每个都从 st+params+actions 独立重放（不读 settlement 中间量），破即 fail-loud raise。"""
@@ -476,7 +450,7 @@ def _assert_conservation(
         x = min(o_S, bal)
         o_rep[c] = x
         o_S -= x
-    for c in ("军饷欠", "官俸欠", "宗禄欠"):
+    for c in _ARREARS_KEYS:  # #14 single source; was duplicate inline 3-tuple
         exp = claim0[c] - o_a还.get(c, 0) + o_nd[c] - o_rep[c]
         if abs(claim[c] - exp) > EPS:
             raise FiscalConservationError(f"债务对账破：{c} {claim[c]:.4f} ≠ oracle {exp:.4f}")

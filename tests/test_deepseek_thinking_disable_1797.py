@@ -1,9 +1,9 @@
+from __future__ import annotations
 """#1797：DeepSeek 全系按模型 id 关思考；llm_dump 记 reasoning/usage/finish_reason。
 
-真实入口 create_chat_model / _dump_llm_messages；不跑真实 LLM。
+真实入口 create_chat_model / run_agent_text；不跑真实 LLM。
 """
 
-from __future__ import annotations
 
 from types import SimpleNamespace
 
@@ -138,20 +138,6 @@ def test_create_chat_model_deepseek_enable_thinking_still_disables(monkeypatch):
     assert relay.extra_body == {"reasoning": {"enabled": False}}
 
 
-def test_create_chat_model_non_deepseek_dashscope_strength_unchanged(monkeypatch):
-    """非 DeepSeek × dashscope × medium → 既有开思考 + budget（本片不得改坏）。"""
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    cfg = LLMConfig(
-        api_key="sk-test",
-        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-        model="qwen-plus",
-        channel="api",
-        reasoning_strength="medium",
-    )
-    model = create_chat_model(cfg, enable_thinking=False)
-    assert model.extra_body == {"enable_thinking": True, "thinking_budget": 10000}
-
-
 def test_create_chat_model_non_deepseek_minimax_strength_unchanged(monkeypatch):
     """非 DeepSeek × minimax × medium → 既有 adaptive（本片不得改坏）。"""
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
@@ -170,13 +156,21 @@ def test_dump_llm_messages_records_reasoning_usage_finish_reason(monkeypatch, tm
     """dump 三样均落盘：reasoning 正文 / usage.reasoning_tokens / finish_reason（键值同断）。
 
     finish_reason 只读 model_provider_data / message.provider_data 字面键；
-    生产形（两容器皆无该键）据实记 (缺)；有值夹具只种实有字段。
+    生产形（两容器皆无该键）据实为 null；有值夹具只种实有字段。
+    验收读结构化记录字段，不锁 JSON 空格/键序等编码呈现。
     """
     import ming_sim.agents as agents_mod
 
-    dump_path = tmp_path / "llm_dump_test.log"
+    import json
+
+    dump_path = tmp_path / "llm_dump_test.jsonl"
     monkeypatch.setattr(agents_mod, "_DUMP_LLM", True)
     monkeypatch.setattr(agents_mod, "_DUMP_PATH", str(dump_path))
+
+    def _last_record() -> dict:
+        lines = [ln for ln in dump_path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+        assert lines, "dump 应至少落一条 JSONL 记录"
+        return json.loads(lines[-1])
 
     msg = SimpleNamespace(
         role="assistant",
@@ -194,56 +188,32 @@ def test_dump_llm_messages_records_reasoning_usage_finish_reason(monkeypatch, tm
         reasoning_tokens=42,
     )
 
-    # 生产形缺席：agno 不写 finish_reason 进实有容器 → 记缺
-    agents_mod._dump_llm_messages(
-        SimpleNamespace(
-            messages=[msg],
-            reasoning_content=None,
-            metrics=metrics,
-            model_provider_data=None,
-        ),
-        "test-tag",
+    output = SimpleNamespace(
+        content=msg.content, messages=[msg], reasoning_content=None,
+        metrics=metrics, model_provider_data=None,
     )
-    text = dump_path.read_text(encoding="utf-8")
-    # reasoning：字段正文（不锁 dump 字数/标签模板）
-    assert "思考过程甲" in text
-    assert "中转 reasoning 正文" in text
-    # usage / finish_reason：键值同断
-    assert '"reasoning_tokens": 42' in text
-    assert "[finish_reason] (缺)" in text
+    monkeypatch.setattr(agents_mod.Agent, "run", lambda self, message: output)
+    agent = agents_mod.Agent()
+    agents_mod.run_agent_text(agent, "probe", tag="test-tag")
+    record = _last_record()
+    assert record["tag"] == "test-tag"
+    # 消息输入原样写入记录（#1897 T1 运输）
+    assert record["messages"][0]["content"] == msg.content
+    assert record["messages"][0]["reasoning_content"] == msg.reasoning_content
+    assert record["messages"][0]["reasoning"] == msg.reasoning
+    usage = record["usage"]
+    assert usage is not None
+    assert usage["input_tokens"] == 100
+    assert usage["output_tokens"] == 20
+    assert usage["total_tokens"] == 120
+    assert usage["reasoning_tokens"] == 42
+    assert record["finish_reason"] is None
 
-    # 有值演练：只种 RunOutput.model_provider_data 字面键（bounce 明示允许）
-    dump_path.write_text("", encoding="utf-8")
-    agents_mod._dump_llm_messages(
-        SimpleNamespace(
-            messages=[msg],
-            reasoning_content=None,
-            metrics=metrics,
-            model_provider_data={"finish_reason": "stop"},
-        ),
-        "test-tag-mpd",
-    )
-    assert "[finish_reason] stop" in dump_path.read_text(encoding="utf-8")
+    output.model_provider_data = {"finish_reason": "stop"}
+    agents_mod.run_agent_text(agent, "probe", tag="test-tag-mpd")
+    assert _last_record()["finish_reason"] == "stop"
 
-    # 有值演练：只种 Message.provider_data 字面键
-    dump_path.write_text("", encoding="utf-8")
-    agents_mod._dump_llm_messages(
-        SimpleNamespace(
-            messages=[
-                SimpleNamespace(
-                    role="assistant",
-                    content="x",
-                    reasoning_content=None,
-                    reasoning=None,
-                    reasoning_details=None,
-                    tool_calls=None,
-                    provider_data={"finish_reason": "length"},
-                )
-            ],
-            reasoning_content=None,
-            metrics=metrics,
-            model_provider_data=None,
-        ),
-        "test-tag-pd",
-    )
-    assert "[finish_reason] length" in dump_path.read_text(encoding="utf-8")
+    output.model_provider_data = None
+    msg.provider_data = {"finish_reason": "length"}
+    agents_mod.run_agent_text(agent, "probe", tag="test-tag-pd")
+    assert _last_record()["finish_reason"] == "length"

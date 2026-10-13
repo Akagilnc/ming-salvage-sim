@@ -76,7 +76,6 @@ rg -n 'region_payload|_public_support_description|region_detail|REGION_SCORE_FIE
 | 8 | Web 效果摘要消费点 | `web/src/components/situation.tsx:44,169,174`；`closedIssues.tsx:32` | 结案行/tip 展示上列摘要 | `formatIssueEffect` / `formatClosedEffect` |
 | 9 | Web 帝国修正条 | `web/src/format.ts:268-271` `formatLegacyEffect`；`web/src/components/hud.tsx:254` `LegacyBar` | `民心+N%` / 地区字段% | `formatLegacyEffect` |
 | 10 | Web 帝国修正服务端文案 | `web_app.py:327-346` `_humanize_legacy_effect` | 与上同构的 `民心{+/-n%}`，经 `effect_text` 下发 | `_humanize_legacy_effect` |
-| 11 | CLI 回合头国势条 | `ming_sim/report.py:25-27`；入口 `ming_sim/cli/terminal.py:110-112` | `民心:  n/100` + `metric_bar` | `SCORE_METRICS` / `metric_bar` |
 | 12 | CLI/报告·核心数值变化句 | `ming_sim/context.py:181-191` `format_metric_delta`；`ming_sim/report.py` 变化报告组装 | `民心+N`（非钱粮键走裸 int） | `format_metric_delta` |
 | 13 | CLI/报告·地区变化句 | `ming_sim/report.py:35-48` `format_region_changes` | `〔省〕民心+N` 等 label+裸增量 | `format_region_changes` |
 | 14 | 章节/时间线效果摘要 | `ming_sim/memories.py:109-120` `effect_brief` | 拼 `民心+N`、`皇威+N` 进效果句（经时间线/章节到玩家） | `effect_brief` 与 `metric_delta` |

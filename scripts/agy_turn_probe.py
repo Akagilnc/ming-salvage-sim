@@ -1,11 +1,10 @@
 """探针：用本地 CLI 后端（agy/codex）非交互跑完整一回合，验证全结算链。
 
-跳大臣对话，直接塞诏书草案 → 颁诏 → 推演 → HITL 决策点自动选第一项 →
-4 模块 extractor 出 JSON → apply 落库 → end_turn。最后打印邸报头 + 国库变化，
-证明「脱 api key 整条结算链能跑」。
+跳大臣对话，直接塞诏书草案 → 颁诏 → 推演；HITL 待裁时保留案头、不自动代选 →
+有报告则打印邸报头 + 国库变化，证明「脱 api key 结算入口能跑」。
 
-用法（脱 key）:
-    MING_SIM_LLM_BACKEND=agy .venv/bin/python -m scripts.agy_turn_probe \
+用法（脱 key；通道由运行配置声明）:
+    .venv/bin/python -m scripts.agy_turn_probe \
         --db /tmp/agy_test.db \
         --directive "着户部发太仓银三万两赈济陕西。"
 """
@@ -17,7 +16,7 @@ import sys
 import time
 
 from ming_sim.models import LLMConfig
-from ming_sim.session import GameSession, TurnPhase
+from ming_sim.session import GameSession
 from scripts.probe_directive_contract import add_narrative_probe_directive
 
 
@@ -28,20 +27,16 @@ def main() -> int:
     p.add_argument("--decree", default="", help="传入则跳过 LLM 写诏")
     ns = p.parse_args()
 
-    # CLI 后端下这些值不会真用到（cli_backend 走 subprocess），给占位即可。
+    # 宿主只由运行配置选；API 占位字段在 CLI 通道下不参与分派。
     cfg = LLMConfig(
         model="agy-local", api_key="none", base_url="http://localhost/v1",
         timeout_seconds=300,
+        channel="cli",
+        cli_runner="agy",
     )
     session = GameSession(ns.db, cfg)
 
-    def on_event(kind, data):
-        s = str(data)
-        if kind in ("simulator_chunk", "extractor_chunk"):
-            return
-        print(f"  [evt] {kind}: {s[:120]}")
-
-    snap = session.begin_turn()
+    session.begin_turn()
     before = dict(session.state.metrics)
     print(f"[turn] {session.state.year}年{session.state.period}月 turn={session.state.turn} "
           f"国库={before.get('国库')} 民心={before.get('民心')} 皇威={before.get('皇威')}")
@@ -51,43 +46,28 @@ def main() -> int:
             session, text, notes="agy-probe",
             probe_id="agy-turn", sequence=sequence,
         )
-        print(f"[directive] id={v.id} {text[:50]}")
+        print(f"[directive] id={v.id} {text}")
 
     session.enter_review()
     t0 = time.monotonic()
     print("[resolve] 颁诏推演中（agy 调用，耐心等）...")
-    result = session.resolve_turn(decree=ns.decree, on_event=on_event)
+    result = session.resolve_turn(decree=ns.decree)
 
-    # HITL：推演若出决策点，自动选第一项，续跑 phase2（含 4 模块 extractor）。
-    # #657：session.submit_hitl_choices 唯一编排 + 既有 session._write_gate。
-    # 首选项投影走 project_preferred_hitl_choice 唯一真源。
-    from ming_sim.rescript_actions import project_preferred_hitl_choice
-
-    rounds = 0
-    while getattr(result, "awaiting", False):
-        rounds += 1
+    # HITL 不再自动首选续跑（#1812 已裁删除）；awaiting 时保留案头，不 end_turn 抹相位。
+    awaiting = bool(getattr(result, "awaiting", False))
+    if awaiting:
         decisions = session.pending_decisions()
-        print(f"[hitl] 第{rounds}轮决策点 {len(decisions)} 个，自动选第一项：")
-        choices = []
-        for d in sorted(decisions, key=lambda x: int(x.get("idx") or 0)):
-            item = project_preferred_hitl_choice(d)
-            label = str(item.get("label") or "")
-            print(f"   - #{d.get('idx')} {str(d.get('title'))[:40]} → 选「{label[:40]}」")
-            choices.append(item)
-        report = session.submit_hitl_choices(
-            choices, write_gate=session._write_gate, on_event=on_event,
-        )
-        result = type("R", (), {"awaiting": False, "report": report})()
-
+        print(f"[hitl] 待裁 {len(decisions)} 个，探针不自动代选、不推进")
     report_text = result.report if hasattr(result, "report") else str(result)
     dt = time.monotonic() - t0
 
-    session.end_turn()
+    if not awaiting and getattr(result, "advanced", False):
+        session.end_turn()
     after = dict(session.state.metrics)
 
     print(f"\n[resolve] 完成，耗时 {dt:.0f}s。phase={session.current_phase()}")
-    print("---- 邸报头 400 字 ----")
-    print((report_text or "")[:400])
+    print("---- 邸报 ----")
+    print(report_text or "")
     print("---- 盘面变化 ----")
     for k in ("国库", "内库", "民心", "皇威", "兵force" if "兵force" in after else "军心"):
         if k in before or k in after:

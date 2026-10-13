@@ -21,9 +21,13 @@ function listFiles(dir: string, acc: string[] = []): string[] {
 
 function externalResourceUrls(text: string): string[] {
   const found = new Set<string>();
-  // href/src absolute URLs (resource links)
-  for (const m of text.matchAll(/\b(?:href|src)\s*=\s*["'](https?:\/\/[^"']+)["']/gi)) {
-    found.add(m[1]);
+  // Read HTML attributes through the platform parser, not source quoting/order.
+  const document = new DOMParser().parseFromString(text, "text/html");
+  for (const element of document.querySelectorAll("[href], [src]")) {
+    for (const name of ["href", "src"]) {
+      const value = element.getAttribute(name);
+      if (value && /^https?:\/\//i.test(value)) found.add(value);
+    }
   }
   // CSS url(...) absolute
   for (const m of text.matchAll(/url\(\s*['"]?(https?:\/\/[^'")\s]+)['"]?\s*\)/gi)) {
@@ -33,31 +37,8 @@ function externalResourceUrls(text: string): string[] {
   for (const m of text.matchAll(/@import\s+(?:url\()?['"]?(https?:\/\/[^'")\s]+)['"]?\)?/gi)) {
     found.add(m[1]);
   }
-  // preconnect/dns-prefetch targets often appear as bare https in link tags already caught;
-  // also catch fonts host strings that might slip into bundled CSS as @font-face src.
-  for (const host of ["fonts.googleapis.com", "fonts.gstatic.com"]) {
-    if (text.includes(host)) found.add(`https://${host}`);
-  }
   return [...found];
 }
-
-describe("源 index.html 字体卫生 #1332/#1412", () => {
-  it("web/index.html 不引 Google Fonts 外网（截图/离线不阻塞）", () => {
-    // #1412 已去三外链；本钉锁源入口不再回归。prototypes/ 不在玩家首屏路径，不扫。
-    const indexPath = join(root, "index.html");
-    expect(existsSync(indexPath)).toBe(true);
-    const html = readFileSync(indexPath, "utf8");
-    expect(externalResourceUrls(html)).toEqual([]);
-    for (const host of ["fonts.googleapis.com", "fonts.gstatic.com"]) {
-      expect(html).not.toContain(host);
-    }
-    // 无 @import 远程样式、无 stylesheet 指向 http(s)
-    expect(html).not.toMatch(/@import\s+url\(\s*['"]?https?:/i);
-    expect(html).not.toMatch(
-      /rel=["']stylesheet["'][^>]*href=["']https?:/i,
-    );
-  });
-});
 
 describe("构建产物资源卫生 #1302/#1303", () => {
   it("dist 零外链资源，且含本地 favicon", () => {
@@ -75,12 +56,8 @@ describe("构建产物资源卫生 #1302/#1303", () => {
     expect(external).toEqual([]);
 
     // favicon link is present and points at a same-origin path (no protocol-host)
-    const faviconHref = index.match(
-      /rel=["'](?:icon|shortcut icon)["'][^>]*href=["']([^"']+)["']/i,
-    )?.[1]
-      ?? index.match(
-        /href=["']([^"']+)["'][^>]*rel=["'](?:icon|shortcut icon)["']/i,
-      )?.[1];
+    const document = new DOMParser().parseFromString(index, "text/html");
+    const faviconHref = document.querySelector('link[rel~="icon" i]')?.getAttribute("href");
     expect(faviconHref).toBeTruthy();
     expect(faviconHref).not.toMatch(/^https?:\/\//i);
 

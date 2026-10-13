@@ -47,8 +47,6 @@ export type SettlementFaceKey =
   | "legacies"             // 顶栏帝国修正
   | "menu"                 // 菜单（存档允许；读档/重置=离局）
   | "decision_modal"       // DecisionModal
-  | "decision_recovery"    // DecisionRecoveryPanel
-  | "settle_resume"        // settling 续跑入口
   | "wang_slip"            // 王承恩核账递话条
   | "cheat_console"        // 排除
   | "ending";              // 排除（终局既有行为）
@@ -84,8 +82,6 @@ export const FACE_GROUP: Record<SettlementFaceKey, Exclude<FaceAccess, "open">> 
   legacies: "readonly",
   menu: "readonly",
   decision_modal: "must",
-  decision_recovery: "must",
-  settle_resume: "must",
   wang_slip: "present",
   cheat_console: "excluded",
   ending: "excluded",

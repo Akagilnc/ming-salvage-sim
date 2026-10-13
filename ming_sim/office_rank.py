@@ -1,10 +1,9 @@
 """明制品级带与任命破格标记的确定性领域函数。"""
 from __future__ import annotations
 
-import re
 from typing import Any, Optional
 
-from ming_sim.assets import load_json_asset
+from ming_sim.assets import load_json_asset, require_dict, require_list
 
 FIRST_APPOINTMENT_HIGH_OFFICE_THRESHOLD = 4
 DEFAULT_LEVERAGE_MULTIPLIER = 1.0
@@ -16,40 +15,42 @@ _NON_OFFICES = frozenset({
     "进士", "举人", "生员", "贡生", "监生", "秀才", "诸生", "庠生", "国子监生",
 })
 _UNOFFICED_TYPES = frozenset({"", "未仕", "生员", "乡绅", "富商", "布衣", "待铨"})
-_TITLE_NOISE_SUFFIXES = (
-    "革职候勘", "革职", "候勘", "闲住", "罢居", "致仕", "赋闲",
-)
 
 
 def _table() -> dict[str, Any]:
-    data = load_json_asset("offices.json")
-    return data if isinstance(data, dict) else {}
+    return require_dict(load_json_asset("offices.json"), "offices.json")
+
+
+def normalize_office(office: str) -> str:
+    """官职多职统一为半角逗号分隔：旧「兼/兼掌/兼署」与全角「，」「、」一律归一逗号，
+    去空分项、去重、保序。是 office 字段落库的唯一规范化入口——所有写 characters.office
+    的路径都过它，保证去重/顶缺时能按逗号分项匹配。"""
+    s = (office or "").strip()
+    if not s:
+        return ""
+    s = s.replace("兼掌", ",").replace("兼署", ",").replace("兼", ",")
+    s = s.replace("，", ",").replace("、", ",")
+    seen: set = set()
+    parts: list[str] = []
+    for p in (x.strip() for x in s.split(",")):
+        if p and p not in seen:
+            seen.add(p)
+            parts.append(p)
+    return ",".join(parts)
 
 
 def concurrent_office_titles(office: object) -> list[str]:
-    """Canonical tokenizer shared by rank, leverage, and archive cleanup."""
+    """Split concurrent office titles by formal conjunction / comma separators.
+
+    No prefix/suffix vocabulary peel: polluted free-text office strings are not
+    rewritten into status or cleaned titles here.
+    """
     text = str(office or "").strip()
     if not text:
         return []
-    text = re.sub(r"^(?:前|原任|原)", "", text).strip()
     text = (text.replace("兼掌", ",").replace("兼署", ",").replace("兼", ",")
             .replace("，", ",").replace("、", ","))
-    titles: list[str] = []
-    for segment in text.split(","):
-        part = segment.strip()
-        if not part:
-            continue
-        pollution_at = min(
-            (part.find(noise) for noise in _TITLE_NOISE_SUFFIXES if noise in part),
-            default=-1,
-        )
-        if pollution_at >= 0:
-            clean = part[:pollution_at].strip()
-            if clean:
-                titles.append(clean)
-            break
-        titles.append(part)
-    return titles
+    return [part.strip() for part in text.split(",") if part.strip()]
 
 
 def canonical_office_title(office: object) -> str:
@@ -58,8 +59,13 @@ def canonical_office_title(office: object) -> str:
 
 
 def _iter_rank_rules(table: dict[str, Any]) -> list[dict[str, Any]]:
-    rules = table.get("rank_rules") or []
-    return [rule for rule in rules if isinstance(rule, dict)]
+    # 静态 offices.json 内容：成员坏即响亮（ADR 0005），不静默丢规则。
+    rules = table.get("rank_rules")
+    if rules is None:
+        return []
+    if not isinstance(rules, list) or any(not isinstance(rule, dict) for rule in rules):
+        raise ValueError("offices.json rank_rules 须为对象数组")
+    return list(rules)
 
 
 def _match_rank_rule(
@@ -79,7 +85,7 @@ def _match_rank_rule(
         title_specific = int(
             required_field == "rank_band" and "leverage_multiplier" in rule
         )
-        for stem in rule.get("stems") or []:
+        for stem in require_list(rule.get("stems", []), "offices.json.rank_rules.stems"):
             token = str(stem or "").strip()
             if not token or token not in text:
                 continue
@@ -112,16 +118,15 @@ def office_rank_band(office: object, office_type: object = "") -> int:
             for stem in entry.get("stems", [])
         ):
             return int(entry["rank_band"])
-    return int((table.get("fallback") or {}).get("rank_band", 9))
+    return int(require_dict(table.get("fallback", {}), "offices.json.fallback").get("rank_band", 9))
 
 
-def office_leverage_multiplier(office: object, already_normalized: bool = False) -> float:
+def office_leverage_multiplier(office: object) -> float:
     """Map an office title to the faction-leverage rank multiplier via offices.json.
 
     Comma-separated concurrent titles take the highest recognized multiplier. Titles with
     no leverage-bearing stem keep the historical conservative default 1.0.
     """
-    del already_normalized  # retained for the historical caller contract
     parts = concurrent_office_titles(office)
     if not parts:
         return DEFAULT_LEVERAGE_MULTIPLIER
@@ -134,7 +139,7 @@ def office_leverage_multiplier(office: object, already_normalized: bool = False)
         for rule in _iter_rank_rules(table):
             if "leverage_multiplier" not in rule:
                 continue
-            for stem in rule.get("stems") or []:
+            for stem in require_list(rule.get("stems", []), "offices.json.rank_rules.stems"):
                 token = str(stem or "").strip()
                 if not token or token not in part:
                     continue
@@ -155,16 +160,13 @@ def office_leverage_multiplier(office: object, already_normalized: bool = False)
 
 
 def _is_substantive_office(title: object, office_type: object = "") -> bool:
-    """Recognize a real title even when its archived type is blank or legacy state."""
+    """Identity kinds are not offices; rank vocabulary does not gate new office titles."""
     text = canonical_office_title(title)
-    if not text or any(label in text for label in _NON_OFFICES if label):
+    if str(office_type or "").strip() in {"身名分", "无名分"}:
         return False
-    title_is_real = any(
-        _match_rank_rule(part, _table(), "leverage_multiplier") is not None
-        for part in concurrent_office_titles(text)
-    )
-    declared_type_is_real = str(office_type or "").strip() not in _UNOFFICED_TYPES
-    return title_is_real or declared_type_is_real
+    if not text or any(label and label in text for label in _NON_OFFICES):
+        return False
+    return True
 
 
 def appointment_break_rank(
@@ -176,7 +178,7 @@ def appointment_break_rank(
     target_type = str(new_office_type or "").strip()
     new_band = office_rank_band(target, target_type)
     row = db.conn.execute(
-        "SELECT office,office_type,status,reason_code FROM characters WHERE name=?",
+        'SELECT office,office_type,status,reason_code FROM characters WHERE name=?',
         (person,),
     ).fetchone()
 
@@ -186,16 +188,25 @@ def appointment_break_rank(
     if row is not None:
         current_title = str(row["office"] or "").strip()
         current_type = str(row["office_type"] or "").strip()
+        # History archive lookup is gated only by closed status / reason enums —
+        # never by free-text office prefixes or status-word substrings.
         may_have_history = (
             str(row["status"] or "") in _INACTIVE_STATUSES
             or (current_title == "听用候铨" and str(row["reason_code"] or "") == "被顶替")
-            or (current_title.startswith(("前", "原")) and any(
-                marker in current_title for marker in ("罢居", "革职", "致仕", "闲住")
-            ))
         )
         if may_have_history:
             archived = db.conn.execute(
-                "SELECT office_title,office_type FROM character_offices WHERE character_name=?",
+                """
+                SELECT o.office_title,
+                       (
+                         SELECT c.office_type FROM office_change_records c
+                         WHERE c.character_name=o.character_name
+                           AND c.office_title=o.office_title
+                         ORDER BY c.id DESC LIMIT 1
+                       ) AS office_type
+                FROM character_offices o
+                WHERE o.character_name=?
+                """,
                 (person,),
             ).fetchone()
             if archived is not None and _is_substantive_office(

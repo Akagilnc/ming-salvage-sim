@@ -1,13 +1,19 @@
-"""关系账 S1：有向边事件的契约、校验和 0079 读侧适配。
+"""关系账 S1：有向边事件的契约与校验。
 
 本模块只负责边事件流水，不负责摘要酿制，也不改 0079 的写端。
 """
 
 from __future__ import annotations
 
+from typing import List
+from ming_sim.exceptions import DeclarationDataError
+
+from ming_sim.applier import RejectedItem, Provenance
+
 import re
 from collections.abc import Mapping
-from typing import Any, Iterable
+from typing import Any
+
 
 EMPEROR_NODE = "皇帝"
 
@@ -56,10 +62,8 @@ def settlement_edge_origin(origin_ref: object, kind: str) -> str:
     只作非空谓词（与 F1 context 同一纪律）。bind_origin_round 在写口内再附
     ``|round:N``（N=当前回合），TD-1 的 origin 回指由既有绑定机制承担，此处
     不重复拼 round。禁在调用侧另拼第二套 origin。"""
-    if not isinstance(origin_ref, str):
-        raise ValueError(f"来源引用必须为字符串，得 {type(origin_ref).__name__}")
     if not origin_ref.strip():
-        raise ValueError("效果缺 origin_ref；盘面自然演化须显式标为「盘面自发」")
+        raise DeclarationDataError("效果缺 origin_ref；盘面自然演化须显式标为「盘面自发」")
     return f"{origin_ref}:relation:{validate_edge_kind(kind)}"
 
 
@@ -70,7 +74,7 @@ def _validated_settlement_origin(
     哨兵字面，或恰为已颁且授权效果的 ``dossier:<id>`` 字面。
 
     dossier 引用受**双重闭集合取**（V2）：id 须属本批冻结输入
-    ``allowed_dossier_ids``（apply_score_extraction 既有 dossier_ids_at_input，
+    ``allowed_dossier_ids``（落库编排器既有 dossier_ids_at_input，
     None/缺集/非集合一律按空闭集 fail-closed，不从 live DB 重建），且经既有
     GameDB.effect_origin_rejection 授权。盘面自发不受该集合影响。
 
@@ -80,12 +84,12 @@ def _validated_settlement_origin(
     回合同步绑定，TD-1 不容伪造）；案卷授权核验复用
     GameDB.effect_origin_rejection 既有 API，不另立平行守门。"""
     if not isinstance(origin_ref, str):
-        raise ValueError(f"来源引用必须为字符串，得 {type(origin_ref).__name__}")
+        raise DeclarationDataError(f"来源引用必须为字符串，得 {type(origin_ref).__name__}")
     if origin_ref == SETTLEMENT_ORIGIN_SENTINEL:
         return origin_ref
     match = _DOSSIER_ORIGIN_RE.fullmatch(origin_ref)
     if match is None:
-        raise ValueError(
+        raise DeclarationDataError(
             f"来源引用非法（只收精确「{SETTLEMENT_ORIGIN_SENTINEL}」或已授权"
             f" dossier:<id>，不归一首尾空白）：{origin_ref!r}"
         )
@@ -94,16 +98,16 @@ def _validated_settlement_origin(
         if isinstance(allowed_dossier_ids, (set, frozenset)) else set()
     )
     if int(match.group("id")) not in frozen_ids:
-        raise ValueError(
+        raise DeclarationDataError(
             f"来源案卷不在本批冻结输入（dossier 闭集拒收）：{origin_ref}"
         )
     if db.effect_origin_rejection(origin_ref) is not None:
-        raise ValueError(f"origin_ref 非法：{origin_ref}")
+        raise DeclarationDataError(f"origin_ref 非法：{origin_ref}")
     return origin_ref
 
 
 def _validated_settlement_endpoints(
-    db: Any, state: Any, source: str, targets: list[str],
+    source: str, targets: list[str],
     allowed_endpoint_names: Any,
 ) -> None:
     """结算口端点守门（V1 + T1 r5 owner 裁决 B 案时间语义）：大臣边两端须为
@@ -113,7 +117,7 @@ def _validated_settlement_endpoints(
     第二名册、不下沉到通用写口——ADR 0081 君臣边与 seed 仍由该写口合法承载
     皇帝节点）：幻觉名/错字/「皇帝」节点及前后两投影均不合格者一律逐项拒收
     留痕。时间语义＝批内瞬态 pre∪post 并集（``allowed_endpoint_names`` 由
-    apply_score_extraction 一次算出传入：入口 pre-roster ∪ 人物变更落定后
+    落库编排器一次算出传入：入口 pre-roster ∪ 人物变更落定后
     post-roster）——同批退场者（先互动后退场）与同批入场者（先入仕/复出后
     互动）的互动都落，不建持久 snapshot、无第二编排；资格集为必传单一契约，
     无缺省 fallback，缺参即 TypeError 显式失败，绝不静默退化到当前 live 投影。
@@ -122,7 +126,7 @@ def _validated_settlement_endpoints(
     wanted = [source, *targets]
     illegal = [name for name in wanted if name not in allowed_endpoint_names]
     if illegal:
-        raise ValueError(
+        raise DeclarationDataError(
             "边端点须为当前在朝合格大臣（皇帝节点与不在名册者逐项拒收）："
             f"{illegal!r}"
         )
@@ -131,7 +135,7 @@ def _validated_settlement_endpoints(
 def validate_edge_kind(event_kind: Any) -> str:
     kind = str(event_kind or "").strip()
     if kind not in EDGE_KINDS:
-        raise ValueError(f"未知边事件类目: {kind!r}")
+        raise DeclarationDataError(f"未知边事件类目: {kind!r}")
     return kind
 
 
@@ -144,8 +148,9 @@ def normalize_evidence(evidence: Any) -> bool:
 
 
 def bind_origin_round(origin: Any, turn: int) -> tuple[str, int]:
-    text = str(origin or "").strip()
-    if not text:
+    # Free prose origin: preserve raw; emptiness on local copy (#1834 F16).
+    text = str(origin or "")
+    if not text.strip():
         raise ValueError("边事件 origin 不能为空")
     match = _ROUND_RE.search(text) or _TURN_RE.search(text)
     if match:
@@ -154,72 +159,28 @@ def bind_origin_round(origin: Any, turn: int) -> tuple[str, int]:
     return f"{text}|round:{round_no}", round_no
 
 
-def credit_event_to_edge(record: Mapping[str, Any]) -> dict[str, Any]:
-    kind = validate_edge_kind(record.get("event_kind") or record.get("kind"))
-    if kind not in CREDIT_EDGE_KINDS:
-        raise ValueError(f"非 0079 信用事件类目: {kind!r}")
-    person = str(
-        record.get("person")
-        or record.get("person_name")
-        or record.get("subject")
-        or record.get("character")
-        or ""
-    ).strip()
-    if not person:
-        raise ValueError("信用事件缺少当事人")
-    context = str(record.get("context") or record.get("sentence") or "").strip()
-    if not context:
-        raise ValueError("信用事件语境不能为空")
-    direction = CREDIT_DIRECTION[kind]
-    source, target = (
-        (EMPEROR_NODE, person)
-        if direction == "emperor_to_person"
-        else (person, EMPEROR_NODE)
-    )
-    turn = int(record.get("turn") or record.get("source_turn") or 0)
-    bound_origin, origin_round = bind_origin_round(
-        record.get("origin") or record.get("source_id"), turn
-    )
-    return {
-        "source": source,
-        "target": target,
-        "event_kind": kind,
-        "context": context,
-        "origin": bound_origin,
-        "origin_round": origin_round,
-        "turn": turn,
-        "year": int(record.get("year") or 0),
-        "period": int(record.get("period") or 0),
-        "evidence": False,
-    }
-
-
-def credit_events_as_edges(records: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    return [credit_event_to_edge(record) for record in records]
-
-
 # ── #633 结算口（ADR 0082）：邸报大臣互动 → 边事件当场落库 ──────────────
 
 
-def _capture_one_interaction(
+def _prepare_one_interaction(
     db: Any, state: Any, item: Mapping[str, Any], turn: int,
     allowed_endpoint_names: Any,
     allowed_dossier_ids: Any = None,
-) -> list[dict[str, Any]]:
+) -> dict[str, Any]:
     kind = validate_edge_kind(item.get("类目") or item.get("kind"))
     if kind not in MINISTER_EDGE_KINDS:
-        raise ValueError(f"结算口只收大臣侧类目，得 {kind!r}（君臣类目归 0079 写端）")
+        raise DeclarationDataError(f"结算口只收大臣侧类目，得 {kind!r}（君臣类目归 0079 写端）")
     raw_source = (
         item["施动者"] if item.get("施动者") is not None else item.get("source")
     )
     if not isinstance(raw_source, str):
-        raise ValueError(
+        raise DeclarationDataError(
             "施动者不能为空" if raw_source is None
             else f"施动者必须为字符串，得 {type(raw_source).__name__}"
         )
     source = raw_source.strip()
     if not source:
-        raise ValueError("施动者不能为空")
+        raise DeclarationDataError("施动者不能为空")
     raw_targets = (
         item["受动者"] if item.get("受动者") is not None else item.get("target")
     )
@@ -229,7 +190,7 @@ def _capture_one_interaction(
     elif isinstance(raw_targets, list) and all(isinstance(t, str) for t in raw_targets):
         candidates = list(raw_targets)
     else:
-        raise ValueError("受动者必须为字符串或字符串列表")
+        raise DeclarationDataError("受动者必须为字符串或字符串列表")
     # V9：成员合法性校验先于过滤/去重/写入——空白或自指成员使整条互动
     # fail-closed 拒收（与端点守门同语义），不静默丢弃坏成员保留其余落边。
     seen: set[str] = set()
@@ -237,27 +198,27 @@ def _capture_one_interaction(
     for candidate in candidates:
         name = candidate.strip()
         if not name:
-            raise ValueError("受动者不能为空")
+            raise DeclarationDataError("受动者不能为空")
         if name == source:
-            raise ValueError(f"受动者不能为施动者自身：{source!r}")
+            raise DeclarationDataError(f"受动者不能为施动者自身：{source!r}")
         if name not in seen:
             seen.add(name)
             targets.append(name)
     # V10：空受动者列表（或全无效成员被拒后为空的等价情形）整项 fail-closed
     # 拒收——shape 垃圾按既有 extractor 契约拒收，不得静默零写冒充成功。
     if not targets:
-        raise ValueError("受动者不能为空")
+        raise DeclarationDataError("受动者不能为空")
     raw_context = (
         item["语境"] if item.get("语境") is not None else item.get("context")
     )
     if not isinstance(raw_context, str):
-        raise ValueError(
+        raise DeclarationDataError(
             "边事件语境不能为空" if raw_context is None
             else f"语境必须为字符串，得 {type(raw_context).__name__}"
         )
     # F1：strip 只作非空谓词；存储值原样交写口（字节相等验收靠这条不加工）。
     if not raw_context.strip():
-        raise ValueError("边事件语境不能为空")
+        raise DeclarationDataError("边事件语境不能为空")
     context = raw_context
     origin = settlement_edge_origin(
         _validated_settlement_origin(
@@ -269,67 +230,72 @@ def _capture_one_interaction(
     )
     # V1：端点整项校验在任何边写入前完成——含坏端点的互动零边写入。
     _validated_settlement_endpoints(
-        db, state, source, targets, allowed_endpoint_names,
+        source, targets, allowed_endpoint_names,
     )
-    out: list[dict[str, Any]] = []
-    for target in targets:
-        # r2 F2 基数：每「施动者→受动者」有序对恰一行；N 方联名=牵头者→各联署者
-        # N-1 行；联署者互不写边、不做对称翻倍——由这个机械展开保证。
-        edge_id = int(db.record_relation_edge_event(
-            source=source,
-            target=target,
-            event_kind=kind,
-            context=context,
-            origin=origin,
-            turn=turn,
-            year=int(state.year),
-            period=int(state.period),
-        ))
-        out.append({
-            "source": source, "target": target, "event_kind": kind,
-            "origin": origin, "edge_id": edge_id,
-        })
-    return out
+    return {
+        "kind": kind,
+        "source": source,
+        "targets": targets,
+        "context": context,
+        "origin": origin,
+    }
 
 
 def resolve_relation_edge_events_from_extraction(
     db: Any, state: Any, extracted: Any,
     allowed_endpoint_names: Any,
     dossier_ids_at_input: Any = None,
-) -> list[dict[str, Any]]:
+    source: Provenance = Provenance.system_simulation,
+) -> tuple[list[dict[str, Any]], list[RejectedItem]]:
     """#633 结算口真入口（resolve_credit_events_from_extraction 先例）。
 
     消费 extractor delta 的 ``relation_edge_events`` section，经 record_relation_edge_event
-    唯一写口当场落库（TD-1）；尊重调用方事务（apply_score_extraction atomic 内）。
+    唯一写口当场落库（TD-1）；尊重调用方事务（落库编排器 atomic 内）。
     dossier 来源受本批冻结输入闭集（dossier_ids_at_input，None/缺集按空闭集
     fail-closed）与既有 effect_origin_rejection 双重合取；端点经既有名册投影
     校验，资格＝调用方传入的批内瞬态 pre∪post 名册并集（T1 r5 B 案；必传
     单一契约，无缺省 fallback，缺参即 TypeError 显式失败）。类目 fail-closed 限大臣侧九类；坏项逐条拒收留痕（category=invalid_relation_event），
     不猜测修正；捕获为空时零事件零副作用。重复项由表 UNIQUE
     (source,target,event_kind,context,origin) 幂等吸收，重放不双记。"""
+    rejections: List[RejectedItem] = []
     results: list[dict[str, Any]] = []
     if not isinstance(extracted, Mapping):
-        return results
+        return results, rejections
     items = extracted.get("relation_edge_events")
     if not isinstance(items, list):
-        return results
+        return results, rejections
     turn = int(getattr(state, "turn", 0) or 0)
     for item in items:
         if not isinstance(item, Mapping):
-            results.append({
-                "rejected": True, "category": "invalid_shape", "item": item,
-                "reason": "大臣互动项必须为对象",
-            })
+            rejections.append(RejectedItem(item={"raw_value": item}, reason="大臣互动项必须为对象", category="invalid_shape", source=source))
             continue
         try:
-            results.extend(_capture_one_interaction(
+            prepared = _prepare_one_interaction(
                 db, state, item, turn,
                 allowed_endpoint_names=allowed_endpoint_names,
                 allowed_dossier_ids=dossier_ids_at_input,
+            )
+        except DeclarationDataError as exc:
+            rejections.append(RejectedItem(item=dict(item), reason=str(exc), category="invalid_relation_event", source=source))
+            continue
+        out: list[dict[str, Any]] = []
+        for target in prepared["targets"]:
+            # r2 F2 基数：每「施动者→受动者」有序对恰一行；N 方联名=牵头者→各联署者
+            # N-1 行；联署者互不写边、不做对称翻倍——由这个机械展开保证。
+            edge_id = int(db.record_relation_edge_event(
+                source=prepared["source"],
+                target=target,
+                event_kind=prepared["kind"],
+                context=prepared["context"],
+                origin=prepared["origin"],
+                turn=turn,
+                year=int(state.year),
+                period=int(state.period),
             ))
-        except (TypeError, ValueError) as exc:
-            results.append({
-                "rejected": True, "category": "invalid_relation_event",
-                "reason": str(exc), "item": dict(item),
+            out.append({
+                "source": prepared["source"], "target": target,
+                "event_kind": prepared["kind"],
+                "origin": prepared["origin"], "edge_id": edge_id,
             })
-    return results
+        results.extend(out)
+    return results, rejections

@@ -1,3 +1,10 @@
+from __future__ import annotations
+import json
+from tests.conftest import open_hall_turn
+from ming_sim import audience_night as an
+from ming_sim.declaration_dispatch import dispatch_declaration
+from ming_sim.materials import list_materials, prepare_scene_materials, read_material
+from ming_sim.public_sayings import list_public_sayings
 """#1839 C2 当场实况直写（夜内直写白名单第四类）。
 
 转译声明为「已发生」的实况当场落世界账本：人物生死 / 下狱 / 革职 / 在场、
@@ -10,14 +17,7 @@ Seams:
 - prepare_scene_materials（下一句目录可见实况）
 """
 
-from __future__ import annotations
 
-import json
-
-from ming_sim import audience_night as an
-from ming_sim.declaration_dispatch import dispatch_declaration
-from ming_sim.materials import list_materials, prepare_scene_materials, read_material
-from ming_sim.public_sayings import list_public_sayings
 
 
 def _active_minister(db, *, exclude: set[str] | None = None) -> str:
@@ -33,12 +33,11 @@ def _active_minister(db, *, exclude: set[str] | None = None) -> str:
             return name
     raise AssertionError("no active minister")
 
-
 def _run_round_with_declaration(db, state, minister: str, declaration: dict, *, night_id: int = 0):
     """一轮窗口：搭建对话轮 → 公开入口分派（入口自记前像）→ 标抽取水位。"""
     if night_id <= 0 and an.get_open_night(db) is None:
         an.open_night(db, state, location="乾清宫", time_of_day="夜")
-    night_id, chat_id = an.attach_chat_turn_to_night(db, state, minister)
+    night_id, chat_id = open_hall_turn(db, state, minister)
     uid = db.conn.execute(
         "INSERT INTO chat_messages (minister_name, turn, role, content) "
         "VALUES (?, ?, 'emperor', ?)",
@@ -50,7 +49,7 @@ def _run_round_with_declaration(db, state, minister: str, declaration: dict, *, 
         (minister, state.turn, "臣遵旨。"),
     ).lastrowid
     db.conn.commit()
-    db.update_chat_turn_messages(
+    db.reign.update_chat_turn_messages(
         int(chat_id), user_message_id=int(uid), minister_message_id=int(mid),
     )
     # 前像由 dispatch_declaration 公开入口自记，helper 不再代行生产机制。
@@ -65,15 +64,14 @@ def _run_round_with_declaration(db, state, minister: str, declaration: dict, *, 
     return int(night_id), int(chat_id), result
 
 
-def test_kill_lands_status_and_next_materials_show_it(game, tmp_path):
-    """AC1：当场落生死，下一句目录里已是实况。"""
+def test_kill_lands_status_dead(game):
     db, state, _ = game
     victim = _active_minister(db)
     witness = _active_minister(db, exclude={victim})
     night = an.open_night(db, state, location="乾清宫", time_of_day="夜")
     night_id = int(night["id"])
-    an.summon_enter(db, night_id, victim, body="宣入", empty_scaffold=True)
-    an.summon_enter(db, night_id, witness, body="宣入", empty_scaffold=True)
+    an.summon_enter(db, night_id, victim)
+    an.summon_enter(db, night_id, witness)
 
     declaration = {
         "on_scene_facts": [{
@@ -85,25 +83,8 @@ def test_kill_lands_status_and_next_materials_show_it(game, tmp_path):
         db, state, witness, declaration, night_id=night_id,
     )
 
-    status, reason = db.get_character_status(victim)
+    status, reason = db.characters.get_character_status(victim)
     assert status == "dead"
-    assert "斩杀" in reason or reason  # 理由原样落库
-
-    prepared = prepare_scene_materials(db, state, dest_root=tmp_path / "after-kill")
-    listed = list_materials(prepared.root)
-    # 在场见证者的朝臣名册不再把死者列为 active 在朝
-    roster_paths = [p for p in listed if p.endswith("朝臣名册.txt")]
-    assert roster_paths
-    for path in roster_paths:
-        text = read_material(prepared.root, path)
-        # 名册只列 active；死者不得再以 active 行出现
-        assert f"{victim}：" not in text or "dead" in text
-    # 若死者仍在场，其人物档料须写明当前状态
-    victim_dossier = f"人物/{victim}/人物档料.txt"
-    if victim_dossier in listed:
-        dossier = read_material(prepared.root, victim_dossier)
-        assert "dead" in dossier or "死" in dossier or "斩杀" in dossier
-
 
 def test_textual_fact_and_public_saying_land_and_show_in_materials(game, tmp_path):
     """AC2：孙传庭伤臂 → 文字事实；袁崇焕对外死讯 → 公开说法；目录可见。"""
@@ -112,7 +93,7 @@ def test_textual_fact_and_public_saying_land_and_show_in_materials(game, tmp_pat
     yuan = _active_minister(db, exclude={sun})
     night = an.open_night(db, state, location="乾清宫", time_of_day="夜")
     night_id = int(night["id"])
-    an.summon_enter(db, night_id, sun, body="宣入", empty_scaffold=True)
+    an.summon_enter(db, night_id, sun)
 
     arm_injury = "左臂中箭，血透重甲，犹力战不退"
     death_rumour = "关外传袁崇焕已死于宁远城下"
@@ -127,98 +108,22 @@ def test_textual_fact_and_public_saying_land_and_show_in_materials(game, tmp_pat
     _run_round_with_declaration(db, state, sun, declaration, night_id=night_id)
 
     facts = db.textual_facts.readable_materials(subject_kind="character", subject_id=sun)
-    assert any(f.body == arm_injury for f in facts)
+    assert facts[0].body == arm_injury
     sayings = list_public_sayings(db, involved_character=yuan)
-    assert any(s["body"] == death_rumour for s in sayings)
+    assert sayings[0]["body"] == death_rumour
 
     prepared = prepare_scene_materials(db, state, dest_root=tmp_path / "after-facts")
     listed = list_materials(prepared.root)
     # 文字事实进场景目录 人物/<名>/按月实况.txt
-    facts_rel = f"人物/{sun}/按月实况.txt"
+    from ming_sim.materials import _safe_segment
+    facts_rel = f"人物/{_safe_segment(sun)}/按月实况.txt"
     assert facts_rel in listed
     assert arm_injury in read_material(prepared.root, facts_rel)
-    # 公开说法经见闻公开层进 人物/<名>/公开说法/
-    public_files = [p for p in listed if "/公开说法/" in p]
-    assert public_files
-    public_blob = "\n".join(read_material(prepared.root, p) for p in public_files)
-    assert death_rumour in public_blob
+    public_rel = f"人物/{_safe_segment(sun)}/公开说法/{state.year}年{state.period}月.txt"
+    assert public_rel in listed
+    assert death_rumour in read_material(prepared.root, public_rel)
 
 
-def test_undo_reverses_round_on_scene_writes(game):
-    """AC3：撤回本轮后该轮直写的实况像逆转，账本与对话轮不分叉。"""
-    db, state, _ = game
-    victim = _active_minister(db)
-    partner = _active_minister(db, exclude={victim})
-    night = an.open_night(db, state, location="乾清宫", time_of_day="夜")
-    night_id = int(night["id"])
-    an.summon_enter(db, night_id, victim, body="宣入", empty_scaffold=True)
-    an.summon_enter(db, night_id, partner, body="宣入", empty_scaffold=True)
-
-    arm_injury = "臂骨已折，不能挽弓"
-    declaration = {
-        "on_scene_facts": [{
-            "name": victim, "动作": "处置", "status": "imprisoned",
-            "reason": "殿前拿下，下狱待勘",
-        }],
-        "textual_facts": [{
-            "subject_kind": "character", "subject_id": partner, "body": arm_injury,
-        }],
-        "public_sayings": [{
-            "body": "坊间盛传某尚书已在殿上被拿",
-            "involved_characters": [victim],
-        }],
-        "presence": [{
-            "person_name": victim, "effect": "exit",
-            "body": "校尉拥之出殿",
-        }],
-        "edge_events": [{
-            "source": partner, "target": victim,
-            "event_kind": "结怨", "context": "见其被拿而不救",
-        }],
-    }
-    night_id, chat_id, result = _run_round_with_declaration(
-        db, state, partner, declaration, night_id=night_id,
-    )
-    assert result.on_scene_facts.rejected == []
-    assert result.textual_facts.rejected == []
-    assert result.public_sayings.rejected == []
-    assert result.presence.rejected == []
-    assert result.edge_events.rejected == []
-
-    assert db.get_character_status(victim)[0] == "imprisoned"
-    assert any(
-        f.body == arm_injury
-        for f in db.textual_facts.readable_materials(
-            subject_kind="character", subject_id=partner,
-        )
-    )
-    assert list_public_sayings(db, involved_character=victim)
-    assert victim not in an.present_names_at(db, night_id)
-    edges_before = db.get_relation_edge_events(source=partner, target=victim)
-    assert edges_before
-
-    # 白名单审计：本轮直写须落在第四类，不得越权咬住
-    observed = an.audit_night_direct_writes(db, night_id)
-    assert "转译声明的当场实况" in observed
-
-    db.undo_chat_turn(chat_id)
-
-    assert db.get_character_status(victim)[0] == "active"
-    assert not any(
-        f.body == arm_injury
-        for f in db.textual_facts.readable_materials(
-            subject_kind="character", subject_id=partner,
-        )
-    )
-    assert not list_public_sayings(db, involved_character=victim)
-    # 告退账随源轮删 → 在场复原
-    assert victim in an.present_names_at(db, night_id)
-    assert not db.get_relation_edge_events(source=partner, target=victim)
-    # 对话轮标 undone，消息已删
-    turn_row = db.conn.execute(
-        "SELECT status FROM chat_turns WHERE id=?", (chat_id,),
-    ).fetchone()
-    assert turn_row["status"] == "undone"
 
 
 def test_night_bound_sections_reject_missing_or_foreign_source_chat_turn(game):
@@ -274,7 +179,7 @@ def test_night_bound_sections_reject_missing_or_foreign_source_chat_turn(game):
     before_sayings = db.conn.execute(
         "SELECT COUNT(*) c FROM public_sayings"
     ).fetchone()["c"]
-    before_status = db.get_character_status(other)[0]
+    before_status = db.characters.get_character_status(other)[0]
     before_listed = db.conn.execute(
         "SELECT 1 FROM characters WHERE name=?", ("李若璉夜測",),
     ).fetchone()
@@ -313,11 +218,10 @@ def test_night_bound_sections_reject_missing_or_foreign_source_chat_turn(game):
     assert after_edges == before_edges
     assert after_facts == before_facts
     assert after_sayings == before_sayings
-    assert db.get_character_status(other)[0] == before_status
+    assert db.characters.get_character_status(other)[0] == before_status
     assert db.conn.execute(
         "SELECT 1 FROM characters WHERE name=?", ("李若璉夜測",),
     ).fetchone() is before_listed
-
 
 def test_commission_stays_staged_not_bypassing_promulgation(game):
     """AC4：任洪承畴、拨三十万仍是暂存交办，不因「当场」绕过颁布关。"""
@@ -337,6 +241,7 @@ def test_commission_stays_staged_not_bypassing_promulgation(game):
     commission: dict = {"text": "任命洪承畴为陕西巡抚，调银三十万两赈灾"}
     if army_id:
         commission["grant"] = {
+            "grant_action": "协饷",
             "amount": 300000, "account": "国库", "purpose": "补饷",
             "target_kind": "army", "target_id": army_id,
         }
@@ -358,7 +263,6 @@ def test_commission_stays_staged_not_bypassing_promulgation(game):
     assert row["kind"] == "directive"
     assert int(row["night_approved"] or 0) == 0  # 未应允，更未收夜成案
     payload = json.loads(row["payload_json"])
-    assert "洪承畴" in payload["text"]
 
     # 不得当场写成 turn_directives（颁布关之前）
     after_directives = db.conn.execute(

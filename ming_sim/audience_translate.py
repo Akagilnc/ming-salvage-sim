@@ -1,41 +1,28 @@
 """召对转译：每轮一次完整声明（C1a/C1b/C2；后台化归 T2 #1842）。
 
 每轮回话落定后起一次转译 LLM，读本轮（皇帝原话 + 回话 + 本场已说的话 +
-本夜暂存清单），一次声明本轮全部记录——交办载荷与应允、当场实况（生死 /
-下狱 / 革职）、文字事实、公开说法、在场进出、说话人分段、边事件、御前主角、
-入册；代码只把声明交给 :func:`ming_sim.audience_translation.apply_audience_round_translation`
+本夜暂存清单），一次声明本轮全部记录——交办载荷与应允、对暂存交办的背书
+（会签/当面站台/御笔手敕）、当场实况（生死 / 下狱 / 革职）、文字事实、
+公开说法、在场进出、说话人分段、边事件、御前主角、入册；代码只把声明交给
+:func:`ming_sim.audience_translation.apply_audience_round_translation`
 （经 C0 分派器）落账（ADR 0155 场中承接）。
 
-生产上转译是后台任务（#1842）：按轮串行、前台不等；封夜提交 join 最后一轮；
-耗尽 = 该轮待补，不挡下一句。场景 LLM 零动作工具、零格式约束；两通道同形。
-承接不了的交办由分派器逐项拒收当事实回场，代码不做「所指未明 → 强制追问」闸。
+生产上转译是后台任务（#1842）：按轮串行、前台不等；收夜先补跑再提交成案；
+耗尽 = 该轮待补，不挡下一句与退朝，过月前 join 补齐。场景 LLM 零动作工具、
+零格式约束。承接不了的交办由分派器逐项拒收当事实回场，代码不做
+「所指未明 → 强制追问」闸。
 """
 
 from __future__ import annotations
 
 import json
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
-from ming_sim.applier import Provenance
-from ming_sim.declaration_dispatch import DeclarationDispatchResult
 from ming_sim.decree_vocabulary import TARGET_KINDS
+from ming_sim.declaration_dispatch import _SECTION_FIELDS as _DECLARATION_KEYS
 
-TranslateFn = Callable[[str, Any], Mapping[str, object]]
 
-# C0 全 section + 主角；normalize 补齐这些键，未知顶层键原样保留给分派器。
-_DECLARATION_KEYS: tuple[str, ...] = (
-    "commissions",
-    "promises",
-    "textual_facts",
-    "public_sayings",
-    "on_scene_facts",
-    "presence",
-    "scene_facts",
-    "edge_events",
-    "protagonist",
-    "registrations",
-    "effects",
-)
+# normalize 与分派器共用 C0 section 真源；未知键仍原样交分派器。
 _ARRAY_SECTIONS = frozenset(
     k for k in _DECLARATION_KEYS if k not in {"protagonist", "effects"}
 )
@@ -51,28 +38,16 @@ def build_pending_summaries(db: Any, turn: int, *, night_id: int = 0) -> List[st
     直接读表：``list_pending_actions`` 投影不含 night_id / night_approved，
     转译必须看见本夜归属与应允态，不能靠那条呈现投影。
     """
-    if not hasattr(db, "conn"):
-        return []
-    params: list[Any] = [int(turn)]
-    sql = (
-        "SELECT id, kind, action, payload_json, night_id, night_approved "
-        "FROM pending_actions WHERE turn=? AND status='pending'"
-    )
-    if int(night_id or 0) > 0:
-        sql += " AND night_id=?"
-        params.append(int(night_id))
-    sql += " ORDER BY id"
-    rows = db.conn.execute(sql, tuple(params)).fetchall()
+    rows = db.dossiers.pending_summary_rows(turn, night_id)
     out: List[str] = []
+    from ming_sim.db import _load_durable_json
+
     for row in rows:
-        try:
-            payload = json.loads(str(row["payload_json"] or "{}"))
-        except (TypeError, ValueError):
-            payload = {}
-        if not isinstance(payload, dict):
-            payload = {}
-        text = str(payload.get("text") or row["action"] or "").strip()
-        brief = text[:60] if text else str(row["kind"] or "")
+        # 已持久 pending 载荷腐坏响亮，不静默成空摘要（#1897 E1 / ADR 0005）。
+        payload = _load_durable_json(row["payload_json"])
+        # #1897：pending 摘要供料保留 payload 自由正文，禁 strip。
+        text = str(payload.get("text") or row["action"] or "")
+        brief = text if text.strip() else str(row["kind"] or "")
         approved = "已应允" if int(row["night_approved"] or 0) else "待应允"
         out.append(
             f"#{int(row['id'])} [{row['kind']}/{row['action']}] {approved} {brief}"
@@ -92,27 +67,25 @@ def build_night_said_so_far(
     该轮的已说；本轮正文只走【本轮皇帝】【本轮回话】，不在此重复；亦不读后续
     已持久化轮（下一句不等转译时可能已落库）。
     """
-    if int(night_id or 0) <= 0 or not hasattr(db, "conn"):
+    if int(night_id or 0) <= 0:
         return []
     from ming_sim.audience_night import list_chat_turns_for_night, list_ledger
 
     cutoff_id = int(until_chat_turn_id or 0)
     cutoff_seq: Optional[int] = None
     if cutoff_id > 0:
-        crow = db.conn.execute(
-            "SELECT night_seq FROM chat_turns WHERE id=?", (cutoff_id,),
-        ).fetchone()
+        crow = db.reign.row(cutoff_id, fields="night_seq")
         if crow is not None:
             cutoff_seq = int(crow["night_seq"] or 0)
 
     def _before_cutoff(seq: int, turn_id: int) -> bool:
         if cutoff_id <= 0 or cutoff_seq is None:
             return True
-        if int(seq) < int(cutoff_seq):
+        if seq < cutoff_seq:
             return True
-        if int(seq) > int(cutoff_seq):
+        if seq > cutoff_seq:
             return False
-        return int(turn_id) < int(cutoff_id)
+        return turn_id < cutoff_id
 
     lines: List[str] = []
     # 故事账（入殿等）按夜序；对话轮按 night_seq。两者分列后按既有材料口径
@@ -132,15 +105,13 @@ def build_night_said_so_far(
         ):
             if not mid:
                 continue
-            row = db.conn.execute(
-                "SELECT content FROM chat_messages WHERE id=?", (int(mid),),
-            ).fetchone()
+            row = db.chat_messages.row(int(mid), fields="content")
             if row is None:
                 continue
             body = str(row["content"] or "")
             if not body.strip():
                 continue
-            lines.append(f"{role_label}：{body}")
+            lines.append(f"[chat_turn_id={tid}] {role_label}：{body}")
     for entry in list_ledger(db, int(night_id)):
         src = int(entry.get("source_chat_turn_id") or 0)
         origin = int(entry.get("origin_chat_turn_id") or 0)
@@ -156,7 +127,7 @@ def build_night_said_so_far(
                 entry_seq = entry.get("order_key")
                 if entry_seq is None:
                     entry_seq = entry.get("seq") or 0
-                if float(entry_seq) >= float(cutoff_seq):
+                if float(entry_seq) >= cutoff_seq:
                     continue
         body = str(entry.get("body") or "")
         if body.strip():
@@ -164,63 +135,133 @@ def build_night_said_so_far(
     return lines
 
 
-def build_translation_target_grounding(db: Any) -> str:
-    """权威目标目录：dispatcher 可校验的 region/army/character/issue 投影。
+def _person_candidate_grounding(db: Any, state: Any) -> str:
+    """把人物候选的权威身份和 event_pool 声明契约交给既有转译调用。"""
+    if state is None:
+        return ""
+    from ming_sim.materials import _world_candidate_events
+
+    roster = [
+        {
+            "id": item["id"],
+            "title": item["title"],
+            "terminal_reason_labels": list(item.get("terminal_reason_labels") or []),
+        }
+        for item in _world_candidate_events(db, state)
+    ]
+    if not roster:
+        return ""
+    return (
+        "【合资格人物事件候选】\n"
+        "身份只认下列 id。段文写明其中一件由人物选择发生时，effects 声明 "
+        "new_issues，origin_kind 为 event_pool，id 为该候选 id。"
+        "该候选列出封闭结局标签时，同一信封顶层 event_id 写该 id，"
+        "事件结局只用其中一枚标签。未发生的候选不声明。\n"
+        + json.dumps(roster, ensure_ascii=False)
+    )
+
+
+def build_translation_target_grounding(db: Any, state: Any = None) -> str:
+    """权威目标目录：dispatcher 可校验的目标与当前场面投影。
 
     只读 DB 真源；查询失败按 ADR 0005 上抛，不得静默退化为空目录。
     不猜、不从正文匹配改写模型输出。
     """
-    if not hasattr(db, "conn"):
-        return ""
     lines: List[str] = []
-    for row in db.conn.execute(
-        "SELECT id, name FROM regions ORDER BY id"
-    ).fetchall():
+    for row in db.conn.execute('SELECT id, name FROM regions ORDER BY id', ()).fetchall():
         lines.append(f"region\t{row['id']}\t{row['name']}")
-    for row in db.conn.execute(
-        "SELECT id, name FROM armies ORDER BY id"
-    ).fetchall():
+    for row in db.conn.execute('SELECT id, name FROM armies ORDER BY id', ()).fetchall():
         lines.append(f"army\t{row['id']}\t{row['name']}")
     for row in db.conn.execute(
-        "SELECT name, office FROM characters WHERE status='active' "
-        "ORDER BY name"
+        "SELECT name, office FROM characters WHERE status='active' ORDER BY name",
+        (),
     ).fetchall():
         lines.append(
             f"character\t{row['name']}\t{str(row['office'] or row['name'])}"
         )
-    if hasattr(db, "list_active_issues"):
-        for row in db.list_active_issues():
-            lines.append(
-                f"issue\t{int(row['id'])}\t{str(row['title'] or '')}"
-            )
-    else:
-        for row in db.conn.execute(
-            "SELECT id, title FROM issues WHERE status='active' ORDER BY id"
-        ).fetchall():
-            lines.append(
-                f"issue\t{int(row['id'])}\t{str(row['title'] or '')}"
-            )
-    if not lines:
+    from ming_sim.staged_commitment import load_commitment_stages
+
+    for row in db.conn.execute(
+        "SELECT id, title, stages_json FROM issues WHERE status='active' ORDER BY id",
+        (),
+    ).fetchall():
+        stages = load_commitment_stages(row['stages_json'])
+        lines.append(f"issue\t{int(row['id'])}\t{str(row['title'] or '')}")
+        for stage in stages:
+            lines.append(f"stage\t{int(row['id'])}\t{stage['stage_idx']}\t{stage}")
+    for row in db.conn.execute(
+        'SELECT id, title, status FROM secret_orders ORDER BY id',
+        (),
+    ).fetchall():
+        lines.append(
+            f"secret_order\t{int(row['id'])}\t{str(row['status'] or '')}\t"
+            f"{str(row['title'] or '')}"
+        )
+    # 在途拨帑与自带押解标记（普通押解随拨银旨）；专用护送目录/实况行已退役。
+    for row in db.conn.execute(
+        'SELECT id, action_type, target_kind, target_id FROM decree_dossiers WHERE '
+        "status='executing' AND action_type='grant_allocation' ORDER BY id",
+        (),
+    ).fetchall():
+        declared = db.dossier_declares_escort(int(row["id"]))
+        lines.append(
+            f"dossier\t{int(row['id'])}\t{str(row['target_kind'] or '')}:{str(row['target_id'] or '')}"
+            + ("\t自带押解" if declared else "")
+        )
+    if state is not None:
+        from ming_sim.due_review import list_due_review_scenes
+        for scene in list_due_review_scenes(db):
+            if scene.get("kind") == "covert_levy_exposure" and not scene.get("decision"):
+                lines.append("scene\t" + json.dumps(scene, ensure_ascii=False, sort_keys=True))
+    candidate_block = _person_candidate_grounding(db, state)
+    from ming_sim.applier import list_unresolved_player_rejections
+    unresolved = list_unresolved_player_rejections(db)
+    for fact in unresolved:
+        lines.append("player_rejection\t" + json.dumps(fact, ensure_ascii=False, sort_keys=True))
+    unresolved_ids = {fact["rejection_id"] for fact in unresolved}
+    for dossier in db.dossiers.list_dossiers():
+        payload = dossier.get("payload", {})
+        ids = [rid for rid in payload.get("_resolves_rejection_ids", []) if rid in unresolved_ids]
+        if ids:
+            lines.append("rejection_correction\t" + json.dumps({
+                "dossier_id": dossier["id"], "resolves_rejection_ids": ids,
+                "status": dossier["status"], "execution_outcome": dossier["execution_outcome"],
+            }, ensure_ascii=False, sort_keys=True))
+    if not lines and not candidate_block:
         return ""
-    body = "\n".join(lines)
-    return (
-        "【权威目标目录】\n"
-        "grant.target_id / appointment.region_id 必须是下列目录中的精确 id，禁止编造。\n"
-        f"{body}\n"
-    )
+    parts: List[str] = []
+    if lines:
+        body = "\n".join(lines)
+        parts.append(
+            "【权威目标目录】\n"
+            "grant.target_id / appointment.region_id / rushes.target_id / 禁摊派案卷 id 必须取对应目录中的精确 id，禁止编造。\n"
+            f"{body}"
+        )
+    if candidate_block:
+        parts.append(candidate_block)
+    return "\n".join(parts) + "\n"
 
 
 def build_c0_declaration_shape() -> str:
     """C0 唯一输出形状，召对与过月转译共用。"""
-    # 效果 delta 的唯一形状真源沿用旧结算入口的 EMPTY_EXTRACTION，避免声明层
-    # 另手维护一份平行字段表。
-    from ming_sim.simulation import EMPTY_EXTRACTION
+    # 效果字段真源是 simulation.DECLARATION_EFFECT_FIELDS；声明层不另维护字段表。
+    from ming_sim.simulation import DECLARATION_EFFECT_FIELDS
 
     # target_kind 表面唯一真源 = decree_vocabulary.TARGET_KINDS，禁手抄分叉。
     target_kind_hint = "|".join(sorted(TARGET_KINDS))
+    # covert_task 冻结契约定义同样只投影 covert_progress 的真源，禁在此另抄字段表
+    # （#1897：只写 "{}" 的形状让真实模型交不出可消费的契约）。
+    from ming_sim.covert_progress import describe_covert_task_contract
+    covert_contract_shape = describe_covert_task_contract()
+    # 案卷关联的合法类型闭集同样只投影 constants 真源，禁手抄分叉。
+    from ming_sim.constants import DOSSIER_LINK_TYPES, ECONOMY_ACCOUNTS
+    from ming_sim.entities.character.transit import TRAVEL_SPEED_BY_TONE
+    dossier_link_types = "|".join(sorted(DOSSIER_LINK_TYPES))
+    account_hint = "|".join(ECONOMY_ACCOUNTS)
+    travel_tone_hint = "|".join(TRAVEL_SPEED_BY_TONE)
     effect_shape = "\n".join(
         f"    {line}" for line in json.dumps(
-            {"event_id": "仅属某事件战果时填事件 id；未填即独立", **EMPTY_EXTRACTION},
+            {"event_id": "仅属某事件战果时填事件 id；未填即独立", **DECLARATION_EFFECT_FIELDS},
             ensure_ascii=False, indent=2,
         ).splitlines()
     )
@@ -228,21 +269,71 @@ def build_c0_declaration_shape() -> str:
         "{\n"
         '  "commissions": [\n'
         "    {\n"
-        '      "text": "交办正文（原样，不删改）",\n'
+        '      "text": "交办正文（原样，不删改）", "mode": "ordinary|midzhi（中旨明示才填 midzhi）",\n'
+        '      "resolves_rejection_ids": [正整数 rejection_id（本旨明确修正的未了结拒收；无则省略）],\n'
+        '      "target_dossier_id": "御笔强推已有案卷 id（不与 grant/appointment 同填）",\n'
         '      "appointment": {\n'
         '        "name": "人名", "office": "官职", "appoint_action": "任命|罢免",\n'
         '        "region_id": "任所 region id（地方/督抚/边镇任命必填；中央可空）"\n'
         "      },\n"
         '      "grant": {\n'
         '        "grant_action": "赈灾|协饷|赏赉|发内帑|项目经费|…",\n'
-        '        "amount": 正整数万两, "account": "国库|内库",\n'
+        f'        "amount": 正整数万两, "account": "{account_hint}",\n'
         '        "purpose": "补饷（仅协饷）",\n'
         f'        "target_kind": "{target_kind_hint}",\n'
-        '        "target_id": "目标 id", "cadence": "一次性|每月"\n'
-        "      }\n"
+        '        "target_id": "目标 id", "cadence": "一次性|每月",\n'
+        '        "escort": {"escortees": [{"character_id": "押解人名", '
+        '"tier": "主办|协办|知情", "role": "职分文字", '
+        '"delegator_id": "委派人名或空"}], "note": "押解护送缘由原句"}\n'
+        "      },\n"
+        '      "punishment": {"target_id": "处置人名（压下时可空）", '
+        '"punish_action": "惩处动作（压下时为无）", "issue_id": "弹劾事项 id（有则填）", '
+        '"issue_disposition": "办人|压下（弹劾事项有则填）", '
+        '"transaction_category": "事务类别（有则填）", "amount": "罚俸金额（罚俸时填）", '
+        '"backing_dossier_id": "所援案卷 id（有则填）"},\n'
+        '      "pacification": {"target_id": "自新内乱首领的具名 id", "mode": "ordinary|midzhi"},\n'
+        '      "revoke": {"target_kind": "dossier|issue（不填按 dossier）", '
+        '"target_id": "所撤那道已发旨的案卷 id 或 issue id", '
+        '"target_candidate": "续办所指候选 id（撤令一般留空）"},\n'
+        '      "secret_order": {"title": "密令标题", "content": "密令正文（原样，不删改）", '
+        '"assignee": "承办人名（名册人名，不得填场景）", "tags": [], "deadline_months": 0, '
+        '"dossier_links": [{"target_dossier_id": 旧案卷id, '
+        f'"relation_type": "{dossier_link_types}", "note": "关联说明（必填）"}}],\n'
+        '        "covert_task": '
+        + covert_contract_shape
+        + '},\n'
+        '      "secret_order_progress": {"order_id": "往期有效密令 id", "note": "本轮具名进展"},\n'
+        '      "strategy_selection": {"target_id": "已选方案的政策目标 id", '
+        '"source_chat_turn_id": "本场已说的大臣陈策轮 chat_turn_id（不能填本轮）", '
+        '"proposer": "陈策大臣人名（名册人名）"},\n'
+        '      "secret_order_update": {"order_id": "承办人现役密令 id", '
+        '"title": "新标题（有则填）", "content": "完整新正文（必填）", '
+        '"deadline_months": "期限月数（有则填）"},\n'
+        '      "secret_order_review": {"order_id": "承办人现役密令 id", '
+        '"claim": "核议陈词（原样）"},\n'
+        '      "assignment": {"title": "独立事项名", "target_id": "事项 id", '        '"assignee": "承办人 id", "participant_roster": [], '
+        '"target_candidate": "续办所指候选 id（新案留空）", '
+        '"commitment_kind": "承诺类别（无承诺填无）", '
+        '"deadline_months": 0, "stop_condition": {}},\n'
+        '      "recommendation": {\n'
+        '        "recommender": "荐者人名", "reason": "荐词原句（非空，逐字）"\n'
+        "      },\n"
+        '      "dossier_action_type": "prohibit_covert_levy（禁摊派时填）",\n'
+        '      "target_id": "本场暗渠案卷事实中的 dossier_id（禁摊派时填）"\n'
         "    }\n"
         "  ],\n"
-        '  "promises": [{"action_id": 正整数, "decision": "应允|拒绝"}],\n'
+        '  "promises": [{"action_id": 正整数, "decision": "应允|拒绝|修改|留中", '
+        '"mode": "ordinary|midzhi（有则填）", "new_content": "仅修改新建密令时填完整正文"}],\n'
+        '  "endorsements": [\n'
+        '    {"action_id": 正整数, "form": "会签|当面站台|御笔手敕", '
+        '"endorser_id": "人名（御笔手敕为空）"}\n'
+        '  ],\n'
+        '  "inquiries": [{"attendant": "受命近侍", "query": "所查之事", '
+        '"order_id": "目录里点名的密令 id（未点名则省略）"}],\n'
+        '  "rushes": [{"target_kind": "commitment|secret_order", "target_id": 正整数, '
+        '"stage_idx": 0, "deadline_months": 1, "reason": "催办缘由"}],\n'
+        f'  "travel_tones": [{{"person_name": "人名", "tone": "{travel_tone_hint}"}}],\n'
+        '  "rejection_withdrawals": [{"rejection_id": 正整数（皇帝明确说不做或叙事了结的未了结拒收 id）, "decision": "withdrawn|succeeded（默认 withdrawn）", "dossier_id": "叙事了结所援案卷 id（succeeded 时填）"}],\n'
         '  "on_scene_facts": [\n'
         "    {\n"
         '      "name": "人名",\n'
@@ -252,14 +343,12 @@ def build_c0_declaration_shape() -> str:
         "    }\n"
         "  ],\n"
         '  "textual_facts": [\n'
-        '    {"subject_kind": "character|army|region", "subject_id": "id", "body": "文字事实"}\n'
+        '    {"subject_kind": "character|army|region", "subject_id": "id", "body": "文字事实", "origin_ref": "本条事实真实来源引用（如 dossier:id / secret_order:id），与 affair_declaration 分开"}\n'
         "  ],\n"
         '  "public_sayings": [\n'
         "    {\n"
         '      "body": "公开说法",\n'
-        '      "involved_characters": ["人名"],\n'
-        '      "excluded_names": ["明示排除、不得知情的人名"],\n'
-        '      "excluded_offices": ["明示排除、不得知情的官职"]\n'
+        '      "involved_characters": ["人名"]\n'
         "    }\n"
         "  ],\n"
         '  "presence": [\n'
@@ -299,10 +388,11 @@ def build_audience_translate_prompt(
     产出契约 = C0 全 section（交办/应允/当场实况/文字事实/公开说法/在场/
     分段/边事件/主角/入册）。不解析自由散文——模型直接给结构化声明。
     """
+    # #1897：判空用局部 strip 副本；写入/供料块保留原文空白（含 grounding）。
     said_block = "\n".join(str(s) for s in night_said if str(s).strip()) or "（无）"
     pending_block = "；".join(str(s) for s in pending_summaries if str(s).strip()) or "（无）"
-    grounding = str(target_grounding or "").strip()
-    grounding_block = f"{grounding}\n" if grounding else ""
+    grounding = str(target_grounding or "")
+    grounding_block = f"{grounding}\n" if grounding.strip() else ""
     return (
         "你是召对转译器。读本轮皇帝原话、回话、本场已说的话与本夜暂存清单，"
         "一次声明本轮全部记录。只输出一个 JSON 对象，无代码围栏、无多余字。\n"
@@ -311,15 +401,44 @@ def build_audience_translate_prompt(
         "- scene_facts 按原顺序完整分段覆盖本轮回话；各 body 直接拼接须与回话逐字相同（含空白、标点与 Markdown），不得概括、补字或漏字；role 是该段的说话人类别，大臣/近臣的 person_names 首位是说话人（user/scene 可为空）。\n"
         "- 一句话同时含拟旨 + 拨帑 + 任免时，只出一条 commission，载荷挂在同一条上；"
         "不要拆成拟旨 / 拨帑 / 交办三道。\n"
+        "- 离殿后独立责成的事项逐件给 commission.assignment；title/target_id 是事项锚，"
+        "assignee/participant_roster 来自已明确的承办人；续办只在能指向既有候选时填 target_candidate。"
+        "不从当场问答推造独立差事。\n"
+        "- 皇帝从本场大臣陈策中点选方案时，交办正文由转译明确给出，"
+        "commission.strategy_selection 指向【本场已说的话】中对应陈策轮 chat_turn_id，"
+        "proposer 为陈策大臣人名；无该源轮不得猜造。\n"
+        "- 具名秘密差事的新建走 commission.secret_order；必须含 title、content（原样）、"
+        "名册里的承办人 assignee 与上面写明的 covert_task 冻结任务契约；"
+        "契约字段不全或承办人只说到场景（无具名人）时不要勉强成条。"
+        "covert_task 的字段随差务类型而异，按该类契约给全（含交付单位与对应身份字段）。"
+        "查案类另可在 covert_task 里给 investigation_fact：本道密令的来源明确指向"
+        "哪一条罪证就填那一条的标识，没指明就留空——留空不是错，引擎不会替来源挑一条。\n"
+        "往期密令具名进展走 commission.secret_order_progress；不凭空记进展。\n"
+        "现役密令提交核议走 commission.secret_order_review（order_id 与 claim 原样）。\n"
+        "- 皇帝明确撤回一道**已发出**的旨（撤回成命）走 commission.revoke，"
+        "target_id 取那道旨的案卷 id；「撤回本场刚才的话」「撤回上一轮召对」"
+        "不是撤令，不填 revoke（由既有撤回机制处理）。\n"
         "- 皇帝对已暂存交办说「准」「照办」等应允语义 → promises 里 decision=应允；"
-        "「不准」「作罢」→ 拒绝。皇帝本轮未表态 → promises 为空（默认不应允）。\n"
+        "「不准」「作罢」→ 拒绝；修改已有新建密令 → 修改并给完整 typed new_content，"
+        "不从原话截断猜正文。皇帝本轮未表态 → promises 为空（默认不应允）。\n"
+        "- 本轮有人当面说出担名（会签/当面站台）或皇帝说要亲笔担某旨 → endorsements "
+        "指向暂存清单里那件（action_id）；御笔手敕的 endorser_id 为空。\n"
         "- 当场已发生（斩杀/拿下/伤臂/告退等）走 on_scene_facts / textual_facts / "
         "presence / public_sayings / edge_events，不要写成交办。\n"
         "- effects 是过月才核算的旨意办理效果；召对夜本轮留空，不得将尚未发生的效果写成当场实况。\n"
-        "- public_sayings 的 excluded_names / excluded_offices：皇帝明示排除的读者"
-        "保持不知情；无排除则给空数组。\n"
         "- 无对应事实的 section 输出空数组（protagonist 无则省略或 null），不要编造。\n"
         "- 承接不了的交办仍写入 commissions（由代码拒收），不要改写皇帝原话去猜。\n"
+        "- 皇帝明确修正某条未了结拒收 → 新 commissions 项带 resolves_rejection_ids；"
+        "皇帝明确说不做或明确确认叙事修正已办成 → rejection_withdrawals（decision 可填 withdrawn 或 succeeded）；闲谈、留中与未回应不算撤回/了结。\n"
+        "- 暗渠揭破场面呈上后皇帝禁摊派 → commissions 一项 dossier_action_type=prohibit_covert_levy，target_id 填当前场面案卷 dossier_id。\n"
+        "- 大臣具名举荐某人任某差并附荐词 → commissions 任命 + recommendation（荐者/荐词原句）。\n"
+        "- 皇帝交代近侍查某事 → inquiries；只有点名【权威目标目录】里某一条密令时才填该行精确 order_id，"
+        "未点名则省略 order_id，只记委派、不拉取密令月报；不得从查访散文猜测密令。"
+        "催某件分段事或密令 → rushes；传召说明缓急 → travel_tones。\n"
+        "- **本场新交办的拨银自带押解**（「着某人押解护送」）→ 不另立密令，"
+        "在该 commissions 项的 grant.escort.escortees 按 ADR 0053 参与人条目写押解人"
+        "（character_id／tier 机械档／role 职分／delegator_id 委派人，无委派留空），"
+        "此人即进本案参与人名单。\n"
         f"{grounding_block}"
         f"【本场已说的话】\n{said_block}\n"
         f"【本夜暂存清单】{pending_block}\n"
@@ -332,10 +451,14 @@ def run_declaration_translate_prompt(
     prompt: str, llm_config: Any = None, *, tag: str, policy: Any = None,
 ) -> Mapping[str, object]:
     """共用声明转译 runner：沿现有宿主 extractor 与 JSON 解析接缝。"""
-    from ming_sim.cli_backend import _loads_lenient, _run_json_extractor_for_config
+    from ming_sim.cli_backend import _run_json_extractor_for_config
 
     raw, _ = _run_json_extractor_for_config(prompt, llm_config, tag=tag, policy=policy)
-    obj = _loads_lenient(raw, accepted_types=(dict,))
+    # Strict stdlib decoder only — no fence/JSONC/brace-crop repair of free prose.
+    try:
+        obj = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        obj = None
     if not isinstance(obj, dict):
         raise AudienceTranslateError("转译输出无法解析为 JSON 对象")
     return obj
@@ -397,7 +520,6 @@ def translate_audience_turn(
     pending_summaries: Sequence[str] = (),
     target_grounding: str = "",
     llm_config: Any = None,
-    translate_fn: Optional[TranslateFn] = None,
 ) -> Dict[str, object]:
     """一次转译 → 完整声明（C0 全 section）。
 
@@ -411,84 +533,10 @@ def translate_audience_turn(
         pending_summaries=pending_summaries,
         target_grounding=target_grounding,
     )
-    runner = translate_fn or _default_translate_runner
     try:
-        raw = runner(prompt, llm_config)
+        raw = _default_translate_runner(prompt, llm_config)
     except AudienceTranslateError:
         raise
     except Exception as exc:
         raise AudienceTranslateError(str(exc) or exc.__class__.__name__) from exc
     return normalize_audience_declaration(raw)
-
-
-def apply_audience_turn_translation(
-    db: Any,
-    state: Any,
-    declaration: Mapping[str, object],
-    *,
-    night_id: int,
-    chat_turn_id: int = 0,
-    minister_name: str = "",
-    source: Provenance = Provenance.system_simulation,
-) -> DeclarationDispatchResult:
-    """把转译声明交给场中承接落账核（C0 分派 + 源轮/水位）。
-
-    ``chat_turn_id`` 是当场实况源轮；落账核经统一分派器自记撤回前像。
-    """
-    from ming_sim.audience_translation import apply_audience_round_translation
-
-    return apply_audience_round_translation(
-        db,
-        state,
-        declaration,
-        night_id=int(night_id or 0),
-        chat_turn_id=int(chat_turn_id or 0),
-        minister_name=minister_name,
-        source=source,
-    )
-
-
-def run_audience_turn_translation(
-    db: Any,
-    state: Any,
-    *,
-    emperor_message: str,
-    reply: str,
-    night_id: int,
-    chat_turn_id: int = 0,
-    minister_name: str = "",
-    llm_config: Any = None,
-    translate_fn: Optional[TranslateFn] = None,
-    source: Provenance = Provenance.system_simulation,
-) -> DeclarationDispatchResult:
-    """组装本轮上下文 → 转译 → 落账。scene_chat 同步路径与后台 worker 共用。
-
-    转译调用失败抛 :class:`AudienceTranslateError`，不进入落账核
-    （失败≠成功空声明）。
-
-    ``chat_turn_id`` 原样下传（不另造平行快照）；过月/无源轮传 0。
-    """
-    ctid = int(chat_turn_id or 0)
-    night_said = build_night_said_so_far(
-        db, int(night_id or 0), until_chat_turn_id=ctid,
-    )
-    pending = build_pending_summaries(db, int(state.turn), night_id=int(night_id or 0))
-    target_grounding = build_translation_target_grounding(db)
-    declaration = translate_audience_turn(
-        emperor_message=emperor_message,
-        reply=reply,
-        night_said=night_said,
-        pending_summaries=pending,
-        target_grounding=target_grounding,
-        llm_config=llm_config,
-        translate_fn=translate_fn,
-    )
-    return apply_audience_turn_translation(
-        db,
-        state,
-        declaration,
-        night_id=int(night_id or 0),
-        chat_turn_id=ctid,
-        minister_name=minister_name,
-        source=source,
-    )

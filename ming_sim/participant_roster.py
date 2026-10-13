@@ -7,14 +7,12 @@ directive capture (#1279 / QA A-2) and night-archive involved_people projection
 
 from __future__ import annotations
 
-import json
 from typing import Dict, List, Mapping
+
 
 # ADR 0053 机械三档闭集（唯一真源）：归一缝、票拟层 A shape 与 prompt 契约共引，
 # 禁第二份字面量。主办可多人（北极星实证：倪元璐＋黄道周合力清丈畿辅）。
 PARTICIPANT_TIERS = ("主办", "协办", "知情")
-PARTICIPANT_LEAD_TIER = "主办"
-
 # 卫/司 类机关整词（单字留作姓、整词才判机关）。词表单源：assignee-hint 子串与
 # 参与人裸机构 fullmatch 共用，防漂移。
 INSTITUTION_PARTICIPANT_TOKENS = (
@@ -59,28 +57,84 @@ def is_non_person_participant_name(name: str) -> bool:
     return False
 
 
+from ming_sim.action_materialize import DecreeMaterializationValidationError
+class UnknownParticipantRefError(DecreeMaterializationValidationError):
+    """名册引用不存在的结构化故障（#1902 T2 / ADR 0142）。
+
+    控制面只认本类型与 ``names``／``label`` 字段，禁止从 ``str(exc)`` 词面正则回推。
+    ``label`` 为「参与人物」或「委派人」。
+    """
+
+    def __init__(self, label: str, name: str, message: str):
+        self.label = str(label or "").strip() or "参与人物"
+        self.name = str(name or "").strip()
+        self.names = [self.name] if self.name else []
+        super().__init__(message, failed_fields=("participant_roster",), category="invalid_state")
+
+
+def decode_durable_participant_roster(
+    raw: object, *, require_tier: bool = True,
+) -> list:
+    """Durable roster decode: list of objects; corrupt → loud (#1897 E1).
+
+    Shared by authority projection, liability projection, and dossier row read.
+    Empty list is a valid empty roster. Empty-string JSON is corrupt, not [].
+
+    require_tier=True（案卷/连坐）：每项必有合法机械档；''/False/0 不得洗空跳过。
+    require_tier=False（knowledge 取人名）：缺档可过；**一旦 present** 类型/闭集仍响亮。
+    """
+    from ming_sim.db import _load_durable_json
+
+    roster = _load_durable_json(raw, default='[]')
+    if not isinstance(roster, list):
+        raise ValueError("participant_roster must be a list of participants")
+    out: list = []
+    for item in roster:
+        entry = {**item}
+        # 人物主键：案卷/连坐必非空 str；knowledge 取名可回落 name 键。
+        cid_raw = entry.get("character_id")
+        if cid_raw is None and not require_tier:
+            cid_raw = entry.get("name")
+        if not isinstance(cid_raw, str):
+            raise ValueError(
+                f"参与人 character_id 须为字符串，得 "
+                f"{type(cid_raw).__name__}"
+            )
+        cid = cid_raw.strip()
+        if not cid:
+            raise ValueError("参与人 character_id 不能为空")
+        if cid:
+            entry["character_id"] = cid
+        if "tier" not in entry or entry.get("tier") is None:
+            if require_tier:
+                raise ValueError("participant_roster 缺 tier")
+            out.append(entry)
+            continue
+        # present 档：类型与闭集响亮；输出规范化枚举，投影与校验同值（#1897 E1）。
+        tier_raw = entry.get("tier")
+        tier = tier_raw.strip()
+        if tier not in PARTICIPANT_TIERS:
+            raise ValueError(f"参与人机械档非法：{tier_raw!r}")
+        entry["tier"] = tier
+        out.append(entry)
+    return out
+
+
 def resolve_dossier_owner_name(dossier: Mapping[str, object]) -> str:
     """案卷归属人：首名 canonical 主办，缺档时才读 legacy executor。
 
     #613 任别读端与 #625 监督事实底共调此单源；roster 解析禁止第三份遍历。
     缺档（无主办且无 executor）返回空串，由调用方按真除或缺席降级。
     """
-    roster = dossier.get("participant_roster") or []
-    if isinstance(roster, str):
-        try:
-            roster = json.loads(roster)
-        except (TypeError, ValueError):
-            # json.JSONDecodeError ⊂ ValueError
-            roster = []
-    if isinstance(roster, list):
-        for entry in roster:
-            if not isinstance(entry, dict):
-                continue
-            if str(entry.get("tier") or "").strip() != "主办":
-                continue
-            name = str(entry.get("character_id") or "").strip()
-            if name:
-                return name
+    roster = decode_durable_participant_roster(
+        dossier.get("participant_roster"),
+    )
+    for entry in roster:
+        if entry["tier"] != "主办":
+            continue
+        name = entry["character_id"]
+        if name:
+            return name
     executor_id = str(dossier.get("executor_id") or "").strip()
     executor_kind = str(dossier.get("executor_kind") or "").strip()
     if executor_id and executor_kind in {"", "character"}:
@@ -89,18 +143,17 @@ def resolve_dossier_owner_name(dossier: Mapping[str, object]) -> str:
 
 
 def participant_roster_names(raw: object) -> set[str]:
-    """Project persisted dict roster entries to their character names."""
-    try:
-        roster = json.loads(raw or "[]")
-    except (TypeError, ValueError):
-        return set()
-    if not isinstance(roster, list):
-        return set()
-    return {
-        str(item.get("character_id") or item.get("name"))
-        for item in roster
-        if isinstance(item, dict) and (item.get("character_id") or item.get("name"))
-    }
+    """Project persisted dict roster entries to their character names.
+
+    Durable decode / top-level / member faults propagate loud (#1897 E1).
+    Empty list is a valid empty roster. Name-only knowledge rows may omit tier.
+    """
+    names: set[str] = set()
+    for item in decode_durable_participant_roster(raw, require_tier=False):
+        name = (item.get("character_id") or item.get("name") or "").strip()
+        if name:
+            names.add(name)
+    return names
 
 
 def project_execution_liability_parties(
@@ -111,27 +164,30 @@ def project_execution_liability_parties(
     同构 breach_decree_dossier 双处收集：协办本人零机械只作戏源，
     但其委派人仍次责（ADR 0053：大臣遣学生为协办办砸→全权者背锅）。
     先定档后去重：同一人 primary 胜 secondary；知情永不入。
-    写路与 list_execution_liability_parties 共用本函数，禁止第二份 roster 遍历。
+    写路共用本函数，禁止第二份 roster 遍历。
     """
-    if not isinstance(roster, list):
-        return []
+    entries = decode_durable_participant_roster(roster)
 
     primary_ids: List[str] = []
     seen_primary: set[str] = set()
-    for item in roster:
-        if not isinstance(item, dict) or item.get("tier") != "主办":
+    for item in entries:
+        if item.get("tier") != "主办":
             continue
-        lead = str(item.get("character_id") or "").strip()
-        if lead and lead not in seen_primary:
+        # character_id 已在 decode 验为非空 str；不再 str(id or '') 过滤（#1897 E1）。
+        lead = item["character_id"]
+        if lead not in seen_primary:
             seen_primary.add(lead)
             primary_ids.append(lead)
 
     secondary_ids: List[str] = []
     seen_secondary: set[str] = set()
-    for item in roster:
-        if not isinstance(item, dict) or item.get("tier") not in {"主办", "协办"}:
+    for item in entries:
+        if item.get("tier") not in {"主办", "协办"}:
             continue
-        delegator = str(item.get("delegator_id") or "").strip()
+        delegator_raw = item.get("delegator_id")
+        if delegator_raw is None:
+            continue
+        delegator = delegator_raw.strip()
         if (
             delegator
             and delegator not in seen_primary

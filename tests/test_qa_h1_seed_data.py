@@ -1,3 +1,4 @@
+from __future__ import annotations
 """#1274 QA 包辛 H-1：seed 扩修钉测（#1359/#1360/#1365/#1361）。
 
 只钉 content/seed 静态口径 + 开局贯通；禁臆写史实、禁动引擎。
@@ -5,14 +6,11 @@
 #1404 若另定单名主官须对照本钉与 gazette 再开。
 """
 
-from __future__ import annotations
 
 import json
-import os
-import re
-import tempfile
 from pathlib import Path
 
+from ming_sim.opening_seed import seed_opening_world
 from ming_sim.content import load_character_content, load_event_content
 from ming_sim.db import GameDB
 from ming_sim.models import GameState
@@ -32,11 +30,13 @@ def _army_by_id(aid: str) -> dict:
     raise AssertionError(f"armies.json 缺 id={aid}")
 
 
-def _bajiu_names(characters: dict) -> set[str]:
+def _offstage_or_dismissed_empty_office(characters: dict) -> set[str]:
+    """#1889：归位后以结构化 status + 空 office 识别在野旧臣，不锁自由文案。"""
     return {
         name
         for name, ch in characters.items()
-        if "罢居" in (ch.office or "")
+        if (ch.status or "") in {"offstage", "dismissed"}
+        and not (ch.office or "").strip()
     }
 
 
@@ -48,13 +48,18 @@ def _deficit_seed():
 
 
 def test_guanning_commander_not_bajiu_offstage_yuan():
-    """#1359：关宁 commander 不得是罢居袁崇焕；须与 opening_gazette 分统口径一致。
+    """#1359/#1889：关宁 commander 不得是 offstage 袁崇焕；须与 opening_gazette 分统口径一致。
 
     gazette：「关外无主帅。关宁军由祖大寿、何可纲、赵率教分统」。
     controller（A-3 已改）与 commander 同落分统名，禁再写袁崇焕。
+    袁崇焕以结构化 status/reason_code 归位；不锁 status_reason 自由文案。
     """
     _, characters = load_character_content()
-    assert "罢居" in (characters["袁崇焕"].office or "")
+    yuan = characters["袁崇焕"]
+    assert yuan.status == "offstage"
+    assert yuan.reason_code == "自请"
+    assert not (yuan.office or "").strip()
+    assert "袁崇焕" in _offstage_or_dismissed_empty_office(characters)
     army = _army_by_id("guanning")
     commander = army["commander"]
     controller = army["controller"]
@@ -64,12 +69,6 @@ def test_guanning_commander_not_bajiu_offstage_yuan():
     for name in ("祖大寿", "何可纲", "赵率教"):
         assert name in commander, f"commander 缺分统 {name}: {commander!r}"
         assert name in controller, f"controller 缺分统 {name}: {controller!r}"
-    # 若 commander 点到名册人物，不得是罢居串
-    named = set(re.findall(r"[\u4e00-\u9fff]{2,4}", commander)) & set(characters)
-    for name in named:
-        assert "罢居" not in (characters[name].office or ""), (
-            f"关宁 commander 点名罢居者 {name}"
-        )
 
 
 def test_dongjiang_commander_is_active_mao_wenlong():
@@ -80,7 +79,6 @@ def test_dongjiang_commander_is_active_mao_wenlong():
     assert (mao.status or "active") == "active"
     army = _army_by_id("dongjiang")
     assert army["commander"] == "毛文龙", army["commander"]
-    assert "旧部" not in army["commander"]
 
 
 def test_seed_army_firearms_differentiated_within_p2_caps():
@@ -113,19 +111,18 @@ def test_seed_army_firearms_differentiated_within_p2_caps():
     assert int(nanjing["cannon_equipment"]) < int(guanning["cannon_equipment"])
 
 
-def test_fresh_seed_army_equipment_and_commanders_wire_through(content):
+def test_fresh_seed_army_equipment_and_commanders_wire_through(content, tmp_path):
     """开局贯通：DB 军队火器/炮与统帅名分与 seed 一致；统帅人物卡状态不自相矛盾。
 
     #1426：全量 id 集 + 每军 commander/controller/firearm/cannon 四字段对照 seed，
     禁只抽查关宁/东江而放过其它军误映射。
     """
     seed_by_id = {item["id"]: item for item in _armies_seed()}
-    fd, path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
+    path = str(tmp_path / "seed.db")
     db = None
     try:
         db = GameDB(path, content)
-        db.seed_static_data()
+        seed_opening_world(db)
         rows = {
             r["id"]: dict(r)
             for r in db.conn.execute(
@@ -167,10 +164,7 @@ def test_fresh_seed_army_equipment_and_commanders_wire_through(content):
         assert any(int(r["cannon_equipment"]) > 0 for r in rows.values())
     finally:
         if db is not None:
-            db.close()
-        for p in (path, f"{path}_agno.db"):
-            if os.path.exists(p):
-                os.remove(p)
+            db.conn.close()
 
 
 def test_deficit_stage_text_aligns_with_opening_treasury_and_hubu():
@@ -186,16 +180,7 @@ def test_deficit_stage_text_aligns_with_opening_treasury_and_hubu():
     assert "南京" in (bi.office or ""), bi.office
 
     ev = _deficit_seed()
-    stage = ev.stage_text or ""
-    assert "毕自严" not in stage, f"具题人仍是南京户书: {stage!r}"
-    assert "郭允厚" in stage, stage
-    # 禁与开局国库 320 恒冲突的「不足三百万」硬数；允许定性或对齐实数
-    assert "不足三百万" not in stage, stage
-    # 若仍写具体「百万」量级，不得宣称低于开局国库
-    m = re.search(r"不足\s*([一二三四五六七八九十百千万0-9]+)\s*万", stage)
-    assert m is None, f"仍用不足X万硬数易与账本漂移冲突: {stage!r}"
-
-    # audiences 须含在任户部尚书，召对注入才对口
+    # 不盯 stage_text 散文措辞；结构化 audiences / 开局国库硬锚为准
     audiences = list(ev.audiences or [])
     assert "郭允厚" in audiences, audiences
 

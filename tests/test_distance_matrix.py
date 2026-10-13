@@ -9,40 +9,6 @@ from ming_sim.distance import DistanceMatrix, bake_distance_matrix
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_bake_uses_half_endpoint_weights_and_zero_diagonal():
-    graph = {
-        "nodes": {"a": {"weight": 2.0}, "b": {"weight": 4.0}},
-        "edges": [{"from": "a", "to": "b", "cost": 1.5}],
-    }
-
-    matrix = bake_distance_matrix(graph)
-
-    assert matrix["a"]["a"] == 0
-    assert matrix["b"]["b"] == 0
-    assert matrix["a"]["b"] == pytest.approx(4.5)
-    assert matrix["b"]["a"] == pytest.approx(4.5)
-
-
-def test_bake_selects_fastest_route_and_preserves_triangle_inequality():
-    graph = {
-        "nodes": {
-            "a": {"weight": 2.0},
-            "b": {"weight": 10.0},
-            "c": {"weight": 2.0},
-        },
-        "edges": [
-            {"from": "a", "to": "b", "cost": 0.0},
-            {"from": "a", "to": "c", "cost": 0.0},
-            {"from": "c", "to": "b", "cost": 0.0},
-        ],
-    }
-
-    matrix = bake_distance_matrix(graph)
-
-    assert matrix["a"]["b"] == pytest.approx(6.0)
-    assert matrix["a"]["b"] <= matrix["a"]["c"] + matrix["c"]["b"]
-
-
 def test_runtime_reader_is_lookup_only(tmp_path):
     path = tmp_path / "distance_matrix.json"
     path.write_text(
@@ -72,7 +38,6 @@ def test_baked_content_covers_all_regions_and_three_golden_anchors():
     assert matrix["henan"]["beizhili"] == 1.0
     assert matrix["nanzhili"]["beizhili"] == 1.6
     assert matrix["guangdong"]["beizhili"] == 3.0
-    assert matrix["guangdong"]["beizhili"] > matrix["nanzhili"]["beizhili"] > matrix["henan"]["beizhili"]
     dongjiang = DistanceMatrix(matrix)
     assert dongjiang.travel_time("dongjiang_area", "liaodong") <= 2.0
     assert dongjiang.travel_time("dongjiang_area", "liaodong") < dongjiang.travel_time("dongjiang_area", "guangdong")

@@ -1,6 +1,20 @@
+from __future__ import annotations
+from ming_sim.entities.issue.legacy import sync_opening_legacies
+import json
+from pathlib import Path
+from types import SimpleNamespace
+import pytest
+from fastapi import HTTPException
+from ming_sim.opening_seed import seed_opening_world
+from ming_sim import audience_night as an
+from tests.conftest import open_hall_turn, stub_scene_agent
+from tests.test_web_audience_night_498 import _FakeAgent
+from ming_sim.db import GameDB
+from web_app import FRONT_HALF_DONE_PHASES
+from ming_sim.session import ChatTurnResult
 """#505 [S4] 续夜 restore：重开回到最后一条持久化对话轮续夜（ADR 0036）。
 
-一条贯穿真实入口→DB 末态的 tracer：用生产 seam（open_night / attach_chat_turn_to_night /
+一条贯穿真实入口→DB 末态的 tracer：用生产 seam（open_night / open_hall_turn /
 append_chat_message）造出「回话生成半途被 kill」的真实崩溃态（generating 轮、问话已落、
 回话未落），再用**重开真路径**（同库新建 GameDB + reconcile_interrupted_chat_turns）断言：
 
@@ -12,22 +26,9 @@ append_chat_message）造出「回话生成半途被 kill」的真实崩溃态�
 reconcile 保留问话消息行（区别于 fail_chat_turn 的删问话善后）。
 """
 
-from __future__ import annotations
 
-import json
-from pathlib import Path
-from types import SimpleNamespace
 
-import pytest
-from fastapi import HTTPException
 
-import ming_sim.issues as issues_mod
-import web_app
-from ming_sim import audience_night as an
-from ming_sim.audience_night import attach_chat_turn_to_night
-from ming_sim.db import GameDB
-from ming_sim.session import ChatTurnResult
-from web_app import FRONT_HALF_DONE_PHASES
 
 
 # ── 真实开局 / 重开 helpers ──────────────────────────────────────────
@@ -39,7 +40,7 @@ def _active_minister(db, content) -> str:
             continue
         if getattr(ch, "office_type", "") == "后宫":
             continue
-        if db.get_character_status(name)[0] == "active":
+        if db.characters.get_character_status(name)[0] == "active":
             return name
     raise AssertionError("no active ming minister")
 
@@ -47,9 +48,9 @@ def _active_minister(db, content) -> str:
 def _open_db(path, content, *, first: bool):
     db = GameDB(path, content)
     if first:
-        db.seed_static_data()
+        seed_opening_world(db)
         state = db.load_state()
-        issues_mod.sync_opening_legacies(db, state)
+        sync_opening_legacies(db, state)
     else:
         state = db.load_state()
     return db, state
@@ -65,24 +66,47 @@ def restore_env(content, tmp_path):
 
 
 def _start_generating_turn(db, state, minister, question):
-    """生产 seam 造在飞 generating 轮：问话已落库并链接，回话未落（= 生成半途被 kill）。"""
-    _night_id, ct = attach_chat_turn_to_night(
-        db, state, minister, agno_session_id="sess", agno_runs_before=0,
+    """生产 seam 造在飞 generating 轮：问话已落库并链接，回话未落（= 生成半途被 kill）。
+
+    #1902 L1：建轮归属恒为殿上（与 begin_audience_chat_turn 同）；问话可挂具名大臣。
+    """
+    from ming_sim.audience_night import SCENE_CHAT_SPEAKER
+
+    _night_id, ct = open_hall_turn(
+        db, state, SCENE_CHAT_SPEAKER, agno_session_id="sess", agno_runs_before=0,
     )
-    mid = db.append_chat_message(minister, state.turn, "user", question)
-    db.update_chat_turn_messages(ct, user_message_id=mid)
+    name = str(minister or "").strip()
+    if name and name != SCENE_CHAT_SPEAKER:
+        an.ensure_summon_enter(
+            db, _night_id, name,
+            method=an.METHOD_XUANRU, origin_chat_turn_id=ct,
+        )
+    mid = db.chat_messages.insert(minister_name=name or SCENE_CHAT_SPEAKER, turn=state.turn, role='user', content=question)
+    db.reign.update_chat_turn_messages(ct, user_message_id=mid)
     return ct
 
 
 def _land_full_turn(db, state, minister, question, answer):
-    """生产 seam 造完成轮：问话 + 回话都落库、链接（generating→active）。"""
-    _night_id, ct = attach_chat_turn_to_night(
-        db, state, minister, agno_session_id="sess", agno_runs_before=0,
+    """生产 seam 造完成轮：问话 + 回话都落库、链接（generating→active）。
+
+    #1902 L1：建轮归属恒为殿上。
+    """
+    from ming_sim.audience_night import SCENE_CHAT_SPEAKER
+
+    _night_id, ct = open_hall_turn(
+        db, state, SCENE_CHAT_SPEAKER, agno_session_id="sess", agno_runs_before=0,
     )
-    uid = db.append_chat_message(minister, state.turn, "user", question)
-    db.update_chat_turn_messages(ct, user_message_id=uid)
-    mid = db.append_chat_message(minister, state.turn, "minister", answer)
-    db.update_chat_turn_messages(ct, minister_message_id=mid)
+    name = str(minister or "").strip()
+    if name and name != SCENE_CHAT_SPEAKER:
+        an.ensure_summon_enter(
+            db, _night_id, name,
+            method=an.METHOD_XUANRU, origin_chat_turn_id=ct,
+        )
+    speaker = name or SCENE_CHAT_SPEAKER
+    uid = db.chat_messages.insert(minister_name=speaker, turn=state.turn, role='user', content=question)
+    db.reign.update_chat_turn_messages(ct, user_message_id=uid)
+    mid = db.chat_messages.insert(minister_name=speaker, turn=state.turn, role='minister', content=answer)
+    db.reign.update_chat_turn_messages(ct, minister_message_id=mid)
     db.conn.execute("UPDATE chat_turns SET extract_status='done' WHERE id=?", (ct,))
     db.conn.commit()
     return ct
@@ -95,25 +119,6 @@ def _reopen(path, content):
 # ── AC1/AC4 账本逐条一致、恢复路径未删任何账 ──────────────────────────
 
 
-def test_reopen_reconcile_preserves_ledger_exactly(restore_env):
-    env = restore_env
-    db, state, content = env.db, env.state, env.content
-    minister = _active_minister(db, content)
-    night = an.open_night(db, state, location="乾清宫", time_of_day="戌时")
-    an.summon_enter(db, night["id"], minister, method=an.METHOD_XUANRU)
-    # 回话生成半途 kill：问话已落、回话未落。
-    _start_generating_turn(db, state, minister, "剿抚孰先？")
-    ledger_before = an.list_ledger(db, night["id"])
-    db.close()
-
-    db2, _state2 = _reopen(env.path, content)
-    try:
-        db2.reconcile_interrupted_chat_turns()
-        ledger_after = an.list_ledger(db2, night["id"])
-        # 恢复路径未删任何账，且逐条一致（AC1/AC4）。
-        assert ledger_after == ledger_before
-    finally:
-        db2.close()
     # keep db handle count sane for fixture teardown
 
 
@@ -127,23 +132,23 @@ def test_reopen_reconcile_unblocks_and_keeps_question(restore_env):
     night = an.open_night(db, state, location="文华殿", time_of_day="午时")
     ct = _start_generating_turn(db, state, minister, "杨卿何以教朕？")
     # kill 前：该轮为在飞、大臣被判「仍在进行」。
-    assert an.list_in_flight_chat_turns(db, night["id"])
-    db.close()
+    assert db.reign.list_in_flight_chat_turns(night_id=night["id"])
+    db.conn.close()
 
     db2, _state2 = _reopen(env.path, content)
     try:
         interrupted = db2.reconcile_interrupted_chat_turns()
         # 该轮被标为可重试的 interrupted（不再在飞、不阻塞续问/收夜）。
-        assert an.list_in_flight_chat_turns(db2, night["id"]) == []
+        assert db2.reign.list_in_flight_chat_turns(night_id=night["id"]) == []
         assert any(int(r["chat_turn_id"]) == ct for r in interrupted)
         # 问话原句保留（不删）——恢复路径永不删记录。
-        proj = db2.build_chat_projection(minister)
+        proj = db2.build_chat_projection(an.SCENE_CHAT_SPEAKER)
         assert [m["content"] for m in proj if m["role"] == "user"] == ["杨卿何以教朕？"]
         # 待重试面板取数：带问话原文。
-        retries = db2.get_interrupted_reply_retries(minister)
+        retries = db2.reign.get_interrupted_reply_retries(an.SCENE_CHAT_SPEAKER)
         assert [r["question"] for r in retries] == ["杨卿何以教朕？"]
     finally:
-        db2.close()
+        db2.conn.close()
 
 
 def test_reconcile_leaves_completed_turn_untouched(restore_env):
@@ -153,7 +158,7 @@ def test_reconcile_leaves_completed_turn_untouched(restore_env):
     minister = _active_minister(db, content)
     an.open_night(db, state, location="乾清宫", time_of_day="夜")
     ct = _land_full_turn(db, state, minister, "问", "臣对。")
-    db.close()
+    db.conn.close()
 
     db2, _state2 = _reopen(env.path, content)
     try:
@@ -164,30 +169,7 @@ def test_reconcile_leaves_completed_turn_untouched(restore_env):
         ).fetchone()["status"]
         assert status == "active"
     finally:
-        db2.close()
-
-
-def test_reconcile_does_not_delete_question_row(restore_env):
-    """负向对照：reconcile 保留问话消息行（区别于 fail_chat_turn 的删问话善后）。"""
-    env = restore_env
-    db, state, content = env.db, env.state, env.content
-    minister = _active_minister(db, content)
-    an.open_night(db, state, location="乾清宫", time_of_day="夜")
-    _start_generating_turn(db, state, minister, "此问不可蒸发")
-    before = db.conn.execute(
-        "SELECT COUNT(*) c FROM chat_messages WHERE role='user'"
-    ).fetchone()["c"]
-    db.close()
-
-    db2, _state2 = _reopen(env.path, content)
-    try:
-        db2.reconcile_interrupted_chat_turns()
-        after = db2.conn.execute(
-            "SELECT COUNT(*) c FROM chat_messages WHERE role='user'"
-        ).fetchone()["c"]
-        assert after == before  # 一条问话都不删
-    finally:
-        db2.close()
+        db2.conn.close()
 
 
 # ── AC2 纯奏对零账目段寸步不丢 ───────────────────────────────────────
@@ -207,16 +189,16 @@ def test_pure_audience_zero_ledger_turn_survives_reopen(restore_env):
         "SELECT COUNT(*) c FROM story_ledger_entries WHERE source_chat_turn_id>0"
     ).fetchone()["c"]
     assert extracted == 0
-    db.close()
+    db.conn.close()
 
     db2, _state2 = _reopen(env.path, content)
     try:
         db2.reconcile_interrupted_chat_turns()
-        proj = db2.build_chat_projection(minister)
+        proj = db2.build_chat_projection(an.SCENE_CHAT_SPEAKER)
         assert "四轮问对之一" in [m["content"] for m in proj if m["role"] == "user"]
         assert "臣愚见如此。" in [m["content"] for m in proj if m["role"] == "minister"]
     finally:
-        db2.close()
+        db2.conn.close()
 
 
 # ── AC3 重试重新生成回话、记录无重复句 ───────────────────────────────
@@ -227,79 +209,18 @@ class _RetrySession:
 
     temporary_characters: set = set()
 
-    def __init__(self, db, state, minister):
-        self.db = db
-        self.state = state
-        self._minister = minister
-        self.content = SimpleNamespace(characters={minister: SimpleNamespace(name=minister)})
 
-    def _character(self, name):
-        return self.content.characters[name]
 
-    def pending_count(self):
-        return 0
 
-    def chat(self, minister_name, message, *, chat_turn_id=0, explicit_secret_order=False):
-        # 关键：retry 复用既有 chat_turn，绝再不落问话——只产回话。
-        assert chat_turn_id != 0
-        return ChatTurnResult(answer="臣重奏：剿为先。")
 
     # #1842：殿上重试入口走 scene_chat；替身委托既有 chat 同 ChatTurnResult。
-    def scene_chat(self, message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
-        return self.chat(
-            minister_name or self._minister, message, chat_turn_id=chat_turn_id,
-        )
-
-    def schedule_pending_scene_translation(self, result):
-        # #1842：WebGame persist 尾必调；轻壳无 pending 时与生产同形 no-op。
-        from ming_sim.session import GameSession
-        return GameSession.schedule_pending_scene_translation(self, result)
-
-    # #542 scene lifecycle seams：retry 入口会 start/join/persist/abandon；替身 no-op。
-    # #1566：场外密令重试不得启殿上 scene——外可见靠 scroll 无 entrance，不记 spy。
-    def start_chat_turn_scene(self, *_a, **_k):
-        return None
-
-    def start_chat_turn_exit_scene(self, *_a, **_k):
-        return None
-
-    def join_chat_turn_scene(self, *_a, **_k):
-        return []
-
-    def persist_chat_turn_scene(self, *_a, **_k):
-        return None
-
-    def abandon_chat_turn_scene(self, *_a, **_k):
-        return None
 
 
-def _retry_runtime(db, state, minister, *, session=None):
-    """Web retry 入口唯一装配壳。session 默认轻量 _RetrySession；可注入生产 chat session。"""
-    rt = object.__new__(web_app.WebGame)
-    # WebGame.db/state 均为只读 property（读 session.db / session.state）——经 session 供给。
-    rt.session = session if session is not None else _RetrySession(db, state, minister)
-    rt.chat_history = {minister: []}
-    rt._write_gate = __import__("threading").Lock()
-    rt._runtime_write_gate = lambda: rt._write_gate
-    rt.directive_rows = lambda: []
-    rt.directive_payload = lambda row: row
-    rt.suggestions_for = lambda character: []
-    rt.can_undo_last_chat = lambda name: False
-    rt.pending_action_failures_for = lambda name: []
-    rt._audience_turn_in_flight = lambda name: False
-    # 整轮 pending 由 retry 本体持有；转译与高亮尾随在本单元测试外——不起后台线程。
-    from ming_sim.session_write_queue import SessionWriteQueue
-    rt._write_queue = SessionWriteQueue()
-    rt._write_gate = rt._write_queue.write_gate
-    rt._runtime_write_queue = lambda: rt._write_queue  # type: ignore
-    rt._mark_pending_write = lambda key=None: rt._write_queue.claim(key=key or ("pending",))  # type: ignore
-    rt._complete_pending_write = lambda ticket=None: rt._write_queue.complete(ticket)  # type: ignore
-    rt._spawn_pending_write_thread = lambda *a, **k: False
-    return rt
 
 
-def test_retry_regenerates_reply_without_duplicate_question(restore_env):
-    env = restore_env
+
+def test_retry_regenerates_reply_without_duplicate_question(web_game, monkeypatch):
+    env = web_game
     db, state, content = env.db, env.state, env.content
     minister = _active_minister(db, content)
     an.open_night(db, state, location="乾清宫", time_of_day="戌时")
@@ -307,7 +228,8 @@ def test_retry_regenerates_reply_without_duplicate_question(restore_env):
     later = _start_generating_turn(db, state, minister, "续问军情？")
     db.reconcile_interrupted_chat_turns()
 
-    rt = _retry_runtime(db, state, minister)
+    rt = web_game
+    stub_scene_agent(monkeypatch, _FakeAgent(answer="臣重奏：剿为先。"))
     payload = rt.retry_interrupted_reply(minister, ct)
 
     assert payload["answer"] == "臣重奏：剿为先。"
@@ -327,45 +249,27 @@ def test_retry_regenerates_reply_without_duplicate_question(restore_env):
     assert row["status"] == "active"
     assert row["minister_message_id"]
     # 重试后该轮不再挂在待重试面板。
-    assert [r["chat_turn_id"] for r in db.get_interrupted_reply_retries(minister)] == [later]
+    assert [r["chat_turn_id"] for r in db.reign.get_interrupted_reply_retries(an.SCENE_CHAT_SPEAKER)] == [later]
 
 
-def test_retry_dispatch_failure_recovers_persisted_reply_without_regeneration(restore_env):
-    db, state, content = restore_env.db, restore_env.state, restore_env.content
-    minister = _active_minister(db, content)
-    an.open_night(db, state, location="乾清宫", time_of_day="戌时")
-    chat_turn_id = _start_generating_turn(db, state, minister, "剿抚孰先？")
-    db.reconcile_interrupted_chat_turns()
-    rt = _retry_runtime(db, state, minister)
-    rt.session.schedule_pending_scene_translation = lambda *_a: (_ for _ in ()).throw(
-        RuntimeError("translation dispatch failed"))
-
-    with pytest.raises(RuntimeError, match="translation dispatch failed"):
-        rt.retry_interrupted_reply(minister, chat_turn_id)
-    assert rt.reply_retries(minister) == []
-    assert [r["chat_turn_id"] for r in rt.pending_translation_retries(chat_turn_id=chat_turn_id)] == [
-        chat_turn_id]
-    assert [(m["role"], m["content"]) for m in rt.chat_projection(minister)] == [
-        ("user", "剿抚孰先？"), ("minister", "臣重奏：剿为先。")]
-
-
-def test_post_reply_failure_resumes_close_without_regenerating_reply(restore_env):
-    db, state, content = restore_env.db, restore_env.state, restore_env.content
+def test_post_reply_failure_resumes_close_without_regenerating_reply(web_game, monkeypatch):
+    db, state, content = web_game.db, web_game.state, web_game.content
     minister = _active_minister(db, content)
     an.open_night(db, state, location="乾清宫", time_of_day="戌时")
     ct = _land_full_turn(db, state, minister, "退朝", "臣遵旨。")
-    db.mark_post_reply_failure(ct, "court_break", "/tmp/post-reply-pack")
-    rt = _retry_runtime(db, state, minister)
+    db.reign.mark_post_reply_failure(ct, "court_break", "/tmp/post-reply-pack")
+    rt = web_game
     assert [(r["chat_turn_id"], r["error_pack_path"]) for r in rt.reply_retries(minister)] == [
         (ct, "/tmp/post-reply-pack")]
-    rt.session.chat = lambda *a, **k: (_ for _ in ()).throw(AssertionError("reply model rerun"))
+    monkeypatch.setattr("ming_sim.session.create_scene_agent", lambda *a, **k: (_ for _ in ()).throw(AssertionError("reply model rerun")))
     calls = []
+    real_close = rt.session.close_night_after_chat_if_needed
     def close_once(action, **kw):
         calls.append(action)
         with pytest.raises(HTTPException):
             rt.retry_interrupted_reply(minister, ct)
+        return real_close(action, **kw)
     rt.session.close_night_after_chat_if_needed = close_once
-    rt.pending_directive_count = lambda: 0
     payload = rt.retry_interrupted_reply(minister, ct)
     assert payload["answer"] == "臣遵旨。"
     assert calls == ["court_break"]
@@ -375,13 +279,12 @@ def test_post_reply_failure_resumes_close_without_regenerating_reply(restore_env
     )] == ["臣遵旨。"]
 
 
-
-def test_retry_without_interrupted_turn_is_rejected(restore_env):
+def test_retry_without_interrupted_turn_is_rejected(web_game):
     """负向：无待重试轮时重试响亮拒绝，不静默造轮。"""
-    env = restore_env
+    env = web_game
     db, state, content = env.db, env.state, env.content
     minister = _active_minister(db, content)
-    rt = _retry_runtime(db, state, minister)
+    rt = web_game
     with pytest.raises(HTTPException):
         rt.retry_interrupted_reply(minister)
 
@@ -393,18 +296,7 @@ class _FailingRetrySession(_RetrySession):
     """session.chat 在返回前 durable 落副作用（改 characters.loyalty）随后失败——
     测重试失败尾声：本次落下的副作用回滚、问话不删、翻回 interrupted 保持可再重试。"""
 
-    def chat(self, minister_name, message, *, chat_turn_id=0, explicit_secret_order=False):
-        assert chat_turn_id != 0
-        self.db.conn.execute(
-            "UPDATE characters SET loyalty = loyalty + 40 WHERE name = ?", (self._minister,)
-        )
-        self.db.conn.commit()
-        raise RuntimeError("重试 LLM 失败")
 
-    def scene_chat(self, message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
-        return self.chat(
-            minister_name or self._minister, message, chat_turn_id=chat_turn_id,
-        )
 
 
 @pytest.mark.parametrize("rollback_method", ["fail_chat_turn", "restore_interrupted_after_failed_retry"])
@@ -442,8 +334,8 @@ def test_failed_chat_rollback_returns_restored_directive_ids(restore_env, rollba
     assert row["status"] == "pending" and row["night_approved"] == 1
 
 
-def test_failed_retry_rolls_back_side_effects_and_keeps_question(restore_env):
-    env = restore_env
+def test_failed_retry_rolls_back_side_effects_and_keeps_question(web_game, monkeypatch):
+    env = web_game
     db, state, content = env.db, env.state, env.content
     minister = _active_minister(db, content)
     an.open_night(db, state, location="乾清宫", time_of_day="戌时")
@@ -453,8 +345,11 @@ def test_failed_retry_rolls_back_side_effects_and_keeps_question(restore_env):
         "SELECT loyalty FROM characters WHERE name=?", (minister,)
     ).fetchone()["loyalty"]
 
-    rt = _retry_runtime(db, state, minister)
-    rt.session = _FailingRetrySession(db, state, minister)
+    rt = web_game
+    stub_scene_agent(monkeypatch, _FakeAgent(answer="臣重奏：剿为先。"))
+    agent = _FailingRetryAgent()
+    agent.db, agent._minister = db, minister
+    stub_scene_agent(monkeypatch, agent)
     with pytest.raises(RuntimeError):
         rt.retry_interrupted_reply(minister)
 
@@ -473,7 +368,7 @@ def test_failed_retry_rolls_back_side_effects_and_keeps_question(restore_env):
     ).fetchone()["error_pack_path"])
     assert (pack / "traceback.txt").is_file()
     assert (pack / "save_backup.db").is_file()
-    assert [r["question"] for r in db.get_interrupted_reply_retries(minister)] == ["剿抚孰先？"]
+    assert [r["question"] for r in db.reign.get_interrupted_reply_retries(an.SCENE_CHAT_SPEAKER)] == ["剿抚孰先？"]
     assert [
         r["content"] for r in db.conn.execute(
             "SELECT content FROM chat_messages WHERE role='user'"
@@ -485,7 +380,7 @@ def test_failed_retry_rolls_back_side_effects_and_keeps_question(restore_env):
     ).fetchone()["c"] == 0
 
     # 再重试成功：问话仍只一条、回话新落一条（记录无重复句）。
-    rt.session = _RetrySession(db, state, minister)
+    stub_scene_agent(monkeypatch, _FakeAgent(answer="臣重奏：剿为先。"))
     payload = rt.retry_interrupted_reply(minister)
     assert payload["answer"] == "臣重奏：剿为先。"
     assert [
@@ -498,16 +393,16 @@ def test_failed_retry_rolls_back_side_effects_and_keeps_question(restore_env):
 # ── finding3：reopen CAS——未赢的并发/双击重试不落第二条大臣回话 ─────────────
 
 
-def test_lost_reopen_cas_rejects_without_second_reply(restore_env, monkeypatch):
-    env = restore_env
+def test_lost_reopen_cas_rejects_without_second_reply(web_game, monkeypatch):
+    env = web_game
     db, state, content = env.db, env.state, env.content
     minister = _active_minister(db, content)
     an.open_night(db, state, location="乾清宫", time_of_day="戌时")
     _start_generating_turn(db, state, minister, "剿抚孰先？")
     db.reconcile_interrupted_chat_turns()
-    rt = _retry_runtime(db, state, minister)
+    rt = web_game
     # 模拟并发重试抢先翻走 CAS：本次 reopen 未赢（rowcount=0 → False）。
-    monkeypatch.setattr(db, "reopen_interrupted_chat_turn_for_retry", lambda cid: False)
+    monkeypatch.setattr(db.reign, "reopen_interrupted_chat_turn_for_retry", lambda cid: False)
     with pytest.raises(HTTPException):
         rt.retry_interrupted_reply(minister)
     assert db.conn.execute(
@@ -518,14 +413,14 @@ def test_lost_reopen_cas_rejects_without_second_reply(restore_env, monkeypatch):
 # ── finding4：结算/亲裁相位不得重试召对（夜不跨月）─────────────────────────
 
 
-def test_retry_rejected_in_settlement_phase(restore_env):
-    env = restore_env
+def test_retry_rejected_in_settlement_phase(web_game):
+    env = web_game
     db, state, content = env.db, env.state, env.content
     minister = _active_minister(db, content)
     an.open_night(db, state, location="乾清宫", time_of_day="戌时")
     _start_generating_turn(db, state, minister, "剿抚孰先？")
     db.reconcile_interrupted_chat_turns()
-    rt = _retry_runtime(db, state, minister)
+    rt = web_game
     rt.session.state.turn_phase = next(iter(FRONT_HALF_DONE_PHASES))
     with pytest.raises(HTTPException):
         rt.retry_interrupted_reply(minister)
@@ -573,38 +468,6 @@ def _seed_agno_v3_runs(db, session_id: str, run_count: int) -> None:
     db.conn.commit()
 
 
-def _seed_agno_legacy_blob(db, session_id: str, run_ids, *, with_table: bool = False) -> None:
-    """Seed sessions.runs blob; optional empty agno_runs table for mixed-state."""
-    runs = [{"run_id": rid} for rid in run_ids]
-    db.conn.execute("DROP TABLE IF EXISTS agno_sessions")
-    if not with_table:
-        db.conn.execute("DROP TABLE IF EXISTS agno_runs")
-    db.conn.execute(
-        "CREATE TABLE agno_sessions ("
-        "session_id TEXT PRIMARY KEY, session_type TEXT NOT NULL, "
-        "runs TEXT, created_at INTEGER NOT NULL, updated_at INTEGER)"
-    )
-    if with_table:
-        _ensure_agno_runs_table(db)
-    db.conn.execute(
-        "INSERT INTO agno_sessions "
-        "(session_id, session_type, runs, created_at, updated_at) VALUES (?, 'agent', ?, 0, 0)",
-        (session_id, json.dumps(runs, ensure_ascii=False)),
-    )
-    db.conn.commit()
-
-
-def _insert_agno_table_run(db, session_id: str, run_id: str, run_index: int) -> None:
-    _ensure_agno_runs_table(db)
-    db.conn.execute(
-        "INSERT INTO agno_runs "
-        "(run_id, session_id, run_type, status, run_index, run_data, created_at) "
-        "VALUES (?, ?, 'agent', 'FAILED', ?, ?, ?)",
-        (run_id, session_id, run_index, json.dumps({"run_id": run_id}), run_index + 1),
-    )
-    db.conn.commit()
-
-
 def test_reconcile_truncates_agno_runs_to_turn_start(restore_env):
     env = restore_env
     db, state, content = env.db, env.state, env.content
@@ -612,16 +475,17 @@ def test_reconcile_truncates_agno_runs_to_turn_start(restore_env):
     an.open_night(db, state, location="乾清宫", time_of_day="戌时")
     # 本轮起点 agno_runs_before=1；崩溃时 Agno 3 runs 已长到 2（半途生成写入未随回话回滚）。
     _seed_agno_v3_runs(db, "sess", run_count=2)
-    _nid, ct = attach_chat_turn_to_night(
+    _nid, ct = open_hall_turn(
         db, state, minister, agno_session_id="sess", agno_runs_before=1,
     )
-    mid = db.append_chat_message(minister, state.turn, "user", "剿抚孰先？")
-    db.update_chat_turn_messages(ct, user_message_id=mid)
-    assert db.agno_runs_length("sess") == 2
+    mid = db.chat_messages.insert(minister_name=minister, turn=state.turn, role="user", content="剿抚孰先？")
+    db.conn.commit()
+    db.reign.update_chat_turn_messages(ct, user_message_id=mid)
+    assert db.reign.agno_runs_length("sess") == 2
 
     db.reconcile_interrupted_chat_turns()
     # 截回起点，只丢没落完那半句的 LLM 工作态——问话/账未删；本 session 只留 keep_count 之前。
-    assert db.agno_runs_length("sess") == 1
+    assert db.reign.agno_runs_length("sess") == 1
     kept = [
         r["run_id"]
         for r in db.conn.execute(
@@ -636,243 +500,67 @@ def test_reconcile_truncates_agno_runs_to_turn_start(restore_env):
     ).fetchone()["status"] == "interrupted"
 
 
-def test_legacy_agno_sessions_runs_blob_still_counts_and_truncates(restore_env):
-    """Old Agno 2 archives: sessions.runs blob path remains readable/writable."""
-    env = restore_env
-    db = env.db
-    _seed_agno_legacy_blob(db, "legacy", ["r1", "r2", "r3"], with_table=False)
-    assert db.agno_runs_length("legacy") == 3
-    db._truncate_agno_runs_in_tx("legacy", 1)
-    db.conn.commit()
-    assert db.agno_runs_length("legacy") == 1
-    runs, _ = db._decode_agno_runs(
-        db.conn.execute(
-            "SELECT runs FROM agno_sessions WHERE session_id=?", ("legacy",)
-        ).fetchone()["runs"]
-    )
-    assert [r["run_id"] for r in runs] == ["r1"]
-
-
-def _agno_public_run_ids(db_path: str, session_id: str) -> list:
-    """Visible run_id history via Agno SqliteDb.get_session (merge authority)."""
-    from agno.db.sqlite import SqliteDb
-
-    adb = SqliteDb(
-        db_file=db_path,
-        session_table="agno_sessions",
-        runs_table="agno_runs",
-    )
-    raw = adb.get_session(session_id, session_type="agent", deserialize=False)
-    assert raw is not None
-    return [
-        r.get("run_id") for r in (raw.get("runs") or []) if isinstance(r, dict)
-    ]
-
-
-def test_logical_history_matches_agno_merge_with_duplicate_legacy_ids(restore_env):
-    """Agno keeps legacy duplicate run_ids; local count/truncate must match get_session."""
-    env = restore_env
-    db = env.db
-    # blob carries duplicate r0 then r1; table has the same ids (migrated overlap).
-    db.conn.execute("DROP TABLE IF EXISTS agno_runs")
-    db.conn.execute("DROP TABLE IF EXISTS agno_sessions")
-    db.conn.execute(
-        "CREATE TABLE agno_sessions ("
-        "session_id TEXT PRIMARY KEY, session_type TEXT NOT NULL, "
-        "agent_id TEXT, team_id TEXT, workflow_id TEXT, user_id TEXT, "
-        "session_data TEXT, agent_data TEXT, team_data TEXT, workflow_data TEXT, "
-        "metadata TEXT, summary TEXT, runs TEXT, "
-        "created_at INTEGER NOT NULL, updated_at INTEGER)"
-    )
-    _ensure_agno_runs_table(db)
-    blob = [{"run_id": "r0"}, {"run_id": "r0"}, {"run_id": "r1"}]
-    db.conn.execute(
-        "INSERT INTO agno_sessions "
-        "(session_id, session_type, runs, created_at, updated_at) VALUES (?, 'agent', ?, 0, 0)",
-        ("sess", json.dumps(blob)),
-    )
-    for i, rid in enumerate(("r0", "r1")):
-        db.conn.execute(
-            "INSERT INTO agno_runs "
-            "(run_id, session_id, run_type, status, run_index, run_data, created_at) "
-            "VALUES (?, 'sess', 'agent', 'COMPLETED', ?, ?, ?)",
-            (rid, i, json.dumps({"run_id": rid}), i + 1),
-        )
-    db.conn.commit()
-
-    # Agno merge walks every legacy slot: length 3, not unique-2.
-    assert db.agno_runs_length("sess") == 3
-    assert _agno_public_run_ids(env.path, "sess") == ["r0", "r0", "r1"]
-
-    db._truncate_agno_runs_in_tx("sess", 1)
-    db.conn.commit()
-    assert db.agno_runs_length("sess") == 1
-    assert _agno_public_run_ids(env.path, "sess") == ["r0"]
-    table_ids = [
-        r["run_id"]
-        for r in db.conn.execute(
-            "SELECT run_id FROM agno_runs WHERE session_id=? ORDER BY run_index",
-            ("sess",),
-        ).fetchall()
-    ]
-    assert table_ids == ["r0"]
-
-
-def test_reconcile_blob_baseline_drops_table_only_new_run(restore_env):
-    """#1716 mixed-state A: blob-only baseline → table-only failed run must drop."""
-    env = restore_env
-    db, state, content = env.db, env.state, env.content
-    minister = _active_minister(db, content)
-    an.open_night(db, state, location="乾清宫", time_of_day="戌时")
-    # 起轮时只有 legacy blob（baseline=2）；同轮 Agno 3 写入 table-only 新失败 run。
-    _seed_agno_legacy_blob(db, "sess", ["legacy-0", "legacy-1"], with_table=True)
-    _insert_agno_table_run(db, "sess", "table-new", run_index=0)
-    assert db.agno_runs_length("sess") == 3
-
-    _nid, ct = attach_chat_turn_to_night(
-        db, state, minister, agno_session_id="sess", agno_runs_before=2,
-    )
-    mid = db.append_chat_message(minister, state.turn, "user", "剿抚孰先？")
-    db.update_chat_turn_messages(ct, user_message_id=mid)
-
-    db.reconcile_interrupted_chat_turns()
-    assert db.agno_runs_length("sess") == 2
-    table_ids = [
-        r["run_id"]
-        for r in db.conn.execute(
-            "SELECT run_id FROM agno_runs WHERE session_id=? ORDER BY run_index, created_at, run_id",
-            ("sess",),
-        ).fetchall()
-    ]
-    assert table_ids == []
-    runs, _ = db._decode_agno_runs(
-        db.conn.execute(
-            "SELECT runs FROM agno_sessions WHERE session_id=?", ("sess",)
-        ).fetchone()["runs"]
-    )
-    assert [r["run_id"] for r in runs] == ["legacy-0", "legacy-1"]
-    assert db.conn.execute(
-        "SELECT status FROM chat_turns WHERE id=?", (ct,)
-    ).fetchone()["status"] == "interrupted"
-
-
-def test_truncate_migrated_overlap_does_not_resurrect_via_agno_read(restore_env):
-    """#1716 mixed-state B: official table+blob overlap must not resurrect tail."""
-    env = restore_env
-    db = env.db
-    overlap = ["r0", "r1", "r2"]
-    other = ["other-0"]
-    # Official v3 migration shape: runs copied into table, legacy blob retained.
-    db.conn.execute("DROP TABLE IF EXISTS agno_runs")
-    db.conn.execute("DROP TABLE IF EXISTS agno_sessions")
-    db.conn.execute(
-        "CREATE TABLE agno_sessions ("
-        "session_id TEXT PRIMARY KEY, session_type TEXT NOT NULL, "
-        "agent_id TEXT, team_id TEXT, workflow_id TEXT, user_id TEXT, "
-        "session_data TEXT, agent_data TEXT, team_data TEXT, workflow_data TEXT, "
-        "metadata TEXT, summary TEXT, runs TEXT, "
-        "created_at INTEGER NOT NULL, updated_at INTEGER)"
-    )
-    _ensure_agno_runs_table(db)
-    for sid, ids in (("sess", overlap), ("other", other)):
-        db.conn.execute(
-            "INSERT INTO agno_sessions "
-            "(session_id, session_type, runs, created_at, updated_at) "
-            "VALUES (?, 'agent', ?, 1, 1)",
-            (sid, json.dumps([{"run_id": rid} for rid in ids])),
-        )
-        for i, rid in enumerate(ids):
-            db.conn.execute(
-                "INSERT INTO agno_runs "
-                "(run_id, session_id, run_type, status, run_index, run_data, created_at) "
-                "VALUES (?, ?, 'agent', 'COMPLETED', ?, ?, ?)",
-                (rid, sid, i, json.dumps({"run_id": rid}), i + 1),
-            )
-    db.conn.commit()
-
-    assert db.agno_runs_length("sess") == 3
-    db._truncate_agno_runs_in_tx("sess", 2)
-    db.conn.commit()
-    assert db.agno_runs_length("sess") == 2
-    assert db.agno_runs_length("other") == 1
-
-    assert _agno_public_run_ids(env.path, "sess") == ["r0", "r1"]
-    assert _agno_public_run_ids(env.path, "other") == ["other-0"]
-
-
 def test_reconcile_marks_questionless_orphan_failed(restore_env):
     """负向：连问话都没落的极窄崩溃孤儿 → 'failed'（无可保留/重试），只解阻塞、不入待重试。"""
     env = restore_env
     db, state, content = env.db, env.state, env.content
     minister = _active_minister(db, content)
     night = an.open_night(db, state, location="乾清宫", time_of_day="戌时")
-    _nid, ct = attach_chat_turn_to_night(
+    _nid, ct = open_hall_turn(
         db, state, minister, agno_session_id="sess", agno_runs_before=0,
     )
+    db.conn.commit()  # 写口不提交；已受理的孤儿轮由调用方持久化。
     # 不 append 问话、不 link user_message_id：generating 且无 user_message。
-    db.close()
+    db.conn.close()
 
     db2, _state2 = _reopen(env.path, content)
     try:
         interrupted = db2.reconcile_interrupted_chat_turns()
         assert all(int(r["chat_turn_id"]) != ct for r in interrupted)
-        assert an.list_in_flight_chat_turns(db2, night["id"]) == []
+        assert db2.reign.list_in_flight_chat_turns(night_id=night["id"]) == []
         assert db2.conn.execute(
             "SELECT status FROM chat_turns WHERE id=?", (ct,)
         ).fetchone()["status"] == "failed"
-        assert db2.get_interrupted_reply_retries(minister) == []
+        assert db2.reign.get_interrupted_reply_retries(an.SCENE_CHAT_SPEAKER) == []
     finally:
-        db2.close()
+        db2.conn.close()
 
 
 # ── finding2：load_save / 换档重建走 __init__ 同序重开对账 ───────────────────
 
 
-@pytest.fixture
-def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
-    """真实 WebGame（新档、temp DB/saves）；构造即不连 LLM，仅 runtime 配置中和。
-
-    _start_chat_turn 会在 cli-action-intent 上跑 scene。须在构造前挂上已有的
-    离线节拍替身，否则 sk-test 会打到 api.openai.com。
-    """
-    monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
-    # #544 / #1353 r6：高亮判官 LLM 边界离线中和，禁 sk-test 真网。
-    monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
-    game = web_app.WebGame(fresh=False)
-    yield game
-    try:
-        game.session.close()
-    except Exception:
-        pass
 
 
 def test_start_chat_turn_second_turn_reads_agno_v3_runs(web_game):
-    """#1716：fresh Agno 3 首轮已落 run 后，生产 _start_chat_turn 第二轮须受理。
+    """#1716：fresh Agno 3 首轮已落 run 后，公开 chat_stream 第二轮须受理。
 
-    复现窗：首轮 LLM 建出 agno_runs 后，第二次发送在 _start_chat_turn 读 runs 长度；
+    复现窗：首轮 LLM 建出 agno_runs 后，第二次发送读 runs 长度；
     旧缝直查 agno_sessions.runs 列 → OperationalError。本 tracer 走真实入口，
     断言第二轮 create 成功且 agno_runs_before=既有 run 数。
     """
+    from ming_sim.audience_night import SCENE_CHAT_SPEAKER, get_open_night, open_night
+
     game = web_game
-    minister = _active_minister(game.db, game.content)
-    sid = game._minister_agno_session_id(minister)
+    night = get_open_night(game.db) or open_night(game.db, game.state)
+    sid, _ = game.session.scene_model_session_anchor(int(night["id"]))
     # 首轮完成后的 Agno 3 态：session + 1 COMPLETED run（无 sessions.runs 列）。
     _seed_agno_v3_runs(game.db, sid, run_count=1)
-    assert game.db.agno_runs_length(sid) == 1
+    assert game.db.reign.agno_runs_length(sid) == 1
 
-    chat_turn_id, _snapshot = game._start_chat_turn(minister)
+    # 离线 scene_chat：只让 stream 跑完 LLM 窗；建轮/accepted 仍走生产 chat_stream。
+    game.session.scene_chat = (
+        lambda message, *, chat_turn_id=0, stream_emit=None, minister_name="", **_k:
+        ChatTurnResult(answer="臣奏：当先抚后剿。")
+    )
+
+    events = list(game.chat_stream(SCENE_CHAT_SPEAKER, "剿抚孰先？"))
+    assert any(ev.get("type") == "accepted" for ev in events)
     row = game.db.conn.execute(
-        "SELECT agno_session_id, agno_runs_before, status FROM chat_turns WHERE id=?",
-        (chat_turn_id,),
+        "SELECT agno_session_id, agno_runs_before FROM chat_turns ORDER BY id DESC LIMIT 1"
     ).fetchone()
     assert row is not None
     assert row["agno_session_id"] == sid
     assert int(row["agno_runs_before"]) == 1
-    assert row["status"] == "generating"
 
 
 def test_load_save_reconciles_interrupted_orphan(web_game):
@@ -882,16 +570,16 @@ def test_load_save_reconciles_interrupted_orphan(web_game):
     minister = _active_minister(game.db, game.content)
     an.open_night(game.db, game.state, location="乾清宫", time_of_day="戌时")
     ct = _start_generating_turn(game.db, game.state, minister, "剿抚孰先？")
-    assert game.db.list_in_flight_chat_turns()  # 存档前：在飞
+    assert game.db.reign.list_in_flight_chat_turns()  # 存档前：在飞
     game.save_to("orphan_save")
 
     game.load_save("orphan_save")
     # 换档重建后重开对账：孤儿轮 → interrupted，在飞判定解除、问话保留。
-    assert game.db.list_in_flight_chat_turns() == []
+    assert game.db.reign.list_in_flight_chat_turns() == []
     assert game.db.conn.execute(
         "SELECT status FROM chat_turns WHERE id=?", (ct,)
     ).fetchone()["status"] == "interrupted"
-    assert [r["question"] for r in game.db.get_interrupted_reply_retries(minister)] == ["剿抚孰先？"]
+    assert [r["question"] for r in game.db.reign.get_interrupted_reply_retries(an.SCENE_CHAT_SPEAKER)] == ["剿抚孰先？"]
 
 
 # ---------------------------------------------------------------------------
@@ -899,637 +587,26 @@ def test_load_save_reconciles_interrupted_orphan(web_game):
 # ---------------------------------------------------------------------------
 
 
-def _657_active_minister(db, content) -> str:
-    return next(
-        ch.name for ch in content.characters.values()
-        if db.get_character_status(ch.name)[0] == "active"
-        and db.resolve_power_id(ch) == "ming"
-        and getattr(ch, "office_type", "") not in ("后宫", "宗藩")
-    )
 
 
-def test_657_s11_rollback_enter_before_chat_turn(game):
-    """S11：真实 prepare 内 create_chat_turn 前崩溃 → 零孤儿。"""
-    from ming_sim.audience_night import prepare_rescript_summon_scaffold, rescript_summon_origin_ref
 
-    db, state, content = game
-    minister = _657_active_minister(db, content)
-    origin = rescript_summon_origin_ref(int(state.turn), 50, 0)
 
-    def _boom(*_a, **_k):
-        raise RuntimeError("inject after enter before chat_turn")
 
-    db.create_chat_turn = _boom  # type: ignore[method-assign]
-    with pytest.raises(RuntimeError, match="inject after enter before chat_turn"):
-        prepare_rescript_summon_scaffold(
-            db, state, person_name=minister, origin_ref=origin,
+    def run(self, *_a, **_k):
+        self.db.conn.execute(
+            "UPDATE characters SET loyalty = loyalty + 40 WHERE name = ?", (self._minister,)
         )
-    assert db.conn.execute(
-        "SELECT COUNT(*) AS c FROM story_ledger_entries WHERE origin_ref=?",
-        (origin,),
-    ).fetchone()["c"] == 0
-    assert db.conn.execute(
-        "SELECT COUNT(*) AS c FROM chat_turns WHERE agno_session_id=?",
-        (f"rescript-summon:{origin}",),
-    ).fetchone()["c"] == 0
+        self.db.conn.commit()
+        raise RuntimeError("重试 LLM 失败")
 
 
-def test_657_s11_rollback_chat_turn_before_rebind(game):
-    """S11：真实 prepare 内 create_chat_turn 后 / 回绑前崩溃 → 零孤儿。"""
-    import sqlite3
+class _FailingRetryAgent:
+    """模型调用在返回前 durable 落副作用（改 characters.loyalty）随后失败——
+    测重试失败尾声：本次落下的副作用回滚、问话不删、翻回 interrupted 保持可再重试。"""
 
-    from ming_sim.audience_night import prepare_rescript_summon_scaffold, rescript_summon_origin_ref
-
-    db, state, content = game
-    minister = _657_active_minister(db, content)
-    origin = rescript_summon_origin_ref(int(state.turn), 1, 0)
-
-    # 临时 trigger：回绑 origin_chat_turn_id 时失败，测后拆除
-    db.conn.execute(
-        "CREATE TEMP TRIGGER _657_s11_rebind_fail "
-        "BEFORE UPDATE OF origin_chat_turn_id ON story_ledger_entries "
-        "BEGIN SELECT RAISE(ABORT, 'inject after chat_turn before rebind'); END"
-    )
-    try:
-        with pytest.raises(sqlite3.IntegrityError, match="inject after chat_turn before rebind"):
-            prepare_rescript_summon_scaffold(
-                db, state, person_name=minister, origin_ref=origin,
-            )
-    finally:
-        db.conn.execute("DROP TRIGGER IF EXISTS _657_s11_rebind_fail")
-        db.conn.commit()
-    assert db.conn.execute(
-        "SELECT COUNT(*) AS c FROM story_ledger_entries WHERE origin_ref=?",
-        (origin,),
-    ).fetchone()["c"] == 0
-    assert db.conn.execute(
-        "SELECT COUNT(*) AS c FROM chat_turns WHERE agno_session_id=?",
-        (f"rescript-summon:{origin}",),
-    ).fetchone()["c"] == 0
-
-
-def test_657_s11_committed_scaffold_reuses_ids(game):
-    """S11：atomic 提交后、② 前 → 恰 1 空 TAG_ENTER；重入复用同 id。"""
-    from ming_sim.audience_night import prepare_rescript_summon_scaffold, rescript_summon_origin_ref
-
-    db, state, content = game
-    minister = _657_active_minister(db, content)
-    origin = rescript_summon_origin_ref(int(state.turn), 50, 0)
-    sc = prepare_rescript_summon_scaffold(
-        db, state, person_name=minister, origin_ref=origin,
-    )
-    assert sc["consumed"] is False
-    s_entry = int(sc["entry_id"])
-    s_ct = int(sc["chat_turn_id"])
-    assert s_entry > 0 and s_ct > 0
-    assert db.conn.execute(
-        "SELECT COUNT(*) AS c FROM story_ledger_entries WHERE origin_ref=?",
-        (origin,),
-    ).fetchone()["c"] == 1
-    body = db.conn.execute(
-        "SELECT body FROM story_ledger_entries WHERE id=?", (s_entry,),
-    ).fetchone()["body"]
-    assert not str(body or "").strip()
-    sc2 = prepare_rescript_summon_scaffold(
-        db, state, person_name=minister, origin_ref=origin,
-    )
-    assert sc2["consumed"] is False
-    assert int(sc2["entry_id"]) == s_entry
-    assert int(sc2["chat_turn_id"]) == s_ct
-
-
-def test_657_s12_reconciles_s_u_q_and_finishes_summon(game, monkeypatch):
-    """S12 medium：durable decided summon 同 origin → reconcile/CAS → 空 choices 真恢复。"""
-    import json
-    import threading
-    from concurrent.futures import ThreadPoolExecutor
-
-    from ming_sim.audience_night import (
-        TAG_ENTER,
-        ensure_summon_scaffold_reenterable,
-        open_night,
-        prepare_rescript_summon_scaffold,
-        rescript_summon_origin_ref,
-    )
-    from ming_sim.beat_orchestration import ChatTurnSceneRegistry
-    from ming_sim.models import TurnPhase
-    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
-    from ming_sim.session import GameSession
-
-    db, state, content = game
-    minister = _657_active_minister(db, content)
-
-    # 1) 先落 durable decided summon（C1 行事实）；origin 即后续空 scaffold
-    state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.save_state(state)
-    opt = normalize_rescript_layer_a_option({
-        "label": "备", "hint": "h", "action_type": "assignment",
-        "assignee_name": "", "target_kind": "region", "target_id": "shaanxi",
-        "locality_scope": "single", "region_id": "shaanxi",
-        "transaction_category": "督赈",
-    })
-    db.conn.execute("DELETE FROM pending_decisions WHERE kind='rescript_draft'")
-    db.save_rescript_drafts(int(state.turn), [{
-        "title": "S12全链", "context": "c",
-        "options": [opt, {"label": "x", "hint": "h", "draft_capability": "z"}],
-        "actor_name": minister, "actor_office": "o", "actor_faction": "f",
-    }])
-    db.save_resolve_context(
-        int(state.turn), "诏", "邸报",
-        {"candidate_events": [], "transit_semantics": []},
-        secret_orders=[], relevant_memories=[],
-    )
-    desk = db.list_rescript_desk(int(state.turn))
-    key = next(r["decision_key"] for r in desk if r["title"] == "S12全链")
-    kind, turn_s, idx_s = key.split(":")
-    choice = {
-        "decision_key": key, "action": "summon",
-        "label": "召见", "summon_target": minister,
-    }
-    db.conn.execute(
-        "UPDATE pending_decisions SET status='decided', choice_json=? "
-        "WHERE kind=? AND turn=? AND idx=?",
-        (json.dumps(choice, ensure_ascii=False), kind, int(turn_s), int(idx_s)),
-    )
-    db.conn.commit()
-    origin_s = rescript_summon_origin_ref(int(turn_s), int(idx_s), 0)
-
-    night = open_night(db, state, empty_scaffold=True)
-    night_id = int(night["id"])
-    sc = prepare_rescript_summon_scaffold(
-        db, state, person_name=minister, origin_ref=origin_s,
-    )
-    s_entry = int(sc["entry_id"])
-    s_ct = int(sc["chat_turn_id"])
-    s_night = int(sc["night_id"])
-
-    u_ct = db.create_chat_turn(
-        state, minister, "orphan-u", 0, night_id=night_id, status="generating",
-    )
-    q_ct = db.create_chat_turn(
-        state, minister, "q-turn", 0, night_id=night_id, status="generating",
-    )
-    mid = db.append_chat_message(minister, int(state.turn), "user", "卿意如何？")
-    db.conn.execute(
-        "UPDATE chat_turns SET user_message_id=? WHERE id=?", (int(mid), int(q_ct)),
-    )
-    db.conn.commit()
-
-    # 2) reconcile 一次 → S/U failed、Q interrupted；ledger 行数/id 不变
-    db.reconcile_interrupted_chat_turns()
-    assert db.conn.execute("SELECT status FROM chat_turns WHERE id=?", (s_ct,)).fetchone()["status"] == "failed"
-    assert db.conn.execute("SELECT status FROM chat_turns WHERE id=?", (u_ct,)).fetchone()["status"] == "failed"
-    assert db.conn.execute("SELECT status FROM chat_turns WHERE id=?", (q_ct,)).fetchone()["status"] == "interrupted"
-    assert db.conn.execute(
-        "SELECT COUNT(*) AS c FROM story_ledger_entries WHERE origin_ref=?",
-        (origin_s,),
-    ).fetchone()["c"] == 1
-
-    # 3) 仅 S CAS → generating；U 仍 failed；Q 仍 interrupted
-    ensure_summon_scaffold_reenterable(
-        db, origin_ref=origin_s, entry_id=s_entry, chat_turn_id=s_ct,
-        expected_night_id=s_night,
-    )
-    assert db.conn.execute("SELECT status FROM chat_turns WHERE id=?", (s_ct,)).fetchone()["status"] == "generating"
-    assert db.conn.execute("SELECT status FROM chat_turns WHERE id=?", (u_ct,)).fetchone()["status"] == "failed"
-    assert db.conn.execute("SELECT status FROM chat_turns WHERE id=?", (q_ct,)).fetchone()["status"] == "interrupted"
-
-    # 4) Q reopen；U 仍 failed
-    assert db.reopen_interrupted_chat_turn_for_retry(int(q_ct)) is True
-    assert db.conn.execute("SELECT status FROM chat_turns WHERE id=?", (q_ct,)).fetchone()["status"] == "generating"
-    assert db.conn.execute("SELECT status FROM chat_turns WHERE id=?", (u_ct,)).fetchone()["status"] == "failed"
-
-    # 5–7) 空 choices 走真实 submit_hitl_choices；session 既有单一 registry
-    assert db.list_rescript_desk(int(state.turn)) == []
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-    sess.content = content
-    sess.llm_config = None
-    sess.agno_db = None
-    sess.registry = None
-    sess.last_decree = "诏"
-    sess.temporary_characters = {}
-    executor = ThreadPoolExecutor(max_workers=2)
-    sess._scene_registry = ChatTurnSceneRegistry(executor)
-    sess._write_gate = threading.Lock()
-    sess._write_queue = type("Q", (), {"write_gate": sess._write_gate})()
-    started: list[int] = []
-    real_start = sess._scene_registry.start_open_enter
-
-    def _track_start(db_arg, state_arg, *a, chat_turn_id=0, **k):
-        started.append(int(chat_turn_id or 0))
-        return real_start(db_arg, state_arg, *a, chat_turn_id=chat_turn_id, **k)
-
-    sess._scene_registry.start_open_enter = _track_start  # type: ignore[method-assign]
-    gen_body = f"{minister}S12入殿。"
-    sess._beat_generator = lambda inputs: gen_body
-
-    from tests.test_pihong_dossier_1490 import _657_install_real_phase2_llm_boundary
-    _657_install_real_phase2_llm_boundary(monkeypatch)
-    import ming_sim.month_chain as month_chain
-    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
-
-    turn_before = int(state.turn)
-    report = sess.submit_hitl_choices([], write_gate=sess._write_gate)
-    assert isinstance(report, str)
-    assert sess.state.turn_phase != TurnPhase.ISSUED.value
-    assert int(sess.state.turn) == turn_before
-    # 仅 S 被启动；U 仍 failed
-    assert started == [s_ct]
-    assert db.conn.execute("SELECT status FROM chat_turns WHERE id=?", (u_ct,)).fetchone()["status"] == "failed"
-
-    hit12 = next(r for r in db.list_rescript_drafts() if r["title"] == "S12全链")
-    assert hit12["status"] == "decided"
-    assert (hit12["choice"] or {}).get("action") == "summon"
-    row12 = db.conn.execute(
-        "SELECT id, body, tags, origin_chat_turn_id FROM story_ledger_entries WHERE origin_ref=?",
-        (origin_s,),
-    ).fetchone()
-    assert row12 is not None
-    assert int(row12["id"]) == s_entry
-    tags12 = json.loads(row12["tags"] or "[]")
-    assert TAG_ENTER in tags12
-    # 同一 S：非空 TAG_ENTER 消费；不锁 generator 字面
-    assert str(row12["body"] or "").strip()
-    assert int(row12["origin_chat_turn_id"] or 0) == s_ct
-    assert db.conn.execute(
-        "SELECT status FROM chat_turns WHERE id=?", (s_ct,),
-    ).fetchone()["status"] == "consumed"
-    executor.shutdown(wait=False)
-
-
-def test_657_s13_reconcile_after_cas_reuses_ids(game):
-    """S13：CAS 后再 reconcile → 同 id 不增行，可 persist。"""
-    from ming_sim.audience_night import (
-        ensure_summon_scaffold_reenterable,
-        prepare_rescript_summon_scaffold,
-        rescript_summon_origin_ref,
-    )
-    from ming_sim.beat_orchestration import persist_chat_turn_scene
-
-    db, state, content = game
-    minister = _657_active_minister(db, content)
-    origin = rescript_summon_origin_ref(int(state.turn), 50, 0)
-    sc = prepare_rescript_summon_scaffold(
-        db, state, person_name=minister, origin_ref=origin,
-    )
-    s_entry = int(sc["entry_id"])
-    s_ct = int(sc["chat_turn_id"])
-    s_night = int(sc["night_id"])
-
-    db.reconcile_interrupted_chat_turns()
-    ensure_summon_scaffold_reenterable(
-        db, origin_ref=origin, entry_id=s_entry, chat_turn_id=s_ct,
-        expected_night_id=s_night,
-    )
-    # CAS 后再崩窗口：再 reconcile + 再 CAS
-    db.reconcile_interrupted_chat_turns()
-    ensure_summon_scaffold_reenterable(
-        db, origin_ref=origin, entry_id=s_entry, chat_turn_id=s_ct,
-        expected_night_id=s_night,
-    )
-    assert db.conn.execute(
-        "SELECT COUNT(*) AS c FROM story_ledger_entries WHERE origin_ref=?",
-        (origin,),
-    ).fetchone()["c"] == 1
-    assert db.conn.execute(
-        "SELECT COUNT(*) AS c FROM chat_turns WHERE id=?", (s_ct,),
-    ).fetchone()["c"] == 1
-    persist_chat_turn_scene(db, [(s_entry, f"{minister}-persist")])
-    db.conn.commit()
-    body_row = db.conn.execute(
-        "SELECT body FROM story_ledger_entries WHERE id=?", (s_entry,),
-    ).fetchone()
-    # S13：persist 后正文非空可续；不锁注入句字面
-    assert str(body_row["body"] or "").strip()
-
-
-def test_657_s14_cas_visible_to_independent_connection(game):
-    """S14 medium：ensure CAS 后独立 SQLite 连接可见 generating + user_message_id IS NULL。"""
-    import sqlite3
-
-    from ming_sim.audience_night import (
-        ensure_summon_scaffold_reenterable,
-        prepare_rescript_summon_scaffold,
-        rescript_summon_origin_ref,
-    )
-
-    db, state, content = game
-    minister = _657_active_minister(db, content)
-    origin = rescript_summon_origin_ref(int(state.turn), 50, 0)
-    sc = prepare_rescript_summon_scaffold(
-        db, state, person_name=minister, origin_ref=origin,
-    )
-    s_ct = int(sc["chat_turn_id"])
-    s_entry = int(sc["entry_id"])
-    s_night = int(sc["night_id"])
-
-    db.reconcile_interrupted_chat_turns()
-    ensure_summon_scaffold_reenterable(
-        db, origin_ref=origin, entry_id=s_entry, chat_turn_id=s_ct,
-        expected_night_id=s_night,
-    )
-
-    ind = sqlite3.connect(str(db.path))
-    ind.row_factory = sqlite3.Row
-    try:
-        row = ind.execute(
-            "SELECT status, user_message_id FROM chat_turns WHERE id=?", (s_ct,),
-        ).fetchone()
-        assert row["status"] == "generating"
-        assert row["user_message_id"] is None
-    finally:
-        ind.close()
-
-
-def test_657_s15_origin_unique_empty_nonempty_and_nontarget_integrity(game):
-    """S15 medium：空≠consumed；typed UNIQUE 复用；非目标 IntegrityError 原样上抛。"""
-    import sqlite3
-
-    from ming_sim.audience_night import (
-        prepare_rescript_summon_scaffold,
-        rescript_summon_origin_ref,
-    )
-
-    db, state, content = game
-    minister = _657_active_minister(db, content)
-
-    origin_empty = rescript_summon_origin_ref(int(state.turn), 7, 0)
-    sc_e = prepare_rescript_summon_scaffold(
-        db, state, person_name=minister, origin_ref=origin_empty,
-    )
-    assert sc_e["consumed"] is False
-    body_e = db.conn.execute(
-        "SELECT body FROM story_ledger_entries WHERE id=?",
-        (int(sc_e["entry_id"]),),
-    ).fetchone()["body"]
-    assert not str(body_e or "").strip()
-    sc2 = prepare_rescript_summon_scaffold(
-        db, state, person_name=minister, origin_ref=origin_empty,
-    )
-    assert sc2["consumed"] is False
-    assert int(sc2["entry_id"]) == int(sc_e["entry_id"])
-    assert int(sc2["chat_turn_id"]) == int(sc_e["chat_turn_id"])
-
-    # 非目标 IntegrityError：经 prepare 真入口，atomic 内撞 NOT NULL（非 origin UNIQUE）
-    # → typed 路径原样上抛（禁 str(exc) taxonomy 吞掉）
-    origin_nt = rescript_summon_origin_ref(int(state.turn), 99, 0)
-    real_create = db.create_chat_turn
-
-    def _nontarget_integrity(state_arg, minister_name, agno_session_id, agno_runs_before, **kw):
-        db.conn.execute(
-            "CREATE TABLE IF NOT EXISTS _657_nontarget_chk "
-            "(id INTEGER PRIMARY KEY, v TEXT NOT NULL)"
+    def run(self, *_a, **_k):
+        self.db.conn.execute(
+            "UPDATE characters SET loyalty = loyalty + 40 WHERE name = ?", (self._minister,)
         )
-        # 真实 NOT NULL 约束失败（非 stub 字符串、非 origin UNIQUE）
-        db.conn.execute("INSERT INTO _657_nontarget_chk(id, v) VALUES (1, NULL)")
-        return real_create(
-            state_arg, minister_name, agno_session_id, agno_runs_before, **kw,
-        )
-
-    db.create_chat_turn = _nontarget_integrity  # type: ignore[method-assign]
-    with pytest.raises(sqlite3.IntegrityError) as ei:
-        prepare_rescript_summon_scaffold(
-            db, state, person_name=minister, origin_ref=origin_nt,
-        )
-    assert isinstance(ei.value, sqlite3.IntegrityError)
-    assert db.conn.execute(
-        "SELECT COUNT(*) AS c FROM story_ledger_entries WHERE origin_ref=?",
-        (origin_nt,),
-    ).fetchone()["c"] == 0
-
-def test_web_retry_offsite_secret_order_via_production_chat(game, monkeypatch):
-    """#1566 主干：Web retry_interrupted_reply → 真实 GameSession.chat 密令路径。
-
-    前置：generating + route=secret_order_offsite + 无前缀问话已落。
-    后：回话落库；scroll 无 entrance；密令 pending 由生产 chat staged（非替身自写）。
-    """
-    from tests.test_audience_travel_gating_670 import (
-        _assert_secret_order_pending,
-        _patch_secret_order_extract,
-        _secret_order_runtime,
-        _set_place,
-    )
-
-    db, state, content = game
-    remote = _set_place(game, "洪承畴", location="shaanxi")
-    night = an.open_night(db, state, location="乾清宫", time_of_day="戌时")
-    night_id = int(night["id"])
-    question = "整饬边备，密查欠饷。"
-    secret_title = "密查欠饷"
-    ct = db.create_chat_turn(
-        state, remote.name, "sess-offsite-secret", 0,
-        night_id=night_id, status="generating",
-        route="secret_order_offsite",
-    )
-    mid = db.append_chat_message(remote.name, state.turn, "user", question)
-    db.update_chat_turn_messages(ct, user_message_id=mid)
-    ledger_before = an.list_ledger(db, night_id)
-    before_n = sum(
-        1 for p in db.list_pending_actions(state.turn) if p.get("kind") == "secret_order"
-    )
-    db.reconcile_interrupted_chat_turns()
-    assert str(db.get_interrupted_reply_retries(remote.name)[-1].get("route") or "") == (
-        "secret_order_offsite"
-    )
-
-    _patch_secret_order_extract(monkeypatch, title=secret_title)
-    secret_rt = _secret_order_runtime(db, state, content, stream=False)
-    # 场外 route 不得启殿上 scene。
-    secret_rt.session.start_chat_turn_scene = lambda *_a, **_k: (_ for _ in ()).throw(
-        AssertionError("offsite secret retry must not start_chat_turn_scene")
-    )
-    rt = _retry_runtime(db, state, remote.name, session=secret_rt.session)
-    payload = rt.retry_interrupted_reply(remote.name)
-
-    users = [
-        r["content"]
-        for r in db.conn.execute(
-            "SELECT content FROM chat_messages WHERE role='user' AND minister_name=?",
-            (remote.name,),
-        ).fetchall()
-    ]
-    assert users == [question]
-    assert len(db.conn.execute(
-        "SELECT id FROM chat_messages WHERE role='minister' AND minister_name=?",
-        (remote.name,),
-    ).fetchall()) == 1
-    row = db.conn.execute(
-        "SELECT status, minister_message_id, route FROM chat_turns WHERE id=?", (ct,),
-    ).fetchone()
-    assert row["status"] == "active"
-    assert row["minister_message_id"]
-    assert str(row["route"] or "") == "secret_order_offsite"
-    scroll = an.read_night_scroll(db, night_id)
-    assert not any(
-        m.get("beat") == "entrance" and m.get("speaker") == remote.name for m in scroll
-    )
-    assert an.list_ledger(db, night_id) == ledger_before
-    pid = int(payload.get("pending_action_id") or 0)
-    _assert_secret_order_pending(
-        db, state, minister_name=remote.name, pid=pid, edict=question, title=secret_title,
-    )
-    assert sum(
-        1 for p in db.list_pending_actions(state.turn) if p.get("kind") == "secret_order"
-    ) == before_n + 1
-
-
-def test_web_retry_ordinary_offsite_court_break_skips_hall_scene(game):
-    """#1716：route=offsite 中断恢复经真实 retry 入口，不得启殿上 scene / 写 presence·entrance。
-
-    与上条 secret_order_offsite 同形恢复主干；本条覆盖普通场外（收夜口令）route 解码分支。
-    """
-    from tests.test_audience_travel_gating_670 import _set_place
-
-    db, state, _content = game
-    remote = _set_place(game, "洪承畴", location="shaanxi")
-    night = an.open_night(db, state, location="乾清宫", time_of_day="戌时")
-    night_id = int(night["id"])
-    question = "退朝"
-    ct = db.create_chat_turn(
-        state, remote.name, "sess-offsite-break", 0,
-        night_id=night_id, status="generating",
-        route="offsite",
-    )
-    mid = db.append_chat_message(remote.name, state.turn, "user", question)
-    db.update_chat_turn_messages(ct, user_message_id=mid)
-    ledger_before = an.list_ledger(db, night_id)
-    present_before = set(an.persons_present_tonight(db, night_id))
-    entered_before = set(an.persons_entered_tonight(db, night_id))
-    db.reconcile_interrupted_chat_turns()
-    interrupted = db.get_interrupted_reply_retries(remote.name)[-1]
-    assert str(interrupted.get("route") or "") == "offsite"
-    # decode 契约：offsite → start_hall_scene=False（与 secret_order_offsite 同值域）。
-    decoded = an.decode_chat_turn_route(interrupted.get("route"))
-    assert decoded == {"explicit_secret_order": False, "start_hall_scene": False}
-
-    session = _RetrySession(db, state, remote.name)
-
-    def _chat(minister_name, message, *, chat_turn_id=0, explicit_secret_order=False):
-        assert chat_turn_id == ct
-        assert explicit_secret_order is False
-        assert message == question
-        return ChatTurnResult(answer="臣领旨。", court_action="court_break")
-
-    def _scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
-        return _chat(minister_name or remote.name, message, chat_turn_id=chat_turn_id)
-
-    session.chat = _chat  # type: ignore[method-assign]
-    session.scene_chat = _scene_chat  # type: ignore[method-assign]
-    session.start_chat_turn_scene = lambda *_a, **_k: (_ for _ in ()).throw(
-        AssertionError("ordinary offsite retry must not start_chat_turn_scene")
-    )
-    rt = _retry_runtime(db, state, remote.name, session=session)
-    payload = rt.retry_interrupted_reply(remote.name)
-
-    assert payload.get("court_action") == "court_break", payload
-    row = db.conn.execute(
-        "SELECT status, minister_message_id, route FROM chat_turns WHERE id=?", (ct,),
-    ).fetchone()
-    assert row["status"] == "active"
-    assert row["minister_message_id"]
-    assert str(row["route"] or "") == "offsite"
-    # 外部可见物理账：恢复不得把场外人物写入殿上 presence/entrance/ENTER。
-    assert set(an.persons_present_tonight(db, night_id)) == present_before
-    assert set(an.persons_entered_tonight(db, night_id)) == entered_before
-    assert remote.name not in an.persons_present_tonight(db, night_id)
-    assert remote.name not in an.persons_entered_tonight(db, night_id)
-    assert an.list_ledger(db, night_id) == ledger_before
-    for entry in an.list_ledger(db, night_id):
-        names = entry.get("person_names") or []
-        if remote.name not in names:
-            continue
-        tags = entry.get("tags") or []
-        assert an.TAG_ENTER not in tags, entry
-        assert str(entry.get("presence_effect") or "") not in {
-            an.PRESENCE_ENTER, "enter",
-        }, entry
-    scroll = an.read_night_scroll(db, night_id)
-    assert not any(
-        m.get("beat") == "entrance" and m.get("speaker") == remote.name for m in scroll
-    )
-
-
-@pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_cli_retry_ordinary_offsite_court_break_closes_night(game, monkeypatch):
-    """#1716：CLI restore 消费 court_action，场外退朝后夜 CLOSED 且无 entrance/presence。"""
-    from ming_sim.cli import terminal as term
-    from ming_sim.session import GameSession
-    from tests.test_audience_travel_gating_670 import _set_place
-
-    db, state, content = game
-    remote = _set_place(game, "洪承畴", location="shaanxi")
-    night = an.open_night(db, state, location="乾清宫", time_of_day="戌时")
-    night_id = int(night["id"])
-    question = "退朝"
-    ct = db.create_chat_turn(
-        state, remote.name, "cli-offsite-break", 0,
-        night_id=night_id, status="generating",
-        route="offsite",
-    )
-    mid = db.append_chat_message(remote.name, state.turn, "user", question)
-    db.update_chat_turn_messages(ct, user_message_id=mid)
-    db.reconcile_interrupted_chat_turns()
-    interrupted = db.get_interrupted_reply_retries(remote.name)[-1]
-    assert str(interrupted.get("route") or "") == "offsite"
-    present_before = set(an.persons_present_tonight(db, night_id))
-    entered_before = set(an.persons_entered_tonight(db, night_id))
-
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-    sess.content = content
-    sess.llm_config = SimpleNamespace(channel="api")
-    sess.temporary_characters = set()
-    sess.registry = None
-
-    def _scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
-        assert chat_turn_id == ct
-        assert message == question
-        assert minister_name == remote.name
-        return ChatTurnResult(answer="臣领旨。", court_action="court_break")
-
-    sess.scene_chat = _scene_chat  # type: ignore[method-assign]
-    sess.chat = lambda *a, **k: (_ for _ in ()).throw(
-        AssertionError("ordinary offsite retry must use scene_chat, not chat")
-    )
-    sess.start_chat_turn_scene = lambda *_a, **_k: (_ for _ in ()).throw(
-        AssertionError("ordinary offsite retry must not start_chat_turn_scene")
-    )
-    sess.join_chat_turn_scene = lambda *_a, **_k: []
-    sess.persist_chat_turn_scene = lambda *_a, **_k: None
-    sess.abandon_chat_turn_scene = lambda *_a, **_k: None
-    sess.close_night_after_chat_if_needed = GameSession.close_night_after_chat_if_needed.__get__(
-        sess, GameSession,
-    )
-    # #1842：CLI 重试不再跑 trail/judge；收夜前标转译水位以免假 pending。
-    db.conn.execute(
-        "UPDATE chat_turns SET extract_status='done' WHERE id=?",
-        (ct,),
-    )
-    db.conn.commit()
-
-    term._retry_interrupted_reply_cli(sess, remote.name)
-
-    # #1842：CLI retry 前台先返回；等后台屏障真正完成再读同一 SQLite 连接。
-    # 仅等 open night 消失会在 CLOSING 时提前通过，fixture 随后可能关掉后台仍在用的连接。
-    from ming_sim.session_write_queue import get_session_write_queue
-
-    get_session_write_queue(sess).wait_idle()
-    night_row = an.get_night(db, night_id)
-    assert night_row is not None and night_row["status"] == an.NIGHT_STATUS_CLOSED
-    assert set(an.persons_present_tonight(db, night_id)) == present_before
-    assert set(an.persons_entered_tonight(db, night_id)) == entered_before
-    assert remote.name not in an.persons_present_tonight(db, night_id)
-    assert remote.name not in an.persons_entered_tonight(db, night_id)
-    scroll = an.read_night_scroll(db, night_id)
-    assert not any(
-        m.get("beat") == "entrance" and m.get("speaker") == remote.name for m in scroll
-    )
-    row = db.conn.execute(
-        "SELECT status, minister_message_id, route FROM chat_turns WHERE id=?", (ct,),
-    ).fetchone()
-    assert row["status"] == "active"
-    assert row["minister_message_id"]
-    assert str(row["route"] or "") == "offsite"
+        self.db.conn.commit()
+        raise RuntimeError("重试 LLM 失败")

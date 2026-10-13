@@ -76,7 +76,7 @@
 
 ---
 
-## 闸级命令与证据路径
+## 闸级命令
 
 ```bash
 # 验收锚（破格阁臣 / 白身巡抚 / 中旨路径 / P4 LLM 面扫）
@@ -84,13 +84,13 @@
 MING_SIM_TRACE_PATH=/tmp/issue-570-acceptance-trace.jsonl \
   python scripts/family_tail_acceptance_570.py \
     --runner claude --model claude-opus-4-6 --samples 1 \
-    --output docs/evidence/issue-570-acceptance-anchors.json
+    --output /tmp/issue-570-acceptance-anchors.json
 
 # 中旨螺旋对照（默认 samples=12，下限 6）
 MING_SIM_TRACE_PATH=/tmp/issue-570-spiral-trace.jsonl \
   python scripts/midzhi_spiral_judge_gate_570.py \
     --runner claude --model claude-opus-4-6 --samples 12 \
-    --output docs/evidence/issue-570-midzhi-spiral.json
+    --output /tmp/issue-570-midzhi-spiral.json
 ```
 
 退出码即闸。证据 JSON 含 method / summary / limitations / raw trace。
@@ -123,7 +123,7 @@ python -m pytest tests/test_family_tail_restore_570.py tests/test_p4_guard_new_s
 
 - **现象**：`scripts/midzhi_spiral_judge_gate_570.py` 配对符号检验未过。r0 用田亩清册+反对清丈议程 → 两端 12/12 打回（场景天花板，无法区分判官是否读历史）。r1 重校为 #561 行政中旨「内廷整理既有文册，不动外廷钱权」+ 中性议程 + 皇威 55，sole intervention 仍=强颁流水 3 vs 0；见证据 `summary.diagnosis`。未造生产棘轮，不自豁 AC④。
 - **归属**：#570（验收债）。若 diagnosis=`judge_history_insensitive`：生产颁布判官 instructions 未点名 `promulgation_history` 字段——属引擎侧不敏感，持证据回庭，本片不改 prompt（P-7）。若仍 `scenario_ceiling_*`：继续只在 scripts/ 重校场景。
-- **证据**：`docs/evidence/issue-570-midzhi-spiral.json` → `summary`（`hist3_rejections`/`hist0_rejections`/`hist_only_discordant`/`p_value_two_sided`/`passed`/`diagnosis`）。
+- **证据字段**：闸输出 `summary`（`hist3_rejections`/`hist0_rejections`/`hist_only_discordant`/`p_value_two_sided`/`passed`/`diagnosis`）。
 
 ---
 

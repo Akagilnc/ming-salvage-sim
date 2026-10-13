@@ -6,6 +6,11 @@ Status: accepted（评审收敛并 main：PR #94，2026-06-11；前置 PR #90 / 
 
 本 ADR 是 **ADR 0003（单 key + 显式动作意图）的实现契约**，并作为 **ADR 0008（C2 落库拒收契约与事务边界）的第一块旗舰 adapter**。范围拍板记录：拒绝 1–2 天快速补丁路线（治 90% 症状但 bug 类不死），深做单一入口，该类灭绝（2026-06-11）。
 
+
+后出注记（2026-09-28，#1837 reopen）：:81、:83、:117、:145 规定的 `candidate` 状态与册封随选妃工具删除；后宫以后再设计。后宫人物仍可在册、被宣入殿。
+
+后出注记（2026-10-07，#1891／#1899）：决定 11 的四旧 key alias 翻译层、`legacy_gate`／`legacy_partial`／spillover 及「不明」方式专用值已退役。现役只认 `人物变更`；下文章节中 alias／legacy 路径描述为历史决定原文，**不构成现行实现义务**（被 #1812 无历史包袱重构与本票裁定取代）。
+
 ## 决定 1：动作枚举七个，按级联差异分立
 
 `人物变更` 每项必带 `动作` ∈ **{任命, 罢黜, 调任, 处置, 易主, 册封, 行止}**。
@@ -106,7 +111,11 @@ status 枚举 = models.py 七值 + 实存的 `candidate`（registry.py:375 秀�
 
 ## 决定 11：旧 key 退场
 
-**总则（2026-06-11 拍）：旧有/上游机制能用不是坏事，但若成为改进的绊脚石，果断踢开——不为将就吞技术债。** alias 的存在理由只有「重放正确性」（ADR 0008 ready=1 重试真源 + 历史 delta 文件），不是对旧 key 的敬意；哪天碍事，一次性迁移脚本洗旧数据 + 删 alias，不背永久房租。新管线设计永远不为旧 key 语义弯腰。
+**总则（2026-06-11 拍）：旧有/上游机制能用不是坏事，但若成为改进的绊脚石，果断踢开——不为将就吞技术债。**
+
+**现行（2026-10-07 #1891／#1899 兑现）**：四旧 key 翻译层已删除；`normalize_person_changes` 只读 `人物变更`。下列 alias／legacy_gate／spillover 细则是 2026-06 设计时的历史路径说明，**已废止，不得再实现或测试保留**。
+
+**原设计总则（历史）**：alias 的存在理由当时只有「重放正确性」（ADR 0008 ready=1 重试真源 + 历史 delta 文件），不是对旧 key 的敬意；碍事即删，不背永久房租。
 
 - **状态感知翻译**住 sanitize 层（`TOP_LEVEL_ALIASES` 入口，翻译时可读当前状态）：`office_changes` → 目标现持职名分则译**调任**、否则译**任命**（兑现 DELTA_SCHEMA 旧契约「任命/调任/升迁/改授」的两义，逐项保真）；`character_status_changes` → 译**处置**；其中 `status=active` 项**译为拒收**（`invalid_enum` + legacy 注记）——实测旧管线两个消费路径的 valid_status 均不含 active：月末路径历史行为即逐项拒收（issues.py:1332），结案路径历史行为为响亮中止（issues.py:694）；两者均从未把 active 落为真实迁移，译为拒收不改写已落库历史（结案通道由中止改逐项拒收=C2 拒收语义的有意收编）；同理，**月末 delta 通道的项打 `legacy_gate` 标记**（通道知识在翻译调用点——翻月末 delta 还是结案效果由调用方天然知道，无需 C2 ApplyContext 扩展），**闸门在条目执行位求值**：执行彼刻**目标人物的当前 status**≠active → 拒收（legacy 注记），逐项复刻旧管线 mid-sequence 语义（issues.py:1352；注意区分——这里校验的是人物彼刻状态，不是 payload 里的迁往 status）；**结案效果通道不打此标记**——旧结案路径（issues.py:694）历史上无此闸，「下狱→赐死」类迁移在彼处合法落库过，加闸反而改写历史；`character_power_changes` → **易主(方式=不明)**；`appointments` → **字段感知**：office_type=后宫 → 册封，其余 → 按 office_changes 同规译任命/调任（复刻旧管线 spillover 行为，issues.py:1292——历史上朝臣项确实经此路落库）。
 - **四旧 key 译项按旧管线执行序拼入数组**：appointments(后宫→册封) → character_status_changes → character_power_changes → office_changes → **appointments 朝臣 spillover 译项（任命/调任）殿后**——复刻旧管线 `office_change_items = 本体 + spillover` 的实际执行位（issues.py:1292 收集、:1391 殿后执行），同 delta 多 key 触及同一人时末态与旧管线一致。
@@ -152,9 +161,14 @@ status 枚举 = models.py 七值 + 实存的 `candidate`（registry.py:375 秀�
 - **后续内容工作**：明末人员名单补齐（消解决定 8 的有意回退）。
 - ADR 0003 加一行指针「实现契约见本 ADR」；其「最终枚举待实现时定」由决定 1 兑现。
 - Issue 簿记：#13=实现载体（维持）；#86 被收编；#11 答案=S9；#21（HITL 状态门）排本契约落地之后；#23 不变式⑤进测试集；与 PR2（#91）零耦合。
-- 测试集骨架 = 验收场景 S1–S15 + 七动作级联各一 + 两条不变式 + 围栏 + alias 状态感知翻译（含 legacy_partial 注记路径）。
+- 测试集骨架 = 验收场景 S1–S15 + 七动作级联各一 + 两条不变式 + 围栏（alias／legacy_partial 路径已随 #1891／#1899 退役，不再要求）。
 - schema 增项：字段二（`transit_to`、`reason_code`）+ 审计流水表一（**`person_logs`**，与既有 army_logs/region_logs/power_logs 家族同构：turn/人物/动作/payload 摘要/derived_from/normalized/source 逐条目落行）——派生事件与归一注记的审计链由此持久化（S1/S5 的「derived_from 链」验收点对此表断言），人物状态终态在 characters、过程史在 person_logs，与「可复盘」方向一致。三者读取端均在本 PR 内闭环。
 
 ## 实现时机
 
 契约先行（本文档）；实现等 PR #90 合入 + M0 收口，作为 C2 契约的第一块旗舰 adapter 落地，顺带 C3 的 `_commit_office_action` 搬家。
+
+
+## 后出注记（#1843 reopen，2026-09-28）
+
+原以「ready=1 重试真源 + 历史 delta 文件」为别名表存在理由的条款：#1843 已删 `TOP_LEVEL_ALIASES` / 五模块 extractor 别名与 `turn_extractions`；条目字段规范化（`ITEM_FIELD_ALIASES` / `_canonical_item_fields`）与 C0 声明效果字段真源（`DECLARATION_EFFECT_FIELDS`，由有序登记表派生）保留；旧 `EMPTY_EXTRACTION` 空壳已随 #1835 F1 退役，见 [ADR 0150 决定 4](0150-entity-adapter-directory-and-settle-delta.md)。ready=1 整套已由 [#1846](https://github.com/Akagilnc/ming-salvage-sim/issues/1846) 退役。

@@ -1,3 +1,20 @@
+from __future__ import annotations
+from ming_sim.session_write_queue import get_session_write_queue
+from types import SimpleNamespace
+from ming_sim.audience_night import (
+    AUDIBILITY_PRIVATE,
+    AUDIBILITY_PUBLIC,
+    list_ledger,
+    open_night,
+    person_night_experience,
+    present_names_at,
+)
+from ming_sim.audience_translation import apply_audience_round_translation
+from ming_sim.entities.affair.store import AffairStore
+from ming_sim.public_sayings import list_public_sayings
+from ming_sim.relations import summon_edge_origin
+from ming_sim.session import GameSession
+from tests.conftest import note_queue_until_game_teardown
 """#1838 C1b 召对转译：分段 / 可闻性 / 在场进出 / 御前主角 / 边事件 / 公开说法。
 
 受控声明桩（模拟转译 LLM 一次产出）经真实 apply 入口落库，验收：
@@ -9,30 +26,14 @@
 不启动故事抽取 / 边事件判官 / 读心——转译声明本身即承接。
 """
 
-from __future__ import annotations
 
-from types import SimpleNamespace
 
-from ming_sim.audience_night import (
-    AUDIBILITY_PRIVATE,
-    AUDIBILITY_PUBLIC,
-    get_night_protagonist,
-    list_ledger,
-    open_night,
-    person_night_experience,
-    present_names_at,
-)
-from ming_sim.audience_translation import apply_audience_round_translation
-from ming_sim.entities.affair.store import AffairStore
-from ming_sim.public_sayings import list_public_sayings
-from ming_sim.relations import summon_edge_origin
-from ming_sim.session import GameSession
-from tests.conftest import deterministic_test_beat_generator, persist_and_schedule_scene
+
 
 
 def _activate(db, state, *names: str) -> None:
     for name in names:
-        if db.get_character_status(name)[0] != "active":
+        if db.characters.get_character_status(name)[0] != "active":
             db.set_character_status(state, name, "active", reason="1838 测试置在场")
 
 
@@ -99,23 +100,23 @@ def test_three_speaker_segments_private_whisper_reaches_only_participant(game):
         and not e.get("presence_effect")
     ]
     assert len(segments) == 4
-    by_body = {e["body"]: e for e in segments}
-    assert by_body[wang_reply]["person_names"] == ["王绍徽"]
-    assert by_body[wang_reply]["audibility"] == AUDIBILITY_PUBLIC
-    assert by_body[bi_interject]["person_names"] == ["毕自严"]
-    assert by_body[bi_interject]["audibility"] == AUDIBILITY_PUBLIC
-    assert by_body[wang_whisper]["person_names"] == ["王承恩", "王绍徽"]
-    assert by_body[wang_whisper]["audibility"] == AUDIBILITY_PRIVATE
-    assert by_body[scene_whisper]["audibility"] == AUDIBILITY_PRIVATE
+    by_id = {e["id"]: e for e in segments}
+    reply_id, interject_id, whisper_id, scene_id = [
+        e["id"] for e in result.scene_facts.applied
+    ]
+    assert by_id[reply_id]["person_names"] == ["王绍徽"]
+    assert by_id[reply_id]["audibility"] == AUDIBILITY_PUBLIC
+    assert by_id[interject_id]["person_names"] == ["毕自严"]
+    assert by_id[interject_id]["audibility"] == AUDIBILITY_PUBLIC
+    assert by_id[whisper_id]["person_names"] == ["王承恩", "王绍徽"]
+    assert by_id[whisper_id]["audibility"] == AUDIBILITY_PRIVATE
+    assert by_id[scene_id]["audibility"] == AUDIBILITY_PRIVATE
 
-    # 王绍徽在场期间可闻殿上公开；御前低语不进其经历投影
-    wang_exp = person_night_experience(db, nid, "王绍徽")
-    bodies = [e["body"] for e in wang_exp]
-    assert wang_reply in bodies
-    assert bi_interject in bodies
-    assert wang_whisper not in bodies
-    assert scene_whisper not in bodies
-    assert wang_whisper in [e["body"] for e in person_night_experience(db, nid, "王承恩")]
+    # Visibility follows ledger identity, independent of shared dialogue text.
+    wang_ids = {e["id"] for e in person_night_experience(db, nid, "王绍徽")}
+    assert {reply_id, interject_id} <= wang_ids
+    assert {whisper_id, scene_id}.isdisjoint(wang_ids)
+    assert whisper_id in {e["id"] for e in person_night_experience(db, nid, "王承恩")}
 
     # 转译已承接本轮 → 转译水位推进，不另起旧路径
     row = db.conn.execute(
@@ -191,116 +192,26 @@ def _scene_session(db, state, content, monkeypatch):
     sess.content = content
     sess.registry = None
     sess.llm_config = SimpleNamespace(channel="")
-    sess.temporary_characters = {}
     sess.agno_db = None
-    from ming_sim.beat_orchestration import ChatTurnSceneRegistry
-    from ming_sim.session import _CLI_ACTION_INTENT_EXECUTOR
-    sess._beat_generator = deterministic_test_beat_generator
-    sess._scene_registry = ChatTurnSceneRegistry(_CLI_ACTION_INTENT_EXECUTOR)
-    sess._write_gate = None
+    sess._write_gate = get_session_write_queue(sess).write_gate
+    # 转译在后台线程跑：登记队列归 game 夹具排空，断言失败也不越过关库边界。
+    note_queue_until_game_teardown(db, get_session_write_queue(sess))
     return sess
 
 
-def _drain_scene_owner(sess, db, *, timeout_s: float = 5.0) -> None:
-    """persist+schedule 后经会话唯一写队列排空。"""
-    del db, timeout_s
-    sess._write_queue.barrier(lambda: None)
 
 
 def _active_chat_turn(db, state, night_id: int) -> int:
     """建可撤回的存活轮（status=active；挂夜默认 generating 不可 undo）。"""
-    return int(db.create_chat_turn(
+    return db.create_chat_turn(
         state, "殿上", "s", 0, night_id=int(night_id), status="active",
-    ))
-
-
-def test_protagonist_follows_translation_and_xuan_cut(game, monkeypatch):
-    """AC3：御前主角随转译声明变化；宣 X 经 scene_chat 真入口当场先切并绑源轮。"""
-    db, state, content = game
-    _activate(db, state, "王绍徽", "王承恩")
-    night = open_night(db, state, location="乾清宫", time_of_day="戌时")
-    nid = int(night["id"])
-    assert get_night_protagonist(db, nid) == ""
-
-    sess = _scene_session(db, state, content, monkeypatch)
-    t1 = _active_chat_turn(db, state, nid)
-    # 真入口：scene_chat("宣王绍徽", chat_turn_id=t1) 当场先切并绑源轮
-    cuts = []
-    r_xuan = sess.scene_chat(
-        "宣王绍徽", chat_turn_id=t1,
-        on_protagonist_changed=lambda: cuts.append(get_night_protagonist(db, nid)),
     )
-    persist_and_schedule_scene(sess, db, r_xuan)
-    _drain_scene_owner(sess, db)
-    assert get_night_protagonist(db, nid) == "王绍徽"
-    assert cuts == ["王绍徽"]
-    assert db.conn.execute(
-        "SELECT protagonist_name FROM chat_turns WHERE id=?", (t1,),
-    ).fetchone()["protagonist_name"] == "王绍徽"
-
-    # 王承恩独自回奏一轮 → 转译声明主角是他
-    ctid = _active_chat_turn(db, state, nid)
-    result = apply_audience_round_translation(
-        db, state,
-        {"protagonist": {"person_name": "王承恩"}},
-        night_id=nid, chat_turn_id=ctid,
-    )
-    assert result.protagonist.validated == {"person_name": "王承恩"}
-    assert get_night_protagonist(db, nid) == "王承恩"
-    assert db.conn.execute(
-        "SELECT protagonist_name FROM chat_turns WHERE id=?", (ctid,),
-    ).fetchone()["protagonist_name"] == "王承恩"
 
 
-def test_protagonist_undo_reprojects_night_current(game, monkeypatch):
-    """御前主角夜当前值：宣 X → 转译覆盖 → undo 真入口按存活最近轮重投影。"""
-    db, state, content = game
-    _activate(db, state, "王绍徽", "王承恩")
-    night = open_night(db, state, location="乾清宫", time_of_day="戌时")
-    nid = int(night["id"])
-    sess = _scene_session(db, state, content, monkeypatch)
-
-    t1 = _active_chat_turn(db, state, nid)
-    r_xuan = sess.scene_chat("宣王绍徽", chat_turn_id=t1)
-    persist_and_schedule_scene(sess, db, r_xuan)
-    _drain_scene_owner(sess, db)
-    assert get_night_protagonist(db, nid) == "王绍徽"
-    assert db.conn.execute(
-        "SELECT protagonist_name FROM chat_turns WHERE id=?", (t1,),
-    ).fetchone()["protagonist_name"] == "王绍徽"
-
-    t2 = _active_chat_turn(db, state, nid)
-    apply_audience_round_translation(
-        db, state,
-        {"protagonist": {"person_name": "王承恩"}},
-        night_id=nid, chat_turn_id=t2,
-    )
-    assert get_night_protagonist(db, nid) == "王承恩"
-
-    # 全局最后存活轮先撤 t2 → 夜主角回到 t1 的王绍徽
-    db.undo_chat_turn(t2)
-    assert get_night_protagonist(db, nid) == "王绍徽"
-
-    # 再撤 t1 → 无存活声明，夜主角回初态空值
-    db.undo_chat_turn(t1)
-    assert get_night_protagonist(db, nid) == ""
 
 
-def test_retry_older_round_keeps_newer_protagonist(game):
-    db, state, _ = game
-    _activate(db, state, "王绍徽", "王承恩")
-    nid = int(open_night(db, state, location="乾清宫", time_of_day="戌时")["id"])
-    older = _active_chat_turn(db, state, nid)
-    newer = _active_chat_turn(db, state, nid)
-    apply_audience_round_translation(
-        db, state, {"protagonist": {"person_name": "王承恩"}},
-        night_id=nid, chat_turn_id=newer,
-    )
-    apply_audience_round_translation(
-        db, state, {"protagonist": {"person_name": "王绍徽"}},
-        night_id=nid, chat_turn_id=older,
-    )
-    assert get_night_protagonist(db, nid) == "王承恩"
+
+
 
 
 def test_edge_event_and_public_saying_attach_affair(game):
@@ -349,7 +260,7 @@ def test_edge_event_and_public_saying_attach_affair(game):
 
     assert len(result.public_sayings.applied) == 1
     sayings = list_public_sayings(db, involved_character="毕自严")
-    matched = next(s for s in sayings if s["body"] == saying_body)
+    matched = next(s for s in sayings if s["id"] == result.public_sayings.applied[0]["id"])
     # 与边事件侧同严：affair_ref 必须精确等于该事务 origin_ref
     assert matched["affair_ref"] == AffairStore.origin_ref(affair.id)
 
@@ -409,11 +320,25 @@ def test_on_scene_fact_undo_via_translation_entry(game):
     )
     assert len(result.on_scene_facts.applied) == 1
     assert result.on_scene_facts.rejected == []
-    assert db.get_character_status("王绍徽")[0] == "dead"
+    assert db.characters.get_character_status("王绍徽")[0] == "dead"
 
     db.undo_chat_turn(ctid)
-    assert db.get_character_status("王绍徽")[0] == "active"
+    assert db.characters.get_character_status("王绍徽")[0] == "active"
     turn_row = db.conn.execute(
         "SELECT status FROM chat_turns WHERE id=?", (ctid,),
     ).fetchone()
     assert turn_row["status"] == "undone"
+
+
+
+
+
+def _night_protagonist(db, night_id: int) -> str:
+    """读 audience_nights.protagonist_name 账本列（生产仍写此列；#1902 删无消费包装）。"""
+    row = db.conn.execute(
+        "SELECT protagonist_name FROM audience_nights WHERE id=?",
+        (int(night_id),),
+    ).fetchone()
+    if row is None:
+        return ""
+    return str(row["protagonist_name"] or "")

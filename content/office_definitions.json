@@ -1,0 +1,13 @@
+{
+  "office_definitions": {
+    "内阁": {"power": 78, "responsibility": 82, "corruption_risk": 42},
+    "户部": {"power": 72, "responsibility": 76, "corruption_risk": 68},
+    "兵部": {"power": 70, "responsibility": 74, "corruption_risk": 55},
+    "工部": {"power": 58, "responsibility": 62, "corruption_risk": 61},
+    "司礼监": {"power": 73, "responsibility": 58, "corruption_risk": 64},
+    "锦衣卫": {"power": 66, "responsibility": 50, "corruption_risk": 72},
+    "东厂": {"power": 76, "responsibility": 45, "corruption_risk": 86},
+    "边镇": {"power": 68, "responsibility": 80, "corruption_risk": 58},
+    "外臣": {"power": 55, "responsibility": 55, "corruption_risk": 40}
+  }
+}

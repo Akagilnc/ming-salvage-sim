@@ -1,7 +1,7 @@
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
-import { IssueGroup, SituationDetailModal, SituationPanel, SituationRow } from "./situation";
+import { SituationDetailModal, SituationPanel, SituationRow } from "./situation";
 import { StateModal } from "./stateModal";
 import type { GameState, Issue } from "../types";
 
@@ -31,25 +31,6 @@ function makeIssue(): Issue & { commitment_progress_text: string } {
   };
 }
 
-function makeCommitmentWithoutProgressText(): Issue {
-  const issue: Issue = { ...makeIssue() };
-  delete issue.commitment_progress_text;
-  return {
-    ...issue,
-    commitment_progress: { months_elapsed: 1 },
-  };
-}
-
-function makeOrdinaryIssueWithoutProgressText(): Issue {
-  const issue: Issue = { ...makeIssue() };
-  delete issue.commitment_progress;
-  delete issue.commitment_progress_text;
-  return {
-    ...issue,
-    tags: [],
-  };
-}
-
 function render(element: React.ReactNode) {
   const host = document.createElement("div");
   document.body.appendChild(host);
@@ -66,31 +47,15 @@ afterEach(() => {
 });
 
 describe("commitment progress display", () => {
-  it("shows commitment progress in the issue board", () => {
-    const cleanup = render(<IssueGroup title="待办" issues={[makeIssue()]} />);
-    expect(document.body.textContent).toContain(commitmentText);
-    cleanup();
-  });
-
-  it("uses a styled fallback when a commitment has progress but no text", () => {
-    const cleanup = render(<IssueGroup title="待办" issues={[makeCommitmentWithoutProgressText()]} />);
-    const progress = document.querySelector(".issue-commitment-progress");
-    expect(progress?.textContent).toBe("未知进度");
-    cleanup();
-  });
-
-  it("does not show fallback progress for ordinary issues", () => {
-    const cleanup = render(<IssueGroup title="待办" issues={[makeOrdinaryIssueWithoutProgressText()]} />);
-    expect(document.body.textContent).not.toContain("未知进度");
-    expect(document.querySelector(".issue-commitment-progress")).toBeNull();
-    cleanup();
-  });
-
-  it("shows commitment progress in the situation detail", () => {
-    const cleanup = render(
-      <SituationDetailModal issue={makeIssue()} onClose={() => undefined} />
-    );
-    expect(document.body.textContent).toContain(commitmentText);
+  it.each([
+    { text: commitmentText, progress: undefined, expected: commitmentText },
+    { text: undefined, progress: { months_elapsed: 1 }, expected: "未知进度" },
+    { text: undefined, progress: undefined, expected: null },
+  ])("detail keeps supplied progress or the applicable fallback ($expected)", ({ text, progress, expected }) => {
+    const issue: Issue = { ...makeIssue(), commitment_progress_text: text, commitment_progress: progress };
+    const cleanup = render(<SituationDetailModal issue={issue} onClose={() => undefined} />);
+    const node = document.querySelector(".situation-detail .issue-commitment-progress");
+    expect(node?.textContent ?? null).toBe(expected);
     cleanup();
   });
 
@@ -115,49 +80,20 @@ describe("commitment progress display", () => {
       );
     });
 
-    expect(document.body.textContent).toContain("承诺进度");
     expect(document.body.textContent).toContain(commitmentText);
     cleanup();
   });
 });
 
 describe("empty bar label presentation (#626)", () => {
-  function makeEmptyBarIssue(): Issue {
-    return {
-      ...makeIssue(),
-      bar_good_meaning: "",
-      bar_bad_meaning: "",
-      tags: [],
-    };
-  }
-
-  it("detail modal omits empty parentheses when bar meanings are blank", () => {
-    const cleanup = render(
-      <SituationDetailModal issue={makeEmptyBarIssue()} onClose={() => undefined} />
-    );
-    const text = document.body.textContent || "";
-    expect(text).toContain("达成");
-    expect(text).toContain("失败");
-    expect(text).not.toContain("达成（）");
-    expect(text).not.toContain("失败（）");
-    cleanup();
-  });
-
-  it("detail modal keeps parentheses when bar meanings are present", () => {
-    const cleanup = render(
-      <SituationDetailModal issue={makeIssue()} onClose={() => undefined} />
-    );
-    const text = document.body.textContent || "";
-    expect(text).toContain("达成（欠饷清偿）");
-    expect(text).toContain("失败（军心溃散）");
-    cleanup();
-  });
-
-  it("issue board progress ends stay blank rather than showing empty labels", () => {
-    const cleanup = render(<IssueGroup title="待办" issues={[makeEmptyBarIssue()]} />);
-    const ends = Array.from(document.querySelectorAll(".issue-progress > span"));
-    expect(ends).toHaveLength(2);
-    expect(ends.every((el) => (el.textContent || "").trim() === "")).toBe(true);
+  it.each([
+    { good: "欠饷清偿", bad: "军心溃散", heads: ["达成（欠饷清偿）", "失败（军心溃散）"] },
+    { good: "", bad: "", heads: ["达成", "失败"] },
+  ])("detail preserves supplied or empty meanings ($good/$bad)", ({ good, bad, heads }) => {
+    const issue = { ...makeIssue(), bar_good_meaning: good, bar_bad_meaning: bad };
+    const cleanup = render(<SituationDetailModal issue={issue} onClose={() => undefined} />);
+    const nodes = document.querySelectorAll(".situation-detail .situation-tip-outcome-head");
+    expect(Array.from(nodes, node => node.textContent)).toEqual(heads);
     cleanup();
   });
 });
@@ -222,18 +158,16 @@ describe("#1726 StateModal 奏疏收件箱", () => {
     expect(doc).toBeTruthy();
     expect(doc!.querySelector(".situation-panel")).toBeNull();
     expect(doc!.querySelector(".situation-row")).toBeNull();
-    expect(doc!.textContent).not.toContain(makeIssue().title);
     expect(doc!.textContent).toContain("杨嗣昌");
     expect(doc!.querySelector("pre.memorial-text")?.textContent).toBe(body);
-    expect(doc!.textContent).not.toContain("progress:7");
-    expect(doc!.textContent).not.toContain("progress_band");
-    expect(doc!.textContent).not.toContain("本月无疏");
-    cleanup();
+    expect(doc!.querySelector(".empty-note")).toBeNull();    cleanup();
   });
 
   it("无奏疏时示空态，不因有局势而填充", () => {
     const cleanup = render(<StateModal state={baseState([])} />);
-    expect(document.body.textContent).toContain("本月无疏");
+    const empty = document.querySelector(".empty-note");
+    expect(empty).not.toBeNull();
+    expect(empty!.textContent?.trim()).toBeTruthy();
     expect(document.querySelector(".situation-panel")).toBeNull();
     cleanup();
   });

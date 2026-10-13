@@ -8,23 +8,17 @@ from __future__ import annotations
 import json
 import math
 import os
-import re
-import textwrap
 from typing import Dict, List
 
-from ming_sim.constants import CONTENT_DIR, MONEY_UNIT, TURN_UNIT, WRAP
+from ming_sim.constants import CONTENT_DIR, MONEY_UNIT, TURN_UNIT
 from ming_sim.person_archive_contract import format_person_actions
-
-
-def wrap(text: str) -> str:
-    return "\n".join(textwrap.wrap(text, width=WRAP, replace_whitespace=False))
 
 
 def load_text_asset(relative_path: str) -> str:
     path = os.path.join(CONTENT_DIR, relative_path)
     try:
         with open(path, "r", encoding="utf-8") as file:
-            text = file.read().strip()
+            text = file.read()
     except OSError as error:
         raise SystemExit(f"设定文件缺失或不可读：{path} ({error})") from error
     return (
@@ -44,13 +38,6 @@ def load_json_asset(relative_path: str) -> object:
         raise SystemExit(f"设定文件 JSON 格式错误：{path} ({error})") from error
 
 
-def strip_json_fence(text: str) -> str:
-    match = re.search(r"```(?:json)?\s*(.*?)```", text, re.S)
-    if match:
-        return match.group(1).strip()
-    return text.strip()
-
-
 def format_money(value: int) -> str:
     return f"{value}{MONEY_UNIT}"
 
@@ -66,10 +53,7 @@ def format_wanliang_amount(value: object) -> str:
     军饷 shortfall 等中间量常为 float；f-string 原始插值会把
     1.2000000000000002 写进 army_logs.reason → previous_summary。
     """
-    try:
-        amount = float(value or 0)
-    except (TypeError, ValueError):
-        amount = 0.0
+    amount = float(value or 0)
     if not math.isfinite(amount):
         amount = 0.0
     rounded = round(amount, 1)
@@ -93,18 +77,18 @@ def require_list(data: object, path: str) -> List[object]:
 def string_list(value: object, path: str) -> List[str]:
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
         raise SystemExit(f"设定字段应为字符串数组：{path}")
-    return [str(item) for item in value]
+    return list(value)
 
 
 def int_field(data: Dict[str, object], key: str, path: str) -> int:
     try:
         return int(data[key])
     except (KeyError, TypeError, ValueError) as error:
-        raise SystemExit(f"设定字段应为整数：{path}.{key}") from error
+        raise SystemExit(f"设定字段应为整数：{path}.{key}：{error}") from error
 
 
 def str_field(data: Dict[str, object], key: str, path: str) -> str:
     value = data.get(key)
     if not isinstance(value, str) or not value.strip():
         raise SystemExit(f"设定字段应为非空字符串：{path}.{key}")
-    return value.strip()
+    return value

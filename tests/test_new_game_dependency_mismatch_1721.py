@@ -1,5 +1,5 @@
-"""#1721 B2: stale importable agno must reach POST /api/menu/new_game as typed facts."""
 from __future__ import annotations
+"""#1721 B2: stale importable agno must reach POST /api/menu/new_game as typed facts."""
 
 import json
 import os
@@ -111,9 +111,9 @@ print(json.dumps({"sse": response.text}))
     assert proc.returncode == 0, proc.stderr
     payload = json.loads(proc.stdout.strip().splitlines()[-1])
     # 复用 #1195 continue 流的同一 SSE 解析（不复制第二份）。
-    from tests.test_menu_continue_stream_1195 import _parse_sse
+    from tests.sse_helpers import parse_sse_event_pairs
 
-    error_events = [data for name, data in _parse_sse(payload["sse"]) if name == "error"]
+    error_events = [data for name, data in parse_sse_event_pairs(payload["sse"]) if name == "error"]
     assert len(error_events) == 1
     detail = error_events[0]
     assert detail["code"] == "dependency_mismatch"

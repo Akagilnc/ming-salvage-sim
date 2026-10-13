@@ -1,3 +1,4 @@
+from __future__ import annotations
 """#570 P-6：月中 restore — 案卷/进展/标记/名单四面无损。
 
 名单＝案卷参与人名单（0053）。同场景四面：
@@ -7,8 +8,8 @@
 4. 参与人名单
 """
 
-from __future__ import annotations
 
+from ming_sim.settlement.dossier import apply_dossier_verdicts
 import json
 
 from ming_sim.db import GameDB
@@ -36,11 +37,11 @@ def _add(db, state, name, office, office_type="布衣", office_region=""):
 
 
 def _face(db, dossier_id: int) -> dict:
-    row = db.get_decree_dossier(dossier_id)
+    row = db.dossiers.get(dossier_id)
     assert row is not None
     payload = json.loads(str(row.get("payload_json") or "{}"))
-    decisions = db.list_decree_dossier_decisions(dossier_id)
-    progress = db.list_dossier_progress(dossier_id)
+    decisions = db.dossiers.decisions(dossier_id)
+    progress = db.dossiers.list_dossier_progress(dossier_id)
     roster = row.get("participant_roster")
     if roster is None:
         roster = payload.get("participant_roster") or payload.get("participants")
@@ -105,7 +106,7 @@ def test_mid_month_restore_keeps_dossier_four_faces(game, tmp_path, content):
             "region_id": "shaanxi",
         },
     )
-    appt_payload = json.loads(db.get_decree_dossier(appt_id)["payload_json"])
+    appt_payload = json.loads(db.dossiers.get(appt_id)["payload_json"])
     assert appt_payload["break_rank"]["is_break_rank"] is True
 
     appt_verdict = rejected_verdict(appt_id, midzhi=True)
@@ -125,7 +126,7 @@ def test_mid_month_restore_keeps_dossier_four_faces(game, tmp_path, content):
             "direction": "negative", "intensity": "weak",
         },
     ]
-    db.apply_dossier_verdicts(state, [appt_verdict])
+    apply_dossier_verdicts(db, state, [appt_verdict])
 
     # Face B: executing long-errand with monthly progress (0058/566 进展档).
     errand_id = db.create_decree_dossier(
@@ -146,7 +147,7 @@ def test_mid_month_restore_keeps_dossier_four_faces(game, tmp_path, content):
         (int(errand_id),),
     )
     db.conn.commit()
-    db.record_dossier_progress(
+    db.dossiers.record_dossier_progress(
         errand_id, state.turn, "在途", "已出京赴陕",
         origin=DOSSIER_REPORT_MONTHLY,
     )
@@ -162,26 +163,24 @@ def test_mid_month_restore_keeps_dossier_four_faces(game, tmp_path, content):
     assert before_appt["participant_roster"], "参与人名单不得空"
     assert before_appt["criteria_snapshots"], "判据快照须随判决落库"
     assert before_errand["progress"] == [{
-        "turn": int(state.turn),
-        "progress_band": "在途",
-        "memorial_text": "已出京赴陕",
-        "origin": DOSSIER_REPORT_MONTHLY,
+        "turn": int(state.turn), "progress_band": "在途",
+        "memorial_text": "已出京赴陕", "origin": DOSSIER_REPORT_MONTHLY,
     }]
 
     backup = tmp_path / "restore-570.db"
     db.backup_to(str(backup))
-    db.close()
+    db.conn.close()
 
     restored = GameDB(str(backup), content=content)
     try:
         assert _face(restored, appt_id) == before_appt
         assert _face(restored, errand_id) == before_errand
 
-        restored.record_dossier_progress(
+        restored.dossiers.record_dossier_progress(
             errand_id, state.turn + 1, "将结", "已抵西安",
             origin=DOSSIER_REPORT_MONTHLY,
         )
-        cont = restored.list_dossier_progress(errand_id)
+        cont = restored.dossiers.list_dossier_progress(errand_id)
         assert [row["memorial_text"] for row in cont] == ["已出京赴陕", "已抵西安"]
     finally:
-        restored.close()
+        restored.conn.close()

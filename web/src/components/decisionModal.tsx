@@ -1,200 +1,71 @@
 import React from "react";
-import type {
-  DecisionChoice, PendingActionFailure, PendingDecision, RescriptDeskAction,
-} from "../types";
+import type { DecisionChoice, PendingDecision } from "../types";
 
 function isCheatConsoleTarget(target: EventTarget | null): boolean {
   return target instanceof Element && target.closest(".cheat-console") !== null;
 }
 
-const RESCRIPT_ACTIONS: { action: RescriptDeskAction; label: string; hint: string }[] = [
-  { action: "follow_draft", label: "依拟", hint: "照票拟落差务" },
-  { action: "return_revise", label: "发回改票", hint: "退回重拟一轮" },
-  { action: "midzhi", label: "另旨·中旨", hint: "中旨直发" },
-  { action: "deliberate", label: "下部议·廷议", hint: "立议程集议" },
-  { action: "hold", label: "留中", hint: "不批，惯性结算" },
-  { action: "summon", label: "召见", hint: "当回合入召对" },
-];
-
-/** 票拟 option → follow_draft choice 字段投影（按钮点选与六动作依拟共用）。 */
-function projectFollowDraftFromOption(option: PendingDecision["options"][number]): DecisionChoice {
-  const s = (v: unknown) => (v == null || v === "" ? undefined : String(v));
-  return {
-    action: "follow_draft",
-    label: String(option.label),
-    hint: String(option.hint || ""),
-    draft_capability: String(option.draft_capability || ""),
-    action_type: s(option.action_type),
-    assignee_name: s(option.assignee_name),
-    target_kind: s(option.target_kind),
-    target_id: s(option.target_id),
-    locality_scope: s(option.locality_scope),
-    region_id: s(option.region_id),
-    transaction_category: s(option.transaction_category),
-  };
-}
-
-function isRescriptDraft(d: PendingDecision | undefined): boolean {
-  return String(d?.kind || "") === "rescript_draft";
-}
-
 function decisionKeyOf(d: PendingDecision, fallbackIdx: number): string | undefined {
   if (d.decision_key) return String(d.decision_key);
-  // 仅 #657 案头行（带 kind）合成键；旧 decision-only 载荷不强制 decision_key
   if (!d.kind) return undefined;
-  const kind = String(d.kind || "decision");
+  const kind = (d.kind || "decision");
   const turn = d.source_turn ?? d.turn ?? 0;
   return `${kind}:${turn}:${d.idx ?? fallbackIdx}`;
 }
 
 export function DecisionModal({
   decisions,
-  failures = [],
   onResolve,
   busy = "",
+  suspended = false,
 }: {
   decisions: PendingDecision[];
-  failures?: PendingActionFailure[];
-  onResolve: (choices: DecisionChoice[]) => void;
-  /** #1620：truthy 时禁用票拟/六动作/亲批/召见/翻页与落印，handler 入口短路——禁二提交。 */
+  onResolve: (choices: DecisionChoice[]) => void | Promise<void>;
+  /** truthy 时禁用票拟/亲批/翻页与落印，handler 入口短路——禁二提交。 */
   busy?: string;
+  /** Keep picks mounted while the live gazette occupies the main face. */
+  suspended?: boolean;
 }) {
-  const [cursor, setCursor] = React.useState(0);
-  const [picks, setPicks] = React.useState<DecisionChoice[]>(() =>
-    decisions.map((d, i) => {
-      const key = decisionKeyOf(d, i);
-      return key ? { decision_key: key } : {};
-    }),
-  );
+  const keyOf = (d: PendingDecision, i: number) => decisionKeyOf(d, i) ?? String(d.idx ?? i);
+  const [currentKey, setCurrentKey] = React.useState(() => decisions[0] ? keyOf(decisions[0], 0) : "");
+  const [picks, setPicks] = React.useState<Record<string, { choice: DecisionChoice; sending?: boolean }>>({});
+  const foundIdx = decisions.findIndex((d, i) => keyOf(d, i) === currentKey);
+  // Skip any sending row — whether it left the desk or is still present — so
+  // other pending items (including new follow-ups) stay actionable (#1847 K4/F2).
+  const currentSending = foundIdx >= 0 && !!picks[keyOf(decisions[foundIdx], foundIdx)]?.sending;
+  const cursor = foundIdx >= 0 && !currentSending
+    ? foundIdx
+    : Math.max(0, decisions.findIndex((d, i) => !picks[keyOf(d, i)]?.sending));
   const pageRef = React.useRef<HTMLElement>(null);
-  const locked = !!busy;
-
   const cur = decisions[cursor];
-  const pick = picks[cursor] || {};
-  const rescript = isRescriptDraft(cur);
+  const key = cur ? keyOf(cur, cursor) : "";
+  const pick = picks[key]?.choice || {};
+  const locked = !!busy || !!picks[key]?.sending;
   const requiresListedChoice = (cur?.event_id || "").startsWith("dossier:");
-  // 急务：已选合法六动作，或未选动作（空 pick 仅 decision_key）→ 可落印；
-  // 未选时服务端 validate_all 统一机械 hold（客户端不得伪造 action:"hold"）。
-  const decided = rescript
-    ? (!pick.action
-      || (pick.action === "summon"
-        ? !!(pick.summon_target || "").trim()
-        : pick.action === "follow_draft"
-          ? !!(pick.draft_capability || pick.label)
-          : true))
-    : requiresListedChoice
-      ? !!pick.label
-      : !!(pick.label || (pick.note || "").trim());
+  const decided = requiresListedChoice
+    ? !!pick.label
+    : !!(pick.label || (pick.note || "").trim());
   const last = cursor >= decisions.length - 1;
   const setPick = (choice: DecisionChoice) => {
     if (locked) return;
-    setPicks((all) =>
-      all.map((item, i) => {
-        if (i !== cursor) return item;
-        const key = item.decision_key || decisionKeyOf(cur, cursor);
-        return key
-          ? { ...item, ...choice, decision_key: key }
-          : { ...item, ...choice };
-      }),
-    );
+    const decisionKey = decisionKeyOf(cur, cursor);
+    setPicks((all) => ({ ...all, [key]: { choice: {
+      ...pick, ...choice, ...(decisionKey ? { decision_key: decisionKey } : {}),
+    } } }));
   };
 
   const next = () => {
     if (locked || !decided) return;
-    if (last) onResolve(picks);
-    else setCursor((value) => value + 1);
-  };
-
-  const pickRescriptAction = (action: RescriptDeskAction) => {
-    if (locked) return;
-    if (action === "follow_draft") {
-      // 需先选票拟 option；若已选 option 则带 capability
-      const opt = cur.options.find((o) => o.label === pick.label) || cur.options[0];
-      if (!opt) {
-        setPick({ action, label: "依拟" });
-        return;
-      }
-      setPick(projectFollowDraftFromOption(opt));
-      return;
-    }
-    if (action === "hold") {
-      setPick({ action, label: "留中", hint: "不批，惯性结算" });
-      return;
-    }
-    if (action === "return_revise") {
-      setPick({ action, label: "发回改票", hint: "退回重拟一轮" });
-      return;
-    }
-    if (action === "deliberate") {
-      setPick({ action, label: "下部议·廷议", hint: "立议程集议" });
-      return;
-    }
-    if (action === "midzhi") {
-      // 中旨：与 follow_draft 同形——把所选 option（已选则用选中项，否则首 option）
-      // 上 §C.4 闭集键投影进 choice。P7：decree_text 回退 label，必须保留
-      // option 的 LLM 文案；「另旨·中旨」只作结构按钮文案（RESCRIPT_ACTIONS）。
-      const opt =
-        cur.options.find((o) => o.label === pick.label) ||
-        cur.options[0];
-      if (!opt) {
-        setPick({ action, label: String(pick.label || ""), hint: String(pick.hint || "") });
-        return;
-      }
-      const s = (v: unknown) => (v == null || v === "" ? undefined : String(v));
-      const n = (v: unknown) => {
-        if (v == null || v === "") return undefined;
-        const num = Number(v);
-        return Number.isFinite(num) ? num : undefined;
-      };
-      // #1778：C.4 participant_roster 与其它闭集键同形抄进 choice（§C.7 midzhi＝choice 显式）
-      const roster = Array.isArray(opt.participant_roster) && opt.participant_roster.length > 0
-        ? opt.participant_roster
-        : undefined;
-      setPick({
-        action,
-        label: String(opt.label),
-        hint: String(opt.hint || ""),
-        action_type: s(opt.action_type) || "assignment",
-        assignee_name: s(opt.assignee_name) || "",
-        name: s((opt as { name?: unknown }).name) || "",
-        target_kind: s(opt.target_kind) || "region",
-        target_id: s(opt.target_id) || "",
-        transaction_category: s(opt.transaction_category) || "",
-        locality_scope: s(opt.locality_scope) || "none",
-        region_id: s(opt.region_id) || "",
-        title: s((opt as { title?: unknown }).title) || "",
-        commitment_kind: s((opt as { commitment_kind?: unknown }).commitment_kind) || "",
-        stop_condition: s((opt as { stop_condition?: unknown }).stop_condition) || "",
-        end_turn: n((opt as { end_turn?: unknown }).end_turn),
-        deadline_months: n((opt as { deadline_months?: unknown }).deadline_months),
-        station: s((opt as { station?: unknown }).station) || "",
-        due_turn: n((opt as { due_turn?: unknown }).due_turn),
-        office: s((opt as { office?: unknown }).office) || "",
-        grant_action: s((opt as { grant_action?: unknown }).grant_action) || "",
-        account: s((opt as { account?: unknown }).account) || "",
-        amount: n((opt as { amount?: unknown }).amount),
-        cadence: s((opt as { cadence?: unknown }).cadence) || "",
-        execution_surface: s((opt as { execution_surface?: unknown }).execution_surface) || "",
-        appoint_action: s((opt as { appoint_action?: unknown }).appoint_action) || "",
-        appointment_tenure: s((opt as { appointment_tenure?: unknown }).appointment_tenure) || "",
-        punish_action: s((opt as { punish_action?: unknown }).punish_action) || "",
-        privilege: s((opt as { privilege?: unknown }).privilege) || "",
-        summon_target: s((opt as { summon_target?: unknown }).summon_target) || "",
-        ...(roster ? { participant_roster: roster } : {}),
-      });
-      return;
-    }
-    if (action === "summon") {
-      setPick({
-        action,
-        label: "召见",
-        hint: "当回合入召对",
-        summon_target: pick.summon_target || cur.actor_name || "",
-      });
-    }
+    setPicks((all) => ({ ...all, [key]: { choice: pick, sending: true } }));
+    // Keep the current raw pick for retry; only this row is locked while sending.
+    void Promise.resolve(onResolve([pick])).finally(() => {
+      setPicks((all) => ({ ...all, [key]: { choice: pick, sending: false } }));
+    });
+    if (!last) setCurrentKey(keyOf(decisions[cursor + 1], cursor + 1));
   };
 
   React.useEffect(() => {
+    if (suspended) return;
     const page = pageRef.current;
     if (!page) return;
 
@@ -253,9 +124,10 @@ export function DecisionModal({
       document.removeEventListener("focusin", keepFocusInPageOnFocus, true);
       if (previousFocus?.isConnected) previousFocus.focus();
     };
-  }, [decisions.length]);
+  }, [decisions.length, suspended]);
 
   React.useEffect(() => {
+    if (suspended) return;
     const page = pageRef.current;
     if (!page) return;
     const firstFocusable = page.querySelector<HTMLElement>(
@@ -263,16 +135,19 @@ export function DecisionModal({
     );
     if (isCheatConsoleTarget(document.activeElement)) return;
     (firstFocusable || page).focus();
-  }, [cursor, decisions.length]);
+  }, [cursor, decisions.length, suspended]);
 
   if (decisions.length === 0) return null;
+  if (!cur) return null;
 
-  const kickerKind = rescript ? "急务票拟" : "打回件";
+  const kickerKind = requiresListedChoice ? "案卷" : "请旨";
 
   return (
     <section
       ref={pageRef}
       className="decision-page"
+      hidden={suspended}
+      style={{ display: suspended ? "none" : undefined }}
       role="dialog"
       aria-modal="true"
       aria-labelledby="decision-page-title"
@@ -285,19 +160,11 @@ export function DecisionModal({
           </span>
           <h2 id="decision-page-title" className="decision-title">奏疏批红</h2>
         </div>
-        {failures.length ? <div className="decision-failure-list" role="alert">
-          {failures.map((failure) => <div className="decision-failure-item" key={failure.id}>{failure.message}</div>)}
-        </div> : null}
         <section aria-labelledby="decision-document-title">
           <div className="decision-document-section">
             <span className="decision-section-label">疏文</span>
             <h3 id="decision-document-title">{cur.title}</h3>
-            <p>{cur.context || "臣等谨陈时局，请陛下裁夺。"}</p>
-            {rescript && cur.actor_name ? (
-              <p className="decision-actor">票拟：{cur.actor_name}
-                {cur.actor_office ? `（${cur.actor_office}）` : ""}
-              </p>
-            ) : null}
+            <p>{cur.context}</p>
           </div>
           {cur.rejection_reason || cur.opposition ? <div className="decision-document-section">
             <span className="decision-section-label">封驳具由</span>
@@ -305,81 +172,23 @@ export function DecisionModal({
             {cur.opposition ? <p>持议者：{cur.opposition}</p> : null}
           </div> : null}
 
-          {rescript ? (
-            <>
-              <div className="decision-document-section">
-                <span className="decision-section-label">内阁票拟</span>
-                <div className="decision-options">
-                  {cur.options.map((option) => (
-                    <button
-                      key={option.label}
-                      type="button"
-                      className={"decision-option" + (pick.label === option.label && pick.action === "follow_draft" ? " is-picked" : "")}
-                      disabled={locked}
-                      onClick={() => {
-                        setPick(projectFollowDraftFromOption(option));
-                      }}
-                    >
-                      <span className="decision-option-label">拟批：{option.label}</span>
-                      {option.hint ? <span className="decision-option-hint">{option.hint}</span> : null}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="decision-document-section" data-testid="rescript-six-actions">
-                <span className="decision-section-label">批红六动作</span>
-                <div className="decision-options decision-rescript-actions">
-                  {RESCRIPT_ACTIONS.map((item) => (
-                    <button
-                      key={item.action}
-                      type="button"
-                      className={"decision-option" + (pick.action === item.action ? " is-picked" : "")}
-                      data-action={item.action}
-                      disabled={locked}
-                      onClick={() => pickRescriptAction(item.action)}
-                    >
-                      <span className="decision-option-label">{item.label}</span>
-                      <span className="decision-option-hint">{item.hint}</span>
-                    </button>
-                  ))}
-                </div>
-                {pick.action === "summon" ? (
-                  <label className="decision-summon-target">
-                    召见对象
-                    <input
-                      type="text"
-                      value={pick.summon_target || ""}
-                      placeholder={cur.actor_name || "大臣名"}
-                      disabled={locked}
-                      onChange={(event) => setPick({
-                        action: "summon",
-                        label: "召见",
-                        summon_target: event.target.value,
-                      })}
-                    />
-                  </label>
-                ) : null}
-              </div>
-            </>
-          ) : (
-            <div className="decision-document-section">
-              <span className="decision-section-label">内阁票拟</span>
-              <div className="decision-options">
-                {cur.options.map((option) => (
-                  <button
-                    key={option.label}
-                    type="button"
-                    className={"decision-option" + (pick.label === option.label ? " is-picked" : "")}
-                    disabled={locked}
-                    onClick={() => setPick(option)}
-                  >
-                    <span className="decision-option-label">拟批：{option.label}</span>
-                    {option.hint ? <span className="decision-option-hint">{option.hint}</span> : null}
-                  </button>
-                ))}
-              </div>
+          <div className="decision-document-section">
+            <span className="decision-section-label">内阁票拟</span>
+            <div className="decision-options">
+              {cur.options.map((option) => (
+                <button
+                  key={option.label}
+                  type="button"
+                  className={"decision-option" + (pick.label === option.label ? " is-picked" : "")}
+                  disabled={locked}
+                  onClick={() => setPick(option)}
+                >
+                  <span className="decision-option-label">拟批：{option.label}</span>
+                  {option.hint ? <span className="decision-option-hint">{option.hint}</span> : null}
+                </button>
+              ))}
             </div>
-          )}
+          </div>
 
           <div className="decision-document-section decision-red-pen">
             <label className="decision-section-label" htmlFor="decision-note">朱笔亲批</label>
@@ -406,13 +215,9 @@ export function DecisionModal({
           <span className="decision-hint-line">
             {decided
               ? "已择，落印即行。"
-              : rescript
-                ? (pick.action === "summon" && !(pick.summon_target || "").trim()
-                  ? "召见须填写对象。"
-                  : "请择六动作之一（留中为默认）。")
-                : requiresListedChoice
-                  ? "此疏须择一票拟。"
-                  : "请择一票拟，或亲笔批示。"}
+              : requiresListedChoice
+                ? "此疏须择一票拟。"
+                : "请择一票拟，或亲笔批示。"}
           </span>
         </div>
       </article>

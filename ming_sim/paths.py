@@ -57,3 +57,24 @@ def user_data_path(*parts: str) -> str:
     p = user_data_dir().joinpath(*parts)
     p.parent.mkdir(parents=True, exist_ok=True)
     return str(p)
+
+
+class UnsafeSaveNameError(ValueError):
+    """存档名非法（#1902：清洗真源，两端共用一份）。"""
+
+
+def safe_save_name(name: str) -> str:
+    """存档名清洗唯一真源（#1902）：Web 菜单、CLI 入口与会话层同用这一份。
+
+    只留字母/数字/``._-``；清洗后为空或以 ``.`` 开头（``.`` / 隐藏名 / 纯 ``..``）
+    一律拒——防目录穿越与隐藏文件。
+    """
+    cleaned = "".join(c for c in str(name or "").strip() if c.isalnum() or c in "._-")
+    if not cleaned or cleaned.startswith("."):
+        raise UnsafeSaveNameError("存档名非法。仅允许字母/数字/._- ")
+    return cleaned
+
+
+def save_slot_path(name: str) -> str:
+    """存档名 → ``<user_data>/saves/<name>.db`` 绝对路径（校验同一份真源）。"""
+    return user_data_path("saves", f"{safe_save_name(name)}.db")

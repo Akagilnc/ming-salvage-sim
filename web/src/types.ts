@@ -133,7 +133,6 @@ export type Minister = {
   favorite: boolean;
   portrait_id?: string;  // 空/undefined=无专属，前端 fallback 到池
   power_id?: string;     // 大明=ming, 后金=houjin, 流寇=bandits 等
-  skills: Array<{ id: string; name: string; sources: string[]; description: string }>;
 };
 
 export type EventItem = {
@@ -153,8 +152,6 @@ export type Directive = {
   event_id: string;
   event_title: string;
   actor: string;
-  skill_id: string;
-  skill_name: string;
   text: string;
   source: string;
   status: string; // pending（待核定大臣拟旨）| draft（颁诏候选）
@@ -174,16 +171,15 @@ export type CasedDirective = {
 };
 
 /** #1764：本地在飞/失败项（仅会话态，非持久真源）。
- * create：无 directiveId，自渲染为会话卡。
- * save/delete：directiveId 绑定所属草案卡的进行态/失败真因。
+ * #1902 J4：拟诏台手写新建/改稿入口已退役，前端不再有无 directiveId 的会话卡，
+ * 故此项恒绑定所属草案卡（现役唯一消费者是删除进行态与失败真因）。
  */
 export type LocalDirectiveItem = {
   localKey: string;
-  text: string;
   phase: "inflight" | "failed";
   error?: string;
-  directiveId?: number;
-  op?: "create" | "save" | "delete";
+  directiveId: number;
+  op: "delete";
 };
 
 export type Issue = {
@@ -294,61 +290,16 @@ export type DossierDecision =
   | "withdrawn"
   | "hold";
 
-/** #657 急务六动作 */
-export type RescriptDeskAction =
-  | "follow_draft"
-  | "return_revise"
-  | "midzhi"
-  | "deliberate"
-  | "hold"
-  | "summon";
-
 export type DecisionChoice = {
   label?: string;
   hint?: string;
   note?: string;
   dossier_id?: number | null;
   dossier_decision?: DossierDecision;
-  /** #657 案头行键 */
+  /** 案头行键 */
   decision_key?: string;
-  /** #657 急务动作 */
-  action?: RescriptDeskAction | string;
-  draft_capability?: string;
-  /** §C.4 capability 派生闭集（仅补缺口，不新并行类型） */
-  summon_target?: string;
-  action_type?: string;
-  target_kind?: string;
-  target_id?: string;
-  locality_scope?: string;
-  region_id?: string;
-  transaction_category?: string;
-  assignee_name?: string;
-  name?: string;
-  title?: string;
-  commitment_kind?: string;
-  stop_condition?: string;
-  end_turn?: number;
-  deadline_months?: number;
-  station?: string;
-  due_turn?: number;
-  office?: string;
-  grant_action?: string;
-  amount?: number;
-  account?: string;
-  cadence?: string;
-  execution_surface?: string;
-  appoint_action?: string;
-  appointment_tenure?: string;
-  punish_action?: string;
-  privilege?: string;
-  /** #1778 决定 3 / C.4：票拟参与名单；中旨 choice 显式携带（§C.7） */
-  participant_roster?: Array<{
-    character_id?: string;
-    tier?: string;
-    role?: string;
-    delegator_id?: string | null;
-    [key: string]: unknown;
-  }>;
+  /** decision 轨动作；0055 三选写 dossier_decision */
+  action?: string;
 };
 
 export type DecisionOption = {
@@ -356,36 +307,6 @@ export type DecisionOption = {
   hint: string;
   dossier_id?: number;
   dossier_decision?: DossierDecision;
-  /** #657 层 A 票拟字段 · §C.4 闭集 */
-  draft_capability?: string;
-  action_type?: string;
-  assignee_name?: string;
-  name?: string;
-  target_kind?: string;
-  target_id?: string;
-  locality_scope?: string;
-  region_id?: string;
-  transaction_category?: string;
-  title?: string;
-  commitment_kind?: string;
-  stop_condition?: string;
-  end_turn?: number;
-  deadline_months?: number;
-  station?: string;
-  due_turn?: number;
-  office?: string;
-  grant_action?: string;
-  account?: string;
-  amount?: number;
-  cadence?: string;
-  execution_surface?: string;
-  appoint_action?: string;
-  appointment_tenure?: string;
-  punish_action?: string;
-  privilege?: string;
-  summon_target?: string;
-  /** #1778 决定 3 / C.4：票拟参与名单 */
-  participant_roster?: DecisionChoice["participant_roster"];
   [key: string]: unknown;
 };
 
@@ -399,16 +320,14 @@ export type PendingDecision = {
   options: DecisionOption[];
   choice?: DecisionChoice | null;
   status?: string;
-  /** #657 案头 */
-  kind?: "decision" | "rescript_draft" | string;
+  kind?: "decision" | string;
   decision_key?: string;
   source_turn?: number;
   turn?: number;
-  revision_round?: number;
-  actor_name?: string;
-  actor_office?: string;
-  actor_faction?: string;
 };
+
+/** #1855：重开落点三值 —— 后端状态口真源；前端契约单定义。 */
+export type ReopenLanding = "audience" | "settlement" | "month";
 
 export type GameState = {
   /** settlement_display：服务端下发的核账展示态（#1234；快照在⇔true）。客户端哑渲染。 */
@@ -421,6 +340,11 @@ export type GameState = {
     /** #1356：后端当前回合年号投影；payload 保留。邸报报头禁用（用 previous_reign_period_label） */
     reign_period_label?: string;
   };
+  /**
+   * #1855 / ADR 0158 决定 7：重开落点。audience=殿上；settlement=核账期同态；month=本月盘面。
+   * 前端只认此字段，不自判夜/核账。三值契约单真源在此。
+   */
+  reopen_landing?: ReopenLanding;
   metrics: Metrics;
   previous_summary: string;
   /** #1356：邸报报文自身年月标签（与 previous_summary 同源）；报头直显，禁用 turn.reign_period_label 混充 */
@@ -455,19 +379,16 @@ export type GameState = {
   pending_directive_count?: number;  // 对话式拟旨暂存数（pending_actions kind=directive）
   pending_secret_order_count?: number;  // #1376：staged 密令候选数（确认闸门仍在；投影可见）
   pending_non_directive_action_count?: number;  // 可见的非拟旨 pending_actions（不含隐藏新密令候选）
-  failed_secret_order_count?: number;
   pending_decisions?: PendingDecision[];
   /** #657：awaiting + resolve_context + 空 pending desk → 续跑 phase2（空 POST 既有 stream） */
   resume_phase2?: boolean;
   /** #1625：结算入口进程内在飞；刷新/重拉只等待，不打回或续跑。 */
   settlement_entry_inflight?: boolean;
   /**
-   * #1620 / ADR 0008 决定 6/7：settling 恢复面投影。
-   * ready_replay=true → 续跑结算；false → 重新推演。message 含错误包路径与发给作者指引。
+   * #1846：settling 恢复面投影。message / error_pack_path 给同一颗「重试」；无 ready 重放分流。
    */
   settlement_recovery?: {
-    ready_replay: boolean;
-    /** #1846：核账期失败可点「重试」；legacy ready 重放亦为 true */
+    /** #1846：核账期失败可点「重试」 */
     retryable?: boolean;
     error_pack_path: string;
     message: string;
@@ -482,7 +403,7 @@ export type GameState = {
 
 export type EndingTimelineItem = {
   turn: number; year: number; period: number;
-  decree_brief: string; effect_brief: string; gazette: string;
+  gazette: string;
 };
 
 export type EndingPayload = {
@@ -492,12 +413,10 @@ export type EndingPayload = {
 };
 
 export type ChatMessage = {
-  /** user=朕 / minister=大臣 / attendant=递话（王承恩读心，ADR 0046） */
-  role: "user" | "minister" | "attendant";
+  /** user=朕 / minister=大臣 */
+  role: "user" | "minister";
   content: string;
-  /** attendant 递话的稳定记录身份（#499）：按 (chatTurnId, recordId) 去重/归位，不依赖 narration 文本 */
   chatTurnId?: number;
-  recordId?: number;
   /** #544：判官短语清单（仅大臣）；前端匹配后渲染，未命中静默丢弃 */
   highlights?: string[];
 };
@@ -511,7 +430,7 @@ export type AudienceScrollMessage = {
   time: string | null;
   content: string;
   soft_boundary: boolean;
-  beat: "opening" | "entrance" | "dialogue" | "aside" | "scene" | "exit" | "divider" | "closing" | "coda" | "summon";
+  beat: "dialogue" | "aside" | "scene" | "exit" | "divider";
   highlights: string[];
   container: { time_of_day: string; location: string; audience_type: string };
   /** Internal durable identity used only to merge a refreshing live projection. */
@@ -519,22 +438,14 @@ export type AudienceScrollMessage = {
   record_id?: number;
 };
 
-/** 服务端 turn-identified 召对投影里的一条消息（#499）：user/minister 带 chat_turn_id，
- *  attendant 递话额外带 record_id；前端映射为 ChatMessage 后渲染。 */
+/** 服务端 turn-identified 召对投影里的一条消息（#499）：user/minister 带 chat_turn_id；
+ *  前端映射为 ChatMessage 后渲染。 */
 export type ServerChatMessage = {
-  role: "user" | "minister" | "attendant";
+  role: "user" | "minister";
   content: string;
   chat_turn_id?: number;
-  record_id?: number;
   /** #544：高亮判官短语清单（仅大臣气泡有意义） */
   highlights?: string[];
-};
-
-export type Suggestion = {
-  label: string;
-  text: string;
-  prefix?: boolean;
-  intent?: "secret_order";
 };
 
 export type ModalName = "none" | "state" | "chat" | "edict" | "report" | "history" | "audience_archive" | "menu" | "secret_orders" | "ending";
@@ -560,12 +471,15 @@ export type LLMConfigInfo = {
   has_advanced_api_key: boolean;
   advanced_thinking_level: string;
   reasoning_strength?: string;
-  api_reasoning_strength?: string;
-  cli_reasoning_strength?: string;
+  api_reasoning_strength?: string | null;
+  cli_reasoning_strength?: string | null;
+  effective_reasoning_strengths?: Record<"api" | "cli", string>;
   reasoning_supported?: boolean;
   reasoning_strengths?: ReasoningStrengthChoice[];
   /** Backend capability list from cli_backend.CLI_REASONING_STRENGTH_RUNNERS (#1271). */
   cli_reasoning_runners?: string[];
+  /** Backend list cli_backend.CLI_REASONING_FLOOR_RUNNERS: off 档实取低（#1271）。 */
+  cli_reasoning_floor_runners?: string[];
   has_api_key: boolean;
   cli_runner?: string;
   cli_model?: string;
@@ -587,8 +501,8 @@ export type LLMConfigInfo = {
     has_advanced_api_key: boolean;
     advanced_thinking_level: string;
     reasoning_strength?: string;
-    api_reasoning_strength?: string;
-    cli_reasoning_strength?: string;
+    api_reasoning_strength?: string | null;
+    cli_reasoning_strength?: string | null;
     cli_runner?: string;
     cli_model?: string;
     cli_timeout_seconds?: number;
@@ -603,6 +517,8 @@ export type DossierProgressReport = {
   progress_band: string;
   memorial_text: string;
   is_terminal: boolean;
+  origin?: string;
+
 };
 
 export type SecretOrder = {
@@ -616,22 +532,12 @@ export type SecretOrder = {
   content: string;
   tags: string[];
   importance: number;
-  status: "active" | "done" | "failed" | "cancelled";
+  status: "active" | "closed" | "cancelled";
   result: string;
-  sim_note: string;
   dossier_progress?: DossierProgressReport[];
   turn_closed: number | null;
 };
 
-export type ProposedDirective = { id: number; text: string; status: string; notes: string };
-
-export type PendingActionFailure = {
-  id: number;
-  kind: string;
-  action: string;
-  minister_name?: string;
-  message: string;
-};
 
 /** #505：崩溃后待重试的中断回话（系统层恢复，非内容选项）。 */
 export type ReplyRetry = {
@@ -660,18 +566,6 @@ export type RetryReadFailure = {
   readFailure?: boolean;
 };
 
-/** #501 / #1353：待补叙事抽取诊断状态（不再驱动玩家 CTA）。 */
-export type ExtractionPendingStatus = {
-  night_id: number;
-  count: number;
-  pending: Array<{
-    chat_turn_id: number;
-    minister_name: string;
-    night_id: number;
-  }>;
-  night_status?: string;
-};
-
 export type ChatIdentity = { campaign_id: string; night_id: number; chat_turn_id: number };
 
 export type ChatResponse = {
@@ -680,26 +574,13 @@ export type ChatResponse = {
   night_id: number;
   chat_turn_id: number;
   history: ServerChatMessage[];
-  suggestions: Suggestion[];
   directives: Directive[];
   pending_count?: number;
   /** #1716：chat done 载荷同步对话式拟旨暂存数，拟诏台 settle 不单靠 refresh 竞态。 */
   pending_directive_count?: number;
   can_undo_last_chat?: boolean;
   court_action?: string;
-  next_minister?: string;
-  registered_minister?: string;
-  proposed_directive?: ProposedDirective | null;
-  secret_order_id?: number;
-  pending_action_failures?: PendingActionFailure[];
-  // #502 AC5：多道准驳含糊态（候选 id/摘要）供前端展示大臣追问哪一道；无则缺席/null。
-  directive_confirmation_ambiguous?: DirectiveConfirmationAmbiguous | null;
-  // #670：成功记召机面控制码（SUMMON_FRESH / SUMMON_IN_TRANSIT）；禁止写入 setError/danger note。
-  admission?: string;
-};
 
-export type DirectiveConfirmationAmbiguous = {
-  candidates: { id: number; summary: string }[];
 };
 
 export type ChatUndoResponse = {
@@ -707,22 +588,24 @@ export type ChatUndoResponse = {
   night_id: number;
   undone_chat_turn_id: number;
   history: ServerChatMessage[];
-  suggestions: Suggestion[];
   directives: Directive[];
   pending_count: number;
   pending_directive_count?: number;
   secret_orders: SecretOrder[];
   can_undo_last_chat: boolean;
-  pending_action_failures?: PendingActionFailure[];
 };
 
 export type ApiErrorDetail = {
+  reason?: string;
+  error_type?: string;
+  error_pack_path?: string;
+  diagnostic_path?: string;
+  diagnostic_error?: string;
   code?: string;
   message?: string;
   provider_message?: string;
   status_code?: number | null;
   turn?: number;
-  pending_action_failures?: PendingActionFailure[];
 };
 
 export type AppView = "menu" | "game";
@@ -775,12 +658,14 @@ export type MenuStatus = {
     has_advanced_api_key: boolean;
     advanced_thinking_level: string;
     reasoning_strength?: string;
-    api_reasoning_strength?: string;
-    cli_reasoning_strength?: string;
+    api_reasoning_strength?: string | null;
+    cli_reasoning_strength?: string | null;
+    effective_reasoning_strengths?: Record<"api" | "cli", string>;
     reasoning_supported?: boolean;
     reasoning_strengths?: ReasoningStrengthChoice[];
     /** Backend capability list from cli_backend.CLI_REASONING_STRENGTH_RUNNERS (#1271). */
     cli_reasoning_runners?: string[];
+    cli_reasoning_floor_runners?: string[];
     /** #1794：API 通道附加请求头表（名→值）；空表＝现状。 */
     default_headers?: Record<string, string>;
   };
@@ -815,7 +700,6 @@ export type HistoryDirective = {
   event_id: string;
   event_title: string;
   actor: string;
-  skill_id: string;
   text: string;
   source: string;
   status: string;

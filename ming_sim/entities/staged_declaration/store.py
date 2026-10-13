@@ -8,34 +8,40 @@
 """
 
 from __future__ import annotations
+from ming_sim.applier import parse_engine_payload_json
 
 import json
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, Mapping
 
-from ming_sim.applier import atomic, connection_owns_transaction, sanitize_sqlite_text
+from ming_sim.applier import atomic, connection_owns_transaction
 
-_STATUS_STAGED = "staged"
-_STATUS_DISCARDED = "discarded"
-_STATUS_SETTLED = "settled"
 
-_SCHEMA_SQL = """
+_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS staged_declarations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     decree_ref TEXT NOT NULL,
-    declaration_json TEXT NOT NULL,
+    declaration_json TEXT,
     visible_refs_json TEXT NOT NULL DEFAULT '{}',
+    verdict_json TEXT,
+    questions_json TEXT,
+    forecast_text TEXT,
     status TEXT NOT NULL DEFAULT 'staged'
         CHECK(status IN ('staged','discarded','settled')),
     created_turn INTEGER NOT NULL,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+"""
+
+_INDEX_SQL = """
 CREATE INDEX IF NOT EXISTS idx_staged_declarations_decree
     ON staged_declarations(decree_ref, id);
 CREATE INDEX IF NOT EXISTS idx_staged_declarations_status
     ON staged_declarations(decree_ref, status, id);
 """
+
+_SCHEMA_SQL = _TABLE_SQL + _INDEX_SQL
 
 
 class DecreeAlreadySettled(ValueError):
@@ -51,7 +57,7 @@ class DecreeAlreadySettled(ValueError):
 class StagedDeclaration:
     id: int
     decree_ref: str
-    declaration: dict
+    declaration: dict | None
     status: str
     created_turn: int
     visible_refs: dict
@@ -68,54 +74,50 @@ class StagedDeclarationStore:
 
     @staticmethod
     def ensure_schema(conn: Any) -> None:
+        # 唯一当前 schema 一次建齐；不另走补列 ALTER 链服务 superseded 表示。
         conn.executescript(_SCHEMA_SQL)
-        cols = {str(row[1]) for row in conn.execute("PRAGMA table_info(staged_declarations)")}
-        if "visible_refs_json" not in cols:
-            conn.execute(
-                "ALTER TABLE staged_declarations ADD COLUMN visible_refs_json TEXT NOT NULL DEFAULT '{}'"
-            )
-        if "verdict_json" not in cols:
-            conn.execute("ALTER TABLE staged_declarations ADD COLUMN verdict_json TEXT")
-        if "questions_json" not in cols:
-            conn.execute("ALTER TABLE staged_declarations ADD COLUMN questions_json TEXT")
-        if "forecast_text" not in cols:
-            conn.execute("ALTER TABLE staged_declarations ADD COLUMN forecast_text TEXT")
 
     def stage(
-        self, *, decree_ref: str, declaration: Mapping[str, object], turn: int,
+        self, *, decree_ref: str, declaration: Mapping[str, object] | None, turn: int,
         visible_refs: Mapping[str, object] | None = None,
         verdict: Mapping[str, object] | None = None,
         questions: list | None = None,
         forecast_text: str | None = None,
+        staged_id: int | None = None,
     ) -> int:
         ref = str(decree_ref or "").strip()
         if not ref:
             raise ValueError("decree_ref 不能为空")
-        if not isinstance(declaration, Mapping):
+        if declaration is not None and not isinstance(declaration, Mapping):
             raise ValueError("声明须为对象")
         def write() -> int:
             if self._is_closed(ref):
                 raise DecreeAlreadySettled(
                     f"decree_ref 已作废或已结算，不能再暂存新声明：{ref}（如需再起该旨，请用新的 decree_ref）"
                 )
+            values = (
+                ref,
+                None if declaration is None else json.dumps(declaration, ensure_ascii=False),
+                json.dumps(visible_refs or {}, ensure_ascii=False),
+                int(turn),
+                None if verdict is None else json.dumps(dict(verdict), ensure_ascii=False),
+                None if questions is None else json.dumps(list(questions), ensure_ascii=False),
+                forecast_text,
+            )
+            if staged_id is not None:
+                self._conn.execute(
+                    "UPDATE staged_declarations SET decree_ref=?, declaration_json=?, "
+                    "visible_refs_json=?, created_turn=?, verdict_json=?, questions_json=?, "
+                    "forecast_text=? WHERE id=? AND status='staged'",
+                    (*values, staged_id),
+                )
+                return staged_id
             cur = self._conn.execute(
                 "INSERT INTO staged_declarations "
                 "(decree_ref, declaration_json, visible_refs_json, status, created_turn, "
                 "verdict_json, questions_json, forecast_text) "
                 "VALUES (?, ?, ?, 'staged', ?, ?, ?, ?)",
-                (
-                    ref,
-                    sanitize_sqlite_text(json.dumps(declaration, ensure_ascii=False)),
-                    json.dumps(visible_refs or {}, ensure_ascii=False),
-                    int(turn),
-                    None if verdict is None else sanitize_sqlite_text(
-                        json.dumps(dict(verdict), ensure_ascii=False),
-                    ),
-                    None if questions is None else sanitize_sqlite_text(
-                        json.dumps(list(questions), ensure_ascii=False),
-                    ),
-                    None if forecast_text is None else sanitize_sqlite_text(forecast_text),
-                ),
+                values,
             )
             return int(cur.lastrowid)
         if connection_owns_transaction(self._conn):
@@ -136,12 +138,7 @@ class StagedDeclarationStore:
         def write() -> int:
             if self.is_settled(ref):
                 return 0
-            cur = self._conn.execute(
-                "UPDATE staged_declarations SET status='discarded' "
-                "WHERE decree_ref=? AND status='staged'",
-                (ref,),
-            )
-            n = int(cur.rowcount or 0)
+            n = self.mark_terminal(ref, status="discarded")
             if n == 0 and not self._is_closed(ref):
                 # Tombstone: decree lifecycle is independent of product rows.
                 self._conn.execute(
@@ -157,13 +154,15 @@ class StagedDeclarationStore:
                 return write()
         return write()
 
-    def staged_for(self, decree_ref: str) -> tuple[StagedDeclaration, ...]:
+    def staged_for(self, decree_ref: str, *, turn: int | None = None) -> tuple[StagedDeclaration, ...]:
+        """Declarations retain decree identity; reusable verdicts are turn-scoped."""
         ref = str(decree_ref or "").strip()
         rows = self._conn.execute(
             "SELECT id, decree_ref, declaration_json, visible_refs_json, status, created_turn, "
             "verdict_json, questions_json, forecast_text "
-            "FROM staged_declarations WHERE decree_ref=? AND status='staged' ORDER BY id",
-            (ref,),
+            "FROM staged_declarations WHERE decree_ref=? AND status='staged' "
+            "AND (? IS NULL OR created_turn=?) ORDER BY id",
+            (ref, turn, turn),
         ).fetchall()
         return tuple(_row_to_staged(row) for row in rows)
 
@@ -185,7 +184,10 @@ class StagedDeclarationStore:
         return row is not None
 
     def questions_for(self, decree_ref: str) -> list:
-        """该旨未作废行上的请旨；已结算行仍保留，供过月重试判断是否还在等答复。"""
+        """该旨未作废行上的请旨；已结算行仍保留，供过月重试判断是否还在等答复。
+
+        SQL NULL = 真正缺省（跳过）；空串/非列表/腐坏 JSON 响亮（#1897 E1）。
+        """
         ref = str(decree_ref or "").strip()
         if not ref:
             return []
@@ -197,15 +199,18 @@ class StagedDeclarationStore:
         questions: list = []
         for row in rows:
             raw = row["questions_json"]
-            if not raw:
+            if raw is None:
                 continue
-            parsed = json.loads(raw)
-            if isinstance(parsed, list):
-                questions.extend(parsed)
+            from ming_sim.db import _load_durable_json
+            parsed = _load_durable_json(raw, default='[]')
+            questions = questions + parsed
         return questions
 
     def forecast_text_for(self, decree_ref: str) -> str:
-        """问前段文。已结算行仍保留，续推只读，不重推、不重落。"""
+        """问前段文。已结算行仍保留，续推只读，不重推、不重落。
+
+        原文过手：strip 只判空副本，运输值不加工（#1897 E2 / P6）。
+        """
         ref = str(decree_ref or "").strip()
         if not ref:
             return ""
@@ -216,14 +221,13 @@ class StagedDeclarationStore:
             (ref,),
         ).fetchall()
         parts = [
-            str(row["forecast_text"]).strip()
+            str(row["forecast_text"])
             for row in rows
-            if str(row["forecast_text"] or "").strip()
         ]
         return "\n".join(parts)
 
-    def clear_questions(self, decree_ref: str) -> int:
-        """批红答复已持久化后清请旨；问前声明与结算标记不动。"""
+    def replace_questions(self, decree_ref: str, questions: list, *, forecast_text: str = "") -> int:
+        """续推消费旧问并承接新问；声明及结算标记不动，原文保留供下一次续推。"""
         ref = str(decree_ref or "").strip()
         if not ref:
             return 0
@@ -233,39 +237,53 @@ class StagedDeclarationStore:
             "WHERE decree_ref=? AND status!='discarded' AND questions_json IS NOT NULL",
             (ref,),
         )
+        self._conn.execute(
+            "UPDATE staged_declarations SET questions_json=?, forecast_text=COALESCE(forecast_text,'') || ? "
+            "WHERE id=(SELECT MAX(id) FROM staged_declarations "
+            "WHERE decree_ref=? AND status!='discarded')",
+            (json.dumps(questions, ensure_ascii=False) if questions else None,
+             "\n" + forecast_text if forecast_text else "", ref),
+        )
         if owns:
             self._conn.commit()
         return int(cur.rowcount or 0)
 
-    def mark_settled(self, decree_ref: str) -> int:
+    def mark_terminal(self, decree_ref: str, *, status: str = "settled") -> int:
         ref = str(decree_ref or "").strip()
         owns = connection_owns_transaction(self._conn)
         cur = self._conn.execute(
-            "UPDATE staged_declarations SET status='settled' "
+            "UPDATE staged_declarations SET status=? "
             "WHERE decree_ref=? AND status='staged'",
-            (ref,),
+            (status, ref),
         )
         if owns:
             self._conn.commit()
         return int(cur.rowcount or 0)
 
 
-def _load_optional_json(row: Any, column: str) -> object:
-    if column not in row.keys() or row[column] is None:
-        return None
-    return json.loads(row[column])
-
-
 def _row_to_staged(row: Any) -> StagedDeclaration:
-    verdict = _load_optional_json(row, "verdict_json")
-    questions = _load_optional_json(row, "questions_json")
+    from ming_sim.db import _load_durable_json
+    # SQL NULL 是缺省；其它值原样解码，留给真实消费，不洗成缺席。
+    decree_ref = str(row["decree_ref"])
+    if "verdict_json" not in row.keys() or row["verdict_json"] is None:
+        verdict = None
+    else:
+        verdict = parse_engine_payload_json(row["verdict_json"])
+    if "questions_json" not in row.keys() or row["questions_json"] is None:
+        questions = None
+    else:
+        questions = _load_durable_json(row["questions_json"], default='[]')
+        if not isinstance(questions, list):
+            raise TypeError(f"staged_declarations.questions_json:{decree_ref} must be a list, got {questions!r}")
     forecast_text = row["forecast_text"] if "forecast_text" in row.keys() else None
     return StagedDeclaration(
-        id=int(row["id"]), decree_ref=str(row["decree_ref"]),
-        declaration=json.loads(row["declaration_json"] or "{}"),
+        id=int(row["id"]), decree_ref=decree_ref,
+        declaration=None if row["declaration_json"] is None else parse_engine_payload_json(row["declaration_json"]),
         status=str(row["status"]), created_turn=int(row["created_turn"]),
-        visible_refs=json.loads(row["visible_refs_json"] or "{}"),
-        verdict=verdict if isinstance(verdict, dict) else None,
-        questions=questions if isinstance(questions, list) else None,
-        forecast_text=None if forecast_text is None else str(forecast_text),
+        visible_refs=parse_engine_payload_json(row["visible_refs_json"]),
+        verdict=verdict,
+        questions=questions,
+        forecast_text=None if forecast_text is None else (
+            forecast_text if isinstance(forecast_text, str) else str(forecast_text)
+        ),
     )

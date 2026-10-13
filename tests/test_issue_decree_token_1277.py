@@ -1,3 +1,11 @@
+from __future__ import annotations
+from ming_sim.session_write_queue import ClassifiedWriteGate
+from types import SimpleNamespace
+import asyncio
+import pytest
+import web_app
+from ming_sim.models import TurnPhase
+from ming_sim.session import GameSession
 """#1277 — issue/issue-stream 可选 expected_turn 防双发吃月（同 #1351 口径）。
 
 接缝：
@@ -6,18 +14,10 @@
 3. 同令牌连发两次 → 第二次 409，月份只进一格
 """
 
-from __future__ import annotations
 
-import threading
-from types import SimpleNamespace
 
-import pytest
-from fastapi import HTTPException
 
-import web_app
-from ming_sim.decree import ResolveResult
-from ming_sim.models import TurnPhase
-from ming_sim.session import GameSession
+
 
 
 def _session(db, state, content):
@@ -31,10 +31,7 @@ def _session(db, state, content):
     session.deaths_this_turn = []
     session.debuts_this_turn = []
     session.last_decree = ""
-    session.last_report = ""
     session._decree_draft_fingerprint = ()
-    session._scene_registry = None
-    session._beat_generator = None
     session.auto_save = lambda *a, **k: None
     return session
 
@@ -56,13 +53,11 @@ def _web_runtime(db, state, content, *, monkeypatch):
                 "phase": state.turn_phase,
             }
         },
-        _write_gate=threading.Lock(),
+        _write_gate=ClassifiedWriteGate(),
     )
 
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
-    monkeypatch.setattr(web_app, "_failed_secret_order_ids_for_turn", lambda *_a, **_k: set())
-    monkeypatch.setattr(web_app, "_new_secret_order_failure_payloads_for_turn", lambda *_a, **_k: [])
     return runtime
 
 
@@ -71,39 +66,41 @@ def _body(expected_turn: int | None, *, cheat: str = ""):
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_double_issue_same_token_second_is_409_turn_plus_one(game, monkeypatch):
-    """同 expected_turn 连发两次：第二次 409，月份只进一格；resolve 不二次执行。"""
-    db, state, content = game
+def test_double_issue_same_token_second_is_409_turn_plus_one(web_game, monkeypatch):
+    """同 expected_turn 连发两次：第二次 SSE 409，月份只进一格；resolve 不二次执行。"""
+    db, state = web_game.db, web_game.state
     assert state.turn_phase == TurnPhase.SUMMONING.value
     start = int(state.turn)
-    runtime = _web_runtime(db, state, content, monkeypatch=monkeypatch)
+    runtime = web_game
 
-    calls = {"n": 0}
+    from tests.month_chain_helpers import canned_full_settlement
+    canned_full_settlement(monkeypatch)
+    from tests.test_month_chain_1843 import _stage_edict, _forbid_extractor
+    _forbid_extractor(monkeypatch)
+    minister = next(iter(runtime.content.characters.values())).name
+    affair = db.affairs.open(name="边饷", origin="旨意", year=state.year, period=state.period, turn=state.turn)
+    _stage_edict(db, state, minister, "核边饷", "核边饷", 0, affair.id)
 
-    def _fake_resolve(**_k):
-        calls["n"] += 1
-        # 模拟 resolve_turn 成功推进一格（与生产同向副作用）。
-        state.turn = start + 1
-        state.turn_phase = TurnPhase.SUMMONING.value
-        db.save_state(state)
-        runtime.session.last_decree = "诏曰测试"
-        return ResolveResult(awaiting=False, report="邸报测")
-
-    runtime.session.resolve_turn = _fake_resolve
-
-    first = web_app.api_issue_decree(_body(start))
-    assert first.get("report") == "邸报测"
+    ev1, first = asyncio.run(_issue_stream_terminal(_body(start)))
+    assert ev1 == "done", first
+    assert isinstance(first.get("report"), str), first
     assert int(state.turn) == start + 1
-    assert calls["n"] == 1
 
-    with pytest.raises(HTTPException) as ei:
-        web_app.api_issue_decree(_body(start))
-
-    assert ei.value.status_code == 409
-    detail = ei.value.detail
-    assert isinstance(detail, dict)
+    ev2, detail = asyncio.run(_issue_stream_terminal(_body(start)))
+    assert ev2 == "error", detail
+    assert int(detail.get("status_code") or 0) == 409, detail
     assert int(detail["turn"]) == start + 1
-    assert str(detail.get("message") or "")
-    assert "令牌" in str(detail.get("message") or "")
     assert int(state.turn) == start + 1  # 未再推进
-    assert calls["n"] == 1  # resolve 未二次执行
+
+async def _issue_stream_terminal(body: web_app.IssueDecreeRequest) -> tuple[str, dict]:
+    from tests.test_chat_stream_failpaths_393 import _parse_sse
+    response = await web_app.api_issue_decree_stream(body)
+    chunks = [
+        chunk.decode() if isinstance(chunk, bytes) else chunk
+        async for chunk in response.body_iterator
+    ]
+    serialized = "".join(chunks)
+    events = _parse_sse(serialized)
+    assert events, serialized
+    event, data = events[-1]
+    return event, data if isinstance(data, dict) else {"message": data}

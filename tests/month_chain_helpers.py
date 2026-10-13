@@ -1,0 +1,107 @@
+from __future__ import annotations
+"""Light GameSession and canned external model seams for real player-month tests."""
+
+
+from concurrent.futures import Future
+from typing import Optional
+
+import ming_sim.decree as decree_mod
+from ming_sim.session import GameSession
+
+
+class InlineExecutor:
+    """Run canned deterministic work to completion, with the executor's Future contract."""
+
+    def submit(self, fn):
+        future = Future()
+        try:
+            future.set_result(fn())
+        except BaseException as exc:
+            future.set_exception(exc)
+        return future
+
+
+def make_light_session(db, state, content):
+    """Minimal GameSession shell for advance_without_decree tracers.
+
+    Same db → one write queue (production invariant). Always returns a light
+    shell (``llm_config=None`` etc.); never hands back a previously bound real
+    GameSession or mutates that owner's fields. Shares the bound owner's queue
+    when present. The returned shell is strongly owned until game teardown so
+    ``decree_forecast`` weakref ownership cannot be GC'd between calls.
+    """
+    from ming_sim.decree_forecast import bind_forecast_owner, _owner_for
+    from ming_sim.session_write_queue import SessionWriteQueue, get_session_write_queue
+    from tests.conftest import own_session_until_game_teardown
+
+    session = GameSession.__new__(GameSession)
+    session.db = db
+    session.state = state
+    session.content = content
+    session.llm_config = None
+    session.agno_db = None
+    session.deaths_this_turn = []
+    session.debuts_this_turn = []
+    session.last_decree = ""
+    session.auto_save = lambda *a, **k: None
+
+    existing = _owner_for(db)
+    shared = getattr(existing, "_write_queue", None) if existing is not None else None
+    if (
+        existing is not None
+        and getattr(existing, "db", None) is db
+        and isinstance(shared, SessionWriteQueue)
+    ):
+        session._write_queue = shared
+        session._write_gate = shared.write_gate
+    else:
+        session._write_gate = get_session_write_queue(session).write_gate
+
+    bind_forecast_owner(session)
+    own_session_until_game_teardown(db, session)
+    return session
+
+
+def empty_rescript_response(session, *, officers, backlog, answer=None):
+    import json
+    return json.dumps({"actor_name": officers[-1]["name"], "items": [], "revisions": []}) if answer is None else json.dumps({
+        "disposition": "settled", "text": "", "decree": None,
+    })
+
+
+def canned_full_settlement(
+    monkeypatch,
+    *,
+    narrative: str = "本月边情邸报：辽饷催征，流寇未息。",
+    simulator_calls: Optional[list] = None,
+) -> list:
+    """Replace only external LLM seams; keep production settlement spine."""
+    simulator_calls = simulator_calls if simulator_calls is not None else []
+
+    # #658：真实 ensure 成案后颁布判官亦为外部 LLM 缝——canned 默认全顺颁。
+    def _promulgate(dossiers, *_a, **_k):
+        return [
+            {"dossier_id": int(row["id"]), "decision": "promulgated"}
+            for row in dossiers
+        ]
+
+    monkeypatch.setattr(decree_mod, "llm_promulgation_verdicts", _promulgate)
+
+    def _world(*_a, **_k):
+        import json
+
+        if _k.get("tag") == "gazette":
+            return json.dumps({"title": "邸报", "report": narrative})
+        if _k.get("tag") in (None, "world-segment"):
+            simulator_calls.append({"world": True, "narrative": narrative})
+        return narrative
+
+    monkeypatch.setattr("ming_sim.rescript_draft.run_rescript_text", empty_rescript_response)
+    monkeypatch.setattr("ming_sim.month_chain.run_world_segment_text", _world)
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", _world)
+    monkeypatch.setattr(
+        "ming_sim.month_translate._default_month_translate_runner",
+        lambda *_a, **_k: {"effects": {}},
+    )
+
+    return simulator_calls

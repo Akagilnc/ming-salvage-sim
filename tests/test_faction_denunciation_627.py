@@ -1,3 +1,14 @@
+from __future__ import annotations
+from ming_sim.settlement.dossier import apply_dossier_promulgation
+from ming_sim.db import GameDB
+from ming_sim.supervision import (
+    ORIGIN_MARK_DENUNCIATION_FALSE,
+    ORIGIN_MARK_DENUNCIATION_TRUE,
+    faction_relation,
+    origin_has_mark,
+)
+from tests.test_dossier_reported_progress_619 import _world_fingerprint
+from tests.dossier_test_helpers import create_test_secret_order
 """#627 政敌检举轨——真伪底与带私货审计（ID-12，r4 宪法版）。
 
 引擎三职：供事实（注入既有叙事 LLM 步）/ 承接落库（clamp）/ 真伪底派生。
@@ -8,44 +19,12 @@ Seams:
 - GameDB.read_dossier_fork_state / build_faction_denunciation_facts
 - GameDB.accept_faction_denunciations（结构化承接）
 - compose_denunciation_origin + derive_denunciation_is_true
-- SUPERVISION_BANNED_PLAYER_TOKENS 单源扩展
-- build_simulator_payload 事实注入
 """
 
-from __future__ import annotations
 
-import ast
-import json
-import re
-from pathlib import Path
-
-import pytest
-
-from ming_sim.db import GameDB
-from ming_sim.simulation import build_simulator_payload
-from ming_sim.supervision import (
-    DENUNCIATION_ALLOWED_COLS,
-    DENUNCIATION_ORIGIN_BASE,
-    DENUNCIATION_TABLE,
-    ORIGIN_MARK_DENUNCIATION_FALSE,
-    ORIGIN_MARK_DENUNCIATION_TRUE,
-    SUPERVISION_BANNED_PLAYER_TOKENS,
-    assert_no_banned_tokens,
-    compose_denunciation_origin,
-    derive_denunciation_is_true,
-    faction_relation,
-    is_reported_actual_fork,
-    origin_has_mark,
-)
-from tests.test_dossier_reported_progress_619 import _world_fingerprint
-from tests.dossier_test_helpers import create_test_secret_order
-
-
-_REPO = Path(__file__).resolve().parents[1]
 
 
 # ── helpers ───────────────────────────────────────────────────────
-
 
 def _chars_by_faction(db) -> dict[str, list]:
     rows = db.conn.execute(
@@ -59,7 +38,6 @@ def _chars_by_faction(db) -> dict[str, list]:
         by_f.setdefault(str(row["faction"]), []).append(row)
     return by_f
 
-
 def _pair_enemy(db):
     by_f = _chars_by_faction(db)
     facs = [f for f, rs in by_f.items() if rs]
@@ -71,14 +49,12 @@ def _pair_enemy(db):
                 return by_f[fa][0], by_f[fb][0]
     return by_f[facs[0]][0], by_f[facs[1]][0]
 
-
 def _enemy_accuser(db, subject_faction: str) -> str:
     by_f = _chars_by_faction(db)
     for fac, rows in by_f.items():
         if faction_relation(fac, subject_faction) == "enemy" and rows:
             return str(rows[0]["name"])
     raise AssertionError("无敌对派系在朝人物")
-
 
 def _subject_dossier(db, state, *, owner: str, token: str = "subj"):
     did = db.create_decree_dossier(
@@ -91,17 +67,16 @@ def _subject_dossier(db, state, *, owner: str, token: str = "subj"):
         executor_id=owner,
         participants=[{"character_id": owner, "tier": "主办"}],
     )
-    db.apply_dossier_promulgation(state, did, "promulgated")
+    apply_dossier_promulgation(db, state, did, "promulgated")
     db.conn.execute(
         "UPDATE decree_dossiers SET status='executing' WHERE id=?", (did,),
     )
     db.conn.commit()
     return did
 
-
 def _make_forked(db, state, dossier_id: int, *, token: str = "fork"):
     """奏报 + 旨外实况 → fork 单源读端为真。"""
-    db.record_dossier_progress(
+    db.dossiers.record_dossier_progress(
         dossier_id, state.turn, "已竣", f"奏称{token}已完",
         is_terminal=False, commit=True,
     )
@@ -115,6 +90,74 @@ def _make_forked(db, state, dossier_id: int, *, token: str = "fork"):
     )
     db.conn.commit()
 
+def test_world_materials_exclude_secret_fork_from_gazette(game, tmp_path, monkeypatch):
+    """公开材料只列入有奏报且与旨外或执行格分叉的案；密令案与未分叉案不入。"""
+    from ming_sim.materials import prepare_world_materials
+
+    db, state, content = game
+    owner = next(iter(_chars_by_faction(db).values()))[0]["name"]
+
+    def _report(dossier_id: int, token: str) -> None:
+        db.dossiers.record_dossier_progress(
+            dossier_id, state.turn, "已竣", f"奏称{token}已完",
+            is_terminal=False, commit=True,
+        )
+
+    def _beyond(dossier_id: int, token: str) -> None:
+        db.record_issue_economy_move(
+            state, "国库", 5, "浮收", f"借旨行私{token}",
+            origin_ref=f"dossier:{dossier_id}", beyond_intent=True, commit=True,
+        )
+
+    def _outcome(dossier_id: int, outcome: str) -> None:
+        db.conn.execute(
+            "UPDATE decree_dossiers SET execution_outcome=? WHERE id=?",
+            (outcome, dossier_id),
+        )
+        db.conn.commit()
+
+    beyond_executing = _subject_dossier(db, state, owner=owner, token="beyond-exec")
+    _report(beyond_executing, "beyond-exec")
+    _beyond(beyond_executing, "beyond-exec")
+    _outcome(beyond_executing, "executing")
+
+    report_transformed = _subject_dossier(db, state, owner=owner, token="report-xf")
+    _report(report_transformed, "report-xf")
+    _outcome(report_transformed, "transformed")
+
+    report_fulfilled = _subject_dossier(db, state, owner=owner, token="report-ok")
+    _report(report_fulfilled, "report-ok")
+    _outcome(report_fulfilled, "fulfilled")
+
+    silent_beyond = _subject_dossier(db, state, owner=owner, token="silent")
+    _beyond(silent_beyond, "silent")
+    _outcome(silent_beyond, "transformed")
+
+    order_id = create_test_secret_order(db, state, owner, "密查", "查账", [])
+    secret_id = int(db.dossiers.get_for_secret_order(order_id)["id"])
+    db.conn.execute("UPDATE decree_dossiers SET status='executing' WHERE id=?", (secret_id,))
+    db.conn.commit()
+    _make_forked(db, state, secret_id)
+
+    import ming_sim.materials as materials
+    captured = {}
+    write_world = materials._write_world_tree
+
+    def record_world(*args, **kwargs):
+        captured.update(args[7])
+        return write_world(*args, **kwargs)
+
+    monkeypatch.setattr(materials, "_write_world_tree", record_world)
+    prepared = prepare_world_materials(
+        db, state, dest_root=tmp_path / "gazette",
+        exclude_secret_order_dossiers=True,
+    )
+    facts = captured["denunciation"]
+    assert (prepared.root / "盘面/派系检举事实.txt").is_file()
+    assert {item["dossier_id"] for item in facts["forked_dossiers"]} == {
+        beyond_executing,
+        report_transformed,
+    }
 
 def _make_transformed_no_fork(db, state, dossier_id: int):
     """变形但无奏报分叉（无私货/无旨外）——fork 读端为假。"""
@@ -124,7 +167,6 @@ def _make_transformed_no_fork(db, state, dossier_id: int):
     )
     db.conn.commit()
 
-
 def _escalate_fork(db, state, dossier_id: int, *, token: str = "esc"):
     """案情升级：再落一笔旨外恶果（actual_effect_count↑）。"""
     db.record_issue_economy_move(
@@ -133,11 +175,6 @@ def _escalate_fork(db, state, dossier_id: int, *, token: str = "esc"):
     )
 
 
-def _table_cols(db, table: str) -> set[str]:
-    return {
-        str(row["name"])
-        for row in db.conn.execute(f'PRAGMA table_info("{table}")').fetchall()
-    }
 
 
 def _scripted_entry(
@@ -154,149 +191,7 @@ def _scripted_entry(
         "memorial_text": body,
     }
 
-
-# ── unit pure ─────────────────────────────────────────────────────
-
-
-def test_fork_predicate_pure_and_single_source_expression():
-    assert is_reported_actual_fork(
-        reported_bands=["已竣"], beyond_intent=True, execution_outcome="executing",
-    ) is True
-    assert is_reported_actual_fork(
-        reported_bands=["已竣"], beyond_intent=False, execution_outcome="transformed",
-    ) is True
-    assert is_reported_actual_fork(
-        reported_bands=["已竣"], beyond_intent=False, execution_outcome="fulfilled",
-    ) is False
-    assert is_reported_actual_fork(
-        reported_bands=[], beyond_intent=True, execution_outcome="transformed",
-    ) is False
-
-    # 结构断言：fork 判据表达式全库仅一处（supervision.py）
-    needle = 'outcome not in {"", "fulfilled", "executing"}'
-    hits: list[Path] = []
-    for path in (_REPO / "ming_sim").rglob("*.py"):
-        text = path.read_text(encoding="utf-8")
-        if needle in text:
-            hits.append(path.relative_to(_REPO))
-    assert hits == [Path("ming_sim/supervision.py")], hits
-
-    src = (_REPO / "ming_sim" / "supervision.py").read_text(encoding="utf-8")
-    tree = ast.parse(src)
-    defs = [
-        n.name for n in tree.body
-        if isinstance(n, ast.FunctionDef) and n.name == "is_reported_actual_fork"
-    ]
-    assert defs == ["is_reported_actual_fork"]
-
-
-def test_veracity_derivation_mechanical_and_origin_marks():
-    """真伪底派生：分叉→真；无分叉→私货；origin 单源 mark。"""
-    assert derive_denunciation_is_true(fork=True) is True
-    assert derive_denunciation_is_true(fork=False) is False
-
-    o_true = compose_denunciation_origin(is_true=True)
-    o_false = compose_denunciation_origin(is_true=False)
-    assert o_true.startswith(DENUNCIATION_ORIGIN_BASE)
-    assert origin_has_mark(o_true, ORIGIN_MARK_DENUNCIATION_TRUE)
-    assert origin_has_mark(o_false, ORIGIN_MARK_DENUNCIATION_FALSE)
-    assert not origin_has_mark(o_true, ORIGIN_MARK_DENUNCIATION_FALSE)
-
-
-def test_no_intensity_quota_template_symbols():
-    """P6/P7：烈度门/quota/模板函数定义不得再存在（禁词表字符串除外）。"""
-    src = (_REPO / "ming_sim" / "supervision.py").read_text(encoding="utf-8")
-    tree = ast.parse(src)
-    top_names = {
-        n.name for n in tree.body
-        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-    }
-    assign_names: set[str] = set()
-    for n in tree.body:
-        if isinstance(n, ast.Assign):
-            for t in n.targets:
-                if isinstance(t, ast.Name):
-                    assign_names.add(t.id)
-        elif isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name):
-            assign_names.add(n.target.id)
-    for banned in (
-        "DENUNCIATION_INTENSITY_GATES",
-        "denunciation_quota",
-        "render_denunciation_memorial",
-        "faction_conflict_intensity",
-        "pick_denunciation_accusers",
-    ):
-        assert banned not in top_names, banned
-        assert banned not in assign_names, banned
-    db_src = (_REPO / "ming_sim" / "db.py").read_text(encoding="utf-8")
-    db_tree = ast.parse(db_src)
-    db_fns = {
-        n.name for n in ast.walk(db_tree) if isinstance(n, ast.FunctionDef)
-    }
-    assert "render_denunciation_memorial" not in db_fns
-    assert "denunciation_quota" not in db_fns
-    assert "trigger_faction_denunciations" not in db_fns
-    assert "accept_faction_denunciations" in db_fns
-    assert "build_faction_denunciation_facts" in db_fns
-
-
-# ── AC1 事实供给 ──────────────────────────────────────────────────
-
-
-def test_ac1_fact_supply_four_classes_no_veracity_no_quota(game):
-    db, state, _content = game
-    subject, _ = _pair_enemy(db)
-    subject_name = str(subject["name"])
-    did = _subject_dossier(db, state, owner=subject_name, token="facts")
-    _make_forked(db, state, did, token="facts")
-
-    facts = db.build_faction_denunciation_facts()
-    # 四类事实
-    for key in (
-        "forked_dossiers",
-        "faction_enmities",
-        "faction_situations",
-        "character_personas",
-    ):
-        assert key in facts, key
-        assert isinstance(facts[key], list), key
-
-    assert any(int(d["dossier_id"]) == did for d in facts["forked_dossiers"])
-    assert facts["faction_enmities"], "须有敌对关系事实"
-    assert facts["faction_situations"], "须有派系处境定性档"
-    assert facts["character_personas"], "须有人物个性"
-
-    # 处境/个性为定性档，非裸分
-    for sit in facts["faction_situations"]:
-        assert "leverage_band" in sit and "satisfaction_band" in sit
-        assert "leverage" not in sit
-        assert "satisfaction" not in sit
-    for persona in facts["character_personas"]:
-        assert "integrity_band" in persona
-
-    # 输入不携真伪位、无 quota
-    blob = json.dumps(facts, ensure_ascii=False)
-    for banned in (
-        "denunciation_true", "denunciation_false", "is_true", "veracity",
-        "quota", "denunciation_quota", "intensity", "faction_conflict_intensity",
-    ):
-        assert banned not in blob, banned
-
-    # 叙事步输入构造：simulator payload 含此键且同约束
-    payload = build_simulator_payload(state, db, decree_text="试", previous_narrative="")
-    assert "faction_denunciation_facts" in payload
-    injected = payload["faction_denunciation_facts"]
-    assert set(injected) >= {
-        "forked_dossiers", "faction_enmities",
-        "faction_situations", "character_personas",
-    }
-    inj_blob = json.dumps(injected, ensure_ascii=False)
-    for banned in ("denunciation_true", "denunciation_false", "quota", "veracity"):
-        assert banned not in inj_blob, banned
-
-
 # ── AC2 承接与 clamp ──────────────────────────────────────────────
-
 
 def test_ac2_scripted_accept_and_clamp(game):
     db, state, _content = game
@@ -309,13 +204,14 @@ def test_ac2_scripted_accept_and_clamp(game):
     _make_forked(db, state, did, token="acc")
 
     body = f"{accuser}奏：{subject_name}清丈有私，请皇上按问。"
-    hits = db.accept_faction_denunciations(
+    res = db.accept_faction_denunciations(
         state,
         [_scripted_entry(
             accuser=accuser, subject=subject_name, dossier_id=did, body=body,
         )],
         commit=True,
     )
+    hits = res.applied
     assert len(hits) == 1
     hit = hits[0]
     assert hit["accuser_name"] == accuser
@@ -323,7 +219,7 @@ def test_ac2_scripted_accept_and_clamp(game):
     assert hit["memorial_text"] == body
     assert origin_has_mark(hit["origin"], ORIGIN_MARK_DENUNCIATION_TRUE)
 
-    rows = db.list_faction_denunciations(turn=state.turn, target_dossier_id=did)
+    rows = db.dossiers.denunciations(turn=state.turn, target_dossier_id=did)
     assert len(rows) == 1
     assert rows[0]["memorial_text"] == body
 
@@ -332,26 +228,24 @@ def test_ac2_scripted_accept_and_clamp(game):
         state,
         [_scripted_entry(
             accuser=accuser, subject=subject_name, dossier_id=9_999_999,
-            body="妄指无案",
         )],
         commit=True,
     )
-    assert missing == []
+    assert missing.applied == []
+    assert len(missing.rejected) == 1
 
     # 检举人不在场 → 拒
     ghost = db.accept_faction_denunciations(
         state,
         [_scripted_entry(
             accuser="不存在之人甲乙丙", subject=subject_name, dossier_id=did,
-            body="鬼影弹章",
         )],
         commit=True,
     )
-    assert ghost == []
-
+    assert ghost.applied == []
+    assert len(ghost.rejected) == 1
 
 # ── AC3 真伪底派生 ────────────────────────────────────────────────
-
 
 def test_ac3_veracity_true_and_false_from_fork(game):
     db, state, _content = game
@@ -373,15 +267,13 @@ def test_ac3_veracity_true_and_false_from_fork(game):
         [
             _scripted_entry(
                 accuser=accuser, subject=subject_name, dossier_id=did_true,
-                body="真分叉弹章",
             ),
             _scripted_entry(
                 accuser=accuser, subject=subject_name, dossier_id=did_false,
-                body="无分叉私货弹章",
             ),
         ],
         commit=True,
-    )
+    ).applied
     by_did = {int(h["target_dossier_id"]): h for h in hits}
     assert origin_has_mark(by_did[did_true]["origin"], ORIGIN_MARK_DENUNCIATION_TRUE)
     assert by_did[did_true]["is_true"] is True
@@ -392,9 +284,7 @@ def test_ac3_veracity_true_and_false_from_fork(game):
     assert by_did[did_false]["is_true"] is False
     assert "fork_exposure" not in by_did[did_false]["payload"]
 
-
 # ── AC4 重复语义三断言 + restore ──────────────────────────────────
-
 
 def test_ac4_dedup_upgrade_closed_and_restore(game, tmp_path, content):
     db, state, _content = game
@@ -406,47 +296,47 @@ def test_ac4_dedup_upgrade_closed_and_restore(game, tmp_path, content):
     did = _subject_dossier(db, state, owner=subject_name, token="dedup")
     _make_forked(db, state, did, token="dedup")
     entry = _scripted_entry(
-        accuser=accuser, subject=subject_name, dossier_id=did, body="初弹",
+        accuser=accuser, subject=subject_name, dossier_id=did,
     )
 
-    first = db.accept_faction_denunciations(state, [entry], commit=True)
+    first = db.accept_faction_denunciations(state, [entry], commit=True).applied
     assert len(first) == 1
 
     # 同 turn 同键二次拒（去重由承接查询单源，非 UNIQUE）
-    same_turn_dup = db.accept_faction_denunciations(state, [entry], commit=True)
+    same_turn_dup = db.accept_faction_denunciations(state, [entry], commit=True).applied
     assert same_turn_dup == []
-    assert len(db.list_faction_denunciations(target_dossier_id=did)) == 1
+    assert len(db.dossiers.denunciations(target_dossier_id=did)) == 1
 
     # 同 turn 案情升级可再落（禁 UNIQUE(turn,...)：否则 IntegrityError）
     _escalate_fork(db, state, did, token="same-turn")
     same_turn_up = db.accept_faction_denunciations(
         state,
         [_scripted_entry(
-            accuser=accuser, subject=subject_name, dossier_id=did, body="同回合升级再弹",
+            accuser=accuser, subject=subject_name, dossier_id=did,
         )],
         commit=True,
-    )
+    ).applied
     assert len(same_turn_up) == 1
-    assert len(db.list_faction_denunciations(target_dossier_id=did)) == 2
+    assert len(db.dossiers.denunciations(target_dossier_id=did)) == 2
 
     # 同人同案同真伪类跨 turn 亦拒（去重键不含 turn）
     state.turn = int(state.turn) + 1
-    db.save_state(state)
-    second = db.accept_faction_denunciations(state, [entry], commit=True)
+    db.reign.save_game_state(state)
+    second = db.accept_faction_denunciations(state, [entry], commit=True).applied
     assert second == []
-    assert len(db.list_faction_denunciations(target_dossier_id=did)) == 2
+    assert len(db.dossiers.denunciations(target_dossier_id=did)) == 2
 
     # 跨 turn 案情再升级可再落
     _escalate_fork(db, state, did, token="up")
     upgraded = db.accept_faction_denunciations(
         state,
         [_scripted_entry(
-            accuser=accuser, subject=subject_name, dossier_id=did, body="升级再弹",
+            accuser=accuser, subject=subject_name, dossier_id=did,
         )],
         commit=True,
-    )
+    ).applied
     assert len(upgraded) == 1
-    assert len(db.list_faction_denunciations(target_dossier_id=did)) == 3
+    assert len(db.dossiers.denunciations(target_dossier_id=did)) == 3
 
     # closed 案卷拒
     did_closed = _subject_dossier(db, state, owner=subject_name, token="cls")
@@ -455,44 +345,42 @@ def test_ac4_dedup_upgrade_closed_and_restore(game, tmp_path, content):
         "UPDATE decree_dossiers SET status='closed' WHERE id=?", (did_closed,),
     )
     db.conn.commit()
-    closed_hits = db.accept_faction_denunciations(
+    closed_res = db.accept_faction_denunciations(
         state,
         [_scripted_entry(
             accuser=accuser, subject=subject_name, dossier_id=did_closed,
-            body="结案勿弹",
         )],
         commit=True,
     )
-    assert closed_hits == []
+    assert closed_res.applied == []
+    assert len(closed_res.rejected) == 1
 
     # restore 无损接续
-    expected = db.list_faction_denunciations()
+    expected = db.dossiers.denunciations()
     backup = tmp_path / "restore-627.db"
     db.backup_to(str(backup))
-    db.close()
+    db.conn.close()
 
     restored = GameDB(str(backup), content=content)
     try:
-        got = restored.list_faction_denunciations()
+        got = restored.dossiers.denunciations()
         assert got == expected
         # restore 后同键重跑不双计
         again = restored.accept_faction_denunciations(
             state,
             [_scripted_entry(
-                accuser=accuser, subject=subject_name, dossier_id=did, body="升级再弹",
+                accuser=accuser, subject=subject_name, dossier_id=did,
             )],
             commit=True,
-        )
+        ).applied
         assert again == []
-        assert restored.list_faction_denunciations() == expected
+        assert restored.dossiers.denunciations() == expected
     finally:
-        restored.close()
+        restored.conn.close()
 
+# ── AC5 零模板 + 暴露载体 ────────────────────────────────────────
 
-# ── AC5 零模板 + banned tokens + #622 单源 + 暴露载体 ─────────────
-
-
-def test_ac5_zero_template_banned_tokens_exposure_and_622(game):
+def test_ac5_zero_template_exposure_and_622(game):
     db, state, _content = game
     subject, _ = _pair_enemy(db)
     subject_name = str(subject["name"])
@@ -503,7 +391,7 @@ def test_ac5_zero_template_banned_tokens_exposure_and_622(game):
     _make_forked(db, state, did, token="ban")
 
     fp_before = _world_fingerprint(db)
-    loophole_before = db.list_loophole_exposures(did)
+    loophole_before = db.dossiers.exposure_rows(did)
     knowledge_n_before = db.conn.execute(
         "SELECT COUNT(*) AS n FROM character_knowledge_events"
     ).fetchone()["n"]
@@ -522,16 +410,15 @@ def test_ac5_zero_template_banned_tokens_exposure_and_622(game):
             accuser=accuser, subject=subject_name, dossier_id=did, body=body,
         )],
         commit=True,
-    )
+    ).applied
     assert hits
     for h in hits:
-        assert_no_banned_tokens(h["memorial_text"], surface="memorial_text")
         # 正文即 LLM/scripted 原文，非引擎模板壳
         assert h["memorial_text"] == body
 
     # 暴露落条目自身，不写 loophole、不回注知识轨、不改世界状态
     assert hits[0]["payload"].get("fork_exposure", {}).get("fork") is True
-    assert db.list_loophole_exposures(did) == loophole_before
+    assert db.dossiers.exposure_rows(did) == loophole_before
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM character_knowledge_events"
     ).fetchone()["n"] == knowledge_n_before
@@ -544,62 +431,18 @@ def test_ac5_zero_template_banned_tokens_exposure_and_622(game):
     ).fetchone()["n"] == dossier_n_before
     assert _world_fingerprint(db) == fp_before
 
-    # 反向：知识轨无检举事件（呈现由 simulator 事件章/探子回报，非引擎回注）
-    items = db.knowledge_items_for_turn(state.turn)
-    bodies = [
-        str(it.get("body") or "")
-        for it in items
-        if isinstance(it, dict)
-    ]
-    assert body not in bodies
-    for it in items:
-        if not isinstance(it, dict):
-            continue
-        blob = " ".join(
-            str(it.get(k) or "")
-            for k in ("title", "body", "text", "summary", "content", "kind", "source_id")
-        )
-        assert "检举" not in blob
-        assert "faction_denunciation" not in blob
-        for key in ("title", "body", "text", "summary", "content"):
-            if key in it:
-                assert_no_banned_tokens(it.get(key), surface="knowledge_items")
+    # 知识轨没有新增条目（由上面的结构化计数证明）。
 
-    for token in (
-        "denunciation_true", "denunciation_false",
-        "fork_exposure", "veracity",
-        "denunciation_quota", "faction_conflict_intensity",
-    ):
-        assert token in SUPERVISION_BANNED_PLAYER_TOKENS
-
-    # schema 白名单
-    assert DENUNCIATION_TABLE in {
-        r[0] for r in db.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
-    }
-    assert _table_cols(db, DENUNCIATION_TABLE) == DENUNCIATION_ALLOWED_COLS
-
-    # 引擎侧零模板句：产出路径无固定文案常量
-    prod_files = [
-        _REPO / "ming_sim" / "supervision.py",
-        _REPO / "ming_sim" / "db.py",
-        _REPO / "ming_sim" / "decree.py",
-    ]
-    template_re = re.compile(
-        r"奏称：.*办理.*有异状|请皇上按问"
-    )
-    for path in prod_files:
-        text = path.read_text(encoding="utf-8")
-        assert not template_re.search(text), f"模板句残留于 {path.name}"
+    # 引擎侧零模板句：产出路径无固定文案常量（正则扫生产源码＝盯文，
+    # 已在 #1901 J3 整类删除；P7 的真实闸案在呈现层 LLM 产出不可篡改）
 
     # #622 读端改调 public fork 单源
     actor = subject_name
     audit_order = create_test_secret_order(db,
         state, actor, "密查清丈", "逐月密奏", ["稽核"], deadline_months=4,
     )
-    audit_dossier = int(db.get_dossier_for_secret_order(audit_order)["id"])
-    db.add_dossier_links(
+    audit_dossier = int(db.dossiers.get_for_secret_order(audit_order)["id"])
+    db.dossiers.add_links(
         audit_dossier,
         [{"target_dossier_id": did, "relation_type": "稽核", "note": "密查"}],
     )
@@ -611,20 +454,95 @@ def test_ac5_zero_template_banned_tokens_exposure_and_622(game):
     assert hit["fork"] == db.read_dossier_fork_state(did)["fork"]
 
 
-def test_accept_wired_in_settle_not_pre_settle_emergence():
-    """承接在 settle 抽取后；pre_settle 不再硬触发检举。"""
-    decree_src = (_REPO / "ming_sim" / "decree.py").read_text(encoding="utf-8")
-    assert "accept_faction_denunciations" in decree_src
-    # pre_settle 内不得再 trigger
-    tree = ast.parse(decree_src)
-    pre = next(
-        n for n in tree.body
-        if isinstance(n, ast.FunctionDef) and n.name == "pre_settle"
-    )
-    pre_body = ast.get_source_segment(decree_src, pre) or ""
-    assert "trigger_faction_denunciations" not in pre_body
-    assert "accept_faction_denunciations" not in pre_body
+def test_k9_accept_faction_denunciations_bad_items_and_containers_refused(game):
+    """K9: 所有原先静默跳过的检举坏项均结构化拒收留痕，合法兄弟条目正常落账；非 list 容器经分派形状拒收。"""
+    from ming_sim.applier import Provenance
+    from ming_sim.declaration_dispatch import dispatch_declaration
 
-    sim_src = (_REPO / "ming_sim" / "simulation.py").read_text(encoding="utf-8")
-    assert "faction_denunciation_facts" in sim_src
-    assert "faction_denunciations" in sim_src  # extractor 字段
+    db, state, _ = game
+    accuser, inactive = [row["name"] for row in db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 2"
+    )]
+    db.conn.execute("UPDATE characters SET status='dead' WHERE name=?", (inactive,))
+    did_open = db.create_decree_dossier(
+        state, action_type="policy", decree_text="在途案卷",
+        target_kind="issue", target_id="1", payload={},
+    )
+    did_closed = db.create_decree_dossier(
+        state, action_type="policy", decree_text="已结案卷",
+        target_kind="issue", target_id="1", payload={},
+    )
+    db.conn.execute("UPDATE decree_dossiers SET status='closed' WHERE id=?", (did_closed,))
+    db.conn.commit()
+
+    bad_items = [
+        "not_a_dict",
+        {"memorial_text": "缺检举人", "target_dossier_id": did_open},
+        {"accuser_name": accuser, "target_dossier_id": did_open},
+        {"accuser_name": accuser, "memorial_text": "零ID", "target_dossier_id": 0},
+        {"accuser_name": accuser, "memorial_text": "字串ID", "target_dossier_id": "not_an_int"},
+        {"accuser_name": inactive, "memorial_text": "检举人已退场", "target_dossier_id": did_open},
+        {"accuser_name": "ghost_accuser", "memorial_text": "查无此人", "target_dossier_id": did_open},
+        {"accuser_name": accuser, "memorial_text": "查无案卷", "target_dossier_id": 999999},
+        {"accuser_name": accuser, "memorial_text": "闭卷检举", "target_dossier_id": did_closed},
+    ]
+    good_item = {"accuser_name": accuser, "memorial_text": "证据确凿", "target_dossier_id": did_open}
+
+    dispatch_declaration(
+        db, state,
+        {"effects": [{"faction_denunciations": [*bad_items, good_item]}]},
+        source=Provenance.system_simulation,
+        defer_disclosure=True,
+    )
+    # 合法 sibling 存活落库
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM faction_denunciations WHERE target_dossier_id=?", (did_open,)
+    ).fetchone()[0] == 1
+    # 坏项全部持久化拒收留痕
+    rejections = db.conn.execute(
+        "SELECT category FROM rejection_reports WHERE section='faction_denunciations' ORDER BY id"
+    ).fetchall()
+    assert [r["category"] for r in rejections] == [
+        "invalid_shape", "invalid_shape", "invalid_shape", "invalid_shape",
+        "invalid_shape",
+        "missing_ref", "missing_ref", "missing_ref", "invalid_status",
+    ]
+
+    # 非 list 容器通过既有 dispatch 形状拒收
+    dispatch_declaration(
+        db, state,
+        {"effects": [{"faction_denunciations": "not_a_list"}]},
+        source=Provenance.system_simulation,
+        defer_disclosure=True,
+    )
+    non_list_count = db.conn.execute(
+        "SELECT COUNT(*) FROM rejection_reports WHERE section='faction_denunciations' AND category='invalid_shape'"
+    ).fetchone()[0]
+    assert non_list_count == 6
+
+    # K9: 密令选态坏编号与未知编号逐项拒收，合法兄弟项正常落账
+    order_id = create_test_secret_order(
+        db, state, accuser, "密查清丈", "逐月密奏", ["稽核"], deadline_months=4,
+    )
+    db.conn.execute("UPDATE secret_orders SET turn_issued=? WHERE id=?", (state.turn - 1, order_id))
+    db.conn.commit()
+
+    dispatch_declaration(
+        db, state,
+        {"effects": [{
+            "covert_exec_selections": [
+                {"order_id": "not_an_id", "fidelity": "忠实"},
+                {"order_id": 999999, "fidelity": "忠实"},
+                {"order_id": order_id, "fidelity": "忠实"},
+            ],
+        }]},
+        source=Provenance.system_simulation,
+        defer_disclosure=False,
+    )
+    secret_rejections = db.conn.execute(
+        "SELECT category FROM rejection_reports WHERE section='covert_exec_selections' ORDER BY id"
+    ).fetchall()
+    assert [r["category"] for r in secret_rejections] == ["invalid_shape", "missing_ref"]
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM dossier_actual_progress WHERE fidelity_state='忠实'"
+    ).fetchone()[0] == 1

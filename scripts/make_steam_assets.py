@@ -18,7 +18,6 @@ XINGKAI  = "/System/Library/AssetsV2/com_apple_MobileAsset_Font8/13b8ce423f92087
 PALATINO = "/System/Library/Fonts/Palatino.ttc"
 
 GOLD  = (255, 235, 130)
-DGOLD = (255, 205,  55)
 DARK  = ( 30,  10,   0)   # near-black stroke
 
 def font(path, size):
@@ -42,9 +41,6 @@ def stamp(draw, x, y, text, fnt, sw=7):
     draw.text((x, y), text, font=fnt, fill=DARK,
               stroke_width=sw, stroke_fill=DARK)
     draw.text((x, y), text, font=fnt, fill=GOLD)
-
-def hline(draw, cx, y, half_w, color=(210, 170, 55), width=2):
-    draw.line([(cx - half_w, y), (cx + half_w, y)], fill=color, width=width)
 
 def text_size(draw, text, fnt):
     bb = draw.textbbox((0, 0), text, font=fnt)
@@ -91,7 +87,6 @@ def overlay_logo(img, lang="cn"):
     ty1 = H - block_h - int(H * 0.08)
     ty2 = ty1 + t1h + gap
     mid = W // 2
-    lw  = max(t1w, t2w) // 2 + int(W * 0.03)
 
     stamp(draw, mid - t1w // 2, ty1, t1, f1, sw=8)
     stamp(draw, mid - t2w // 2, ty2, t2, f2, sw=6)
@@ -129,7 +124,6 @@ def make_small_capsule(lang):
     ty2 = ty1 + t1h + gap
 
     mid = split + logo_w // 2 + 4
-    lw  = logo_w // 2 - 4
 
     stamp(draw, mid - t1w // 2, ty1, t1, f1, sw=5)
     stamp(draw, mid - t2w // 2, ty2, t2, f2, sw=3)

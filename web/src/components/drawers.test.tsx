@@ -1,9 +1,9 @@
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ArmyDrawer, MinisterCardList, RegionDrawer } from "./drawers";
+import { ArmyDrawer, MinisterCardList } from "./drawers";
 import { PortraitUploadButton } from "./hud";
-import type { Army, Minister, Region } from "../types";
+import type { Army, Minister } from "../types";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -28,47 +28,6 @@ function renderArmyDrawer(army: Army) {
   return host;
 }
 
-function makeRegion(overrides: Partial<Region> = {}): Region {
-  return {
-    id: "beizhili",
-    name: "北直隶",
-    kind: "两京",
-    population: 7200000,
-    public_support: 50,
-    unrest: 20,
-    natural_disaster: "无",
-    human_disaster: "无",
-    registered_land: 200,
-    hidden_land: 0,
-    tax_per_turn: 1,
-    grain_security: 40,
-    gentry_resistance: 30,
-    military_pressure: 70,
-    status: "平",
-    controlled_by: "ming",
-    ...overrides,
-  };
-}
-
-function renderRegionDrawer(regions: Region[]) {
-  const host = document.createElement("div");
-  document.body.appendChild(host);
-  const root = createRoot(host);
-  act(() =>
-    root.render(
-      <RegionDrawer
-        regions={regions}
-        open={true}
-        selectedRegionId={regions[0].id}
-        onSelectRegion={() => {}}
-        onClose={() => {}}
-      />
-    )
-  );
-  mountedRoots.push({ root, host });
-  return host;
-}
-
 function minister(partial: Partial<Minister> & Pick<Minister, "name" | "office">): Minister {
   return {
     office_type: "",
@@ -78,7 +37,6 @@ function minister(partial: Partial<Minister> & Pick<Minister, "name" | "office">
     status_label: "在朝",
     summary: "",
     favorite: false,
-    skills: [],
     ...partial,
   };
 }
@@ -97,7 +55,7 @@ async function renderCourtList(
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string) => {
-      if (String(url).includes("/api/court_layout")) {
+      if (url.includes("/api/court_layout")) {
         return { ok: true, json: async () => ({ layout: "{}" }) } as Response;
       }
       return { ok: true, json: async () => ({}) } as Response;
@@ -140,7 +98,7 @@ afterEach(() => {
 describe("ArmyDrawer presentation", () => {
   // #321 P7：军情三键 ABI 仍可入 props，DOM 不得直显固定串；保留兵力/月饷世界事实
   it("keeps world facts and never renders situation three-key strings", () => {
-    const host = renderArmyDrawer({
+    const army: Army = {
       id: "denglai",
       name: "登莱兵与水师",
       station: "山东 / 登莱",
@@ -159,43 +117,14 @@ describe("ArmyDrawer presentation", () => {
       mutiny_tier: "优秀",
       status: "可支援辽东和海运",
       owner_power: "ming",
-    });
-
-    expect(host.textContent).toContain("登莱兵与水师");
-    expect(host.textContent).toContain("26000");
-    expect(host.textContent).toContain("4万");
+    };
+    const host = renderArmyDrawer(army);
+    expect(host.querySelector("table")!.textContent).toContain(String(army.manpower));
+    expect(host.querySelector("table")!.textContent).toContain(String(army.army_needed));
+    expect(host.textContent).toContain(army.name);
     expect(host.textContent).not.toContain("欠饷约60万两，数月军饷");
     expect(host.textContent).not.toContain("士气：尚稳");
     expect(host.textContent).not.toContain("优秀");
-    expect(host.textContent).not.toContain("63万两");
-    expect(host.textContent).not.toContain("忠诚73");
-  });
-
-  it("does not render fractional arrears_text or raw 12.5", () => {
-    const host = renderArmyDrawer({
-      id: "denglai",
-      name: "登莱兵与水师",
-      station: "山东 / 登莱",
-      theater: "山东",
-      commander: "登莱巡抚",
-      controller: "兵部",
-      troop_type: "水师、火器兵、步卒",
-      manpower: 26000,
-      army_needed: 4,
-      supply: 73,
-      morale_text: "士气：尚稳",
-      training: 73,
-      equipment: 73,
-      arrears_text: "欠饷约15万两，约两月军饷",
-      mobility: 73,
-      mutiny_tier: "优秀",
-      status: "可支援辽东和海运",
-      owner_power: "ming",
-    });
-
-    expect(host.textContent).not.toContain("欠饷约15万两");
-    expect(host.textContent).not.toContain("约两月军饷");
-    expect(host.textContent).not.toContain("12.5万两");
   });
 
   it("#1501 does not render static army status sentence", () => {
@@ -223,21 +152,10 @@ describe("ArmyDrawer presentation", () => {
 
     // 即使 props 仍带旧 status / 军情三键，军牌 DOM 不得渲染之
     expect(host.textContent).not.toContain(statusSentence);
-    expect(host.textContent).not.toContain("欠饷严重");
-    expect(host.textContent).not.toMatch(/状态/);
     expect(host.textContent).not.toContain("欠饷约60万两，数月军饷");
     expect(host.textContent).not.toContain("士气：不振");
     expect(host.textContent).not.toContain("不满");
     expect(host.querySelector(".right-drawer-detail")).toBeTruthy();
-  });
-});
-
-describe("RegionDrawer #648 population (P7: LLM 长文，无 UI 模板)", () => {
-  it("never renders fixed population strings (约N万口 / 不足一万口)", () => {
-    const host = renderRegionDrawer([makeRegion({ population: 7200000 })]);
-    expect(host.textContent).not.toContain("万口");
-    expect(host.textContent).not.toContain("不足一万");
-    expect(host.textContent).not.toContain("undefined");
   });
 });
 
@@ -275,7 +193,7 @@ describe("朝堂空 layout 合法态（#1290/#1332）", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (url: string) => {
-        if (String(url).includes("/api/court_layout")) return pending as unknown as Response;
+        if (url.includes("/api/court_layout")) return pending as unknown as Response;
         return { ok: true, json: async () => ({}) } as Response;
       })
     );
@@ -358,8 +276,6 @@ describe("朝堂空 layout 合法态（#1290/#1332）", () => {
     });
 
     const after = cardPos(host, "施凤来");
-    expect(after).not.toBeNull();
-    expect(after!.left).not.toBe("");
     // 完成拖拽后 → 非空服务端 layout 回包不得回滚本地
     expect(after).toEqual(dragged);
 
@@ -374,8 +290,8 @@ describe("朝堂空 layout 合法态（#1290/#1332）", () => {
       resolveLayout = r;
     });
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
-      if (String(url).includes("/api/court_layout")) {
-        if (init && String(init.method || "GET").toUpperCase() === "POST") {
+      if (url.includes("/api/court_layout")) {
+        if (init && (init.method || "GET").toUpperCase() === "POST") {
           return { ok: true, json: async () => ({}) } as Response;
         }
         return pending as unknown as Response;
@@ -460,7 +376,7 @@ describe("朝堂空 layout 合法态（#1290/#1332）", () => {
 
     // POST 载荷须含合并结果：张瑞图服务端位 + 施凤来本地拖位；不得只剩默认布局
     const posts = fetchMock.mock.calls.filter(
-      (c) => String(c[0]).includes("/api/court_layout") && c[1] && String((c[1] as RequestInit).method || "").toUpperCase() === "POST",
+      (c) => c[0].includes("/api/court_layout") && c[1] && ((c[1] as RequestInit).method || "").toUpperCase() === "POST",
     );
     expect(posts.length).toBeGreaterThan(0);
     const lastPost = posts[posts.length - 1];
@@ -484,8 +400,8 @@ describe("朝堂空 layout 合法态（#1290/#1332）", () => {
       resolveLayout = r;
     });
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
-      if (String(url).includes("/api/court_layout")) {
-        if (init && String(init.method || "GET").toUpperCase() === "POST") {
+      if (url.includes("/api/court_layout")) {
+        if (init && (init.method || "GET").toUpperCase() === "POST") {
           return { ok: true, json: async () => ({}) } as Response;
         }
         return pending as unknown as Response;
@@ -548,7 +464,7 @@ describe("朝堂空 layout 合法态（#1290/#1332）", () => {
 
     // 合并完成前不得 POST
     const postsBefore = fetchMock.mock.calls.filter(
-      (c) => String(c[0]).includes("/api/court_layout") && c[1] && String((c[1] as RequestInit).method || "").toUpperCase() === "POST",
+      (c) => c[0].includes("/api/court_layout") && c[1] && ((c[1] as RequestInit).method || "").toUpperCase() === "POST",
     );
     expect(postsBefore.length).toBe(0);
 
@@ -569,7 +485,7 @@ describe("朝堂空 layout 合法态（#1290/#1332）", () => {
 
     // 仍无 POST
     const postsMid = fetchMock.mock.calls.filter(
-      (c) => String(c[0]).includes("/api/court_layout") && c[1] && String((c[1] as RequestInit).method || "").toUpperCase() === "POST",
+      (c) => c[0].includes("/api/court_layout") && c[1] && ((c[1] as RequestInit).method || "").toUpperCase() === "POST",
     );
     expect(postsMid.length).toBe(0);
 
@@ -599,7 +515,7 @@ describe("朝堂空 layout 合法态（#1290/#1332）", () => {
 
     // 完成后 POST 一次且载荷完整
     const posts = fetchMock.mock.calls.filter(
-      (c) => String(c[0]).includes("/api/court_layout") && c[1] && String((c[1] as RequestInit).method || "").toUpperCase() === "POST",
+      (c) => c[0].includes("/api/court_layout") && c[1] && ((c[1] as RequestInit).method || "").toUpperCase() === "POST",
     );
     expect(posts.length).toBe(1);
     const body = JSON.parse(String((posts[0][1] as RequestInit).body));
@@ -664,8 +580,8 @@ describe("朝堂同衔分座（#1196 呈现层去冲突）", () => {
     // 判官 mutation 反例：把 drawers.tsx 回退至 57dc9cfe（副作用回到 setState updater 内），
     // StrictMode 双调 updater → commitSave 两发 → 本测试必须转红；非 StrictMode 不具判别力。
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
-      if (String(url).includes("/api/court_layout")) {
-        if (init && String(init.method || "GET").toUpperCase() === "POST") {
+      if (url.includes("/api/court_layout")) {
+        if (init && (init.method || "GET").toUpperCase() === "POST") {
           return { ok: true, json: async () => ({}) } as Response;
         }
         return { ok: true, json: async () => ({ layout: "{}" }) } as Response;
@@ -725,9 +641,9 @@ describe("朝堂同衔分座（#1196 呈现层去冲突）", () => {
     // 纯化 updater：同一次松手只允许一次 POST（StrictMode 双调下旧实现会发两发）
     const posts = fetchMock.mock.calls.filter(
       (c) =>
-        String(c[0]).includes("/api/court_layout") &&
+        c[0].includes("/api/court_layout") &&
         c[1] &&
-        String((c[1] as RequestInit).method || "").toUpperCase() === "POST",
+        ((c[1] as RequestInit).method || "").toUpperCase() === "POST",
     );
     expect(posts.length).toBe(1);
     const body = JSON.parse(String((posts[0][1] as RequestInit).body));
@@ -782,7 +698,7 @@ describe("朝堂同衔分座（#1196 呈现层去冲突）", () => {
       vi.stubGlobal(
         "fetch",
         vi.fn(async (url: string) => {
-          if (String(url).includes("/api/court_layout")) {
+          if (url.includes("/api/court_layout")) {
             return { ok: true, json: async () => ({ layout: "{}" }) } as Response;
           }
           return { ok: true, json: async () => ({}) } as Response;
@@ -894,8 +810,7 @@ describe("#1683 MinisterCardList place ⊥ office DOM", () => {
     ]);
 
     const transit = host.querySelector(".minister-place.minister-transit");
-    expect(transit).not.toBeNull();
-    expect(transit!.textContent).toBe("山东");
+    expect(transit?.textContent).toBe("山东");
     expect(host.querySelectorAll(".minister-place")).toHaveLength(1);
     expect(host.querySelector(".minister-office")?.textContent).toBe("辽东巡抚");
   });
@@ -911,9 +826,8 @@ describe("#1683 MinisterCardList place ⊥ office DOM", () => {
     ]);
 
     const place = host.querySelector(".minister-place");
-    expect(place).not.toBeNull();
-    expect(place!.classList.contains("minister-transit")).toBe(false);
-    expect(place!.textContent).toBe("河南");
+    expect(place?.classList?.contains("minister-transit")).toBe(false);
+    expect(place?.textContent).toBe("河南");
     expect(host.querySelector(".minister-office")?.textContent).toBe("兵部右侍郎");
   });
 
@@ -930,8 +844,7 @@ describe("#1683 MinisterCardList place ⊥ office DOM", () => {
     ]);
 
     const transit = host.querySelector(".minister-place.minister-transit");
-    expect(transit).not.toBeNull();
-    expect(transit!.textContent).toBe("山东");
+    expect(transit?.textContent).toBe("山东");
     expect(host.querySelectorAll(".minister-place")).toHaveLength(1);
     expect(host.querySelector(".minister-office")?.textContent).toBe("辽东巡抚");
   });

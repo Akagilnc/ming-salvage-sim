@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import inspect
 import time
+import traceback
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
@@ -48,8 +49,15 @@ _typed_provider_status: ContextVar[Optional[int]] = ContextVar(
 # 提供方层抛出的 transport typed 失败（空转/空输出/瞬断/HTTP）。SDK 层把异常吞成
 # RunErrorEvent(content=str(e)) 后 typed 语义只剩散文；本 ContextVar 在 model 调用
 # 边界原样记住分类结果，供事件映射还原——不从 content 散文抠语义（ADR 0142）。
-_typed_provider_failure: ContextVar[Optional["ClassifiedFailure"]] = ContextVar(
+_typed_provider_failure: ContextVar[Optional["ClassifiedFailure | BaseException"]] = ContextVar(
     "ming_sim_transport_typed_failure", default=None,
+)
+
+# 非 transport typed 的代码异常。SDK 把异常吞成 RunErrorEvent / status=ERROR 后，
+# 只剩 content 散文；本槽在 model 调用边界原样记住，供 extract / map 还原为代码
+# 故障（错误包路径），不得摊平成 llm_run_error / llm_stream_error（#1902）。
+_code_fault: ContextVar[Optional[BaseException]] = ContextVar(
+    "ming_sim_transport_code_fault", default=None,
 )
 
 
@@ -58,9 +66,8 @@ class TransportPolicy:
     """统一 transport 预算；调用方可在 runtime 预算上收紧特定入口的重试。"""
 
     max_attempts: int = TRANSPORT_DEFAULT_MAX_ATTEMPTS
-    # #1853 召对 / #1846 过月共用：429 一次终止；其它瞬断最多三次。
-    # 非此名单的调用仍可走 default_transport_policy（#1465 429 自愈）。
-    retry_429: bool = True
+    # 429 一次终止；其它瞬断最多三次、间隔五秒。召对与其余调用同一套。
+    retry_429: bool = False
     # SDK/httpx read 阻塞预算（bind_transport_sdk_budget → model.timeout）。
     attempt_timeout_seconds: float = TRANSPORT_DEFAULT_ATTEMPT_TIMEOUT_SECONDS
     # #1792：可重试失败 → 下一 attempt 起手前的固定间隔（秒）。不按失败种类区分。
@@ -111,47 +118,23 @@ def transport_attempts_public(attempts: List[TransportAttempt]) -> List[dict]:
     ]
 
 
-def transport_policy_from_mapping(data: object) -> TransportPolicy:
-    """从 runtime 映射归一策略。数值解析单权威在 llm_config：
-
-    - 次数 / SDK 阻塞预算 → transport 段（transport_runtime_slot）
-    - 静默判死阈值 → 设置页那一格 cli.timeout_seconds（cli_idle_timeout_seconds）
-
-    只给 transport 段（无 cli 槽）时静默阈值取默认——设置页写过的值经整份 runtime
-    映射进来。
-    """
-    from ming_sim.llm_config import cli_idle_timeout_seconds, transport_runtime_slot
-
-    if not isinstance(data, dict):
-        return default_transport_policy()
-    src = data.get("transport") if isinstance(data.get("transport"), dict) else data
-    if not isinstance(src, dict):
-        return default_transport_policy()
-    slot = transport_runtime_slot(src)
-    return TransportPolicy(
-        max_attempts=int(slot["max_attempts"]),
-        attempt_timeout_seconds=float(slot["attempt_timeout_seconds"]),
-        retry_interval_seconds=float(slot["retry_interval_seconds"]),
-        idle_timeout_seconds=cli_idle_timeout_seconds(data),
-    )
-
-
 def resolve_transport_policy(source: object = None) -> TransportPolicy:
-    """解析策略：TransportPolicy / mapping → runtime_llm.json transport 段 → 默认。
+    """解析策略：显式 TransportPolicy 透传，其余回 ADR 0157 的固定一套。
 
-    不认 getattr 对象旁路（无执行消费者；配置经 runtime 文件或显式 mapping 进入）。
-    load_runtime_llm 自身已对缺/坏档回空 dict；此处不再 except Exception。
+    #1902：runtime_llm.json 的 transport 段退役——它没有任何生产者（设置页不写），
+    却让「每次调用同一套重试」可被旧档里的数字悄悄改写（429 自愈次数、间隔、阻塞
+    预算）。次数/间隔/阻塞预算现由本模块唯一定义；**静默判死阈值不同**——它是设置页
+    那一格（cli.timeout_seconds，#1792 owner 拍），仍从运行档读。
     """
     if isinstance(source, TransportPolicy):
         return source
-    if isinstance(source, dict):
-        return transport_policy_from_mapping(source)
-    from ming_sim.llm_config import load_runtime_llm
+    from ming_sim.llm_config import cli_idle_timeout_seconds, load_runtime_llm
 
+    base = default_transport_policy()
     runtime = load_runtime_llm()
-    if runtime:
-        return transport_policy_from_mapping(runtime)
-    return default_transport_policy()
+    if not runtime:
+        return base
+    return replace(base, idle_timeout_seconds=cli_idle_timeout_seconds(runtime))
 
 
 def audience_transport_policy(source: object = None) -> TransportPolicy:
@@ -208,7 +191,8 @@ def _remember_typed_failure(
     OpenAIChat.invoke 会把 openai typed 异常包装为 ModelProviderError 并显式
     ``raise ... from provider_error``；外层本身不是 openai typed，须沿 __cause__
     链取回既有 typed 事实（与 _remember_typed_status 同口径，不走 __context__）。
-    未 typed 的异常不记，仍走 run_error_event_failure 的「无 status 不洗成瞬断」。
+    未 typed 的异常改记 _code_fault，仍走代码故障还原（#1902），不走
+    run_error_event_failure 摊平。
 
     remember_connection：同步 verify/invoke 为 True（#1465 网络断重试）；流式
     invoke_stream 为 False——无提供方 HTTP typed status 的连接断不得洗成
@@ -223,11 +207,42 @@ def _remember_typed_failure(
             (TransportIdleTimeout, LLMUnavailable, APITimeoutError, APIStatusError),
         ):
             _typed_provider_failure.set(classify_transport_failure(cause))
+            _code_fault.set(None)
             return
-        if remember_connection and isinstance(cause, APIConnectionError):
-            _typed_provider_failure.set(classify_transport_failure(cause))
+        if isinstance(cause, APIConnectionError):
+            # 已知提供方连接故障始终记 typed，不得落入 _code_fault（#1902
+            # KNOWN-PROVIDER-FAILURES）。流式 remember_connection=False：用既有
+            # terminal 码 llm_stream_error（非 llm_connection_error）——后者经
+            # transport_failure_unavailable→LLMUnavailable 再 classify 会被
+            # 重判 retryable=True 而重试三次；llm_stream_error 往返仍 terminal
+            # （#1780 / 上轮 KNOWN-PROVIDER 处方：流式无 HTTP status 不重试）。
+            # 同步路径仍走可重试 llm_connection_error，不连带禁重试。
+            if remember_connection:
+                failure = classify_transport_failure(cause)
+            else:
+                base = classify_transport_failure(cause)
+                failure = ClassifiedFailure(
+                    retryable=False,
+                    code="llm_stream_error",
+                    status_code=None,
+                    provider_message=base.provider_message,
+                    message=base.message,
+                )
+            _typed_provider_failure.set(failure)
+            _code_fault.set(None)
             return
         cause = cause.__cause__
+    # 未 typed：记代码故障原件，供 SDK 吞成 ERROR 后还原（不得摊成 llm_*）。
+    _code_fault.set(error)
+
+
+def take_remembered_code_fault() -> Optional[BaseException]:
+    """取出并清空 model 调用边界记下的代码故障。无则 None。"""
+    fault = _code_fault.get()
+    if fault is None:
+        return None
+    _code_fault.set(None)
+    return fault
 
 
 def _capture_status_wrapper(method: Callable) -> Callable:
@@ -265,6 +280,27 @@ def _typed_status_from_run_error_event(event: Any) -> Optional[int]:
     return _typed_provider_status.get()
 
 
+def _exception_text_with_causes(error: BaseException) -> str:
+    """Compact cause-chain text for existing provider_message / trace.error exits.
+
+    ``traceback.format_exception`` (used by error_pack) includes frames — too heavy
+    for the single-string transport exits. ``format_exception_only`` does not walk
+    ``__cause__``. So join ``TracebackException`` message parts along the PEP 3134
+    cause chain (stdlib structure; no parallel diagnostic field / notes reliance).
+    """
+    parts: list[str] = []
+    cur: traceback.TracebackException | None = traceback.TracebackException.from_exception(
+        error, compact=True,
+    )
+    seen: set[int] = set()
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        text = str(cur).strip() or getattr(cur, "exc_type_str", "") or "Exception"
+        parts.append(text)
+        cur = cur.__cause__
+    return " | caused by: ".join(parts)
+
+
 def classify_transport_failure(error: BaseException) -> ClassifiedFailure:
     """先分类后重试。只认 typed 信号；不从错误散文猜语义（ADR 0142）。
 
@@ -275,12 +311,13 @@ def classify_transport_failure(error: BaseException) -> ClassifiedFailure:
     本函数是 APITimeout/Connection/Status/空输出/RunError → code/retryable/status 的唯一权威
     （llm_unavailable_from_error / run_error_event_failure / empty_output_failure 委派或同构）。
     """
+    err_text = _exception_text_with_causes(error)
     if isinstance(error, TransportIdleTimeout):
         return ClassifiedFailure(
             retryable=True,
             code="llm_idle_timeout",
             status_code=None,
-            provider_message=str(error) or "idle timeout",
+            provider_message=err_text or "idle timeout",
             message="LLM 调用空转超时。",
         )
     if isinstance(error, APITimeoutError):
@@ -288,7 +325,7 @@ def classify_transport_failure(error: BaseException) -> ClassifiedFailure:
             retryable=True,
             code="llm_timeout",
             status_code=None,
-            provider_message=str(error),
+            provider_message=err_text,
             message="LLM 调用超时。",
         )
     if isinstance(error, APIConnectionError):
@@ -296,7 +333,7 @@ def classify_transport_failure(error: BaseException) -> ClassifiedFailure:
             retryable=True,
             code="llm_connection_error",
             status_code=None,
-            provider_message=str(error),
+            provider_message=err_text,
             message="LLM 连接失败。",
         )
     if isinstance(error, APIStatusError):
@@ -306,13 +343,21 @@ def classify_transport_failure(error: BaseException) -> ClassifiedFailure:
             retryable=_status_retryable(status_i),
             code=code,
             status_code=status_i,
-            provider_message=str(error),
+            provider_message=err_text,
             message=f"LLM 调用失败（HTTP {status_i}）。" if status_i else "LLM 调用失败。",
         )
     if isinstance(error, LLMUnavailable):
         status = error.status_code
         code = str(error.code or "llm_unavailable")
-        pmsg = str(error.provider_message or error.message or "")
+        # Keep structured provider_message; append PEP 3134 cause chain when
+        # present. Do not replace provider body with str(error)/message.
+        base = str(error.provider_message or error.message or "")
+        cause = error.__cause__
+        if cause is not None:
+            cause_text = _exception_text_with_causes(cause)
+            pmsg = f"{base} | caused by: {cause_text}" if base else cause_text
+        else:
+            pmsg = base
         status_i = _coerce_status(status)
         if status_i is not None:
             return ClassifiedFailure(
@@ -359,8 +404,8 @@ def classify_transport_failure(error: BaseException) -> ClassifiedFailure:
         retryable=False,
         code="llm_error",
         status_code=None,
-        provider_message=str(error),
-        message=f"LLM 调用失败：{error}",
+        provider_message=err_text,
+        message=f"LLM 调用失败：{err_text}",
     )
 
 
@@ -402,19 +447,13 @@ def empty_output_failure() -> ClassifiedFailure:
 
 
 def run_error_event_failure(
-    content: object = None, status_code: object = None,
+    content: object, status_code: int,
 ) -> ClassifiedFailure:
     """RunErrorEvent → 分类唯一构造。无 typed status 时不洗成瞬断（#1452）。"""
-    pmsg = str(content or "").strip() or "stream error"
+    pmsg = str(content or "")
+    if not pmsg.strip():
+        pmsg = "stream error"
     status_i = _coerce_status(status_code)
-    if status_i is None:
-        return ClassifiedFailure(
-            retryable=False,
-            code="llm_stream_error",
-            status_code=None,
-            provider_message=pmsg,
-            message=f"LLM 流式调用失败：{pmsg}",
-        )
     return ClassifiedFailure(
         retryable=_status_retryable(status_i),
         code=f"llm_http_{status_i}",
@@ -435,21 +474,28 @@ def take_remembered_typed_failure() -> Optional[ClassifiedFailure]:
         return None
     _typed_provider_failure.set(None)
     _typed_provider_status.set(None)
+    if isinstance(remembered, BaseException):
+        raise remembered
     return remembered
 
 
 def map_run_error_event(event: Any) -> Optional[BaseException]:
-    """RunErrorEvent → LLMUnavailable 单真源（agents/web 三处同权威；#12/#14）。
+    """RunErrorEvent → 失败单真源（agents/web 三处同权威；#12/#14）。
 
-    非 RunErrorEvent 返回 None。分类语义 = run_error_event_failure；
-    系统层出口 = transport_failure_unavailable。typed status 只认事件字段或
-    提供方层捕获的 status_code，不解析 content 散文。
+    非 RunErrorEvent 返回 None。代码故障优先还原（#1902）；否则分类语义 =
+    run_error_event_failure，系统层出口 = transport_failure_unavailable。
+    typed status 只认事件字段或提供方层捕获的 status_code，不解析 content 散文。
 
     提供方层已 typed 的失败（CLI 空转/空输出/瞬断等）由 _remember_typed_failure
     在 model 调用边界记下：SDK 吞成散文事件后按记忆还原分类，禁在此重新猜语义。
     """
     if type(event).__name__ != "RunErrorEvent":
         return None
+    code_fault = take_remembered_code_fault()
+    if code_fault is not None:
+        # 代码故障优先；清掉可能残留的 typed 记忆，避免下一 attempt 串洗。
+        take_remembered_typed_failure()
+        return code_fault
     remembered = take_remembered_typed_failure()
     if remembered is not None:
         return transport_failure_unavailable(
@@ -457,6 +503,10 @@ def map_run_error_event(event: Any) -> Optional[BaseException]:
         )
     status = _typed_status_from_run_error_event(event)
     _typed_provider_status.set(None)
+    if status is None:
+        error = RuntimeError(getattr(event, "content", None) or "")
+        error.error_type = getattr(event, "error_type", None)
+        return error
     return transport_failure_unavailable(
         run_error_event_failure(
             getattr(event, "content", None), status_code=status,
@@ -556,6 +606,7 @@ def bind_transport_sdk_budget(model: object, policy: TransportPolicy) -> Iterato
         # 绑定退出即弃本次捕获，禁跨接缝残留（#1780）
         _typed_provider_status.set(None)
         _typed_provider_failure.set(None)
+        _code_fault.set(None)
 
 
 def _sleep_retry_interval(seconds: float) -> None:
@@ -645,9 +696,10 @@ def run_transport_stream(
     tick = clock or time.monotonic
 
     def _one_attempt() -> R:
-        # 每次 attempt 完整空转预算；清空上一 attempt 的 typed 记忆，禁串洗。
+        # 每次 attempt 完整空转预算；清空上一 attempt 的 typed/代码故障记忆，禁串洗。
         _typed_provider_status.set(None)
         _typed_provider_failure.set(None)
+        _code_fault.set(None)
         last_activity_at = tick()
         stream = start_stream()
         try:

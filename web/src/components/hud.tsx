@@ -172,7 +172,7 @@ export function PortraitUploadButton({
             _portraitBust[`custom:${ministerName}`] = Date.now();
             await onUpload(ministerName, file);
           } catch (err) {
-            setUploadError(`上传失败：${(err as Error).message}`);
+            setUploadError((err as Error).message);
           } finally {
             setBusy(false);
           }

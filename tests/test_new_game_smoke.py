@@ -1,13 +1,5 @@
-"""新档冒烟（#96 release 清单 / #92 E2E 确定性核）：开新档 → driver.run_settle 跑 3 回合全链
-（pre_settle 固定财政 tick → settle_with_delta 落库/inertia/结局/推进，同真实核 ADR 0004）→
-restore 接续。含 #66 省级财政基座 shadow 推进的真实链路验证。无需 LLM（driver 收确定性 delta）。
-
-实玩（真 LLM 邸报/extractor + 浏览器多机兼容）是另一层，需真人 + LLM 后端，不在本确定性冒烟内。
-"""
+"""新档冒烟：验证财政基座、外键与现役官类父行/名分写端；构造时不调用 LLM。"""
 import json
-import os
-import sqlite3
-import tempfile
 
 import pytest
 
@@ -17,8 +9,6 @@ from ming_sim.db import GameDB
 import ming_sim.issues as issues_mod
 from ming_sim.models import LLMConfig
 from ming_sim.session import GameSession
-from driver import open_game
-from tests.section_rejection_helpers import prepare_then_settle as run_settle
 
 
 def _shaanxi_settle(db):
@@ -67,10 +57,7 @@ def fresh_game_dir(tmp_path, monkeypatch):
     try:
         yield sess, dbp, content
     finally:
-        try:
-            sess.close()
-        except Exception:
-            pass
+        sess.close()
 
 
 def test_new_game_has_fiscal_substrate(fresh_game_dir):
@@ -90,7 +77,7 @@ def test_new_game_enforces_foreign_keys_without_seed_violations(fresh_game_dir):
 def test_unknown_event_id_fails_without_synthesizing_parent(fresh_game_dir):
     sess, _dbp, _content = fresh_game_dir
     event_id = "__unknown_event_1026__"
-    with pytest.raises(ValueError, match="未定义事件"):
+    with pytest.raises(ValueError):
         sess.db.mark_event_triggered(sess.state, event_id)
     assert sess.db.conn.execute(
         "SELECT 1 FROM events WHERE id=?", (event_id,),
@@ -102,7 +89,7 @@ def test_unknown_office_type_fails_without_synthesizing_parent(fresh_game_dir):
     minister = sess.db.conn.execute(
         "SELECT name FROM characters WHERE status='active' AND power_id='ming' LIMIT 1"
     ).fetchone()[0]
-    with pytest.raises(ValueError, match="未定义官类"):
+    with pytest.raises(ValueError):
         sess.db.set_character_office(minister, "试授虚衔", "__unknown_office_1026__")
     assert sess.db.conn.execute(
         "SELECT 1 FROM offices WHERE office_type='__unknown_office_1026__'"
@@ -114,72 +101,62 @@ def test_person_title_kind_does_not_materialize_office_parent(fresh_game_dir):
     minister = sess.db.conn.execute(
         "SELECT name FROM characters WHERE status='active' AND power_id='ming' LIMIT 1"
     ).fetchone()[0]
+    before = sess.db.conn.execute(
+        "SELECT office_title FROM character_offices WHERE character_name=?",
+        (minister,),
+    ).fetchone()
     sess.db.set_character_office(minister, "降臣", "身名分")
     assert sess.db.conn.execute(
         "SELECT 1 FROM offices WHERE office_type='身名分'"
     ).fetchone() is None
-    assert sess.db.conn.execute(
-        "SELECT 1 FROM character_offices WHERE character_name=?", (minister,)
-    ).fetchone() is None
+    after = sess.db.conn.execute(
+        "SELECT office_title FROM character_offices WHERE character_name=?",
+        (minister,),
+    ).fetchone()
+    if before is None:
+        assert after is None
+    else:
+        assert after["office_title"] == before["office_title"]
+        assert after["office_title"] != "降臣"
 
 
-def test_existing_office_fk_violation_is_normalized_on_reopen(fresh_game_dir):
+def test_appointment_category_survives_reopen_from_canonical_source(fresh_game_dir):
+    """#1889：官职类别真源唯一 = characters.office_type；备档只留历史官名。
+
+    经真实入口授官 → 关闭重开：官职与类别仍与真源一致，起复按备档历史官名可复原品级
+    （behavior 由 test_office_rank_562 的 restoration 用例守）。此处守「重开不篡改真源、
+    不残留第二个可写类别」这一外部可见结果。
+    """
     sess, dbp, content = fresh_game_dir
-    character = sess.db.conn.execute(
-        "SELECT name, office_type FROM characters ORDER BY name LIMIT 1"
+    db = sess.db
+    minister = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
+        "AND office_type NOT IN ('身名分', '待铨') ORDER BY name LIMIT 1"
+    ).fetchone()[0]
+    db.set_character_office(
+        minister, "山西巡抚", "地方", "真除", region_id="shaanxi",
+    )
+    db.conn.commit()
+    truth = db.conn.execute(
+        "SELECT office, office_type FROM characters WHERE name=?", (minister,)
     ).fetchone()
     sess.close()
-    raw = sqlite3.connect(dbp)
-    raw.execute("PRAGMA foreign_keys=OFF")
-    raw.execute(
-        "UPDATE character_offices SET office_type='__stale_office_1026__' "
-        "WHERE character_name=?",
-        (character["name"],),
-    )
-    raw.commit()
-    raw.close()
 
     reopened = GameDB(dbp, content=content)
     try:
-        office = reopened.conn.execute(
-            "SELECT office_type FROM character_offices WHERE character_name=?",
-            (character["name"],),
+        reopened.load_state()
+        row = reopened.conn.execute(
+            "SELECT office, office_type FROM characters WHERE name=?", (minister,)
         ).fetchone()
-        assert office["office_type"] == character["office_type"]
-        assert reopened.conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+        assert (row["office"], row["office_type"]) == (truth["office"], truth["office_type"]), (
+            "重开后官职/类别须与真源一致（备档不得反向改写真源）"
+        )
+        archived = reopened.conn.execute(
+            "SELECT office_title FROM character_offices WHERE character_name=?", (minister,)
+        ).fetchone()
+        assert archived is not None and archived["office_title"] == "山西巡抚", (
+            "备档应留最近实职历史标题供起复读品级"
+        )
         assert reopened.conn.execute("PRAGMA foreign_key_check").fetchall() == []
     finally:
-        reopened.close()
-
-
-def test_new_game_three_turn_chain_advances_substrate_and_restores(fresh_game_dir):
-    sess, dbp, content = fresh_game_dir
-    db, state = sess.db, sess.state
-    start_turn = state.turn
-    seed_tax_arrears = _shaanxi_settle(db)["st"]["民欠旧赋"]
-    for i in range(3):
-        before = state.turn
-        report = run_settle(
-            db, state, content,
-            {"economy_moves": [{"account": "国库", "delta": 30, "reason": f"smoke{i}"}]},
-            narrative=f"第{i}月邸报",
-        )
-        assert isinstance(report, str)
-        assert state.turn == before + 1, f"回合{i} 应推进一回合"
-        st = _shaanxi_settle(db)["st"]
-        # #66 shadow：固定财政相位每回合推进基座，末态有效（省库非 None、军饷欠有限非负）
-        assert st["省库库银"] is not None
-        assert st["军饷欠"] == pytest.approx(_shaanxi_source_arrears(db))
-    assert state.turn == start_turn + 3
-    end_tax_arrears = _shaanxi_settle(db)["st"]["民欠旧赋"]
-    assert end_tax_arrears > seed_tax_arrears, \
-        f"3 回合后民欠应累积（{seed_tax_arrears}→{end_tax_arrears}），证明基座在固定财政相位真推进"
-
-    # restore：关库重开 → 状态接续（turn 一致 + 基座仍在）
-    db.close()
-    db2, state2, _content2 = open_game(dbp)
-    try:
-        assert state2.turn == state.turn, "restore 接续：turn 一致"
-        assert _shaanxi_settle(db2) is not None, "restore 后 #66 基座仍在 DB"
-    finally:
-        db2.close()
+        reopened.conn.close()

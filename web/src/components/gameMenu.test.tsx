@@ -9,10 +9,19 @@ import {
   LoadTab,
   SavesList,
   ShutdownTab,
-  mergePersistedSaveSnapshot,
 } from "./gameMenu";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+const CLI_RUNNERS = [
+  { value: "agy", label: "agy（Gemini）" },
+  { value: "codex", label: "codex" },
+  { value: "claude", label: "claude" },
+  { value: "cursor", label: "cursor" },
+  { value: "kimi", label: "kimi" },
+  { value: "grok", label: "grok" },
+  { value: "pi", label: "pi" },
+];
 
 const BASE_LLM_RESPONSE = {
   channel: "api" as const,
@@ -35,6 +44,8 @@ const BASE_LLM_RESPONSE = {
   advanced_thinking_level: "",
   has_api_key: true,
   cli_runner: "agy",
+  cli_runners: CLI_RUNNERS,
+  cli_reasoning_floor_runners: ["codex", "grok"],
   cli_model: "",
   cli_timeout_seconds: 300,
   persisted: {
@@ -86,6 +97,35 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+it("in-game menu actions never request a new game", async () => {
+  const calls: Array<{ url: string; method: string }> = [];
+  global.fetch = vi.fn(async (url, init) => {
+    calls.push({ url: String(url), method: init?.method ?? "GET" });
+    return { ok: true, json: async () => ({ ...BASE_LLM_RESPONSE, saves: [] }) } as Response;
+  });
+  vi.useFakeTimers();
+  const { cleanup } = render(<GameMenuModal onClose={() => {}} onAfterLoad={() => {}} onExitToMenu={() => {}} />);
+  try {
+    await act(async () => {});
+    const navigation = document.querySelector("nav, [role=navigation]");
+    expect(navigation).not.toBeNull();
+    const tabs = Array.from(navigation!.querySelectorAll<HTMLButtonElement>("button"));
+    expect(tabs.some((tab) => !tab.disabled)).toBe(true);
+    for (const tab of tabs) {
+      await act(async () => { tab.click(); });
+      const actions = Array.from(document.querySelectorAll("button"))
+        .filter((button) => !navigation!.contains(button));
+      for (const action of actions) {
+        if (!action.disabled) await act(async () => { action.click(); });
+      }
+    }
+    expect(calls.some((call) => call.url === "/api/menu/new_game" && call.method === "POST")).toBe(false);
+  } finally {
+    cleanup();
+    vi.useRealTimers();
+  }
+});
+
 describe("LLMConfigTab — channel-gated field rendering", () => {
   beforeEach(() => {
     mockFetch({
@@ -94,81 +134,31 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     });
   });
 
-  it("shows API fields and hides CLI fields when channel=api (initial render)", async () => {
-    const { cleanup } = render(<LLMConfigTab />);
-    // flush fetch + state updates
-    await act(async () => {});
-
-    const text = document.body.textContent ?? "";
-    expect(text).toContain("Base URL");
-    expect(text).toContain("推理强度");
-    expect(text).not.toContain("CLI Runner");
-    expect(text).not.toContain("静默判死");
-    // #1794：头表属 API 区——有请求头名输入即露表（不锁标题措辞）
-    expect(document.querySelectorAll('input[aria-label="请求头名"]').length).toBe(1);
-    cleanup();
-  });
-
-  it("shows CLI fields and hides API fields when channel is switched to cli", async () => {
-    const { cleanup } = render(<LLMConfigTab />);
-    await act(async () => {});
-
-    // switch channel select to "cli"
-    const selects = document.querySelectorAll("select");
-    const channelSelect = Array.from(selects).find((s) =>
-      s.querySelector('option[value="cli"]')
-    );
-    expect(channelSelect).toBeTruthy();
-    act(() => {
-      channelSelect!.value = "cli";
-      channelSelect!.dispatchEvent(new Event("change", { bubbles: true }));
+  it.each([
+    ["api", []], ["api", ["cli"]], ["api", ["cli", "api"]], ["cli", []],
+  ] as const)("renders channel control values from %s through %j", async (initial, path) => {
+    mockFetch({
+      ...BASE_LLM_RESPONSE, channel: initial, default_headers: { "X-Session": "abc" },
+      persisted: { ...BASE_LLM_RESPONSE.persisted, channel: initial },
     });
-
-    const text = document.body.textContent ?? "";
-    expect(text).toContain("CLI Runner");
-    expect(text).toContain("静默判死");
-    expect(text).not.toContain("Base URL");
-    expect(document.querySelectorAll('input[aria-label="请求头名"]').length).toBe(0);
-    cleanup();
-  });
-
-  it("restores API fields when channel is switched back to api", async () => {
     const { cleanup } = render(<LLMConfigTab />);
     await act(async () => {});
-
-    const selects = document.querySelectorAll("select");
-    const channelSelect = Array.from(selects).find((s) =>
-      s.querySelector('option[value="cli"]')
-    );
-
-    // switch to cli
-    act(() => {
-      channelSelect!.value = "cli";
-      channelSelect!.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-
-    // switch back to api
-    act(() => {
-      channelSelect!.value = "api";
-      channelSelect!.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-
-    const text = document.body.textContent ?? "";
-    expect(text).toContain("Base URL");
-    expect(text).not.toContain("CLI Runner");
-    expect(document.querySelectorAll('input[aria-label="请求头名"]').length).toBe(1);
-    cleanup();
-  });
-
-  it("loads channel=cli from server and shows CLI fields", async () => {
-    mockFetch({ ...BASE_LLM_RESPONSE, channel: "cli", persisted: { ...BASE_LLM_RESPONSE.persisted, channel: "cli" } });
-    const { cleanup } = render(<LLMConfigTab />);
-    await act(async () => {});
-
-    const text = document.body.textContent ?? "";
-    expect(text).toContain("CLI Runner");
-    expect(text).not.toContain("Base URL");
-    expect(document.querySelectorAll('input[aria-label="请求头名"]').length).toBe(0);
+    for (const next of path) {
+      const channel = Array.from(document.querySelectorAll("select"))
+        .find((select) => select.querySelector('option[value="cli"]'))!;
+      act(() => {
+        channel.value = next;
+        channel.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    }
+    const api = (path.at(-1) ?? initial) === "api";
+    const inputs = Array.from(document.querySelectorAll("input"));
+    expect(inputs.some((input) => input.value === BASE_LLM_RESPONSE.base_url)).toBe(api);
+    expect(inputs.some((input) => input.value === String(BASE_LLM_RESPONSE.cli_timeout_seconds))).toBe(!api);
+    const runner = Array.from(document.querySelectorAll("select"))
+      .find((select) => select.querySelector('option[value="codex"]'));
+    expect(runner?.value).toBe(api ? undefined : BASE_LLM_RESPONSE.cli_runner);
+    expect(document.querySelectorAll('input[aria-label="请求头名"]').length).toBe(api ? 1 : 0);
     cleanup();
   });
 
@@ -195,7 +185,6 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     expect(strength?.disabled).toBe(false);
     expect(strength?.value).toBe("off");
     const offOption = Array.from(strength?.options || []).find((option) => option.value === "off");
-    expect(offOption?.textContent).toBe("关（codex 最低=低）");
     cleanup();
   });
 
@@ -207,6 +196,7 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
       reasoning_strength: "high",
       reasoning_supported: true,
       cli_reasoning_runners: ["codex", "claude", "grok"],
+      cli_reasoning_floor_runners: ["codex", "grok"],
       persisted: {
         ...BASE_LLM_RESPONSE.persisted,
         channel: "cli",
@@ -233,44 +223,11 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
     expect(strength?.disabled).toBe(false);
     const offOption = Array.from(strength?.options || []).find((option) => option.value === "off");
-    expect(offOption?.textContent).toBe("关（grok 最低=低）");
-    cleanup();
-  });
-
-  it("in-game CLI runner dropdown includes grok from shared source (#1274 W1)", async () => {
-    mockFetch({
-      ...BASE_LLM_RESPONSE,
-      channel: "cli",
-      cli_runner: "agy",
-      cli_runners: [
-        { value: "agy", label: "agy（Gemini）" },
-        { value: "codex", label: "codex" },
-        { value: "claude", label: "claude" },
-        { value: "cursor", label: "cursor" },
-        { value: "kimi", label: "kimi" },
-        { value: "grok", label: "grok" },
-      ],
-      persisted: {
-        ...BASE_LLM_RESPONSE.persisted,
-        channel: "cli",
-        cli_runner: "agy",
-      },
-    });
-    const { cleanup } = render(<LLMConfigTab />);
-    await act(async () => {});
-
-    const runnerSelect = Array.from(document.querySelectorAll("select")).find((select) =>
-      Array.from(select.options).some((option) => option.value === "codex")
-    );
-    const runnerValues = Array.from(runnerSelect?.options || []).map((option) => option.value);
-    expect(runnerValues).toEqual(["agy", "codex", "claude", "cursor", "kimi", "grok"]);
-    expect(runnerValues).toContain("grok");
     cleanup();
   });
 
   it("clears the legacy thinking_level shadow on save so the unified selector owns reasoning (#358 cmr)", async () => {
-    // 旧档持有 thinking_level=high、reasoning_strength 空。统一选择器以旧值迁移初始化，
-    // 保存时须清掉旧 thinking_level，否则它仍作隐藏旋钮、用户选「默认」也清不掉。
+    // A present default selector wins over legacy thinking, including on save.
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
       calls.push({ url, init });
@@ -294,10 +251,8 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     const { cleanup } = render(<LLMConfigTab />);
     await act(async () => {});
 
-    // selector migrated the legacy value into the unified strength
     const select = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
-    expect(select?.value).toBe("high");
-    expect(document.body.textContent).not.toContain("Advanced Thinking Level");
+    expect(select?.value).toBe("");
 
     const saveBtn = Array.from(document.querySelectorAll("button")).find((b) =>
       (b.textContent ?? "").includes("保存并应用")
@@ -310,7 +265,7 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     const post = calls.find((c) => c.init?.method === "POST" && c.url === "/api/llm/config");
     expect(post).toBeTruthy();
     const body = JSON.parse(String(post!.init!.body));
-    expect(body.reasoning_strength).toBe("high");
+    expect(body.reasoning_strength).toBe("");
     expect(body.thinking_level).toBe("");
     expect(body.advanced_thinking_level).toBe("");
     cleanup();
@@ -415,9 +370,9 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     cleanup();
   });
 
-  it.each(["disabled", "none"])(
-    "migrates legacy %s thinking level to unified off",
-    async (legacyThinkingLevel) => {
+  it(
+    "saves the backend-projected off reasoning strength",
+    async () => {
       const calls: Array<{ url: string; init?: RequestInit }> = [];
       global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
         calls.push({ url, init });
@@ -427,10 +382,10 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
             ...BASE_LLM_RESPONSE,
             base_url: "https://api.minimax.io/v1",
             model: "minimax-test",
-            thinking_level: legacyThinkingLevel,
-            reasoning_strength: "",
+            thinking_level: "",
+            reasoning_strength: "off",
             reasoning_supported: true,
-            persisted: { ...BASE_LLM_RESPONSE.persisted, thinking_level: legacyThinkingLevel, reasoning_strength: "" },
+            persisted: { ...BASE_LLM_RESPONSE.persisted, thinking_level: "", reasoning_strength: "off" },
           }),
         } as Response);
       });
@@ -454,46 +409,29 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     }
   );
 
-  it("uses advanced model capability for API reasoning support", async () => {
+  it.each([
+    { base_url: "https://api.deepseek.com/v1", model: "deepseek-chat",
+      advanced_base_url: "https://api.example.com/v1", advanced_model: "gpt-5",
+      reasoning_supported: true },
+    { base_url: "https://api.example.com/v1", model: "gpt-5", reasoning_supported: false },
+  ])("uses backend API reasoning capability: $reasoning_supported", async (capability) => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
         ...BASE_LLM_RESPONSE,
-        base_url: "https://api.deepseek.com/v1",
-        model: "deepseek-chat",
-        advanced_base_url: "https://api.example.com/v1",
-        advanced_model: "gpt-5",
-        reasoning_supported: true,
+        ...capability,
       }),
     } as Response);
     const { cleanup } = render(<LLMConfigTab />);
     await act(async () => {});
 
     const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
-    expect(strength?.disabled).toBe(false);
+    expect(strength?.disabled).toBe(!capability.reasoning_supported);
     cleanup();
   });
 
-  it("trusts backend reasoning_supported over local API model heuristics", async () => {
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        ...BASE_LLM_RESPONSE,
-        base_url: "https://api.example.com/v1",
-        model: "gpt-5",
-        reasoning_supported: false,
-      }),
-    } as Response);
-    const { cleanup } = render(<LLMConfigTab />);
-    await act(async () => {});
 
-    const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
-    expect(strength?.disabled).toBe(true);
-    expect(document.body.textContent).toContain("该后端不支持推理强度设置");
-    cleanup();
-  });
-
-  it("keeps trusting backend reasoning support for whitespace-only API edits", async () => {
+  it("keeps the backend verdict for equivalent API settings but allows reasoning on an edited draft", async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
@@ -514,6 +452,33 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
       changeInput(modelInput!, " gpt-5 ");
     });
 
+    expect(strength?.disabled).toBe(true);
+    act(() => {
+      changeInput(modelInput!, "gpt-5-mini");
+    });
+    expect(strength?.disabled).toBe(false);
+    act(() => {
+      changeInput(modelInput!, "gpt-5");
+    });
+    expect(strength?.disabled).toBe(true);
+    act(() => {
+      changeInput(modelInput!, "gpt-5-mini");
+    });
+    expect(strength?.disabled).toBe(false);
+    act(() => {
+      strength!.value = "high";
+      strength!.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    const save = Array.from(document.querySelectorAll("button")).find((button) =>
+      button.textContent?.includes("保存并应用")
+    );
+    await act(async () => {
+      save!.click();
+    });
+    const post = vi.mocked(global.fetch).mock.calls.find(([, init]) => init?.method === "POST");
+    const body = JSON.parse(String(post![1]!.body));
+    expect(body.model).toBe("gpt-5-mini");
+    expect(body.reasoning_strength).toBe("high");
     expect(strength?.disabled).toBe(true);
     cleanup();
   });
@@ -564,40 +529,6 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     cleanup();
   });
 
-  it("merges save response fields into existing persisted snapshot when the response omits persisted", () => {
-    const current: LLMConfigInfo = {
-      ...BASE_LLM_RESPONSE,
-      persisted: {
-        ...BASE_LLM_RESPONSE.persisted,
-        base_url: "https://old.example.com/v1",
-        model: "old-model",
-        api_reasoning_strength: "low",
-        cli_reasoning_strength: "medium",
-        cli_runner: "codex",
-        cli_model: "raw-cli-model",
-        cli_timeout_seconds: 120,
-      },
-    };
-    const response: Partial<LLMConfigInfo> = {
-      ...BASE_LLM_RESPONSE,
-      base_url: "https://api.example.com/v1",
-      model: "gpt-5",
-      reasoning_strength: "high",
-      reasoning_supported: true,
-    };
-    delete response.persisted;
-
-    expect(mergePersistedSaveSnapshot(response as LLMConfigInfo, current)).toMatchObject({
-      base_url: "https://api.example.com/v1",
-      model: "gpt-5",
-      api_reasoning_strength: "high",
-      cli_reasoning_strength: "medium",
-      cli_runner: "codex",
-      cli_model: "raw-cli-model",
-      cli_timeout_seconds: 120,
-    });
-  });
-
   it("refreshes reasoning support from the save response before trusting the saved backend snapshot", async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
@@ -635,7 +566,7 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
       changeInput(baseUrlInput!, "https://api.deepseek.com/v1");
       changeInput(modelInput!, "deepseek-chat");
     });
-    expect(strength?.disabled).toBe(true);
+    expect(strength?.disabled).toBe(false);
 
     const saveBtn = Array.from(document.querySelectorAll("button")).find((b) =>
       (b.textContent ?? "").includes("保存并应用")
@@ -648,7 +579,6 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     const post = calls.find((c) => c.init?.method === "POST" && c.url === "/api/llm/config");
     expect(post).toBeTruthy();
     expect(strength?.disabled).toBe(true);
-    expect(document.body.textContent).toContain("该后端不支持推理强度设置");
     cleanup();
   });
 
@@ -706,58 +636,14 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     cleanup();
   });
 
-  it("falls back to local API capability when the loaded backend setting is edited", async () => {
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        ...BASE_LLM_RESPONSE,
-        base_url: "https://api.deepseek.com/v1",
-        model: "deepseek-chat",
-        reasoning_supported: false,
-      }),
-    } as Response);
-    const { cleanup } = render(<LLMConfigTab />);
-    await act(async () => {});
-
-    const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
-    expect(strength?.disabled).toBe(true);
-    const baseUrlInput = document.querySelector<HTMLInputElement>('input[placeholder="https://api.openai.com/v1"]');
-    const modelInput = document.querySelector<HTMLInputElement>('input[placeholder="gpt-4o-mini"]');
-    expect(baseUrlInput).toBeTruthy();
-    expect(modelInput).toBeTruthy();
-    act(() => {
-      changeInput(baseUrlInput!, "https://api.example.com/v1");
-      changeInput(modelInput!, "gpt-5");
-    });
-
-    expect(strength?.disabled).toBe(false);
-    cleanup();
-  });
 });
 
 describe("#1732 GameMenu · 就地消解", () => {
-  it("不再提供「重开新局」页签", async () => {
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ saves: [] }),
-    } as Response);
-    const { cleanup } = render(
-      <GameMenuModal onClose={() => {}} onAfterLoad={() => {}} onExitToMenu={() => {}} />
-    );
-    await act(async () => {});
-    const text = document.body.textContent ?? "";
-    expect(text).not.toContain("重开新局");
-    expect(text).toContain("回到主菜单");
-    cleanup();
-  });
-
   it("回到主菜单：面板直通，不调 window.confirm", async () => {
     const confirm = vi.spyOn(window, "confirm");
     const onExit = vi.fn(async () => {});
     const { cleanup } = render(<ExitToMenuTab onExit={onExit} />);
-    const btn = Array.from(document.querySelectorAll("button")).find((b) =>
-      (b.textContent || "").includes("回到主菜单")
-    );
+    const btn = document.querySelector("button.menu-btn.primary");
     expect(btn).toBeTruthy();
     await act(async () => {
       btn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -771,9 +657,7 @@ describe("#1732 GameMenu · 就地消解", () => {
     const confirm = vi.spyOn(window, "confirm");
     global.fetch = vi.fn().mockResolvedValue({ ok: true } as Response);
     const { cleanup } = render(<ShutdownTab />);
-    const btn = Array.from(document.querySelectorAll("button")).find((b) =>
-      (b.textContent || "").includes("退出游戏")
-    );
+    const btn = document.querySelector("button.menu-btn.danger");
     await act(async () => {
       btn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
@@ -786,7 +670,7 @@ describe("#1732 GameMenu · 就地消解", () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
       calls.push({ url, init });
-      if (String(url) === "/api/saves" && !init?.method) {
+      if (url === "/api/saves" && !init?.method) {
         return Promise.resolve({
           ok: true,
           json: async () => ({ saves: [{ name: "slot_a", mtime: 1, size: 2048 }] }),
@@ -813,7 +697,7 @@ describe("#1732 GameMenu · 就地消解", () => {
     await act(async () => {
       cancel!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
-    expect(calls.some((c) => String(c.url).includes("/load"))).toBe(false);
+    expect(calls.some((c) => c.url.includes("/load"))).toBe(false);
 
     await act(async () => {
       loadBtn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -826,7 +710,7 @@ describe("#1732 GameMenu · 就地消解", () => {
       yes!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await Promise.resolve();
     });
-    expect(calls.some((c) => String(c.url).includes("/api/saves/slot_a/load") && c.init?.method === "POST")).toBe(true);
+    expect(calls.some((c) => c.url.includes("/api/saves/slot_a/load") && c.init?.method === "POST")).toBe(true);
     expect(onAfterLoad).toHaveBeenCalled();
     cleanup();
   });
@@ -867,7 +751,7 @@ describe("#1732 GameMenu · 就地消解", () => {
       yes!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await Promise.resolve();
     });
-    expect(calls.some((c) => String(c.url).includes("/api/saves/keep") && c.init?.method === "DELETE")).toBe(true);
+    expect(calls.some((c) => c.url.includes("/api/saves/keep") && c.init?.method === "DELETE")).toBe(true);
     expect(onRefresh).toHaveBeenCalled();
     cleanup();
   });

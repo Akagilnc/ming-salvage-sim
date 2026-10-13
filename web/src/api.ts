@@ -1,6 +1,4 @@
-import React from "react";
 import { audienceStreamPath } from "./audienceScene";
-import { forwardSteamEvents } from "./steamEvents";
 import type { ApiErrorDetail, ChatResponse } from "./types";
 
 export class ApiRequestError extends Error {
@@ -12,8 +10,11 @@ export class ApiRequestError extends Error {
     fallback: string,
     chatIdentity?: { campaign_id: string; night_id: number; chat_turn_id: number },
   ) {
-    const message = detail.message || fallback;
-    super(message);
+    const reason = detail.reason || detail.provider_message || detail.message || fallback;
+    const diagnostic = detail.diagnostic_error
+      ? `\n${detail.diagnostic_error}\n诊断写入路径：${detail.diagnostic_path}`
+      : "";
+    super((detail.error_pack_path ? `${reason}\n错误包：${detail.error_pack_path}` : reason) + diagnostic);
     this.name = "ApiRequestError";
     this.detail = detail;
     this.chatIdentity = chatIdentity;
@@ -23,17 +24,11 @@ export class ApiRequestError extends Error {
 export const normalizeApiError = (error: any, fallback: string): ApiErrorDetail => {
   const detail = error?.detail ?? error;
   if (detail && typeof detail === "object") {
-    const turnRaw = detail.turn;
-    const turnNum = typeof turnRaw === "number" ? turnRaw : Number(turnRaw);
+    const turnNum = Number(detail.turn);
     return {
-      code: detail.code,
+      ...detail,
       message: detail.message || detail.detail || fallback,
-      provider_message: detail.provider_message,
-      status_code: detail.status_code,
       turn: Number.isFinite(turnNum) ? turnNum : undefined,
-      pending_action_failures: Array.isArray(detail.pending_action_failures)
-        ? detail.pending_action_failures
-        : undefined,
     };
   }
   return { message: String(detail || fallback) };
@@ -51,7 +46,6 @@ export const api = async <T,>(path: string, options?: RequestInit): Promise<T> =
     throw new ApiRequestError(normalized, response.statusText);
   }
   const payload = await response.json();
-  void forwardSteamEvents(payload);
   return payload;
 };
 
@@ -72,7 +66,6 @@ export const parseSseMessage = (raw: string): { event: string; data: string } | 
 
 export type StreamChatOptions = {
   signal?: AbortSignal;
-  intent?: "secret_order";
   /** #544：流完补挂高亮清单（done 之后、end 之前） */
   onHighlights?: (payload: {
     highlights: string[];
@@ -100,11 +93,12 @@ export const streamChat = async (
     signalOrOptions instanceof AbortSignal || signalOrOptions === undefined
       ? { signal: signalOrOptions }
       : signalOrOptions;
-  const url = audienceStreamPath(ministerName);
+  void ministerName; // live transport is always the single audience scene (#1849 reopen)
+  const url = audienceStreamPath();
   const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, ...(options.intent ? { intent: options.intent } : {}) }),
+    body: JSON.stringify({ message }),
     signal: options.signal,
   });
   if (!response.ok) {

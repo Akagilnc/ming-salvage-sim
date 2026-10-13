@@ -2,12 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Dict, NamedTuple, Tuple
-
-
-class ExitGame(Exception):
-    pass
-
 
 class DependencyMismatch(Exception):
     """Installed Python package does not satisfy requirements.txt."""
@@ -41,25 +35,23 @@ class LLMUnavailable(Exception):
         self.stage = stage
 
 
-class PromulgationHealEvidence(NamedTuple):
-    """#1753 颁布判决有界补交耗尽证据：生产/消费两侧同一契约。"""
-
-    bad_outputs: Tuple[object, ...]
-    compliant_verdicts: Tuple[Dict[str, object], ...]
-
-
 class LLMContractError(Exception):
-    def __init__(
-        self,
-        message: str,
-        *,
-        raw_value: object = None,
-        heal_evidence: PromulgationHealEvidence | None = None,
-    ) -> None:
-        super().__init__(message)
-        self.raw_value = raw_value
-        # #1753：颁布判决有界补交耗尽时携带首次+补交坏输出与已合规判决证据。
-        self.heal_evidence = heal_evidence
+    pass
+
+
+class RevokeOriginUnresolved(ValueError):
+    """撤回成命目标无合法案卷来源：判后物化拒收；只读供料方按「无原旨可读」捕获。
+
+    仅此一型可被供料方捕获；坏持久载荷、目标事项缺失等仍是普通 ValueError 上抛。
+    """
+
+
+class DeclarationDataError(ValueError):
+    """A declaration's data is invalid; not an incidental read/write failure."""
+
+
+class DeclarationReferenceError(KeyError):
+    """A declaration references a missing entity, not a broken persistence read."""
 
 
 class OfficeAppointmentRejection(ValueError):
@@ -74,12 +66,25 @@ class OfficeAppointmentRejection(ValueError):
         self.category = category
 
 
+class PendingActionRefusal(Exception):
+    """一项暂存的业务拒收：只终态该项，不带走整批，也不是系统故障。
+
+    不继承 ValueError。提交口只认本类、任免拒收类和案卷关联拒收属性；
+    其余异常一律上抛。category 是机读契约，message 不得被调用方解析。
+    """
+
+    def __init__(self, message: str, *, category: str, item: dict | None = None) -> None:
+        super().__init__(message)
+        self.category = category
+        self.item = item
+
+
 class SettlementAbort(Exception):
     """结算中止可重试（ADR 0008 决定 3/6）。
 
-    extractor 失败 / 结算核代码异常时上抛——绝不静默续跑（半落库 P1 破口）。
+    月链模型调用失败 / 结算核代码异常时上抛——绝不静默续跑（半落库 P1 破口）。
     携带 turn / 阶段 / 错误包路径，供上层向玩家提示「本月结算失败，进度已保存，可重试」。
-    重试 = 重跑 simulator/extractor（其产出本未持久化），与决定 3 不冲突。
+    重试从已保存的月链进度接续，不重复已落账步骤。
     """
 
     def __init__(
@@ -89,9 +94,11 @@ class SettlementAbort(Exception):
         turn: int,
         stage: str = "extract",
         error_pack_path: str | None = None,
+        accounted: bool = False,
     ) -> None:
         super().__init__(message)
         self.message = message
         self.turn = turn
         self.stage = stage
         self.error_pack_path = error_pack_path
+        self.accounted = bool(accounted)

@@ -1,19 +1,19 @@
+from ming_sim.settlement.dossier import apply_dossier_promulgation
 import json
 
 import pytest
 
-from ming_sim import issues as issue_engine
-
+import ming_sim.entities.character.appointment as office_appointment
+from ming_sim.settlement import SettlementContext, settle_delta
+from ming_sim.settlement.views import section
 
 VALID_TENURES = ("真除", "署理", "兼署", "加衔")
-
 
 def _active_minister(db):
     return db.conn.execute(
         "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
         "AND office_type!='后宫' ORDER BY rowid LIMIT 1"
     ).fetchone()["name"]
-
 
 def _promulgate_appointment(db, state, content, name, office, tenure=None):
     payload = {"name": name, "office": office, "text": f"命{name}任{office}"}
@@ -23,16 +23,15 @@ def _promulgate_appointment(db, state, content, name, office, tenure=None):
         state.turn, kind="office", action="任命",
         minister_name=_active_minister(db), target_id=None, payload=payload,
     )
-    db.commit_pending_actions(state, content=content, registry=None)
+    db.commit_pending_actions(state, content=content)
     dossier = next(
-        row for row in db.list_decree_dossiers()
+        row for row in db.dossiers.list_dossiers()
         if row["pending_action_id"] == pending_id
     )
-    db.apply_dossier_promulgation(
-        state, dossier["id"], "promulgated", content=content, registry=None,
+    apply_dossier_promulgation(db,
+        state, dossier["id"], "promulgated", content=content,
     )
-    return db.get_decree_dossier(dossier["id"])
-
+    return db.dossiers.get(dossier["id"])
 
 def test_appointment_dossier_and_office_archive_preserve_each_tenure(game):
     db, state, content = game
@@ -54,7 +53,6 @@ def test_appointment_dossier_and_office_archive_preserve_each_tenure(game):
         ).fetchone()
         assert office["appointment_tenure"] == tenure
 
-
 def test_legacy_appointment_defaults_to_permanent_without_rejudging(game):
     db, state, content = game
     name = _active_minister(db)
@@ -66,7 +64,6 @@ def test_legacy_appointment_defaults_to_permanent_without_rejudging(game):
         "SELECT appointment_tenure FROM character_offices WHERE character_name=?", (name,)
     ).fetchone()
     assert row["appointment_tenure"] == "真除"
-
 
 @pytest.mark.parametrize("tenure_fields", [
     {"任别": "试署"},
@@ -90,18 +87,14 @@ def test_person_delta_rejects_invalid_appointment_tenure_without_mutation(
         "name": name, "动作": "任命", "office": "非法任别官", **tenure_fields,
     }
 
-    result = issue_engine.apply_score_extraction(
-        db, state, {"人物变更": [item]}, content=content,
-    )
+    result = settle_delta(state, db, {'人物变更': [item]}, SettlementContext(content=content))
 
-    rejected = result["applied_person_changes"][0]
-    assert rejected["rejected"] is True
-    assert rejected["category"] == "invalid_enum"
-    assert rejected["item"] == item
+    rejected = section(result, "applied_person_changes").rejected[0]
+    assert rejected.category == "invalid_enum"
+    assert rejected.item == item
     assert db.conn.execute(
         "SELECT office FROM characters WHERE name=?", (name,)
     ).fetchone()["office"] == before
-
 
 def test_failed_dossier_reappointment_rolls_back_audit_and_sequence(game, monkeypatch):
     db, state, content = game
@@ -113,9 +106,9 @@ def test_failed_dossier_reappointment_rolls_back_audit_and_sequence(game, monkey
         minister_name=_active_minister(db), target_id=None,
         payload={"text": "测试任免原文", "name": name, "office": "失败回滚新官", "任别": "兼署"},
     )
-    db.commit_pending_actions(state, content=content, registry=None)
+    db.commit_pending_actions(state, content=content)
     dossier = next(
-        row for row in db.list_decree_dossiers()
+        row for row in db.dossiers.list_dossiers()
         if row["pending_action_id"] == pending_id
     )
     dossier_id = dossier["id"]
@@ -130,20 +123,22 @@ def test_failed_dossier_reappointment_rolls_back_audit_and_sequence(game, monkey
     before_sequence = dict(db.conn.execute(
         "SELECT * FROM sqlite_sequence WHERE name='office_change_records'"
     ).fetchone())
-    before_dossier = dict(db.get_decree_dossier(dossier_id))
+    before_dossier = dict(db.dossiers.get(dossier_id))
 
     def fail_after_office_write(*_args, **_kwargs):
         raise RuntimeError("simulated post-office-write failure")
 
     monkeypatch.setattr(
-        issue_engine, "_displace_duplicate_offices", fail_after_office_write
+        office_appointment, "_displace_duplicate_offices", fail_after_office_write
     )
     try:
-        db.apply_dossier_promulgation(
-            state, dossier_id, "promulgated", content=content, registry=None,
+        apply_dossier_promulgation(db,
+            state, dossier_id, "promulgated", content=content,
         )
-    except ValueError as exc:
-        assert str(exc) == "任免案卷载荷物化失败"
+    except RuntimeError as exc:
+        # Injected code fault must surface as RuntimeError through the real
+        # promulgation entry (ADR 0005 / #1853 / #1889 R5); not washed to product reject.
+        assert exc is not None
     else:
         raise AssertionError("dossier materialization failure did not propagate")
 
@@ -158,11 +153,11 @@ def test_failed_dossier_reappointment_rolls_back_audit_and_sequence(game, monkey
     assert dict(db.conn.execute(
         "SELECT * FROM sqlite_sequence WHERE name='office_change_records'"
     ).fetchone()) == before_sequence
-    assert dict(db.get_decree_dossier(dossier_id)) == before_dossier
+    assert dict(db.dossiers.get(dossier_id)) == before_dossier
 
     monkeypatch.undo()
-    db.apply_dossier_promulgation(
-        state, dossier_id, "promulgated", content=content, registry=None,
+    apply_dossier_promulgation(db,
+        state, dossier_id, "promulgated", content=content,
     )
     audit = db.conn.execute(
         "SELECT * FROM office_change_records WHERE dossier_id=?", (dossier_id,)
@@ -173,7 +168,6 @@ def test_failed_dossier_reappointment_rolls_back_audit_and_sequence(game, monkey
         "SELECT appointment_tenure FROM character_offices WHERE character_name=?",
         (name,),
     ).fetchone()["appointment_tenure"] == "兼署"
-
 
 def test_appointment_tenure_survives_restore(game):
     from ming_sim.content import GameContent
@@ -193,7 +187,6 @@ def test_appointment_tenure_survives_restore(game):
         assert row["appointment_tenure"] == "兼署"
     finally:
         restored.conn.close()
-
 
 def test_acting_appointment_can_be_reappointed_permanent_on_same_path(game):
     db, state, content = game

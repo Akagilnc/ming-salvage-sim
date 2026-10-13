@@ -365,7 +365,7 @@ export function GrandMap({ nodes, selectedId, onSelect }: { nodes: MapNode[]; se
       return {
         id: group.regionId,
         name: node?.region?.name || group.regionId,
-        controlledBy: MAP_DISPLAY_POWER_OVERRIDES[group.regionId] || String(node?.region?.controlled_by || "ming"),
+        controlledBy: MAP_DISPLAY_POWER_OVERRIDES[group.regionId] || (node?.region?.controlled_by || "ming"),
         unrest: node?.region?.unrest || 0,
         risk: node?.risk || 0,
         labelX: node?.x ?? 50,
@@ -691,7 +691,7 @@ export function GrandMap({ nodes, selectedId, onSelect }: { nodes: MapNode[]; se
                       x={pos.svgX}
                       y={pos.svgY}
                     >
-                      {group.name.split(" / ")[0]}
+                      {group.name}
                     </text>
                   );
                 })}
@@ -704,7 +704,7 @@ export function GrandMap({ nodes, selectedId, onSelect }: { nodes: MapNode[]; se
                       x={pos.svgX}
                       y={pos.svgY}
                     >
-                      {region.name.split(" / ")[0]}
+                      {region.name}
                     </text>
                   );
                 })}
@@ -738,7 +738,7 @@ export function GrandMap({ nodes, selectedId, onSelect }: { nodes: MapNode[]; se
                   tabIndex={0}
                 >
                   {node.kind === "theater" ? <Shield size={16} /> : <MapPinned size={15} />}
-                  <span>{node.region?.name.split(" / ")[0] || node.label}</span>
+                  <span>{node.region?.name || node.label}</span>
                 </button>
               );
             })}

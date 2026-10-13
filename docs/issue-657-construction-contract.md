@@ -80,9 +80,9 @@
         prior_options_json append；CAS 含旧 revision_round
    c. 对「行上 choice 已与请求精确匹配且领域已应用」的行：跳过领域写与 CAS 覆写
    d. 任一条失败 → 回滚（含各行 choice 写入）
-   e. 禁 save/clear_pending_decisions 触碰 rescript_draft
+   e. 禁 save_pending_decisions 触碰 rescript_draft
    f. **禁止** 任何 resolve_context 键承载本批 choices 集合
-④ commit 后 → 既有 phase2（decision clear 纪律不变）
+④ commit 后 → 既有 phase2 续跑
    phase2 全程成功结束时：
    - return_revise 行：清空其 choice_json（或写 `consumed_epoch` 使精确匹配失效）
      → 下一轮对新 options 的新动作是新鲜提交
@@ -109,20 +109,9 @@
 
 **若仅靠行事实出现无法判定的状态**：实现前必须先提交可复现反例 + 缺失的最小行字段；**禁止**用另一份整批 choices 副本代替诊断。
 
-### B.3 ready_replay（单谓词 · 无 batch_committed）
+### B.3 已应用行与续跑
 
-```
-extracted_ready = resolve_context.extracted is not None
-rows_applied   = 请求中每一行：库行 choice 规范后 == 请求 choice
-                 且（status=decided ∨ 已应用 return_revise 锚）
-
-if extracted_ready:
-    # 既有 phase2 恢复：不覆写 decision 事件账；急务领域不重放；只续 phase2
-elif rows_applied:
-    # ③ 已 commit、phase2 未产出 extracted：跳过领域写与 choice 覆写；只开/续 phase2
-else:
-    # 新鲜批或混合未齐：走 ①②③；部分已应用行在 ③c 跳过
-```
+已应用行的判定与去重沿 B.2 状态表；过月续跑见 [#1846 现行正文](https://github.com/Akagilnc/ming-salvage-sim/issues/1846)，不再依赖整月 extracted 就绪分流。
 
 **P 与默认留中**（与恢复正交）：
 
@@ -139,7 +128,7 @@ else:
 
 ### B.5 C1 测试矩阵（规范说明 · 勾选正文见 §E.2）
 
-- **C1.1 mixed batch**：急务 follow + decision 打回同批；③后杀进程（extracted 空）→ 同 body 重 POST → 无双写案卷/无双写 decision choice → phase2 完成；**且** `resolve_context` 无 choices 批副本键
+- **C1.1 mixed batch**：急务 follow + decision 打回同批；③后中断（phase2 未完成）→ 同 body 重 POST → 无双写案卷/无双写 decision choice → phase2 完成；**且** `resolve_context` 无 choices 批副本键
 - **C1.2 return_revise**：改票成功后 crash → 同 revise choice 重 POST → round 不双增；phase2 清行锚后，对新 options 的 follow 可新鲜提交
 - **C1.3 不一致重试**：③后改 body 任一 choice → 整批 ValueError，库态不变
 - **C1.4 CAS0 无 choice 证据**：status 非 pending 且 choice 不匹配/空 → 拒
@@ -735,7 +724,7 @@ generator 失败：该 target 零成功消费；空垫位不可投影；**不得
 
 ### E.2 C1 矩阵（C1.1–C1.5）
 
-- [ ] **C1.1 mixed batch**：急务 follow + decision 打回同批；③后杀进程（extracted 空）→ 同 body 重 POST → 无双写案卷/无双写 decision choice → phase2 完成；**且** `resolve_context` 无 choices 批副本键；无 `committed_rescript_batch`；applied-revise 先于 options 校验
+- [ ] **C1.1 mixed batch**：急务 follow + decision 打回同批；③后中断（phase2 未完成）→ 同 body 重 POST → 无双写案卷/无双写 decision choice → phase2 完成；**且** `resolve_context` 无 choices 批副本键；无 `committed_rescript_batch`；applied-revise 先于 options 校验
 - [ ] **C1.2 return_revise**：改票成功后 crash → 同 revise choice 重 POST → round 不双增；phase2 清行锚后，对新 options 的 follow 可新鲜提交
 - [ ] **C1.3 不一致重试**：③后改 body 任一 choice → 整批 ValueError，库态不变
 - [ ] **C1.4 CAS0 无 choice 证据**：status 非 pending 且 choice 不匹配/空 → 拒（禁静默 CAS0 当成功）

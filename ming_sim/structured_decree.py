@@ -6,6 +6,7 @@
 """
 
 from __future__ import annotations
+from ming_sim.exceptions import DeclarationDataError
 
 from typing import Any, Dict, Mapping, MutableMapping, Optional
 
@@ -21,14 +22,14 @@ from ming_sim.execution_pressure import (
 from ming_sim.executor_routing import duty_route_categories
 
 
-class StructuredDecreeCombinationError(ValueError):
+class StructuredDecreeCombinationError(DeclarationDataError):
     """结构化旨意组合校验失败（typed；纠错路径只捕本类，禁异常文本子串识别）。
 
     partial_result：抽取已解析但组合未过的首抽快照（含 participant_roster）；
     failed_fields：本不变式可修字段边界（单条）；
     field_failures：权威结构化失败事实（field/current/expected）；运输层只携带；
-    draft_failures：批抽 idx → 可修字段边界；
     heal 只从纠错轮采纳边界内字段，保留首抽名册与未失败结构。
+    #1902 R1：批抽 draft_failures 已随无消费者批次模式清退。
     """
 
     def __init__(
@@ -38,7 +39,6 @@ class StructuredDecreeCombinationError(ValueError):
         partial_result: Optional[Dict[str, Any]] = None,
         failed_fields: Optional[frozenset[str]] = None,
         field_failures: Optional[tuple[Dict[str, object], ...]] = None,
-        draft_failures: Optional[Dict[int, frozenset[str]]] = None,
     ) -> None:
         super().__init__(message)
         self.partial_result = partial_result
@@ -52,7 +52,6 @@ class StructuredDecreeCombinationError(ValueError):
             )
         else:
             self.failed_fields = frozenset(failed_fields or ())
-        self.draft_failures = dict(draft_failures or {})
 
 
 # 组合纠错可覆盖的结构字段（与 assemble/validate 核心键同集；名册/旨文不在此列）
@@ -121,10 +120,6 @@ def _as_str(value: object) -> str:
     return str(value)
 
 
-def _transaction_categories() -> frozenset[str]:
-    return duty_route_categories()
-
-
 def structured_decree_prompt_contract() -> str:
     """三入口共用结构化旨意契约（唯一真源；禁入口平行复述）。
 
@@ -132,7 +127,7 @@ def structured_decree_prompt_contract() -> str:
     target×locality 可接受面由 TARGET_KIND_LOCALITY_SCOPES 投影（与 assert 同真源）；
     不手抄第二份矩阵。
     """
-    cats = "|".join(sorted(_transaction_categories()))
+    cats = "|".join(sorted(duty_route_categories()))
     kinds = "|".join(sorted(TARGET_KINDS))
     matrix_face = project_target_locality_matrix_prompt()
     return (
@@ -154,9 +149,7 @@ def structured_decree_prompt_contract() -> str:
 
 def transport_keys_to_canonical(raw: Mapping[str, object]) -> Dict[str, object]:
     """运输键归一；同义键合并，后写不覆盖已有非空 canonical。"""
-    if not isinstance(raw, Mapping):
-        raise ValueError("structured decree raw 须为 object")
-    out: Dict[str, object] = dict(raw)
+    out: Dict[str, object] = {**raw}
     for src, dest in _TRANSPORT_KEY_ALIASES.items():
         if src not in raw:
             continue
@@ -277,8 +270,8 @@ def validate_structured_decree_combination(
         )
 
     cat = _as_str(payload.get("transaction_category") or "").strip()
-    cats = sorted(_transaction_categories())
-    if cat and cat not in _transaction_categories():
+    cats = sorted(duty_route_categories())
+    if cat and cat not in duty_route_categories():
         _combo_fail(
             f"transaction_category 非法：{cat!r}",
             field_failures=(

@@ -1,9 +1,6 @@
+from __future__ import annotations
 """Issue #190 bandit leader/stock split behavior."""
 
-from __future__ import annotations
-
-
-import json
 
 
 def test_seed_splits_li_zicheng_and_zhang_xianzhong_bandit_powers(read_game):
@@ -18,7 +15,6 @@ def test_seed_splits_li_zicheng_and_zhang_xianzhong_bandit_powers(read_game):
     }
     assert rows["李自成"]["power_id"] == "bandit_li_zicheng"
     assert rows["张献忠"]["power_id"] == "bandit_zhang_xianzhong"
-    assert rows["李自成"]["power_id"] != rows["张献忠"]["power_id"]
 
     powers = {
         row["id"]: dict(row)
@@ -33,72 +29,46 @@ def test_seed_splits_li_zicheng_and_zhang_xianzhong_bandit_powers(read_game):
     assert powers["bandit_li_zicheng"]["military_strength"] != powers["bandit_zhang_xianzhong"]["military_strength"]
 
 
-def test_old_save_schema_init_backfills_bandit_power_split(game):
-    """旧档打开只跑 init_schema，也必须补 #190 的流寇分股静态盘面。"""
-    db, _state, _content = game
-    db.conn.execute(
-        "UPDATE characters SET power_id='bandits' WHERE name IN ('李自成', '张献忠')"
-    )
-    db.conn.execute(
-        "DELETE FROM powers WHERE id IN ('bandit_li_zicheng', 'bandit_zhang_xianzhong')"
-    )
-    # Pre-#522 stock authority still present on old saves.
-    db.conn.execute("UPDATE powers SET leader='王嘉胤等' WHERE id='bandits'")
-    db.conn.commit()
+def test_bandit_power_split_survives_reopen(game):
+    """#190：流寇分股盘面经真实易主入口写入后，关闭重开仍不被改写。
 
-    db.init_schema()
+    走生产写入口 ``apply_character_power_changes``（易主的唯一出口，含派系 leverage
+    重算与拒收分支），而非裸 UPDATE——裸 UPDATE 绕过该入口的其余副作用，测的不是
+    它自称覆盖的「写入—重开」行为链。
 
-    rows = {
-        row["name"]: row["power_id"]
-        for row in db.conn.execute(
-            "SELECT name, power_id FROM characters WHERE name IN ('李自成', '张献忠')"
-        ).fetchall()
-    }
-    assert rows == {
-        "李自成": "bandit_li_zicheng",
-        "张献忠": "bandit_zhang_xianzhong",
-    }
-    powers = {
-        row["id"]: row["leader"]
-        for row in db.conn.execute(
-            "SELECT id, leader FROM powers "
-            "WHERE id IN ('bandits', 'bandit_li_zicheng', 'bandit_zhang_xianzhong')"
-        ).fetchall()
-    }
-    assert powers == {
-        "bandits": "王嘉胤",
-        "bandit_li_zicheng": "李自成",
-        "bandit_zhang_xianzhong": "张献忠",
-    }
+    旧实现覆盖的是「init_schema 按旧形状回填流寇股/leader/aliases」——那是纯旧档
+    兼容补写（已随 #1889 拆除）。同一形状改由真源侧表达：人物 power_id 是唯一归属真源，
+    powers 表是 content seed 产物，重开不得反向改写任一侧。
+    """
+    from ming_sim.db import GameDB
 
-
-def test_bandit_power_backfill_serializes_list_aliases(game):
-    """旧档补流寇股时，即使 content power aliases 仍是 list，也必须写成 TEXT 不崩。"""
     db, _state, content = game
-    content.powers["bandit_li_zicheng"].aliases = ["李自成部", "闯军"]
-    db.conn.execute("DELETE FROM powers WHERE id='bandit_li_zicheng'")
-    db.conn.commit()
-
-    db.init_schema()
-
-    aliases = db.conn.execute(
-        "SELECT aliases FROM powers WHERE id='bandit_li_zicheng'"
-    ).fetchone()["aliases"]
-    assert json.loads(aliases) == ["李自成部", "闯军"]
-
-
-def test_bandit_power_split_backfill_preserves_changed_owner(game):
-    """旧档中已被玩家改归属的人物，schema backfill 不应强行迁回流寇股。"""
-    db, _state, _content = game
-    db.conn.execute("UPDATE characters SET power_id='ming' WHERE name='张献忠'")
-    db.conn.execute("DELETE FROM powers WHERE id='bandit_zhang_xianzhong'")
-    db.conn.commit()
-
-    db.init_schema()
-
+    applied = db.apply_character_power_changes(
+        [{"name": "张献忠", "new_power": "ming", "reason": "归正"}]
+    )
+    assert not applied[1], applied
     assert db.conn.execute(
         "SELECT power_id FROM characters WHERE name='张献忠'"
-    ).fetchone()["power_id"] == "ming"
-    assert db.conn.execute(
-        "SELECT leader FROM powers WHERE id='bandit_zhang_xianzhong'"
-    ).fetchone()["leader"] == "张献忠"
+    ).fetchone()["power_id"] == "ming", "易主入口未落库"
+    path = db.path
+    db.conn.close()
+
+    reopened = GameDB(path, content)
+    try:
+        owner = reopened.conn.execute(
+            "SELECT power_id FROM characters WHERE name='张献忠'"
+        ).fetchone()["power_id"]
+        assert owner == "ming", "重开不得把已易主人物迁回流寇股"
+        leaders = {
+            row["id"]: row["leader"]
+            for row in reopened.conn.execute(
+                "SELECT id, leader FROM powers "
+                "WHERE id IN ('bandit_li_zicheng', 'bandit_zhang_xianzhong')"
+            ).fetchall()
+        }
+        assert leaders == {
+            "bandit_li_zicheng": "李自成",
+            "bandit_zhang_xianzhong": "张献忠",
+        }, "流寇股 leader 仍是 content 钦定单一人名"
+    finally:
+        reopened.conn.close()

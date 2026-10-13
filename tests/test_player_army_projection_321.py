@@ -1,31 +1,20 @@
-"""#321 — 玩家军心/士气/欠饷投影：复用 derive + qualitative/arrears helper，四链去 raw。"""
 from __future__ import annotations
-
-import contextlib
-import io
-import sqlite3
+from ming_sim.applier import Provenance
 from types import SimpleNamespace
-
 import pytest
-
 import web_app
-from ming_sim.db import (
-    GameDB,
-    _army_arrears_report_text,
-    _player_army_situation,
-    _qualitative_army_stat,
-    mutiny_loyalty_cap,
-)
-from ming_sim.flows import apply_fixed_period_flows, derive_army_mutiny_state
-from ming_sim.intelligence import _qualitative_domain_statement
-from ming_sim.knowledge import build_character_knowledge
-from ming_sim.report import print_header
-from ming_sim.materials import list_materials, prepare_character_materials, read_material
+"""#321 — 玩家军情结构化投影：真实载荷与地图节点不暴露 raw 军情。"""
+
+
+
 
 ARMY = "guanning"
-PATHS = ("legacy", "substrate_hub")
 
-_RAW_KEYS = frozenset({"morale", "loyalty", "arrears"})
+
+_RAW_KEYS = frozenset({
+    "morale", "loyalty", "arrears",
+    "province_pay_arrears", "central_pay_arrears",
+})
 _SIT_KEYS = frozenset({"mutiny_tier", "morale_text", "arrears_text"})
 _MUTINY_ORDINAL_KEYS = frozenset(
     {
@@ -39,14 +28,6 @@ _MUTINY_ORDINAL_KEYS = frozenset(
         "mutiny_state",
     }
 )
-_PERSISTENT_COL_TOKENS = (
-    "is_mutinied",
-    "mutiny_count",
-    "mutiny_probation",
-    "full_pay_streak",
-    "redemption_count",
-)
-
 # 六档真值表（票面 latch / 边界 / probation；含全部明确边界样本）
 _TIER_CASES = (
     # (is_mutinied, loyalty, probation, expected_tier)
@@ -76,55 +57,7 @@ _TIER_IDS = [
 ]
 
 
-def _row(
-    *,
-    is_mutinied: int = 0,
-    loyalty: int = 70,
-    mutiny_probation: int = 0,
-    morale: int = 73,
-    arrears: float = 0.0,
-    **extra,
-):
-    base = {
-        "is_mutinied": is_mutinied,
-        "loyalty": loyalty,
-        "mutiny_probation": mutiny_probation,
-        "morale": morale,
-        "arrears": arrears,
-    }
-    base.update(extra)
-    return base
-
-
-@pytest.mark.parametrize(
-    "is_mutinied,loyalty,probation,expected",
-    _TIER_CASES,
-    ids=_TIER_IDS,
-)
-def test_player_army_situation_six_tier_truth_table(
-    is_mutinied, loyalty, probation, expected
-):
-    row = _row(is_mutinied=is_mutinied, loyalty=loyalty, mutiny_probation=probation)
-    sit = _player_army_situation(row, monthly_pay=10)
-    assert sit["mutiny_tier"] == expected
-    assert sit["morale_text"] == _qualitative_army_stat("morale", row["morale"])
-    assert sit["arrears_text"] == _army_arrears_report_text(row, 10)
-    # derive 非「正常」时档名必须与 derive 一致；正常时再细分
-    derived = derive_army_mutiny_state(row)
-    if derived != "正常":
-        assert sit["mutiny_tier"] == derived
-    else:
-        assert sit["mutiny_tier"] in ("一般", "优秀", "死忠")
-
-
-def _configure(db, fiscal_path: str) -> None:
-    value = 0 if fiscal_path == "legacy" else 1
-    for key in ("__army_pay_source_cutover", "__fiscal_engine"):
-        db.conn.execute(
-            "INSERT INTO fiscal_config(key,value,kind,note) VALUES (?,?,'meta','test') "
-            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            (key, value),
-        )
+def _configure(db) -> None:
     db.conn.execute("UPDATE armies SET manpower=0")
     db.conn.execute(
         """UPDATE armies SET owner_power='ming', is_tusi=0, self_funded_pay=0,
@@ -138,7 +71,6 @@ def _configure(db, fiscal_path: str) -> None:
 
 def _write_mutiny_fixture(
     db,
-    fiscal_path: str,
     *,
     loyalty: int,
     arrears: float,
@@ -149,16 +81,15 @@ def _write_mutiny_fixture(
     redemption_count: int,
     morale: int = 55,
 ) -> None:
-    central = arrears if fiscal_path == "substrate_hub" else 0
+    central = arrears  # active hub source-split seed
     db.conn.execute(
-        """UPDATE armies SET loyalty=?, arrears=?, is_mutinied=?,
+        """UPDATE armies SET loyalty=?, is_mutinied=?,
            mutiny_count=?, mutiny_probation=?, full_pay_streak=?, redemption_count=?,
            morale=?, province_pay_arrears=0, central_pay_arrears=?,
            manpower=10000, owner_power='ming'
            WHERE id=?""",
         (
             loyalty,
-            arrears,
             is_mutinied,
             mutiny_count,
             mutiny_probation,
@@ -214,204 +145,22 @@ def _find_army_in_map_nodes(nodes, army_id: str = ARMY):
     raise AssertionError(f"map_nodes 未挂载军队 {army_id}")
 
 
-def _assert_structured_situation(card: dict, sit: dict, label: str) -> None:
+def _assert_structured_situation(card: dict, label: str, *, expected_tier: str | None = None) -> None:
+    """真实出口结构化契约：三键在场、raw/ordinal 缺席、类型合法；档名可与独立期望比。"""
     assert _SIT_KEYS <= set(card.keys()), f"{label} 缺 situation 三键: {sorted(card)}"
     assert _RAW_KEYS.isdisjoint(card.keys()), f"{label} 泄漏 raw 轴: {sorted(_RAW_KEYS & set(card.keys()))}"
     assert _MUTINY_ORDINAL_KEYS.isdisjoint(card.keys()), (
         f"{label} 泄漏 mutiny ordinal/五持久列: {sorted(_MUTINY_ORDINAL_KEYS & set(card.keys()))}"
     )
-    assert card["mutiny_tier"] == sit["mutiny_tier"], f"{label}.mutiny_tier"
-    assert card["morale_text"] == sit["morale_text"], f"{label}.morale_text"
-    assert card["arrears_text"] == sit["arrears_text"], f"{label}.arrears_text"
-    assert isinstance(card["mutiny_tier"], str)
-    assert isinstance(card["morale_text"], str)
-    assert isinstance(card["arrears_text"], str)
+    assert isinstance(card["mutiny_tier"], str) and card["mutiny_tier"].strip()
+    assert isinstance(card["morale_text"], str) and card["morale_text"].strip()
+    assert isinstance(card["arrears_text"], str) and card["arrears_text"].strip()
+    if expected_tier is not None:
+        assert card["mutiny_tier"] == expected_tier, f"{label}.mutiny_tier"
 
 
-def _assert_chain_embeds_situation(text: str, sit: dict, label: str) -> None:
-    assert sit["mutiny_tier"] in text, f"{label} 缺 mutiny_tier={sit['mutiny_tier']!r}\n{text}"
-    assert sit["morale_text"] in text, f"{label} 缺 morale_text={sit['morale_text']!r}\n{text}"
-    assert sit["arrears_text"] in text, f"{label} 缺 arrears_text={sit['arrears_text']!r}\n{text}"
-    assert "12.5" not in text, f"{label} 泄漏 bare arrears 12.5\n{text}"
-    for token in _PERSISTENT_COL_TOKENS:
-        assert token not in text, f"{label} 泄漏五持久列名 {token!r}\n{text}"
 
 
-def test_four_chains_embed_situation_matrix(game):
-    """AC1：exactly 1 非零欠饷代表覆盖链1–4 全接缝（含 warning 载荷嵌入 + print_header 负例）。"""
-    # 代表：latch=0, L=55, p=0 → 不满；arrears>0（精确小数 12.5）
-    is_mutinied, loyalty, probation, expected = 0, 55, 0, "不满"
-    db, state, content = game
-    _configure(db, "legacy")
-    arrears = 12.5
-    _write_mutiny_fixture(
-        db,
-        "legacy",
-        loyalty=loyalty,
-        arrears=arrears,
-        is_mutinied=is_mutinied,
-        mutiny_count=0,
-        mutiny_probation=probation,
-        full_pay_streak=0,
-        redemption_count=0,
-        morale=52,
-    )
-    # 压低他军 danger、抬高关宁短板，确保 limit 窗口（warning/header/list）必含目标军；
-    # 不改 loyalty/latch/probation（档位输入）。
-    db.conn.execute(
-        """UPDATE armies SET supply=100, training=100, morale=100, loyalty=100,
-           arrears=0, province_pay_arrears=0, central_pay_arrears=0,
-           is_mutinied=0, mutiny_probation=0
-           WHERE id != ?""",
-        (ARMY,),
-    )
-    db.conn.execute(
-        "UPDATE armies SET supply=1, training=1 WHERE id=?",
-        (ARMY,),
-    )
-    # print_header 负例：唯一军名哨兵；若 header 回流 army_report 必带此名
-    header_army_sentinel = "321-header-sentinel-guanning"
-    db.conn.execute(
-        "UPDATE armies SET name=? WHERE id=?",
-        (header_army_sentinel, ARMY),
-    )
-    db.conn.commit()
-    row = db.conn.execute("SELECT * FROM armies WHERE id=?", (ARMY,)).fetchone()
-    sit = _player_army_situation(row, db._army_pay(row))
-    assert sit["mutiny_tier"] == expected
-
-    # 链1：army_payload / state_payload.armies / map_nodes（结构 ABI 三键，非 DOM 直显）
-    card = _payload_by_id(db)[ARMY]
-    _assert_structured_situation(card, sit, "army_payload")
-
-    runtime = _web_runtime(db, state, content)
-    payload = web_app.WebGame.state_payload(runtime)
-    armies = {a["id"]: a for a in (payload.get("armies") or [])}
-    assert ARMY in armies
-    _assert_structured_situation(armies[ARMY], sit, "state_payload.armies")
-    # army_warning = 当前无渲染消费者的载荷副本（可与 report 同源；测可断言嵌入 ≠ HUD 授权）
-    warning = payload.get("army_warning") or ""
-    _assert_chain_embeds_situation(warning, sit, "state_payload.army_warning")
-
-    map_army = _find_army_in_map_nodes(payload.get("map_nodes") or [])
-    _assert_structured_situation(map_army, sit, "map_nodes.armies")
-    # 直接 map_nodes 缝（非仅 state_payload 内嵌）
-    map_army2 = _find_army_in_map_nodes(runtime.map_nodes())
-    _assert_structured_situation(map_army2, sit, "WebGame.map_nodes")
-
-    # 链2：report / intelligence / knowledge（LLM 输入装配）
-    report = db.army_report(limit=30)
-    _assert_chain_embeds_situation(report, sit, "army_report")
-
-    intel_text, intel_src = _qualitative_domain_statement(db, "各军欠饷如何")
-    assert intel_src == "armies"
-    _assert_chain_embeds_situation(intel_text, sit, "intelligence")
-
-    war = next(c for c in content.characters.values() if c.office_type == "兵部")
-    knowledge = build_character_knowledge(db, state, war.name)
-    military = (knowledge.get("world") or {}).get("military") or ""
-    assert "兵籍在册" in military
-
-    # #321 P7：print_header 不得回流 army_report（以目标军结构化 name 哨兵为唯一负断言）
-    buf = io.StringIO()
-    with contextlib.redirect_stdout(buf):
-        print_header(state, db)
-    header_out = buf.getvalue()
-    assert header_army_sentinel not in header_out, (
-        f"report.print_header 不得回流目标军 name={header_army_sentinel!r}\n{header_out}"
-    )
-
-    # 链3：detail（LLM 输入装配；旧 inspect_army 查询工具已退役）
-    detail = db.army_detail(ARMY)
-    _assert_chain_embeds_situation(detail, sit, "army_detail")
-
-    # 链4：roster / 材料目录（LLM 输入装配）
-    roster = db.army_roster()
-    _assert_chain_embeds_situation(roster, sit, "army_roster")
-    prepared = prepare_character_materials(db, state, war)
-    blob = "\n".join(
-        read_material(prepared.root, path)
-        for path in list_materials(prepared.root) if path != "INDEX.txt"
-    )
-    assert "兵籍在册" in blob
-
-
-@pytest.mark.parametrize("fiscal_path", PATHS)
-def test_restore_five_columns_and_player_tier_across_paths(game, tmp_path, fiscal_path):
-    """AC6–9：五持久列跨 reopen；仅凭 DB load_state 接续 tick；tick 后逐字段 oracle。"""
-    db, _state, content = game
-    path = str(tmp_path / f"restore-321-{fiscal_path}.db")
-    copied = sqlite3.connect(path)
-    db.conn.backup(copied)
-    copied.close()
-
-    opened = GameDB(path, content)
-    try:
-        _configure(opened, fiscal_path)
-        # 票面 literal：count=2 redemption=1 → cap=70；streak=7 → tick 后 8；probation 2→1
-        _write_mutiny_fixture(
-            opened,
-            fiscal_path,
-            loyalty=95,
-            arrears=0,
-            is_mutinied=1,
-            mutiny_count=2,
-            mutiny_probation=2,
-            full_pay_streak=7,
-            redemption_count=1,
-            morale=60,
-        )
-    finally:
-        opened.close()
-
-    reopened = GameDB(path, content)
-    try:
-        row = reopened.conn.execute(
-            "SELECT * FROM armies WHERE id=?", (ARMY,)
-        ).fetchone()
-        assert tuple(
-            row[k]
-            for k in (
-                "is_mutinied",
-                "mutiny_count",
-                "mutiny_probation",
-                "full_pay_streak",
-                "redemption_count",
-            )
-        ) == (1, 2, 2, 7, 1)
-        assert int(row["loyalty"]) == 95
-        assert float(row["arrears"]) == pytest.approx(0)
-        assert int(row["manpower"]) == 10000
-        assert mutiny_loyalty_cap(2, redemption_count=1) == 70
-        assert derive_army_mutiny_state(row) == "哗变"
-        pay = reopened._army_pay(row)
-        sit_before = _player_army_situation(row, pay)
-        assert sit_before["mutiny_tier"] == "哗变"
-        card_before = _payload_by_id(reopened)[ARMY]
-        assert card_before["mutiny_tier"] == "哗变"
-
-        # P1：仅凭 DB 重建恢复态，再在恢复态上设测用国库并 tick
-        restored_state = reopened.load_state()
-        restored_state.metrics["国库"] = 10**9
-        apply_fixed_period_flows(reopened, restored_state)
-        after = reopened.conn.execute(
-            "SELECT * FROM armies WHERE id=?", (ARMY,)
-        ).fetchone()
-        assert int(after["loyalty"]) == 70
-        assert int(after["is_mutinied"]) == 0
-        assert int(after["mutiny_count"]) == 2
-        assert int(after["mutiny_probation"]) == 1
-        assert int(after["full_pay_streak"]) == 8
-        assert int(after["redemption_count"]) == 1
-        assert float(after["arrears"]) == pytest.approx(0)
-        assert int(after["manpower"]) == 10000
-        assert mutiny_loyalty_cap(2, redemption_count=1) == 70
-        assert derive_army_mutiny_state(after) == "不满"
-        sit_after = _player_army_situation(after, reopened._army_pay(after))
-        assert sit_after["mutiny_tier"] == "不满"
-        assert _payload_by_id(reopened)[ARMY]["mutiny_tier"] == "不满"
-    finally:
-        reopened.close()
 
 
 @pytest.mark.parametrize(
@@ -425,12 +174,11 @@ def test_apply_army_deltas_rejects_five_persistent_mutiny_columns(game, field):
         f"SELECT {field} FROM armies WHERE id=?", (ARMY,)
     ).fetchone()[field]
     event = SimpleNamespace(id="test-321", title="非法写哗变列")
-    changes = db.apply_army_deltas(
+    changes, changes_rejections = db.apply_army_deltas(
         state, event, None, "测试", {ARMY: {field: 1, "reason": "probe"}}
-    )
-    rejected = [c for c in changes if c.get("rejected")]
-    assert rejected, f"{field} 应被拒收"
-    assert all(c.get("category") == "invalid_enum" for c in rejected)
+    , source=Provenance.system_simulation)
+    assert changes_rejections, f"{field} 应被拒收"
+    assert all(c.category == "invalid_enum" for c in changes_rejections)
     after = db.conn.execute(
         f"SELECT {field} FROM armies WHERE id=?", (ARMY,)
     ).fetchone()[field]

@@ -1,3 +1,4 @@
+from __future__ import annotations
 """#1505 QA 包：地图 typed station_region 单归属 + 同 id 合 theater+region。
 
 钉测：
@@ -9,7 +10,6 @@
 6. dongjiang_area 与 liaodong 一样是前端可渲染的同 id 合并 pin
 """
 
-from __future__ import annotations
 
 from types import SimpleNamespace
 
@@ -52,12 +52,12 @@ def test_map_nodes_province_garrison_co_node(game):
     db.conn.execute(
         "INSERT INTO armies ("
         " id, name, station, station_region, theater, commander, controller,"
-        " troop_type, manpower, supply, morale, training, equipment, arrears,"
+        " troop_type, manpower, supply, morale, training, equipment,"
         " mobility, loyalty, status, owner_power"
-        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             "temp_boundary_army", "临时驻防探针", "山西 / 临时驻防", "",
-            "西南", "驻军", "兵部", "边军、步卒", 4000, 50, 50, 50, 50, 0,
+            "西南", "驻军", "兵部", "边军、步卒", 4000, 50, 50, 50, 50,
             40, 50, "边界探针：typed station_region 为空不挂点", "ming",
         ),
     )

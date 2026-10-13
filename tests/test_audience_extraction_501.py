@@ -1,7 +1,8 @@
+from __future__ import annotations
 """#501 仍现役的召对转译补跑边界。"""
 
-from __future__ import annotations
 
+from tests.conftest import stub_audience_translate
 from ming_sim import audience_night as an
 
 
@@ -24,13 +25,11 @@ def _open_night_with_persisted_reply(db, state, minister, reply="臣愿肩起此
 def test_engine_close_night_drains_pending_success(game, monkeypatch):
     """收夜 join 转译 catch-up 清待补。"""
     db, state, content = game
-    monkeypatch.setattr(
-        "ming_sim.audience_extraction.extract_endorsements_for_night",
-        lambda **k: [],
-    )
     minister = _minister(db, content)
     nid, ctid = _open_night_with_persisted_reply(db, state, minister, reply="臣作保。")
-    assert db.count_pending_story_extractions(night_id=nid) == 1
+
+    assert len(db.reign.list_unextracted_replies(night_id=nid)) == 1
+
 
     def translate_fn(prompt, llm_config):
         return {
@@ -45,14 +44,14 @@ def test_engine_close_night_drains_pending_success(game, monkeypatch):
 
     from ming_sim.session_write_queue import SessionWriteQueue
     write_queue = SessionWriteQueue()
+    stub_audience_translate(monkeypatch, translate_fn)
     result = an.close_night(
         db, state, night_id=nid, llm_config=object(),
         write_gate=write_queue.write_gate, write_queue=write_queue,
-        translate_fn=translate_fn,
     )
     assert result["closed"] is True
     assert an.get_night(db, nid)["status"] == an.NIGHT_STATUS_CLOSED
-    assert db.get_story_extract_status(ctid) == "done"
+    assert db.reign.get_story_extract_status(ctid) == "done"
     assert db.conn.execute(
         "SELECT COUNT(*) AS c FROM story_ledger_entries "
         "WHERE night_id=? AND source_chat_turn_id=?",
@@ -66,12 +65,10 @@ def test_engine_close_night_without_deps_keeps_pending_no_fail_closed(
     """无 llm/write_gate 时待补保留，不 fail-closed。"""
     db, state, content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
-    monkeypatch.setattr(
-        "ming_sim.audience_extraction.extract_endorsements_for_night",
-        lambda **k: [],
-    )
     minister = _minister(db, content)
     nid, ctid = _open_night_with_persisted_reply(db, state, minister)
     an.close_night(db, state, night_id=nid)
-    assert db.count_pending_story_extractions(night_id=nid) >= 1
-    assert str(db.get_story_extract_status(ctid) or "") in ("", "pending")
+
+    assert len(db.reign.list_unextracted_replies(night_id=nid)) >= 1
+
+    assert str(db.reign.get_story_extract_status(ctid) or "") in ("", "pending")

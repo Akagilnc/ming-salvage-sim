@@ -50,8 +50,8 @@
 ### 工厂科技（buildings 可挂 output_metric/output_amount）
 
 - 现有：京营火器局 / 佛山铸炮厂（火器）、御用监织造库 / 杭州织造库（→内库）
-- **玻璃/肥皂/化肥 工厂靠诏书现建**：诏书明文「设玻璃局/办肥皂坊/开化肥厂」→ extractor 强制立
-  一条 `new_issue` 带 `effect_on_resolve: buildings:create`（prompt L183 + `issues.py:88`）→ issue 推满后真建 building，产出落库。**无需先扩 buildings.json**。
+- **玻璃/肥皂/化肥 工厂靠诏书现建**：诏书明文「设玻璃局/办肥皂坊/开化肥厂」→ 声明立
+  一条 `new_issue`，`effect_on_resolve.buildings`（create）→ 推满结案后由 `entities.issue.effects._apply_issue_buildings` 真建 building，产出落库（详见 §五；旧 extractor/`issues.py:88` 路径已退役）。
 - 化肥→挂 regions 的 grain_security/民心；玻璃肥皂→挂国库（商品收入）。建厂是一条独立 bar（办不办得成），与情势线分开。
 
 ### 科技人才（`content/characters.json`，58 人）
@@ -62,10 +62,9 @@
 | 袁可立 | 80/79 | 登莱海防·节制东江 | 开海 + 辽东海路 |
 | 佟养性 | 74/68 | 铸炮·辽人降军·工匠 | 在后金那边（敌方，可策反/对标） |
 
-> ✅ **郑芝龙 / 宋应星 / 汤若望（"孙若望"）不在预置 58 人 ≠ 招不了**。结算链支持**诏书招募**：
-> 下旨「召某某入京授某官」，extractor 抽 `office_changes`，代码按 name 在不在册自判——
-> **不在册自动建新档入朝**（`issues.py:1136`）。所以这几人**靠诏书招进来即可，无需先扩 JSON**。
-> 海盗/外族（郑芝龙）授官需诏书明文「招抚/反正」，extractor 先把 `power_id` 改 `ming` 再任官（prompt L223）。
+> ✅ **郑芝龙 / 宋应星 / 汤若望（"孙若望"）不在预置 58 人 ≠ 招不了**，但**任命核不隐式建档**（ADR 0009：人物须已存在；册外直接 `人物变更/任命` → `hallucinated_id` 拒收）。
+> 合法顺序：先经显式 `registrations` 入册声明（`declaration_dispatch` → `register_unlisted_person_record`）或史实人物补档，**再**月链 `人物变更` 任命。见 [`character-office-changes`](character-office-changes.md)。
+> 海盗/外族（郑芝龙）授官另需「招抚/反正」：在册后先 `易主`(new_power→ming) 再任官。
 
 ---
 
@@ -117,55 +116,41 @@
 
 ---
 
-## 五、诏书招募 / 诏书建厂写法（无需扩 JSON）
+## 五、诏书招募 / 诏书建厂写法（须先有名册/声明契约）
 
-招人、建厂全走**诏书结算链**——下旨说清楚，extractor 自动落库。**不预置、不改 JSON**。
+招人、建厂走**声明 → `declaration_dispatch` → `settlement.settle_delta`**。人物必须已在 `content.characters`（并已 seed 入 DB）；未知名 `人物变更` 任命/调任整项 `hallucinated_id` 拒收，**不**自动建档。
 
-### 招科技人才（不在 58 人名册也能招）
+### 招科技人才（名册内起复 / 在册授官）
 
-诏书措辞要明文「召/起/拜/授 某某 为 某官」，extractor 抽成 `office_changes`，
-代码按 name 在不在册自判：不在册 → **建新档入朝**（`issues.py:1136`）。
+1. **在册者**：诏书明文「召/起/拜/授 某某 为 某官」，月链 `人物变更`（动作 `任命` 等）即可。
+2. **册外者**：先显式 `registrations` 入册（`declaration_dispatch` → `register_unlisted_person_record`）或史实人物补档，**再**任命。直接对陌生名写任命 → `hallucinated_id` 拒收（ADR 0009）。
 
 - **徐光启**：在册，直接起复授工部/礼部，挂西学农政火器。
 - **袁可立**：在册，起复督登莱（开海+辽东海路）。
-- **宋应星**：诏书「召宋应星入京，授工部主事，专理格物制造」→ 自动建档。配玻璃肥皂化肥厂。
-- **汤若望**（"孙若望"应指此，西洋传教士懂铸炮历法）：诏书「召西士汤若望入钦天监/军器局，襄理火器历法」→ 自动建档。
-- **郑芝龙**（海盗，power_id≠ming）：必须诏书明文「**招抚/招安郑芝龙归顺**，授福建水师副总兵」。
-  extractor 先 `人物易主`(new_power→ming) 再任官（prompt L223）。少了「招抚反正」字样建模不成。
+- **宋应星**：先补档/登记入册，再诏「授工部主事，专理格物制造」。配玻璃肥皂化肥厂。
+- **汤若望**（"孙若望"应指此）：先补档/登记，再诏入钦天监/军器局襄理火器历法。
+- **郑芝龙**（海盗，power_id≠ming）：先入册，诏书明文「**招抚/招安郑芝龙归顺**，授福建水师副总兵」；在册后先 `易主`(new_power→ming) 再任官。少了「招抚反正」字样建模不成。
 
 ### 建工厂（玻璃/肥皂/化肥）
 
-诏书明文「设玻璃局 / 办肥皂坊 / 开化肥厂 于 某地」→ extractor 强制立一条独立 `new_issue`
-带 `effect_on_resolve: buildings:create`（prompt L183）→ 推满后真建 building 产出落库（`issues.py:88`）。
+诏书明文「设玻璃局 / 办肥皂坊 / 开化肥厂 于 某地」→ 月链声明立一条独立 `new_issue`
+带 `effect_on_resolve: buildings:create` → 推满后真建 building 产出落库。
 
 - 建厂是「办得成办不成」的独立 bar，别和情势线（陕西流寇等）混。
 - 产出去向在诏书/邸报里说清：玻璃肥皂→国库（商品收入）；化肥→挂 regions grain_security/民心。
 
 ---
 
-## 六、复现命令
-
-```bash
-# 跑这套攻略（CLI 自动玩，崇祯 agent 按上述目标行动）
-.venv/bin/python scripts/play_as_emperor.py \
-  --goal "100月内解决户部亏空/辽东索饷/陕西流寇：先打阉党提皇威，再查隐田+开海+办工厂(玻璃肥皂化肥)开源，招徐光启/袁可立/郑芝龙/宋应星，国库转正后足饷解辽东、赈抚解陕西" \
-  --turns 100 \
-  --db data/strat100.db --agno-db data/strat100_agno.db \
-  --log scripts/runs/strat100_$(date +%s).log
-```
-
-验证看：四指标曲线、三 bar 是否单调上行、国库月净何时转正、有无单指标飞天/崩盘。
-
----
-
 ## 七、实跑验证结论（2026-05，qwen3.6-plus 跑游戏侧+玩家侧）
+
+> 以下为历史实跑报告（旧 extractor 时代 CLI 自动局），仅作证据；现行操作以第五、二节改写后的月链声明接法为准。
 
 CLI 自动跑局（崇祯 agent=qwen）实测，攻略**三线全部跑通并落库**：
 
 ### 攻略有效性 ✅（已验证）
 | 验证项 | 结果 |
 |--------|------|
-| **招募**（诏书招名册外的人） | 郑芝龙(海盗→总督闽浙海防)、宋应星(布衣→工部格物局副使)、徐光启(起复总领) **全自动建档落库** |
+| **招募**（诏书招名册外的人） | 旧 extractor 时代：郑芝龙/宋应星/徐光启曾自动建档落库（**非现役**；现役须先补档/登记再任命，见第五节） |
 | **开海** | 闽海市舶司立项→bar 100 **resolved** |
 | **工厂科技** | 工部格物局+礼部历局立项→bar 100 **resolved**；天津火器局续摊 |
 | **三大局势** | 辽东索饷✅resolved、陕西流寇✅resolved、户部亏空 83-90(终前) |
@@ -178,12 +163,3 @@ CLI 自动跑局（崇祯 agent=qwen）实测，攻略**三线全部跑通并落
   「挪垫/预估」推满，开源收益始终没真盖过支出。纸面繁荣 > 实账。
 - **内库须显式守**：goal 不写「内库别透支」时，agent 把内库当钱包填窟窿，10 回合烧穿（440→0）；
   goal 加「守住实账」后稳守 460-518。**复现时 goal 务必带这句**。
-
-### CLI 自动跑局已修的脚本 bug（`scripts/play_as_emperor.py`，与攻略无关）
-qwen 弱模型驱动 CLI 暴露一串历史坑，已修：① 退朝判断要覆盖「朕问：」界面（agent 用「传X」换人不回主菜单）
-② 草案界面强制颁布兜底 ③ payload 喂本月进度（num_history_runs=8 太短会盲凑）④ issue 颁布须先 confirm pending
-⑤ confirm N 的 N 是 directive **id** 不是序号 ⑥ TIMEOUT 试探重试 ⑦ step 上限 500→turns×60+300
-⑧ 草案空发 back 逼拟旨 + 超长输入截断（防 CLI 卡死）。
-
-> 残留：草案审议界面 qwen 仍偶发 confirm/issue/yes 循环（弱模型与复杂状态机不匹配）。
-> 跑满 100 月建议**游戏侧换 deepseek**（更守 prompt），或用 `decree-probe` 跳过对话直接喂诏书序列验结算。

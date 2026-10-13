@@ -1,3 +1,4 @@
+from __future__ import annotations
 """#1465 切片③：CLI 子进程替身（禁起真 CLI 进程）。
 
 生产读法 = `Popen` + 增量读 stdout（新字节刷新活动时刻，不设总墙钟）。
@@ -6,7 +7,6 @@
 「静默超阈值判死」等契约用。
 """
 
-from __future__ import annotations
 
 import threading
 from typing import Any, Callable, Dict, List, Optional, Sequence, Union
@@ -134,18 +134,13 @@ class FakeCliProcess:
 
     def __init__(
         self,
-        cmd: Optional[Sequence[str]] = None,
         *,
         stdout_script: Sequence[ScriptItem] = (),
         stderr_script: Sequence[ScriptItem] = (),
         returncode: int = 0,
-        popen_kwargs: Optional[Dict[str, Any]] = None,
         stdin_error: Optional[BaseException] = None,
     ) -> None:
-        self.cmd = list(cmd or [])
-        self.popen_kwargs = dict(popen_kwargs or {})
         self.killed = threading.Event()
-        self.terminated = False
         self.stdin = _FakeStdin(stdin_error)
         self.stdout = _ScriptedStream(stdout_script, self.killed)
         self.stderr = _ScriptedStream(stderr_script, self.killed)
@@ -166,7 +161,6 @@ class FakeCliProcess:
 
     def terminate(self) -> None:
         # 真 subprocess 对已退进程 terminate 是 no-op：退出码不得被收尾动作改写。
-        self.terminated = True
         if self.poll() is None:
             self.killed.set()
 
@@ -193,11 +187,9 @@ class FakeCliRunnerScript:
             index = len(self.processes)
             spec = self._runs[min(index, len(self._runs) - 1)]
             proc = FakeCliProcess(
-                cmd,
                 stdout_script=spec.get("stdout", ()),
                 stderr_script=spec.get("stderr", ()),
                 returncode=int(spec.get("returncode", 0)),
-                popen_kwargs=kwargs,
                 stdin_error=spec.get("stdin_error"),
             )
             self.processes.append(proc)
@@ -212,6 +204,5 @@ def install_fake_cli_runner(monkeypatch, runs: Sequence[Dict[str, Any]]) -> Fake
     script = FakeCliRunnerScript(runs)
     monkeypatch.setattr(cb.subprocess, "Popen", script.popen)
     monkeypatch.setattr(cb, "_resolve_cli_bin", lambda name, configured: f"/fake/{name}")
-    monkeypatch.setattr(cb, "_warm_keychain", lambda: None)
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
     return script

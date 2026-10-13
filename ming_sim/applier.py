@@ -1,7 +1,7 @@
 """结算落库统一拒收契约与事务边界（ADR 0008 S0 骨架）。
 
-契约住此模块；各 section 适配器将原地迁入（PR2）。
-公开类型：Provenance / RejectedItem / SectionResult / ApplyContext / RejectionCollector。
+契约住此模块；段适配器在 entities/* 与 settlement 目录，经登记表调度。
+公开类型：Provenance / RejectedItem / SectionResult / RejectionCollector。
 """
 
 from __future__ import annotations
@@ -9,35 +9,141 @@ from __future__ import annotations
 import enum
 import json
 import sqlite3
+import contextlib
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterator, List, Tuple
-
-
-def sanitize_sqlite_text(value: Any) -> Any:
-    """Return value with strings safe to bind into SQLite UTF-8 TEXT.
-
-    Python can hold lone surrogate codepoints produced by permissive JSON
-    parsing, but sqlite3 refuses to UTF-8 encode them at bind time. Preserve
-    normal text (including Chinese) and escape only unencodable codepoints.
-    """
-    if isinstance(value, str):
-        return value.encode("utf-8", "backslashreplace").decode("utf-8")
-    if isinstance(value, list):
-        return [sanitize_sqlite_text(item) for item in value]
-    if isinstance(value, tuple):
-        return tuple(sanitize_sqlite_text(item) for item in value)
-    if isinstance(value, dict):
-        return {
-            sanitize_sqlite_text(key): sanitize_sqlite_text(val)
-            for key, val in value.items()
-        }
-    return value
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
 
 def safe_json_dumps(value: Any, **kwargs: Any) -> str:
     """json.dumps that preserves readable UTF-8 while escaping bad codepoints."""
-    return json.dumps(sanitize_sqlite_text(value), **kwargs)
+    return json.dumps(value, **kwargs).encode("utf-8", "backslashreplace").decode("utf-8")
+
+
+class StoredDocumentError(Exception):
+    """Present durable JSON is corrupt or wrong-shaped.
+
+    Load-seam fault for already-persisted documents. Not a model/product
+    validation error: callers that isolate LLM ValueError must not catch this.
+    Blank/missing documents still resolve to ``blank`` and do not raise.
+    """
+
+
+def durable_int(
+    raw: object, *, label: str, blank: int | None = 0,
+    accept_numeric_strings: bool = True,
+) -> int:
+    """Read one integer from a durable column.
+
+    ``blank`` is the value for None/empty on *optional* columns (e.g. due_turn).
+    Pass ``blank=None`` for required columns: None/empty is StoredDocumentError,
+    not a silent 0. Present values reuse strict_int (reject bool/float/overflow).
+    ``accept_numeric_strings`` defaults True so other callers keep current behavior;
+    durable segment identities pass False (no TEXT/BLOB wash, #1897 G1).
+    """
+    if raw is None or raw == "":
+        if blank is None:
+            raise StoredDocumentError(f"{label} 损坏")
+        return int(blank)
+    from ming_sim.strict_types import strict_int
+
+    try:
+        return strict_int(raw, accept_numeric_strings=accept_numeric_strings)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise StoredDocumentError(f"{label} 损坏") from exc
+
+
+def coerce_beyond_intent_flag(value: object) -> int:
+    """闭世界肯定识别器：仅契约内肯定表示 →1；缺席/否定/空/畸形一律 →0。
+
+    肯定：True / 非零 int·float / 肯定串集 {"1","true","yes","on","是","有","真"}。
+    开放兜底永不得回归——畸形输入不得捏造肯定标记（0072/0118 真相层）。
+    Durable beyond_intent 列的唯一归一；Store 与写口共用，不经 GameDB 反向依赖。
+    """
+    if value is None:
+        return 0
+    if isinstance(value, bool):
+        return 1 if value else 0
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return 1 if int(value) != 0 else 0
+    text = str(value).strip().lower()
+    return 1 if text in {"1", "true", "yes", "on", "是", "有", "真"} else 0
+
+
+def load_stored_json(raw: object, *, label: str, blank: object = None) -> object:
+    """Read one durable JSON document.
+
+    SQL NULL is the absent document (`blank`). A present value
+    that is not JSON raises StoredDocumentError; it is not rewritten empty.
+    """
+    if isinstance(raw, (dict, list)):
+        return raw
+    if raw is None:
+        return blank
+    if isinstance(raw, (bytes, bytearray)):
+        try:
+            raw = raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise StoredDocumentError(f"{label} 损坏") from exc
+    if not isinstance(raw, str):
+        raise StoredDocumentError(f"{label} 损坏")
+    try:
+        return json.loads(raw)
+    except (TypeError, ValueError) as exc:
+        raise StoredDocumentError(f"{label} 损坏") from exc
+
+
+def load_stored_object(raw: object, *, label: str) -> dict:
+    """Durable JSON object. SQL NULL is {}. A present non-object raises."""
+    value = load_stored_json(raw, label=label, blank={})
+    if not isinstance(value, dict):
+        raise StoredDocumentError(f"{label} 必须为对象")
+    return value
+
+
+def parse_engine_payload_json(
+    raw: object, *, surface: str = "payload_json",
+) -> dict:
+    """#624 / ADR 0005：引擎侧 payload 读路单一助手。
+
+    SQL NULL/缺省 → {}；腐坏 JSON 或非对象 → 响亮 tlog + StoredDocumentError。
+    """
+    from ming_sim.token_stats import tlog
+
+    try:
+        return dict(load_stored_object(raw, label=surface))
+    except StoredDocumentError as exc:
+        tlog(f"[{surface}] {exc}")
+        raise
+
+
+def load_stored_list(raw: object, *, label: str) -> list:
+    """Durable JSON list. SQL NULL is []. A present non-list raises."""
+    value = load_stored_json(raw, label=label, blank=[])
+    if not isinstance(value, list):
+        raise StoredDocumentError(f"{label} 必须为名单")
+    return value
+
+
+def load_stored_object_list(raw: object, *, label: str) -> list[dict]:
+    """Already-decoded durable field: list of objects.
+
+    Blank/missing → []. A present non-list — including a JSON text string — is
+    corruption (no second json.loads). Top-level JSON documents still use
+    load_stored_list / load_stored_object at the document boundary.
+    """
+    from collections.abc import Mapping
+
+    if raw is None or raw == "":
+        return []
+    if not isinstance(raw, list):
+        raise StoredDocumentError(f"{label} 必须为名单")
+    out: list[dict] = []
+    for item in raw:
+        if not isinstance(item, Mapping):
+            raise StoredDocumentError(f"{label} 成员须为对象")
+        out.append(dict(item))
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -79,7 +185,8 @@ class _SuspendableConnection(sqlite3.Connection):
                 callback_errors.append(exc)
         if callback_errors:
             raise RuntimeError(
-                f"runtime commit callback failed ({len(callback_errors)} error(s))"
+                f"runtime commit callback failed ({len(callback_errors)} error(s)): "
+                f"{callback_errors[0]}"
             ) from callback_errors[0]
 
     def rollback(self) -> None:
@@ -102,7 +209,8 @@ class _SuspendableConnection(sqlite3.Connection):
                 self.execute("BEGIN")
         if callback_errors:
             raise RuntimeError(
-                f"runtime rollback callback failed ({len(callback_errors)} error(s))"
+                f"runtime rollback callback failed ({len(callback_errors)} error(s)): "
+                f"{callback_errors[0]}"
             ) from callback_errors[0]
 
     def __enter__(self) -> "_SuspendableConnection":
@@ -151,13 +259,19 @@ def atomic(db: Any) -> Iterator[None]:
     """把 db.conn 上的一段写序列包成单事务，期内暂停所有 commit。
 
     进入：置暂停标志，期内全部 self.conn.commit() 变 no-op。
-    正常退出：解除暂停 + 一次真 commit。
-    异常：解除暂停 + rollback + 原样 re-raise（ADR 0005 fail-loud，不吞）。
+    正常退出：仅当本层真正开了事务时解除暂停 + 一次真 commit。
+    异常：仅当本层开了事务时 rollback；借用外层事务时不抢先落定/回滚。
+    原样 re-raise（ADR 0005 fail-loud，不吞）。
 
     嵌套 flat/可重入：内层 atomic 不另起事务、不提前提交，由最外层统一
-    commit/rollback（计数深度，仅深度归 0 时落定）。内层异常即使被中间层
-    try/except 吞掉，最外层退出也强制回滚并响亮抛错（rollback-only 标志，
-    cmr S1 F2）——flat 语义下「吞内层异常后继续提交」结构上不可达。
+    commit/rollback（计数深度，仅深度归 0 且本层拥有事务时落定）。内层异常
+    即使被中间层 try/except 吞掉，最外层退出也强制回滚并响亮抛错
+    （rollback-only 标志，cmr S1 F2）——flat 语义下「吞内层异常后继续提交」
+    结构上不可达。
+
+    与 :func:`connection_owns_transaction` 同一归属契约：外层已 BEGIN / 已在
+    atomic 内时，内层不得 COMMIT（SQLite COMMIT 会清空 savepoint；见
+    https://www.sqlite.org/lang_savepoint.html）。
 
     备份请在 rollback/commit 之后、atomic 之外做：db.backup_to 在 atomic 内
     会响亮拒绝（备份走同连接 pager，会带上未提交脏页，cmr S1 F3）。
@@ -170,6 +284,8 @@ def atomic(db: Any) -> Iterator[None]:
         )
     # 进入深度：>1 表示嵌套内层，退出时不落定。
     depth = getattr(conn, "_atomic_depth", 0) + 1
+    # 本层是否开了事务：已有外层 BEGIN/atomic 时借用，不得在退出时抢提交。
+    started_here = False
     # 状态变更全部在 try 内：BEGIN 抛错 / KeyboardInterrupt 落在入口窗口时，
     # except 分支照常复位，暂停标志不泄漏（泄漏=79 处 commit 永久静默失效，
     # cmr S1 r3 F2）。
@@ -177,16 +293,18 @@ def atomic(db: Any) -> Iterator[None]:
         conn._commit_suspended = True
         conn._atomic_depth = depth
         if depth == 1 and not conn.in_transaction:
-            # legacy 模式只有 DML 隐式开事务；不显式 BEGIN 的话，DDL 打头的
-            # 序列（如 flush_to_db 建表）跑在 autocommit 里、回滚留表（cmr S1 r2 F2）。
+            # Establish transaction ownership before yielding, even before the first DML.
+            # Nested writers use conn.in_transaction to decide whether they own the commit.
             conn.execute("BEGIN")
+            started_here = True
         yield
     except BaseException:
         conn._atomic_depth = depth - 1
         if depth == 1:
             conn._atomic_rollback_only = False
             conn._commit_suspended = False
-            conn.rollback()
+            if started_here:
+                conn.rollback()
         else:
             # 内层异常：标记 rollback-only，防中间层吞掉后外层照常提交。
             conn._atomic_rollback_only = True
@@ -197,17 +315,71 @@ def atomic(db: Any) -> Iterator[None]:
             conn._commit_suspended = False
             if getattr(conn, "_atomic_rollback_only", False):
                 conn._atomic_rollback_only = False
-                conn.rollback()
+                if started_here:
+                    conn.rollback()
+                    raise RuntimeError(
+                        "atomic: 内层异常被调用方吞掉，本层事务已整体回滚。"
+                        "flat 语义下内层无独立原子性——请勿在 atomic 之间吞内层异常。"
+                    )
+                # 借用外层 BEGIN/atomic：本层不得抢先 ROLLBACK；只响亮要求外层整体回滚。
                 raise RuntimeError(
-                    "atomic: 内层异常被调用方吞掉，事务已整体回滚。"
+                    "atomic: 内层异常被调用方吞掉；本层借用外层事务，未抢先 rollback，"
+                    "外层必须整体回滚。"
                     "flat 语义下内层无独立原子性——请勿在 atomic 之间吞内层异常。"
                 )
+            if not started_here:
+                # 外层拥有事务：只解除暂停，由外层统一 COMMIT/ROLLBACK。
+                return
             try:
                 conn.commit()
             except BaseException:
                 # commit 失败不留开事务（与原生 with conn: 语义一致）。
                 conn.rollback()
                 raise
+
+
+class ItemAtomicReject(Exception):
+    """在 :func:`item_savepoint_scope` 块内抛出以整项回滚，外层捕获后转拒收。"""
+
+    def __init__(self, reason: str, category: str) -> None:
+        self.reason = reason
+        self.category = category
+        super().__init__(reason)
+
+
+@contextmanager
+def item_savepoint_scope(db: Any, savepoint: str) -> Iterator[None]:
+    """逐项落库的最小原子域：外层事务内用 SAVEPOINT 做本项细粒度回滚。
+
+    已在外层事务内时只用 SAVEPOINT，不再另开 ``atomic``（嵌套 flat 语义会把
+    「接住内层异常后继续下一项」判为吞异常）。未在任何外层事务内时用
+    ``atomic(db)`` 令本项独立开合。
+
+    跨层回滚：本项 body 开始前记 ``_runtime_rollback_callbacks`` 长度，失败时
+    只回放本项新增的闭包（不新建平行快照系统）；成功路径留给外层 commit/
+    rollback 按既有语义处理。
+    """
+    owns = connection_owns_transaction(db.conn)
+    cm = atomic(db) if owns else contextlib.nullcontext()
+    with cm:
+        rollback_callbacks = getattr(db.conn, "_runtime_rollback_callbacks", None)
+        if rollback_callbacks is None:
+            rollback_callbacks = []
+            db.conn._runtime_rollback_callbacks = rollback_callbacks
+        baseline = len(rollback_callbacks)
+        db.conn.execute(f"SAVEPOINT {savepoint}")
+        try:
+            yield
+        except BaseException:
+            db.conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+            db.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+            item_callbacks = rollback_callbacks[baseline:]
+            del rollback_callbacks[baseline:]
+            for callback in reversed(item_callbacks):
+                callback()
+            raise
+        else:
+            db.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
 
 
 # ---------------------------------------------------------------------------
@@ -233,14 +405,28 @@ class RejectedItem:
     """一条被拒收的 delta 项，附原因与分析类别。
 
     category 约定值（非 exhaustive）：hallucinated_id / invalid_enum / missing_ref。
-    source 由 driver/extractor 灌注，决定是否向玩家可见（ADR 0008 决定 5）。
+    source 由调用方传入，决定是否向玩家可见（ADR 0008 决定 5）。
     """
 
-    item: dict                  # 原始 dict，原样保留便于重放分析
+    item: dict                  # 恒为对象；非对象在拒收产生处包成 {"raw_value": 原值}
     reason: str                 # 人读原因
     category: str               # 机读类别，供聚合
     source: Provenance          # 来源
 
+
+def reject_item(
+    rejected: List[RejectedItem], item: object, reason: str, category: str,
+    source: Provenance,
+) -> None:
+    """Record a rejected item, preserving objects and wrapping non-object inputs."""
+    from collections.abc import Mapping
+    payload = dict(item) if isinstance(item, Mapping) else {"raw_value": item}
+    rejected.append(RejectedItem(
+        item=payload,
+        reason=reason,
+        category=category,
+        source=source,
+    ))
 
 # ---------------------------------------------------------------------------
 # 决定 1：段适配器返回值
@@ -265,23 +451,22 @@ class SectionResult:
         )
 
 
-# ---------------------------------------------------------------------------
-# 决定 1：适配器入参上下文
-# ---------------------------------------------------------------------------
-
-@dataclass
-class ApplyContext:
-    """适配器入参，持结算所需的全部外部依赖。
-
-    registry 可为 None（向后兼容无 registry 路径）。
-    source 由 driver/extractor 在调用前灌注。
-    """
-
-    db: Any          # GameDB（不在 applier 层导入 GameDB 避免循环）
-    state: Any       # GameState
-    content: Any     # GameContent
-    registry: Any    # 可为 None
-    source: Provenance
+def merge_delta_maps(total: dict, applied: dict) -> None:
+    """把一笔派系/阶级增量并进同批累计（同键同字段相加）。"""
+    for key, delta in applied.items():
+        if isinstance(delta, dict):
+            previous = total.get(key, {})
+            if not isinstance(previous, dict):
+                previous = {"satisfaction": previous}
+            for fld, amount in delta.items():
+                previous[fld] = previous.get(fld, 0) + amount
+            total[key] = previous
+        else:
+            previous = total.get(key, 0)
+            if isinstance(previous, dict):
+                previous["satisfaction"] = previous.get("satisfaction", 0) + delta
+            else:
+                total[key] = previous + delta
 
 
 # ---------------------------------------------------------------------------
@@ -293,21 +478,6 @@ class RejectionCollectorRequired(ValueError):
 
     typed 控制流标记：catch 只认本类，禁止解析异常散文。
     """
-
-_CREATE_REJECTION_REPORTS = """
-CREATE TABLE IF NOT EXISTS rejection_reports (
-    id       INTEGER PRIMARY KEY AUTOINCREMENT,
-    turn     INTEGER NOT NULL,
-    section  TEXT    NOT NULL,
-    item_json TEXT   NOT NULL,
-    reason   TEXT    NOT NULL,
-    category TEXT    NOT NULL,
-    source   TEXT    NOT NULL,
-    attempt  INTEGER NOT NULL DEFAULT 1,
-    resimulation_invalidated INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-"""
 
 
 @dataclass
@@ -321,13 +491,21 @@ class RejectionCollector:
     mirror 只镜像已 flush 进 DB 的行：未落库的行可能随回滚消失，镜像它们
     会留孤立行。本类不做时序判断，由调用方保证。
 
-    attempt 由调用方在构造时灌注（PR2-S0 接错误目录推导，ADR 决定 5：不从 DB 取
-    ——DB 计数随回滚重置即失真；error_pack._next_attempt 是同一推导的唯一真源）。
     """
 
     attempt: int = 1
     _buffer: List[dict] = field(default_factory=list, init=False, repr=False)
     _flushed: List[dict] = field(default_factory=list, init=False, repr=False)
+    _commit_rejections: Dict[int, BaseException] = field(
+        default_factory=dict, init=False, repr=False,
+    )
+
+    def note_commit_rejection(self, action_id: int, exc: BaseException) -> None:
+        """Carry an explicit domain rejection across the business savepoint."""
+        self._commit_rejections[int(action_id)] = exc
+
+    def commit_rejection(self, action_id: int) -> Optional[BaseException]:
+        return self._commit_rejections.get(int(action_id))
 
     def record(self, section: str, rejected_item: RejectedItem, turn: int) -> None:
         """暂存一条拒收记录到内存缓冲，不写 DB。
@@ -347,18 +525,8 @@ class RejectionCollector:
     def flush_to_db(self, db: Any) -> None:
         """把缓冲写进 rejection_reports 表，写完移入待镜像快照。
 
-        首次调用时建表（CREATE TABLE IF NOT EXISTS）——确保老存档不需要迁移脚本。
         空缓冲时直接返回（幂等）。
         """
-        db.conn.execute(_CREATE_REJECTION_REPORTS)
-        cols = {
-            str(row[1]) for row in db.conn.execute("PRAGMA table_info(rejection_reports)").fetchall()
-        }
-        if "resimulation_invalidated" not in cols:
-            db.conn.execute(
-                "ALTER TABLE rejection_reports "
-                "ADD COLUMN resimulation_invalidated INTEGER NOT NULL DEFAULT 0"
-            )
         if not self._buffer:
             return
         db.conn.executemany(
@@ -394,13 +562,60 @@ class RejectionCollector:
         """丢弃缓冲与待镜像快照（回滚路径：DB 行已随事务回滚，内存同步清场）。"""
         self._buffer.clear()
         self._flushed.clear()
+        self._commit_rejections.clear()
 
-    def has_player_visible_rejection(self) -> bool:
-        """本回合是否有 player_decree / hitl_decision 来源的拒收——决定玩家面邸报是否给一句
-        in-world 提示（ADR 0008 决定 5：仅这两来源对玩家可见，系统推演来源安静）。
-        检 _buffer + _flushed：报告组装在事务内、commit/mirror 前，拒收已 record 可能已 flush 未 mirror。"""
-        _visible = {Provenance.player_decree.value, Provenance.hitl_decision.value}
-        return any(row["source"] in _visible for row in (*self._buffer, *self._flushed))
+
+def list_rejection_reports_for_turn(conn: Any, turn: int) -> List[Any]:
+    """Read rejection_reports rows for one turn."""
+    return list(
+        conn.execute(
+            "SELECT section, item_json, reason, category, source FROM rejection_reports "
+            "WHERE turn=? ORDER BY id",
+            (int(turn),),
+        )
+    )
+
+
+def list_unresolved_player_rejections(db: Any) -> List[dict]:
+    """Scene/translation read port: rejected parts persist until explicitly resolved."""
+    rows = db.conn.execute(
+        "SELECT r.* FROM rejection_reports r LEFT JOIN rejection_resolutions s "
+        "ON s.rejection_id=r.id WHERE s.rejection_id IS NULL "
+        "AND r.source IN (?, ?) ORDER BY r.id",
+        (Provenance.player_decree.value, Provenance.hitl_decision.value),
+    ).fetchall()
+    return [{
+        "kind": "player_rejection", "rejection_id": int(row["id"]),
+        "turn": int(row["turn"]), "section": row["section"],
+        "item": load_stored_object(row["item_json"], label="rejection_reports.item_json"),
+        "reason": row["reason"], "category": row["category"], "source": row["source"],
+    } for row in rows]
+
+
+def require_player_rejection_ids(db: Any, raw: object) -> List[int]:
+    """Only explicit IDs from the unresolved player rejection ledger are admissible."""
+    from ming_sim.strict_types import strict_sqlite_id
+
+    if not isinstance(raw, list):
+        raise TypeError("resolves_rejection_ids 须为数组")
+    ids = [strict_sqlite_id(value) for value in raw]
+    if not ids:
+        return []
+    eligible = {row["rejection_id"] for row in list_unresolved_player_rejections(db)}
+    if any(rid not in eligible for rid in ids):
+        raise KeyError("拒收记录不存在、非玩家来源或已了结")
+    return list(dict.fromkeys(ids))
+
+
+def resolve_player_rejections(
+    db: Any, ids: List[int], *, decision: str, turn: int,
+) -> None:
+    """Record the declared result in the caller's transaction; never rewrite the rejection."""
+    db.conn.executemany(
+        "INSERT INTO rejection_resolutions (rejection_id, decision, turn) "
+        "VALUES (?, ?, ?) ON CONFLICT(rejection_id) DO NOTHING",
+        [(rid, decision, int(turn)) for rid in ids],
+    )
 
 
 def register_runtime_outcome_callbacks(
@@ -412,10 +627,10 @@ def register_runtime_outcome_callbacks(
     """Run callbacks at the real outermost commit/rollback boundary.
 
     Nested owners register on the shared connection so side effects (JSONL mirror,
-    registry refresh) only fire after the outermost commit, and are discarded on
+    runtime-memory updates) only fire after the outermost commit, and are discarded on
     rollback. Depth 0 runs on_commit immediately.
     """
-    if getattr(db.conn, "_atomic_depth", 0) == 0:
+    if connection_owns_transaction(db.conn):
         if on_commit is not None:
             on_commit()
         return

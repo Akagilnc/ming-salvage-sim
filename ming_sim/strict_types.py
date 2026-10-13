@@ -3,6 +3,9 @@
 from ming_sim.appointment_tenure import APPOINTMENT_TENURES
 from ming_sim.qualitative import POWER_BANDS
 
+# SQLite 有符号 64-bit 整数边界：超界 int 绑进 SQLite 会抛 OverflowError。
+SQLITE_INT_MIN, SQLITE_INT_MAX = -(2 ** 63), 2 ** 63 - 1
+
 
 def strict_int(raw: object, *, accept_numeric_strings: bool = True) -> int:
     """Reject bools/floats; optionally retain legacy acceptance of integer strings."""
@@ -14,6 +17,18 @@ def strict_int(raw: object, *, accept_numeric_strings: bool = True) -> int:
         return int(raw)  # type: ignore[arg-type]
     except (TypeError, ValueError, OverflowError) as exc:
         raise ValueError("value must be an integer") from exc
+
+
+def strict_sqlite_id(raw: object, *, accept_numeric_strings: bool = True) -> int:
+    """Identity that will bind as SQLite INTEGER: strict_int + 64-bit range.
+
+    超界在查询前即 ValueError，避免 'Python int too large to convert to SQLite
+    INTEGER' 逃逸整批（#1897 C1）。全仓身份权威只此一处范围守门。
+    """
+    val = strict_int(raw, accept_numeric_strings=accept_numeric_strings)
+    if not (SQLITE_INT_MIN <= val <= SQLITE_INT_MAX):
+        raise ValueError("id 超出 SQLite 64-bit 范围")
+    return val
 
 
 REJECTION_VERDICT_KEYS = frozenset({
@@ -54,8 +69,6 @@ def validate_verdict_affected_parties(
     #657 §C.8 later-wins：mode=midzhi 不猜/不强制 affected_parties（顺颁与打回皆然）；
     ordinary 打回仍须非空 typed 清单；ordinary 顺颁必须省略。
     """
-    if not isinstance(verdict, dict):
-        raise ValueError("案卷 verdict 须为对象")
     decision = verdict.get("decision")
     present = "affected_parties" in verdict
     if mode == "midzhi":
@@ -86,8 +99,6 @@ def validate_rejection_verdict(
     character_ids: object,
 ) -> None:
     """Validate the complete ADR 0066 shape against authoritative DB identities."""
-    if not isinstance(verdict, dict):
-        raise ValueError("打回判决须为对象")
     opponents = verdict.get("primary_opponents")
     snapshot = verdict.get("criteria_snapshot")
     string_list = lambda value: (isinstance(value, list) and all(
@@ -147,3 +158,16 @@ def validate_rejection_verdict(
                for item in endorsement_ids)
     ):
         raise ValueError("打回判决缺少关口、主否决方、缘由或完整 typed 判据快照")
+
+
+_SQLITE_INT_MIN, _SQLITE_INT_MAX = -(2 ** 63), 2 ** 63 - 1
+
+
+def _parse_sqlite_id(raw: object) -> int:
+    """解析将绑进 SQLite 的整型主键 id（secret_order / issue 等通用）：非整数/bool/float/超
+    SQLite 64-bit 范围 → 抛 ValueError（调用方拒为 invalid_enum）。避免绑定超界 int 抛
+    OverflowError 崩整月结算（#63.5 一坏项带走整批；cmr secret-order r2 / close-issues r1 codex）。"""
+    val = strict_int(raw)  # bool/float/非数 → ValueError
+    if not (_SQLITE_INT_MIN <= val <= _SQLITE_INT_MAX):
+        raise ValueError("id 超出 SQLite 64-bit 范围")
+    return val

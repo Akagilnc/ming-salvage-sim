@@ -21,18 +21,18 @@
 
 ## 🟠 branch probe/chat-action-pending CMR Deferred（动作闸门确认 UX 重设计，cmr ship-pre 5 轮收敛后 defer，未上 issue）
 - CA1【P3 行为缺口·fail-safe】口头用自然语言把**已在位**的妃嫔升位份（嫔→贵妃）：`_commit_office_action` 任命走 consort 路 → `apply_appointment`（[session.py](ming_sim/session.py)）对在位同名妃 `_find_candidate_by_name` 不中 + 非 candidate → 返 `("","")` → commit 标 failed（不崩、不错落，仅升妃没生效）。要不要支持「口头升妃」属品味题；要支持则在 consort 路加「在位妃→改 office/位份」分支。CMR R2/R4 由 Claude 单独提、判 low。
-- CA2【P3 死代码】前端「待颁诏」面板拆掉后，`web_app.py` 的 `GET /api/pending_actions` + `POST /api/pending_actions/{id}/withdraw` 两端点 + `tests/test_pending_actions.py` 内 `api_pending_actions`/`api_withdraw_pending_action` 用例**没人再调**（确认改对话驱动）。用户「先留着」；要清就连测试一起删。CMR R5 Claude 顺带提（非 review finding）。
+- CA2【P3 死代码】~~前端「待颁诏」/「未落库政务」面板后端三端点~~：**#1853 reopen 已删**（`GET/POST /api/pending_actions*` + 召对内 `pending_action_failures_for` 投影；`db.withdraw_pending_action` 转译拒绝仍保留；结算侧 `failure_snapshot` 不动）。
 - CA3【验证待办·非缺陷】Slice 4 给 `content/prompts/minister_agent.md` 加的「in-character 领命并补充信息和要点」是 prompt 改、行为=LLM 输出，**无法确定性单测**；需在跑着的 server 上真召对一轮，确认大臣不出戏、不弹系统式「确认?」问句。
 
 ## 🟠 family/379-base integrated-cmr Deferred（ship-pre Gate1 完整性闸 2026-06-26 收敛时记录）
-- **#389 残留：simulator「漏 event_id + 改写抉择名」双重偏离时事件选择不绑定（P3）**。`bind_decisions_to_candidate_events`（[settlement_payload.py](ming_sim/settlement_payload.py)）已把绑定从「信 simulator 回显 id」改成「以权威候选快照为准」：回显 id 在快照内→采信；缺 id/回显 off-snapshot→以快照**唯一标题**(重)绑；无键可绑→解绑（选择留 `pending_decisions.choice_json`，settle 末 `clear_pending_decisions` 删，不进 `event_triggers` 终态账）。残留：simulator 既漏掉 prompt 强制的 `event_id`（`season_simulator.md:143`）**又**把抉择标题改写得与候选 title 不等时，该候选事件决策与「正当的非事件亲裁决策」无任何共享键可区分 → 无法安全确定性绑定（按候选数消去法会把非事件决策误绑到本回合未浮现的候选，证伪不安全）。彻底闭合需让候选事件决策块由系统生成、携带确定性 candidate index/id（= 改 #345 触发=推送的决策生成路径，#389 边界明示 out-of-scope「不重做 #345」）。判据：3/4 整合 cmr 腿 exercise 后判 DONE；与 #340-H 裁决「绑定残留靠日志/观测兜底、不扩 scope」同类、同处置。要彻底修时回头改决策块生成路径或开新 ADR。
+- **#389 残留：simulator「漏 event_id + 改写抉择名」双重偏离时事件选择不绑定（P3）**。`bind_decisions_to_candidate_events`（[settlement_payload.py](ming_sim/settlement_payload.py)）以权威候选快照的**显式 event_id**为真源：回显 id 在快照内→采信；缺 id／回显 off-snapshot→**解绑**（选择留 `pending_decisions.choice_json`，settle 末 `clear_pending_decisions` 删，不进 `event_triggers` 终态账）。~~旧「唯一标题补／重绑」兼容路径已于 #1897 K2／ADR0142 清退（2026-10-05）；呈现标题不得再补造或重绑结构化身份。~~ 残留：simulator 既漏掉 prompt 强制的 `event_id`（`season_simulator.md:143`）**又**无法靠显式 id 对齐时，该候选事件决策与「正当的非事件亲裁决策」无任何共享键可区分 → 无法安全确定性绑定（按候选数消去法会把非事件决策误绑到本回合未浮现的候选，证伪不安全）。彻底闭合需让候选事件决策块由系统生成、携带确定性 candidate index/id（= 改 #345 触发=推送的决策生成路径，#389 边界明示 out-of-scope「不重做 #345」）。判据：3/4 整合 cmr 腿 exercise 后判 DONE；与 #340-H 裁决「绑定残留靠日志/观测兜底、不扩 scope」同类、同处置。要彻底修时回头改决策块生成路径或开新 ADR。**本轮门槛不是恢复全部事件功能。**
 
 ## 🟠 family/379-base integrated-cmr Gate2 Deferred（ship-pre Gate2 正确性闸 2026-06-26 收敛时记录）
 - **#396（P2）生命周期端点关连接 vs 后台召对 worker** → 退回菜单/关闭/新游戏 `session.close()` 时若 #383 后台 worker 仍持 `_write_gate` 写同一连接 → worker 崩「closed database」。属 #382 连接级并发模型（#393 明示 deferred）+ 与 #383「exit≠cancel」产品语义纠缠；in-game save/load/reset 已加 409 兜底（Gate2 r5），菜单 exit/shutdown 的取消语义留 #382 统一裁。
 - **#397（P2）#344 显式「密令如下：<完整旨意>」丢御旨** → `content = reply or secret_intent`（cli_backend.py:1284）取大臣回话当密令正文，大臣只领命时御旨只剩截断标题。修法（御旨优先/大臣扩写优先/合并）改 #344 用户裁决 + enshrining 测试，需产品设计裁决。
 
 ## ✅ RESOLVED — #383 后台召对并发写簇 F1-F4（原 ESCALATED，family/379-base integrated-cmr 2026-06-26 收敛）
-> **原 Gate2 ESCALATE 已由 #393（串行化裁决 = 单 `_write_gate` 锁串行后台召对 worker 与结算/其它写入者）+ 整合 cmr Gate1/Gate2 write-surface 收口解决。** F1（chat SSE → `run_in_executor` 出事件循环）/F2（`accepted_turn` 受理时捕获并贯穿落库）/F3（串行后 rollback 快照不再误收他人行）/F4（结算 worker 与所有冲突写入者抢同一锁 → 写不再骑进 `_commit_suspended` 原子窗口）全闭。整合 cmr 另把串行门从「直写端点」扩到会话写/llm-config/生命周期全部 web 写端点（10+7+undo+llm/config+save/load/reset），并修 #345 ready-replay 重试不覆写事件账（Gate2 r4 F2）。**残留通用连接级并发（连接-per-线程/在途 worker 取消）= #382 + #396，本切片不做（#393 明示）。**
+> **原 Gate2 ESCALATE 已由 #393（串行化裁决 = 单 `_write_gate` 锁串行后台召对 worker 与结算/其它写入者）+ 整合 cmr Gate1/Gate2 write-surface 收口解决。** F1（chat SSE → `run_in_executor` 出事件循环）/F2（`accepted_turn` 受理时捕获并贯穿落库）/F3（串行后 rollback 快照不再误收他人行）/F4（结算 worker 与所有冲突写入者抢同一锁 → 写不再骑进 `_commit_suspended` 原子窗口）全闭。整合 cmr 另把串行门从「直写端点」扩到会话写/llm-config/生命周期全部 web 写端点（10+7+undo+llm/config+save/load/reset），并修 #345 重试不覆写事件账（Gate2 r4 F2）。**残留通用连接级并发（连接-per-线程/在途 worker 取消）= #382 + #396，本切片不做（#393 明示）。**
 > <details><summary>原 F1-F4 escalate 记录（存档）</summary>
 > - **F4（P1，Claude leg）** `applier.py:164` `conn._commit_suspended` 是【共享连接实例标志】无线程隔离/无锁。结算 worker `atomic()` 置 True 期间，并发召对 worker 的 `conn.commit()` 变静默 no-op（写被吞进/随结算事务回滚）；反之召对在标志为 False 窗口 commit 会把结算半成原子态提前 commit → 破 ADR0008「全有或全无」。
 > - **F1（P1，codexB+codexC concur）** `web_app.py:1608` chat SSE 同步 generator 阻塞 `ev_queue.get()`，而 `api_chat_stream`(2295) 是 async、直接 for-iterate 它 → 阻塞 ASGI event loop（结算 SSE 已用 `await loop.run_in_executor(None, ev_queue.get)`，2486/2549——chat 路没跟上）。「离开实时观察后继续玩」的后续 HTTP 请求会被卡到首 delta/最终结果到达（codex 一次吐时=整段回复时长）。
@@ -126,7 +126,7 @@
 > **最终方案（简单可靠，绕了几道弯才想明白）**：玩家用拟旨/密令按钮 = 消息带「拟旨如下：/密令如下：」前缀 = 已表态要下旨，那大臣**这一句回话原文整段入档**即可——不解析圣旨边界、不用 JSON、不用正则。大臣本就把相关衙门/人等写进回话（原 prompt 行为），所以回话原文就是补全版圣旨。多轮聊出多道 → 颁诏时玩家去重。
 > **后出修订（#1503，2026-08-28）**：上句仍适用于非载荷拟旨；拨饷/协饷等载荷式拟旨会并发调用一次既有动作分类器，产出结构化 payload 后沿拨款单轨成案。密令前缀零其它分类器、后置串行 extractor 仍禁跑；权威口径见 ADR 0028。
 > - `cli_backend.resolve_minister_actions(minister_reply, player_message, default_assignee)`：前缀命中则把回话原文当 directive。
-> - **密令的结构化字段**（title/content/承办人/期限/标签）原版靠 function-call 让大臣顺手填，agy 无 function-call 丢了。补法 = `_extract_secret_order`：下密令时**多一次聚焦提取 agy 调用**（纯抽取、不扮演，与月末 extractor 同款可靠，~12s）把命令+回话抽成四字段。实测能正确抓到「皇帝点名的承办人」「三月内回奏=期限3」「干净标题」。当时普通圣旨不需要此步；#1503 后，拨饷/协饷等载荷式拟旨例外地需要一次并发 typed 分类，非载荷拟旨仍以回话原文成 generic 草案。
+> - **密令的结构化字段**（title/content/承办人/期限/标签）现役沿召对声明链（`declaration_dispatch`）结构化成案；旧 CLI `_extract_secret_order`／拼装／散文解析／落地恢复链已清退（#1897 R1）。#1503 后，拨饷/协饷等载荷式拟旨例外地需要一次并发 typed 分类，非载荷拟旨仍以回话原文成 generic 草案。
 > - `session.chat`（CLI）+ `web_app` 流式 handler（web）各调一次。core 改动小、CLI 后端 gated。`invoke` 只出文本（不再 JSON/正则）。
 > - 实测：web 流式拟旨 directive（含户部/巡抚/洪承畴）+ 密令 secret_order 均落库；普通对话不误触发；月末结算无回归。
 > - **弯路记录**（别重蹈）：先后试过 ① agno 合成 tool_call（流式 run_output 不 surface）② 散文正则捞「…钦此」（agy 时而不写正式圣旨）③ 强制大臣输出 JSON（被角色扮演 prompt 压制，agy 不遵守）。都不如「前缀已表态 → 抓回话原文」简单可靠。教训：别和 agy 的非确定性输出较劲，用玩家已有的明确信号。
@@ -164,9 +164,9 @@
 - **铁律**：凡诏书新政带"每月 X 万经费/俸/饷"的，产 delta 时**issue + `fiscal_creates` 必须成对出**（issue 管进度、fiscal_creates 管账）。一次性投入才用 `economy_moves`。
 - **已补**：崇祯二年六月起 `taixuefu_base`(国库 expense 500) + `huoqi_base`(国库 expense 200) 已立账；六月当月用 economy_moves 补扣、常设账自七月固定 tick 起自动走（采甲案：前 4 月不倒补）。
 
-### T4. "练新军/编新营"国策必须同产 new_armies + office_changes（已踩坑） → [issue #46](https://github.com/Akagilnc/ming-salvage-sim/issues/46)（实例已补，缺引擎级强制配对）
-- **教训**：「荡寇天雄军」国策(issue 13)崇祯二年六月结案=练成，但**只做了 issue 进度条，漏了 ① `new_armies` 建天雄军军籍记人马 ② `office_changes` 把卢象升从大名知府调任为带兵主将**。结果"卢象升移驻东协"只在邸报，军册上查无天雄军、卢仍是文官知府，崇祯二年八月被陛下"卢象升现有多少人马"一问当场穿帮。
-- **铁律**：凡诏书"练某军/募某营/调某将镇某地"的，产 delta 时 **issue（进度）+ `new_armies`（军籍人马）+ `office_changes`（主将调任）必须配齐**。光推 bar 不落实体 = 账实不符。
+### T4. "练新军/编新营"国策必须同产 new_armies + 人物变更（已踩坑） → [issue #46](https://github.com/Akagilnc/ming-salvage-sim/issues/46)（实例已补，缺引擎级强制配对）
+- **教训**：「荡寇天雄军」国策(issue 13)崇祯二年六月结案=练成，但**只做了 issue 进度条，漏了 ① `new_armies` 建天雄军军籍记人马 ② 主将调任（当时写路为 `office_changes`，现役已归 `人物变更`）**。结果"卢象升移驻东协"只在邸报，军册上查无天雄军、卢仍是文官知府，崇祯二年八月被陛下"卢象升现有多少人马"一问当场穿帮。
+- **铁律**：凡诏书"练某军/募某营/调某将镇某地"的，产 delta 时 **issue（进度）+ `new_armies`（军籍人马）+ `人物变更`（主将任命/调任）必须配齐**。旧 `office_changes` 键已退役，不得再当写路。光推 bar 不落实体 = 账实不符。
 - **已补**：崇祯二年八月立天雄军军籍(兵 18000)+ 调卢象升「荡寇将军」督天雄军镇蓟镇东协·喜峰口、受孙承宗节制。
 
 ### T5. 密令应支持「撤销/提前结束」（玩家面，留待深挖密令机制时做）
@@ -201,4 +201,4 @@
 - **[崇祯元年十二月结算]** B1 阉党 leverage：用手动 SQL `UPDATE factions SET leverage=35 WHERE name='阉党'` 临时修复（叙事支撑=核心退场+四十余党羽清出要津），78→35。〔2026-07-06 核实：根因已闭环——#9 已落地 `set_character_status`→`recompute_faction_leverage` 联动重算（db.py），2026-06-17 关闭；下行为修复前的历史判断，留档勿当现状。〕~~遗留根因未解：长期应让 `db.set_character_status` 在"握实权官职的核心人物"退场时，自动按官职权重联动扣减所属派系 leverage，而非每回合手动 SQL。下次重构结算管线时一并做。~~
 
 - [ ] p4（#1256 r2 复裁记档）：四闸脚本（561/562/spiral570/familytail570）删复制守卫后遗留死 `import os` 四行——下次触动任一脚本时顺手删尽（判词裁：零行为影响不单开循环）。
-- [x] #1256 grok 闸冒烟 pending-owner-login（2026-08-19 owner 登录后已补跑：通道通，12 检 11 绿；唯一红=midzhi_force_e2e_three_costs 判卷型 n=1，证据如实在案）：owner `grok login --device-code`（或置 XAI_API_KEY）后按 S1 同命令补跑落绿证据 JSON（docs/evidence/issue-1256-grok-smoke.json 现为失败证据），可随首次启用 grok 腿一并补。
+- [x] #1256 grok 闸冒烟 pending-owner-login（2026-08-19 owner 登录后已补跑：通道通，12 检 11 绿；唯一红=midzhi_force_e2e_three_costs 判卷型 n=1，证据如实在案）：owner `grok login --device-code`（或置 XAI_API_KEY）后按 S1 同命令补跑落绿证据 JSON，可随首次启用 grok 腿一并补。

@@ -1,3 +1,4 @@
+from __future__ import annotations
 """召对「等多久算死」= 设置页那一格（静默判死阈值）。#1465 切片③。
 
 owner 2026-09-07 拍：设置页 `cli_timeout_seconds` 从「总超时」改接空转轴——距上次
@@ -8,7 +9,6 @@ owner 2026-09-07 拍：设置页 `cli_timeout_seconds` 从「总超时」改接�
 受控推进时钟，不跑真墙钟、不起真 CLI 进程、不连真 LLM。
 """
 
-from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
@@ -16,7 +16,8 @@ from fastapi.testclient import TestClient
 import ming_sim.cli_backend as cb
 import web_app
 from tests.cli_process_doubles import SilentUntilKilled, install_fake_cli_runner
-from tests.test_chat_stream_failpaths_393 import _parse_sse, _post_chat_stream
+from tests.sse_helpers import parse_sse_event_pairs as _parse_sse
+from tests.test_chat_stream_failpaths_393 import _post_chat_stream
 from tests.test_cli_transport_1465 import _cli_web_game
 
 # 受控时钟：每读一次表推进阈值的 1/4——判死落在第 4 次空转核查，时点确定不看真墙钟。
@@ -51,7 +52,7 @@ def _save_idle_threshold_via_settings_api(monkeypatch, tmp_path, seconds: float)
 
 @pytest.mark.parametrize("idle_seconds", [45.0, 120.0])
 def test_minister_chat_idle_death_time_follows_settings_threshold(
-    monkeypatch, tmp_path, game, idle_seconds,
+    monkeypatch, tmp_path, web_game, idle_seconds,
 ):
     """设置页写下的静默阈值就是召对判死的时点：改这一格，判死时点随之变。
 
@@ -79,9 +80,9 @@ def test_minister_chat_idle_death_time_follows_settings_threshold(
         return scripted_popen(cmd, **kwargs)
 
     monkeypatch.setattr(cb.subprocess, "Popen", _recording_popen)
-    web_game, minister = _cli_web_game(game, monkeypatch)
+    _cli_web_game(web_game, monkeypatch)
 
-    response = _post_chat_stream(monkeypatch, web_game, minister)
+    response = _post_chat_stream(monkeypatch, web_game)
     assert response.status_code == 200, response.text
     events = _parse_sse(response.text)
     assert events[-1][0] == "error", events

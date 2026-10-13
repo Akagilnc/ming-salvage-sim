@@ -4,6 +4,7 @@ import { ArmyPaySection, MinisterPlaceOffice, MinisterPortrait, PortraitUploadBu
 import { formatMoney, formatSignedMoney, qualitativeArmyStat } from "../format";
 import { settlementClosedReason } from "../settlementPresentation";
 import type { Army, Building, GameState, MapNode, Minister, Region } from "../types";
+import { COURT_OFFICE_TYPE_ORDER } from "./ministerFilters";
 
 export function MinisterCardList({
   list,
@@ -500,12 +501,10 @@ export function RegionDrawer({
 }
 
 export function BuildingDrawer({
-  regions,
   mapNodes,
   open,
   onClose,
 }: {
-  regions: Region[];
   mapNodes: MapNode[];
   open: boolean;
   onClose: () => void;
@@ -632,7 +631,7 @@ export function AppointmentDrawer({
   onClose: () => void;
 }) {
   const [q, setQ] = React.useState("");
-  const offices = ["内阁", "吏部", "户部", "礼部", "兵部", "刑部", "工部"];
+  const offices = COURT_OFFICE_TYPE_ORDER;
   const byOffice = new Map<string, Minister[]>();
   for (const office of offices) byOffice.set(office, []);
   byOffice.set("其他", []);
@@ -757,7 +756,6 @@ export function HaremDrawer({
   open,
   onGroupChange,
   onClose,
-  onOpenChat,
   onUploadPortrait,
   chatEntryEnabled = true,
   phase,
@@ -768,7 +766,7 @@ export function HaremDrawer({
   open: boolean;
   onGroupChange: (group: string) => void;
   onClose: () => void;
-  onOpenChat: (minister: Minister) => void;
+  /** #1849 reopen：后宫卡片与朝臣同形，不再打开按人面板。 */
   onUploadPortrait: (ministerName: string, file: File) => Promise<void>;
   /** #1236：核账期拔召对写入口，名册只读。 */
   chatEntryEnabled?: boolean;
@@ -807,7 +805,6 @@ export function HaremDrawer({
           portraitPrefix="consort_"
           selectedMinister={selectedMinister}
           emptyNote={q ? "无匹配结果。" : "后宫暂无可召见之人。"}
-          onOpenChat={onOpenChat}
           onUploadPortrait={onUploadPortrait}
           chatEntryEnabled={chatEntryEnabled}
           phase={phase}

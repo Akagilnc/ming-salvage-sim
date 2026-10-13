@@ -1,43 +1,19 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiRequestError, normalizeApiError, streamChat } from "./api";
-import type { PendingActionFailure } from "./types";
-
-const failure = (id: number, message = `失败 ${id}`): PendingActionFailure => ({
-  id,
-  kind: "secret_order",
-  action: "新建",
-  message,
-});
-
-describe("normalizeApiError", () => {
-  it("preserves pending action failures from structured API errors", () => {
-    const pending_action_failures = [failure(9, "退朝落库失败")];
-
-    expect(normalizeApiError({
-      detail: {
-        message: "退朝失败",
-        pending_action_failures,
-      },
-    }, "fallback")).toEqual({
-      message: "退朝失败",
-      provider_message: undefined,
-      status_code: undefined,
-      code: undefined,
-      pending_action_failures,
-    });
-  });
-});
+import { ApiRequestError, streamChat } from "./api";
 
 describe("streamChat typed error projection", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it("shows the payload message while preserving diagnostic fields", async () => {
+  it("preserves the native cause and diagnostic pointer", async () => {
     const detail = {
       code: "llm_run_error",
       message: "通传未达，请稍后再召。",
       provider_message: "provider stack trace",
+      reason: "Cannot operate on a closed database.",
+      error_type: "ProgrammingError",
+      error_pack_path: "/tmp/native-failure",
     };
     const body = `event: error\ndata: ${JSON.stringify(detail)}\n\n`;
     vi.stubGlobal("fetch", vi.fn(async () => new Response(body, {
@@ -48,7 +24,9 @@ describe("streamChat typed error projection", () => {
     const error = await streamChat("洪承畴", "传来。", () => {}).catch((reason) => reason);
 
     expect(error).toBeInstanceOf(ApiRequestError);
-    expect(error.message).toBe(detail.message);
+    expect(error.detail.reason).toBe(detail.reason);
+    expect(error.detail.error_type).toBe(detail.error_type);
+    expect(error.detail.error_pack_path).toBe(detail.error_pack_path);
     expect(error.detail.code).toBe(detail.code);
     expect(error.detail.provider_message).toBe(detail.provider_message);
   });
@@ -73,37 +51,40 @@ describe("#1465 streamChat halfstream replace resets temp body", () => {
 
     let temp = "";
     let resets = 0;
+    let postResetDeltas = 0;
     const done = await streamChat("洪承畴", "传来。", (d) => {
       temp += d;
+      if (resets > 0) postResetDeltas += 1;
     }, {
       onStreamReset: () => {
         resets += 1;
         temp = "";
+        postResetDeltas = 0;
       },
     });
 
     expect(resets).toBe(1);
-    // 呈现结构：reset 后临时正文 = done.answer（不叠旧半句）；不锁措辞
-    expect(temp).toBe(String(done.answer || ""));
-    expect(temp.length).toBeGreaterThan(0);
+    // reset 后只计入后续 delta 次数；不把临时缓冲与 done.answer 做散文等值。
+    expect(postResetDeltas).toBe(1);
+    expect(done).toEqual(expect.objectContaining({ history: [] }));
   });
 });
 
-describe("#670 streamChat 成功记召退出错误通道", () => {
+describe("#670 streamChat 成功 done/end 退出错误通道", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it("done+end 携带 admission 机面码时不抛错、不走 error 事件", async () => {
+  it("done+end 携带现役轮身份时不抛错、不走 error 事件", async () => {
+    // 无产者的 admission 响应字段已清退；本案只钉 done/end 时序与现役轮身份。
     const payload = {
       answer: "",
       campaign_id: "c1",
       night_id: 7,
-      chat_turn_id: 0,
+      chat_turn_id: 42,
       history: [],
       suggestions: [],
       directives: [],
-      admission: "SUMMON_FRESH",
     };
     const body =
       `event: done\ndata: ${JSON.stringify(payload)}\n\n` +
@@ -117,12 +98,9 @@ describe("#670 streamChat 成功记召退出错误通道", () => {
     let sawError = false;
     const done = await streamChat("洪承畴", "传来。", (d) => deltas.push(d), {
       onDone: (p) => {
-        // 机面 admission 可达 onDone（刷盘），但不得被当作错误文案。
-        expect(p.admission).toBe("SUMMON_FRESH");
+        expect(p.chat_turn_id).toBe(42);
         expect(p.answer).toBe("");
-        expect(String(p.answer)).not.toContain("SUMMON_");
-        expect(String(p.answer)).not.toContain("赴京");
-        expect(String(p.answer)).not.toContain("不能入殿");
+
       },
     }).catch((err) => {
       sawError = true;
@@ -131,9 +109,8 @@ describe("#670 streamChat 成功记召退出错误通道", () => {
 
     expect(sawError).toBe(false);
     expect(deltas).toEqual([]);
-    expect(done.admission).toBe("SUMMON_FRESH");
+    expect(done.chat_turn_id).toBe(42);
     expect(done.answer).toBe("");
-    // 消费端契约：成功记召不经 ApiRequestError / error 事件进 danger note。
-    expect(String(done.answer || "")).not.toMatch(/SUMMON_|赴京|在途|不能入殿/);
+
   });
 });

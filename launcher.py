@@ -16,7 +16,6 @@ import socket
 import sys
 import threading
 import time
-import urllib.request
 import webbrowser
 
 # Windows windowed (--noconsole) 下 sys.stdout/stderr = None。uvicorn 的

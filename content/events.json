@@ -42,6 +42,7 @@
     "trigger_class": "strategic_foreign",
     "trigger_gate": {},
     "event_type": "node",
+    "terminal_reason_labels": ["挡于边墙", "入塞被遏", "长驱直入"],
     "precondition": "历史既定：崇祯二年十一月皇太极绕道蒙古叩喜峰口、龙井关——此乃后金主动来犯，是否发起不由明廷，玩家无法取消其入塞，只能决定结果。后金避宁锦坚城、择蓟镇边墙之弱处而入，故结果主要由蓟镇一线虚实决定，看盘面：蓟镇(jizhen) arrears/training/equipment/morale、宣大(xuan_da) 同字段、关宁军(guanning) 是否欠饷哗变且能否分兵入卫、京营(jingying) 战力、beizhili.military_pressure。结果按蓟镇宣大此前整备程度分三档：①【挡于边墙】蓟镇宣大欠饷已补、操练城防像样（arrears 低、training/equipment 中上、morale 不低），则建虏顿于喜峰口一线、攻关不下，劫掠数州后粮尽自退，京师至多戒严不破关；②【入塞被遏】只补强部分、或补强不久根基浅，则虏骑破口入塞、掠京畿数县，但勤王军（关宁入卫）合力可将其逐出、未抵京师城下；③【长驱直入】蓟镇空虚、关宁欠饷哗变无力入卫，则破龙井关、陷遵化、兵临德胜门，京畿大掠。蓟镇是关键变量，宁锦再强若蓟镇空虚仍挡不住绕袭；反之蓟镇宣大扎实补强即可显著减轻祸患，不必面面俱到。"
   },
   {
@@ -82,9 +83,8 @@
     "open_window": true,
     "trigger_gate": {},
     "terminal_reason_labels": ["已准", "已驳"],
-    "default_terminal_reason": "已准",
     "event_type": "node",
-    "precondition": "历史既定：崇祯四年正月，辽饷由九厘旧额升至一分二厘；#259 shadow 阶段用史实默认「已准」，#260 落地后改由圣旨置结局。"
+    "precondition": "历史既定：崇祯四年正月，辽饷由九厘旧额升至一分二厘。加不加由皇帝亲裁（#1891 呈批、#1893/#1892 不交世界段模型代批），引擎不自动置结局。"
   },
   {
     "id": "kong_youde",
@@ -161,7 +161,6 @@
     "trigger_month": 4,
     "open_window": true,
     "trigger_gate": {},
-    "auto_trigger": true,
     "effect_on_trigger": {
       "power_renames": [
         {
@@ -174,7 +173,7 @@
         }
       ]
     },
-    "precondition": "触发门：无条件/近天定。理由：皇太极称帝改国号是后金内部核心事实，不由明廷取消；明廷承不承认伪号、联蒙或保朝鲜的外交与意识形态响应仍走软判。",
+    "precondition": "触发门：无条件/近天定。理由：皇太极称帝改国号是后金内部核心事实，不由明廷取消；明廷承不承认伪号、联蒙或保朝鲜的外交与意识形态响应仍走软判。#1893：本事件不再 auto_trigger，改由同一次月末世界段的模型从候选清单挑选后落账。",
     "event_type": "situation"
   },
   {
@@ -215,9 +214,8 @@
     "open_window": true,
     "trigger_gate": {},
     "terminal_reason_labels": ["已准", "已驳"],
-    "default_terminal_reason": "已准",
     "event_type": "node",
-    "precondition": "历史既定：崇祯十年剿饷开征；#259 shadow 阶段用史实默认「已准」，#260 落地后改由圣旨置结局。"
+    "precondition": "历史既定：崇祯十年剿饷开征。开不开由皇帝亲裁（#1891 呈批、#1892 不交世界段模型代批），引擎不自动置结局。"
   },
   {
     "id": "lian_levy_start_1639",
@@ -237,9 +235,8 @@
     "open_window": true,
     "trigger_gate": {},
     "terminal_reason_labels": ["已准", "已驳"],
-    "default_terminal_reason": "已准",
     "event_type": "node",
-    "precondition": "历史既定：崇祯十二年练饷开征；#259 shadow 阶段用史实默认「已准」，#260 落地后改由圣旨置结局。练饷无议停事件，在征谓词只读本事件结局。"
+    "precondition": "历史既定：崇祯十二年练饷开征。开不开由皇帝亲裁（#1891 呈批、#1892 不交世界段模型代批），引擎不自动置结局。练饷无议停事件，在征谓词只读本事件结局。"
   },
   {
     "id": "jiao_levy_stop_1640",
@@ -259,9 +256,8 @@
     "open_window": true,
     "trigger_gate": {"event.jiao_levy_start_1637.terminal_reason": "==已准"},
     "terminal_reason_labels": ["已停", "仍征"],
-    "default_terminal_reason": "已停",
     "event_type": "node",
-    "precondition": "历史既定：崇祯十三年议停剿饷；仅在剿饷开征已准后出现，是否仍征由事件结局承载，不在 trigger_gate 自指。"
+    "precondition": "历史既定：崇祯十三年议停剿饷；仅在剿饷开征已准后出现，停不停由皇帝亲裁（#1891 呈批），不在 trigger_gate 自指。"
   },
   {
     "id": "zhangxianzhong_zaifan",

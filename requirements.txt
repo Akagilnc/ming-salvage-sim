@@ -2,6 +2,5 @@ agno[openai,sqlite]>=3.0.0,<4
 sqlalchemy[asyncio]>=2.0
 debugpy>=1.8.20
 fastapi>=0.115.0
-pexpect>=4.9.0
 python-multipart>=0.0.9
 uvicorn[standard]>=0.32.0

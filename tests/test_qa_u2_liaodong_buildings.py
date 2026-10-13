@@ -1,10 +1,10 @@
+from __future__ import annotations
 """#1400 / QA 包⑥：辽东/宁锦边镇 buildings 开局非空 + 走真实月度流水。
 
 finding：content/buildings.json 全内地、零 liaodong——数据缺非代码 bug。
 只钉 seed 内容与月度建筑落账 seam；金手指三条不得进仓。
 """
 
-from __future__ import annotations
 
 from ming_sim.content import load_building_content
 from ming_sim.flows import apply_fixed_period_flows
@@ -82,9 +82,7 @@ def test_liaodong_buildings_enter_monthly_period_flows(game):
     for r in rows:
         metric = str(r["output_metric"] or "")
         out_base = int(r["output_amount"] or 0)
-        cond = max(0, min(100, int(r["condition"] or 0)))
-        produced = round(out_base * cond / 100) if metric and out_base else 0
-        if produced <= 0 or metric not in ("国库", "内库", "民心", "皇威"):
+        if out_base <= 0 or metric not in ("国库", "内库", "民心", "皇威"):
             continue
         hit = any(
             f.get("category") == "建筑产出" and f.get("building") == r["name"]

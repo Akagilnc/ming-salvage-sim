@@ -17,7 +17,7 @@ import contextlib
 import logging
 import threading
 from concurrent.futures import CancelledError, Future, ThreadPoolExecutor
-from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Mapping, Optional, Tuple
 
 from ming_sim.applier import Provenance, atomic
 from ming_sim.audience_night import reproject_night_protagonist, set_night_protagonist
@@ -26,7 +26,6 @@ from ming_sim.declaration_dispatch import (
     dispatch_declaration,
 )
 
-TranslateFn = Callable[[str, Any], Mapping[str, object]]
 logger = logging.getLogger(__name__)
 
 # 同夜 FIFO 只保留 Future tail；在飞/排空/关闭的唯一真源是
@@ -37,36 +36,34 @@ _night_tail: Dict[Tuple[int, int], Future] = {}  # (queue identity, night_id)
 _turn_future: Dict[Tuple[int, int], Future] = {}  # cancellation scheduling only
 
 
+def _translation_write_gate(gate: Any) -> Any:
+    """转译写闸类型闸（单真源）：裸 ClassifiedWriteGate 或票据写缝 TicketedWriteGate。
+
+    两者同族契约（acquire_translation / is_held_by_translation /
+    wait_while_held_by_translation），故票据缝可直接承接转译持闸，
+    重开补跑不必绕开票据生命周期（#1898 / ADR 0036）。
+    """
+    from ming_sim.session_write_queue import ClassifiedWriteGate, TicketedWriteGate
+
+    if not isinstance(gate, (ClassifiedWriteGate, TicketedWriteGate)):
+        raise TypeError("转译写闸须为 ClassifiedWriteGate 或 TicketedWriteGate")
+    return gate
+
+
 def translation_holding_write_gate(gate: Any) -> bool:
     """该 gate 是否正被转译短持（与所有权同临界可读；不 join、不 cancel）。"""
-    from ming_sim.session_write_queue import ClassifiedWriteGate
-
-    if isinstance(gate, ClassifiedWriteGate):
-        return gate.is_held_by_translation()
-    return False
+    return _translation_write_gate(gate).is_held_by_translation()
 
 
 def wait_translation_write_gate_released(gate: Any) -> None:
     """等到该 gate 不再被转译持有（不抢闸、不加超时；结算/他写不抬此等待）。"""
-    from ming_sim.session_write_queue import ClassifiedWriteGate
-
-    if isinstance(gate, ClassifiedWriteGate):
-        gate.wait_while_held_by_translation()
+    _translation_write_gate(gate).wait_while_held_by_translation()
 
 
 @contextlib.contextmanager
 def _translation_write_cm(gate: Any) -> Iterator[None]:
     """转译侧短持会话 write_gate；holder kind 与取得所有权同临界（#1842）。"""
-    from ming_sim.session_write_queue import ClassifiedWriteGate
-
-    if gate is None:
-        yield
-        return
-    if isinstance(gate, ClassifiedWriteGate):
-        gate.acquire_translation()
-    else:
-        # 裸 Lock 测试夹具：无分类能力，仅保互斥（生产路径均为 ClassifiedWriteGate）。
-        gate.acquire()
+    _translation_write_gate(gate).acquire_translation()
     try:
         yield
     finally:
@@ -106,10 +103,9 @@ def apply_audience_round_translation(
             chat_turn_id=ctid,
             source=source,
         )
-        # 分段若有一项拒收，整轮不可标 done；atomic 回滚部分落账，后台保 pending。
-        if ctid > 0 and result.scene_facts.rejected:
-            from ming_sim.audience_translate import AudienceTranslateError
-            raise AudienceTranslateError("说话人分段声明有拒收项")
+        # 段项领域拒收已由 dispatch 逐项记入 rejection_reports；好项照落，
+        # 不把可独立拒收的段项升级成整轮业务故障（ADR 0015 / #1897 N1）。
+        # 真实数据库／代码异常仍经 atomic 响亮回滚。
         # 主角持久化 + 转译水位：chat_turns 不在前像表，undo 走重投影。
         _bind_round_after_dispatch(db, nid, ctid, result)
     from ming_sim.decree_forecast import schedule_approved_from_dispatch
@@ -130,13 +126,10 @@ def _bind_round_after_dispatch(
         name = str(validated.get("person_name") or "").strip()
     if chat_turn_id <= 0:
         if name and night_id > 0:
-            set_night_protagonist(db, night_id, name, reason="translation", commit=False)
+            set_night_protagonist(db, night_id, name, commit=False)
         return
     if name:
-        db.conn.execute(
-            "UPDATE chat_turns SET protagonist_name=? WHERE id=?",
-            (name, int(chat_turn_id)),
-        )
+        db.reign.set_chat_turn_protagonist(int(chat_turn_id), name)
         # The night value is only a projection of the latest live declaration.
         # A retry may commit an older round after a newer round (or a xuan cut).
         reproject_night_protagonist(db, night_id)
@@ -148,20 +141,15 @@ def mark_turn_translation_done(
     db: Any, chat_turn_id: int, *, commit: bool = True,
 ) -> None:
     """水位单真源：源轮 extract_status → done（控制口令早退与转译落账共用）。"""
+    from ming_sim.applier import connection_owns_transaction
+
     ctid = int(chat_turn_id or 0)
-    if ctid <= 0 or not hasattr(db, "conn"):
+    if ctid <= 0:
         return
-    db.conn.execute(
-        "UPDATE chat_turns SET extract_status='done' "
-        "WHERE id=? AND status NOT IN ('failed','undone')",
-        (ctid,),
-    )
-    if not commit:
-        return
-    if (
-        not bool(getattr(db.conn, "_commit_suspended", False))
-        and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0
-    ):
+    # 首笔 DML 前快照归属：外层 atomic/BEGIN 已拥有事务时不得提交。
+    owns = bool(commit) and connection_owns_transaction(db.conn)
+    db.reign.mark_extract_status_done(ctid)
+    if owns:
         db.conn.commit()
 
 
@@ -186,7 +174,7 @@ def cancel_turn_translation(chat_turn_id: int, *, write_queue: Any, gate_held: b
             else:
                 fut.cancel()
             return 0
-        return int(write_queue.cancel_key(("audience_translation", ctid)))
+        return write_queue.cancel_key(("audience_translation", ctid))
 
 
 def _observe_finished_future(
@@ -210,11 +198,11 @@ def _observe_finished_future(
 
 def _mark_translation_pending(db: Any, chat_turn_id: int, write_gate: Any) -> None:
     ctid = int(chat_turn_id or 0)
-    if ctid <= 0 or not hasattr(db, "mark_story_extraction_pending"):
+    if ctid <= 0:
         return
     # 失败路径短持：与 job 内读写同属转译持闸类（ClassifiedWriteGate kind）。
     with _translation_write_cm(write_gate):
-        db.mark_story_extraction_pending(ctid)
+        db.reign.mark_story_extraction_pending(ctid)
 
 
 def list_pending_translations(
@@ -224,10 +212,9 @@ def list_pending_translations(
     """玩家可重试的转译失败：仅明确失败的 pending，不含刚落库的空水位。
 
     可按夜 / 源轮收窄。返回行附结构化系统提示态（供 0158 决定 6 投影，不做页面）。
+    # #1853 J8：必备 list_unextracted_replies 直调；禁缺接口洗成空待补投影。
     """
-    if not hasattr(db, "list_unextracted_replies"):
-        return []
-    rows = list(db.list_unextracted_replies(night_id=night_id) or [])
+    rows = list(db.reign.list_unextracted_replies(night_id=night_id) or [])
     want = int(chat_turn_id) if chat_turn_id is not None else None
     out: List[Dict[str, Any]] = []
     for row in rows:
@@ -260,19 +247,17 @@ def run_turn_translation_job(
     chat_turn_id: int,
     minister_name: str = "",
     llm_config: Any = None,
-    translate_fn: Optional[TranslateFn] = None,
     write_gate: Any = None,
     source: Provenance = Provenance.system_simulation,
 ) -> DeclarationDispatchResult:
     """单轮转译+落账（已持夜串行锁时由 worker 调用；失败标 pending）。"""
-    from ming_sim.audience_translate import (
-        AudienceTranslateError,
-        run_audience_turn_translation,
-    )
+    from ming_sim.audience_translate import AudienceTranslateError
 
     ctid = int(chat_turn_id or 0)
     nid = int(night_id or 0)
-    gate = write_gate  # 可为 None（单写测试路径）
+    if write_gate is None:
+        raise TypeError("转译写闸须为 ClassifiedWriteGate")
+    gate = write_gate
 
     def _gate_cm():
         # 转译短持带 holder kind，供前台非阻塞抢闸区分「等转译」与「结算 → 409」。
@@ -280,43 +265,28 @@ def run_turn_translation_job(
 
     # 死轮 / 未落定回话 / 已 done：闸内短读后早退（禁持非重入锁再嵌套写）。
     # ADR 0155 / 0036：转译真源 = 已持久化回话；generating 或无 minister_message_id 拒绝。
+    # #1853 J8：必备 get_story_extract_status / conn 查询直调；禁缺接口把已 done
+    # 洗成 already_done=False 后静默整轮重译（不只空[]）。
     already_done = False
-    if ctid > 0 and hasattr(db, "conn"):
+    if ctid > 0:
         with _gate_cm():
-            row = db.conn.execute(
-                "SELECT status, minister_message_id FROM chat_turns WHERE id=?",
-                (ctid,),
-            ).fetchone()
+            row = db.reign.row(ctid, fields="status, minister_message_id")
             if row is not None and str(row["status"] or "") in {"failed", "undone"}:
                 raise AudienceTranslateError(f"源轮已死：chat_turn_id={ctid}")
             status = str(row["status"] or "") if row is not None else ""
             mid = 0
             if row is not None and row["minister_message_id"] is not None:
-                try:
-                    mid = int(row["minister_message_id"] or 0)
-                except (TypeError, ValueError):
-                    mid = 0
+                mid = int(row["minister_message_id"])
             if status == "generating" or mid <= 0:
                 raise AudienceTranslateError(
                     f"源轮回话未落定：chat_turn_id={ctid} status={status}"
                 )
-            already_done = (
-                hasattr(db, "get_story_extract_status")
-                and db.get_story_extract_status(ctid) == "done"
-            )
-            if not already_done and hasattr(db, "mark_story_extraction_pending"):
-                db.mark_story_extraction_pending(ctid)
+            already_done = db.reign.get_story_extract_status(ctid) == "done"
+            if not already_done:
+                db.reign.mark_story_extraction_pending(ctid)
         if already_done:
-            from ming_sim.applier import SectionResult
-            from ming_sim.declaration_dispatch import ProtagonistResult
-            empty = SectionResult(applied=[], rejected=[])
-            return DeclarationDispatchResult(
-                commissions=empty, promises=empty, textual_facts=empty,
-                public_sayings=empty, on_scene_facts=empty, presence=empty,
-                scene_facts=empty, edge_events=empty,
-                protagonist=ProtagonistResult(validated=None, rejected=[]),
-                registrations=empty,
-            )
+            from ming_sim.declaration_dispatch import empty_dispatch_result
+            return empty_dispatch_result()
 
     try:
         # LLM 在 write_gate 外；声明到手后再短持锁落账。
@@ -333,7 +303,7 @@ def run_turn_translation_job(
             )
             pending = build_pending_summaries(db, int(state.turn), night_id=nid)
             from ming_sim.audience_translate import build_translation_target_grounding
-            target_grounding = build_translation_target_grounding(db)
+            target_grounding = build_translation_target_grounding(db, state)
         declaration = translate_audience_turn(
             emperor_message=emperor_message,
             reply=reply,
@@ -341,7 +311,6 @@ def run_turn_translation_job(
             pending_summaries=pending,
             target_grounding=target_grounding,
             llm_config=llm_config,
-            translate_fn=translate_fn,
         )
         # 分段是整轮回话的结构化覆盖声明；不完整或改字不得入账并置 done。
         # 失败走既有 pending/retry 路径，原戏文继续中性显示。
@@ -355,10 +324,8 @@ def run_turn_translation_job(
             raise AudienceTranslateError("说话人分段未逐字覆盖源轮回话")
         with _gate_cm():
             # 落账临界区复查源轮仍存活（ADR 0038：后台写入前须校验目标轮仍存活）。
-            if ctid > 0 and hasattr(db, "conn"):
-                live = db.conn.execute(
-                    "SELECT status FROM chat_turns WHERE id=?", (ctid,),
-                ).fetchone()
+            if ctid > 0:
+                live = db.reign.row(ctid, fields="status")
                 if live is None or str(live["status"] or "") in {"failed", "undone"}:
                     from ming_sim.audience_translate import AudienceTranslateError
                     raise AudienceTranslateError(
@@ -371,7 +338,7 @@ def run_turn_translation_job(
             )
     except Exception as exc:
         _mark_translation_pending(db, ctid, write_gate)
-        if ctid > 0 and hasattr(db, "set_chat_turn_error_pack"):
+        if ctid > 0:
             from ming_sim.exceptions import LLMUnavailable
             if not isinstance(exc, LLMUnavailable):
                 from ming_sim.audience_night import write_audience_error_pack
@@ -381,7 +348,7 @@ def run_turn_translation_job(
                         detail={"chat_turn_id": ctid, "night_id": nid},
                         db=db, exc=exc,
                     )
-                    db.set_chat_turn_error_pack(ctid, pack)
+                    db.reign.set_chat_turn_error_pack(ctid, pack)
         raise
 
 
@@ -395,7 +362,6 @@ def schedule_audience_turn_translation(
     chat_turn_id: int,
     minister_name: str = "",
     llm_config: Any = None,
-    translate_fn: Optional[TranslateFn] = None,
     write_gate: Any = None,
     write_queue: Any = None,
     admitted_ticket: Any = None,
@@ -424,7 +390,6 @@ def schedule_audience_turn_translation(
             chat_turn_id=ctid,
             minister_name=minister_name,
             llm_config=llm_config,
-            translate_fn=translate_fn,
             write_gate=write_gate,
             source=source,
         )
@@ -511,7 +476,6 @@ def schedule_audience_turn_translation(
         pred_fut: Future,
         *,
         _out: Future = fut,
-        _night_key: Tuple[int, int] = night_key,
     ) -> None:
         _observe_predecessor(pred_fut)
         if _out.done():
@@ -539,25 +503,21 @@ def _load_emperor_message_for_turn(
     db: Any, chat_turn_id: int, write_gate: Any,
 ) -> str:
     """读源轮皇帝原话。查询成功且缺行 → 空串；SQL/连接/Row 形状异常响亮上抛。"""
+    # #1853 J8：必备 db.conn 直调；禁缺接口洗成「无原话」。无效 chat_turn_id 仍空串。
     ctid = int(chat_turn_id or 0)
-    if ctid <= 0 or not hasattr(db, "conn"):
+    if ctid <= 0:
         return ""
     with _translation_write_cm(write_gate):
-        trow = db.conn.execute(
-            "SELECT user_message_id FROM chat_turns WHERE id=?", (ctid,),
-        ).fetchone()
+        trow = db.reign.row(ctid, fields="user_message_id")
         if trow is None:
             return ""
         uid = trow["user_message_id"]
         if not uid:
             return ""
-        mrow = db.conn.execute(
-            "SELECT content FROM chat_messages WHERE id=?",
-            (int(uid),),
-        ).fetchone()
-        if mrow is None:
+        body = db.chat_messages.content_of(int(uid))
+        if body is None:
             return ""
-        return str(mrow["content"] or "")
+        return body
 
 
 def catch_up_pending_translations(
@@ -567,7 +527,6 @@ def catch_up_pending_translations(
     night_id: Optional[int] = None,
     chat_turn_id: Optional[int] = None,
     llm_config: Any = None,
-    translate_fn: Optional[TranslateFn] = None,
     write_gate: Any = None,
     write_queue: Any = None,
     within_barrier: bool = False,
@@ -580,7 +539,7 @@ def catch_up_pending_translations(
     不洗成空原话继续转译。
     """
     # 恢复真源比玩家可重试投影宽：崩溃在回话落库与任务登记之间时，'' 也须补跑。
-    rows = list(db.list_unextracted_replies(night_id=night_id) or [])
+    rows = list(db.reign.list_unextracted_replies(night_id=night_id) or [])
     if chat_turn_id is not None:
         rows = [r for r in rows if int(r.get("chat_turn_id") or 0) == int(chat_turn_id)]
     extracted = 0
@@ -606,7 +565,6 @@ def catch_up_pending_translations(
                     chat_turn_id=ctid,
                     minister_name=str(row.get("minister_name") or ""),
                     llm_config=llm_config,
-                    translate_fn=translate_fn,
                     write_gate=write_gate,
                     source=source,
                 )
@@ -631,8 +589,8 @@ def catch_up_pending_translations(
             reply=reply,
             night_id=nid,
             chat_turn_id=ctid,
+            minister_name=str(row.get("minister_name") or ""),
             llm_config=llm_config,
-            translate_fn=translate_fn,
             write_gate=write_gate,
             write_queue=write_queue,
             source=source,

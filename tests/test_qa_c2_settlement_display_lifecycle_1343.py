@@ -1,3 +1,13 @@
+from __future__ import annotations
+from ming_sim.models import TurnPhase
+from fastapi.testclient import TestClient
+from pathlib import Path
+from ming_sim.session_write_queue import ClassifiedWriteGate
+import threading
+from types import SimpleNamespace
+import web_app
+from ming_sim.decree import ResolveResult
+from tests.sse_helpers import parse_sse_event_pairs
 """QA 包乙刀② #1343/#1378/#1379/#1388：核账遮罩生命周期（快照清理时点）。
 
 单谓词不动：settlement_display ⇔ 当前回合快照在。
@@ -8,25 +18,19 @@
   · 真实入口成功回 summoning 清残留（见 test_month_open_snapshot_1234 退朝入口）
 """
 
-from __future__ import annotations
-
-import threading
-from contextlib import contextmanager
-from types import SimpleNamespace
-
-import web_app
-from ming_sim.models import TurnPhase
-from ming_sim.month_open_snapshot import MONTH_OPEN_KEYS
 
 
-def _click_before(state) -> dict[str, int]:
-    return {k: int(state.metrics[k]) for k in MONTH_OPEN_KEYS}
+
+
+
+
 
 
 def _shell(db, state, content):
     """轻壳 WebGame：真 db/state + 真 write_gate。"""
     runtime = object.__new__(web_app.WebGame)
     runtime.session = SimpleNamespace(
+        advance_without_decree=lambda **_k: ResolveResult(awaiting=False, advanced=False),
         db=db,
         state=state,
         content=content,
@@ -39,7 +43,7 @@ def _shell(db, state, content):
         victory=lambda: {"status": "ongoing", "summary": ""},
         await_translations_before_month=lambda after_drain=None: after_drain() if after_drain else None,
     )
-    runtime._write_gate = threading.Lock()
+    runtime._write_gate = ClassifiedWriteGate()
     runtime._settlement_entry_lock = threading.Lock()
     runtime._settlement_entry_inflight = 0
     runtime.directive_rows = lambda: []
@@ -53,78 +57,6 @@ def _shell(db, state, content):
     return runtime
 
 
-@contextmanager
-def _blocking_gate(game):
-    """与 issue/stream 同形：阻塞持 _game_write_gate。"""
-    gate = web_app._game_write_gate(game)
-    gate.acquire()
-    try:
-        yield
-    finally:
-        gate.release()
-
-
-def test_success_clear_holds_write_gate_not_peer_txn(game, monkeypatch):
-    """验收：A 成功未推月清残留时 DELETE 须持 write_gate；B 持 atomic 门时 A 不得无门写入。"""
-    db, state, content = game
-    before = _click_before(state)
-    runtime = _shell(db, state, content)
-    # 成功体不推进月份，离开时仍 summoning + 快照在 → 触发成功支 clear_orphan。
-    state.turn_phase = TurnPhase.SUMMONING.value
-    db.save_state(state)
-
-    monkeypatch.setattr(web_app, "_accept_settlement_period", lambda _g: True)
-    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda _g, **_k: None)
-
-    # 预置残留快照（模拟点即入 capture 后未推月）
-    db.capture_month_open_snapshot(state)
-    assert db.get_month_open_snapshot(int(state.turn)) == before
-
-    gate = web_app._game_write_gate(runtime)
-    clear_saw_gate = {"locked": None}
-    orig_clear = db.clear_month_open_snapshot
-
-    def _wrapped_clear(t):
-        clear_saw_gate["locked"] = gate.locked()
-        return orig_clear(t)
-
-    db.clear_month_open_snapshot = _wrapped_clear  # type: ignore[method-assign]
-
-    # B 先持 gate（模拟进 atomic）——A 成功支 clear 须堵在 write_cm，不得无门完成 DELETE
-    assert gate.acquire(blocking=False)
-    a_done = threading.Event()
-    a_err: list = []
-
-    def _a_success():
-        try:
-            with web_app._settlement_period_entry(runtime, write_cm=_blocking_gate):
-                pass  # 成功未推月
-        except Exception as exc:  # noqa: BLE001
-            a_err.append(exc)
-        finally:
-            a_done.set()
-
-    try:
-        t = threading.Thread(target=_a_success, daemon=True)
-        t.start()
-        assert not a_done.is_set(), "A 成功支 clear 不得在 B 持 gate 时无门完成"
-        # B 事务窗内快照仍在——证明 DELETE 未落进共享连接/B 侧可见状态
-        assert db.get_month_open_snapshot(int(state.turn)) == before
-        gate.release()
-        a_done.wait()
-        t.join()
-    finally:
-        db.clear_month_open_snapshot = orig_clear  # type: ignore[method-assign]
-        if gate.locked():
-            gate.release()
-
-    assert not a_err, a_err
-    assert clear_saw_gate["locked"] is True, "成功支 clear 须持 write_gate"
-    assert db.get_month_open_snapshot(int(state.turn)) is None
-    assert web_app._settlement_entry_inflight(runtime) == 0
-    assert runtime.state_payload()["turn"]["settlement_display"] is False
-
-
 def test_success_clear_throw_still_ends_inflight(game, monkeypatch):
     """验收：成功支 clear 抛错仍执行 _end_settlement_entry（inflight 归零）。
 
@@ -134,36 +66,30 @@ def test_success_clear_throw_still_ends_inflight(game, monkeypatch):
     db, state, content = game
     runtime = _shell(db, state, content)
     state.turn_phase = TurnPhase.SUMMONING.value
-    db.save_state(state)
+    db.reign.save_game_state(state)
     db.capture_month_open_snapshot(state)
 
-    monkeypatch.setattr(web_app, "_accept_settlement_period", lambda _g: True)
+    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda _g, **_k: None)
-
-    exit_calls = {"n": 0}
-    real_exit = web_app._exit_settlement_display_on_failure
-
-    def _spy_exit(g, *, blocking=False):
-        exit_calls["n"] += 1
-        return real_exit(g, blocking=blocking)
-
-    monkeypatch.setattr(web_app, "_exit_settlement_display_on_failure", _spy_exit)
 
     def _boom_clear(_t):
         raise RuntimeError("clear boom")
 
-    db.clear_month_open_snapshot = _boom_clear  # type: ignore[method-assign]
+    db.month_open_snapshots.delete = _boom_clear  # type: ignore[method-assign]
 
-    raised = None
-    try:
-        with web_app._settlement_period_entry(runtime, write_cm=_blocking_gate):
-            pass
-    except RuntimeError as exc:
-        raised = exc
-
-    assert raised is not None and "clear boom" in str(raised)
-    assert web_app._settlement_entry_inflight(runtime) == 0, "clear 抛错后 inflight 须归零"
-    assert exit_calls["n"] == 1, "clear 抛须走失败 exit（settled_ok 未在 clear 前预置）"
+    response = TestClient(web_app.app, raise_server_exceptions=False).post(
+        "/api/decree/advance_without_edict/stream", json={},
+    )
+    assert response.status_code == 200
+    kind, detail = parse_sse_event_pairs(response.text)[-1]
+    assert kind == "error"
+    assert "status_code" not in detail
+    assert detail["message"] == "clear boom"
+    assert detail["error_type"] == "RuntimeError"
+    assert detail["reason"] == "clear boom"
+    assert Path(detail["error_pack_path"]).is_dir()
+    assert db.month_open_snapshots.get(int(state.turn)) is not None
+    assert runtime.state_payload()["settlement_entry_inflight"] is False
 
 
 def test_failure_exit_throw_still_ends_inflight(game, monkeypatch):
@@ -171,25 +97,29 @@ def test_failure_exit_throw_still_ends_inflight(game, monkeypatch):
     db, state, content = game
     runtime = _shell(db, state, content)
     state.turn_phase = TurnPhase.SUMMONING.value
-    db.save_state(state)
+    db.reign.save_game_state(state)
 
-    monkeypatch.setattr(web_app, "_accept_settlement_period", lambda _g: True)
+    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda _g, **_k: None)
 
     def _boom_exit(*_a, **_k):
         raise RuntimeError("exit boom")
 
-    monkeypatch.setattr(web_app, "_exit_settlement_display_on_failure", _boom_exit)
+    db.month_open_snapshots.delete = _boom_exit
+    runtime.session.advance_without_decree = lambda **_k: (_ for _ in ()).throw(ValueError("body fail"))
 
-    raised = None
-    try:
-        with web_app._settlement_period_entry(runtime, write_cm=_blocking_gate):
-            raise ValueError("body fail")
-    except RuntimeError as exc:
-        raised = exc
-
-    assert raised is not None and "exit boom" in str(raised)
-    assert web_app._settlement_entry_inflight(runtime) == 0
+    response = TestClient(web_app.app, raise_server_exceptions=False).post(
+        "/api/decree/advance_without_edict/stream", json={},
+    )
+    assert response.status_code == 200
+    kind, detail = parse_sse_event_pairs(response.text)[-1]
+    assert kind == "error"
+    assert detail["message"] == "exit boom"
+    assert detail["error_type"] == "RuntimeError"
+    assert detail["reason"] == "exit boom"
+    assert Path(detail["error_pack_path"]).is_dir()
+    assert db.month_open_snapshots.get(int(state.turn)) is not None
+    assert runtime.state_payload()["settlement_entry_inflight"] is False
 
 
 def test_success_clear_throw_via_orphan_exits_display(game, monkeypatch):
@@ -200,11 +130,11 @@ def test_success_clear_throw_via_orphan_exits_display(game, monkeypatch):
     db, state, content = game
     runtime = _shell(db, state, content)
     state.turn_phase = TurnPhase.SUMMONING.value
-    db.save_state(state)
+    db.reign.save_game_state(state)
     db.capture_month_open_snapshot(state)
     assert runtime.state_payload()["turn"]["settlement_display"] is True
 
-    monkeypatch.setattr(web_app, "_accept_settlement_period", lambda _g: True)
+    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda _g, **_k: None)
 
     import ming_sim.month_open_snapshot as mos
@@ -214,28 +144,16 @@ def test_success_clear_throw_via_orphan_exits_display(game, monkeypatch):
 
     monkeypatch.setattr(mos, "clear_orphan_month_open_snapshot", _boom_orphan)
 
-    raised = None
-    try:
-        with web_app._settlement_period_entry(runtime, write_cm=_blocking_gate):
-            pass
-    except RuntimeError as exc:
-        raised = exc
-
-    assert raised is not None and "orphan clear boom" in str(raised)
-    assert web_app._settlement_entry_inflight(runtime) == 0
-    assert db.get_month_open_snapshot(int(state.turn)) is None
+    response = TestClient(web_app.app, raise_server_exceptions=False).post(
+        "/api/decree/advance_without_edict/stream", json={},
+    )
+    assert response.status_code == 200
+    kind, detail = parse_sse_event_pairs(response.text)[-1]
+    assert kind == "error"
+    assert detail["message"] == "orphan clear boom"
+    assert detail["error_type"] == "RuntimeError"
+    assert detail["reason"] == "orphan clear boom"
+    assert Path(detail["error_pack_path"]).is_dir()
+    assert runtime.state_payload()["settlement_entry_inflight"] is False
+    assert db.month_open_snapshots.get(int(state.turn)) is None
     assert runtime.state_payload()["turn"]["settlement_display"] is False
-
-
-def test_refresh_turn_no_longer_clears_orphan(game):
-    """F3：refresh_turn 不再是清理点——直调不得清残留（清理只在受理样板成功支）。"""
-    db, state, content = game
-    before = _click_before(state)
-    db.capture_month_open_snapshot(state)
-    state.turn_phase = TurnPhase.SUMMONING.value
-    db.save_state(state)
-
-    runtime = _shell(db, state, content)
-    # 绑定真实方法（轻壳无实例绑定）
-    web_app.WebGame.refresh_turn(runtime)
-    assert db.get_month_open_snapshot(int(state.turn)) == before

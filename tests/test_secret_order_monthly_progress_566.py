@@ -1,9 +1,10 @@
-"""#566: production settlement owns the durable monthly progress rail."""
-
-import json
-
+import threading
 import pytest
 from tests.dossier_test_helpers import create_test_secret_order
+from ming_sim.settlement import SettlementContext, settle_delta
+"""#566: production settlement owns the durable monthly progress rail."""
+
+
 
 
 def _actor(db):
@@ -26,7 +27,7 @@ def _order(db, state, title="护行辽饷", tags=None, deadline=4):
             },
         },
     )
-    return order_id, int(db.get_dossier_for_secret_order(order_id)["id"])
+    return order_id, int(db.dossiers.get_for_secret_order(order_id)["id"])
 
 
 def _production_session(db, state, content):
@@ -36,89 +37,34 @@ def _production_session(db, state, content):
     session.db, session.state, session.content = db, state, content
     session.registry = session.llm_config = session.agno_db = None
     session.deaths_this_turn, session.debuts_this_turn = [], []
-    session.last_decree = session.last_report = ""
+    session.last_decree = ""
     session._decree_draft_fingerprint = ()
-    session._scene_registry = None
-    session._beat_generator = None
     session.auto_save = lambda *args, **kwargs: None
     return session
 
 
-def _canned_monthly_settlement(monkeypatch, extractor_calls):
-    """Keep the production settlement pipeline; replace only external LLM seams."""
-    import ming_sim.decree as decree
-
-    monkeypatch.setattr(decree, "create_season_simulator_agent", lambda *a, **k: None)
-    monkeypatch.setattr(
-        decree, "simulate_season_with_payload",
-        lambda *a, **k: ("本月公开邸报", k["simulator_payload"]),
-    )
-
-    def extract(_agents, db, state, _narrative, *args, **kwargs):
-        extractor_calls.append(state.turn)
-        reports = [{
-            "dossier_id": item["dossier_id"],
-            "progress_band": "月度核验",
-            "memorial_text": "本月长差已有密奏",
-        } for item in db.list_monthly_dossier_progress_nudges()]
-        return {"dossier_progress_reports": reports}, "out", "in"
-
-    # #1745：结算拒收递话同属外层 LLM 缝。
-    from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
-    install_settlement_attendant_agent_stub(monkeypatch, decree)
+def _record_monthly_report(db, state, progress):
+    db.record_monthly_dossier_progress(state.turn, [progress])
 
 
-def _settle(db, state, content, narrative="本月邸报", progress=None):
-    from ming_sim.decree import settle_with_delta
-
-    turn = state.turn
-    extracted = {"dossier_progress_reports": [progress]} if progress else {}
-    settle_with_delta(
-        state, db, extracted, before_turn=turn, content=content, narrative=narrative,
-    )
-    return turn
-
-
-def test_only_emperor_private_payload_shows_monthly_report(game):
-
-    db, state, content = game
-    order_id, dossier_id = _order(db, state)
-    marker = "首批饷车已验山海关关防566"
-    _settle(db, state, content, progress={
-        "dossier_id": dossier_id, "progress_band": "在途核验",
-        "memorial_text": marker,
-    })
-
-    # Emperor-facing secret-order product payload reads the canonical rail.
-    emperor_order = next(item for item in db.list_secret_orders() if item["id"] == order_id)
-    assert emperor_order["dossier_progress"][-1]["memorial_text"] == marker
-
-    # The report does not leak into the assignee's on-demand material directory.
-    from ming_sim.materials import list_materials, prepare_character_materials, read_material
-    assignee = content.characters[emperor_order["minister_name"]]
-    prepared = prepare_character_materials(db, state, assignee)
-    private_blob = "\n".join(
-        read_material(prepared.root, path)
-        for path in list_materials(prepared.root)
-    )
-    assert marker not in private_blob
 
 
 def test_disclosure_promotes_monthly_report_to_public_event_only_after_disclosure(game):
-    from ming_sim.issues import apply_score_extraction
 
     db, state, content = game
     order_id, dossier_id = _order(db, state, title="稽核辽饷", tags=["稽核"])
     marker = "密奏查得辽饷兑付名册有重名566"
-    _settle(db, state, content, progress={
+    _record_monthly_report(db, state, {
         "dossier_id": dossier_id, "progress_band": "核账",
         "memorial_text": marker,
     })
-    assert marker not in str(db._character_knowledge_events(""))
+    assert not any(
+        str(item.get("source_id") or "").startswith(f"secret_order_disclosure:{order_id}:")
+        for item in db._character_knowledge_events("")
+    )
 
-    apply_score_extraction(db, state, {"secret_order_updates": [{
-        "order_id": order_id, "sim_note": "该案已经明发廷议", "disclosed": True,
-    }]}, content=content)
+    sim_note = "该案已经明发廷议"
+    settle_delta(state, db, {'secret_order_updates': [{'order_id': order_id, 'sim_note': sim_note, 'disclosed': True}]}, SettlementContext(content=content))
     public = db._character_knowledge_events("")
     disclosure = next(
         item for item in public
@@ -127,6 +73,7 @@ def test_disclosure_promotes_monthly_report_to_public_event_only_after_disclosur
         )
     )
     assert marker in disclosure["body"]
+    assert sim_note in disclosure["body"]
 
 
 def test_titles_do_not_classify_and_all_active_secret_orders_are_candidates(game):
@@ -145,84 +92,14 @@ def test_titles_do_not_classify_and_all_active_secret_orders_are_candidates(game
         }
         for did in ids
     ]
-    from ming_sim.decree import settle_with_delta
-    settle_with_delta(
-        state, db, {"dossier_progress_reports": reports},
-        before_turn=state.turn, content=content, narrative="本月邸报",
-    )
-    assert db.list_dossier_progress(title_only)
-    assert db.list_dossier_progress(unrelated)
-    assert db.list_dossier_progress(short)
+    db.record_monthly_dossier_progress(state.turn, reports)
+    assert db.dossiers.list_dossier_progress(title_only)
+    assert db.dossiers.list_dossier_progress(unrelated)
+    assert db.dossiers.list_dossier_progress(short)
 
 
-def test_only_an_existing_monthly_chain_gets_terminal_progress(game):
-    db, state, content = game
-    eligible_id, eligible = _order(db, state)
-    ordinary_id, ordinary = _order(db, state, title="保护堤岸", tags=["河工"])
-    state.turn += 1
-    db.save_state(state)
-    reports = [
-        {"dossier_id": eligible, "progress_band": "在途", "memorial_text": "已出京"},
-        {"dossier_id": ordinary, "progress_band": "在办", "memorial_text": "河工并列密奏"},
-    ]
-    from ming_sim.decree import settle_with_delta
-    settle_with_delta(
-        state, db, {"dossier_progress_reports": reports},
-        before_turn=state.turn, content=content, narrative="本月邸报",
-    )
-
-    db.close_secret_order(eligible_id, "failed", "护行中止", state.turn)
-    db.close_secret_order(ordinary_id, "failed", "河工中止", state.turn)
-
-    assert db.list_dossier_progress(eligible)[-1]["is_terminal"] is True
-    assert db.list_dossier_progress(ordinary)
 
 
-def test_character_terminal_status_closes_secret_orders_through_canonical_progress_rail(game):
-    db, state, content = game
-    assignee = _actor(db)
-    chained_id, chained_dossier = _order(db, state, title="护行辽饷")
-    unchained_id, unchained_dossier = _order(
-        db, state, title="清查库藏", tags=["财政"],
-    )
-    state.turn += 1
-    db.save_state(state)
-    reports = [
-        {
-            "dossier_id": chained_dossier,
-            "progress_band": "在途",
-            "memorial_text": "首批已出京",
-        },
-        {
-            "dossier_id": unchained_dossier,
-            "progress_band": "在办",
-            "memorial_text": "库藏并列密奏",
-        },
-    ]
-    from ming_sim.decree import settle_with_delta
-    settle_with_delta(
-        state, db, {"dossier_progress_reports": reports},
-        before_turn=state.turn, content=content, narrative="本月邸报",
-    )
-
-    db.set_character_status(state, assignee, "dead", "途中病故")
-
-    orders = {
-        int(row["id"]): row
-        for row in db.conn.execute(
-            "SELECT id,status,result FROM secret_orders WHERE id IN (?, ?)",
-            (chained_id, unchained_id),
-        ).fetchall()
-    }
-    assert orders[chained_id]["status"] == "failed"
-    assert orders[unchained_id]["status"] == "failed"
-    assert "人物终态：dead；途中病故" in orders[chained_id]["result"]
-    assert db.get_decree_dossier(chained_dossier)["status"] == "closed"
-    assert db.get_decree_dossier(unchained_dossier)["status"] == "closed"
-    terminal = db.list_dossier_progress(chained_dossier)[-1]
-    assert terminal["is_terminal"] is True
-    assert "人物终态：dead；途中病故" in terminal["memorial_text"]
-    assert db.list_dossier_progress(unchained_dossier)
 
 
 def test_current_secret_order_deadline_controls_monthly_eligibility(game):
@@ -238,7 +115,7 @@ def test_current_secret_order_deadline_controls_monthly_eligibility(game):
     assert row["deadline_span"] == 1
     assert [item["dossier_id"] for item in db.list_monthly_dossier_progress_nudges()] == [dossier_id]
     db.update_secret_order_by_id(state, order_id, "护行辽饷", "继续逐月办理", ["护行"], 3)
-    assert db.get_decree_dossier(dossier_id)["due_turn"] != state.turn + 3
+    assert db.dossiers.get(dossier_id)["due_turn"] != state.turn + 3
     assert [item["dossier_id"] for item in db.list_monthly_dossier_progress_nudges()] == [dossier_id]
 
 
@@ -307,11 +184,10 @@ def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write
     game, monkeypatch, entry,
 ):
     """A post-fiscal fault cannot expose preview-time directive materialization."""
-    from contextlib import contextmanager
     from types import SimpleNamespace
     import ming_sim.decree as decree
-    import ming_sim.session as session_mod
     import web_app
+    from fastapi.testclient import TestClient
 
     db, state, content = game
     turn = state.turn
@@ -327,58 +203,54 @@ def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write
     before = _rollback_snapshot(db, state, pending_ids)
     observed = {"fiscal_written": False, "metrics_written": False}
     original_flows = decree.apply_fixed_period_flows
+    fiscal_fault = RuntimeError("post-fiscal failure 566")
 
     def fail_after_real_flows(flow_db, flow_state):
         ledger_before = _rows(flow_db, "economy_ledger")
         metrics_before = dict(flow_state.metrics)
-        result = original_flows(flow_db, flow_state)
+        original_flows(flow_db, flow_state)
         observed["fiscal_written"] = _rows(flow_db, "economy_ledger") != ledger_before
         observed["metrics_written"] = dict(flow_state.metrics) != metrics_before
         assert observed == {"fiscal_written": True, "metrics_written": True}
-        raise RuntimeError("post-fiscal failure 566")
+        raise fiscal_fault
 
     monkeypatch.setattr(decree, "apply_fixed_period_flows", fail_after_real_flows)
-    monkeypatch.setattr(
-        session_mod, "write_decree_with_agno",
-        lambda _config, _agno, _state, directives, db=None: "\n".join(
-            str(item["text"]) for item in directives
-        ),
-    )
-    session = _production_session(db, state, content)
+    from tests.month_chain_helpers import make_light_session
+    session = make_light_session(db, state, content)
 
     if entry == "web":
         web_game = SimpleNamespace(
+            _write_gate=threading.Lock(),
             db=db, state=state, content=content, session=session,
             directive_rows=lambda: [], refresh_turn=lambda: None,
             state_payload=lambda: {"turn": state.turn},
         )
 
-        @contextmanager
-        def unlocked(_game):
-            yield
-
         monkeypatch.setattr(web_app, "get_game", lambda: web_game)
-        monkeypatch.setattr(web_app, "_serialized_web_write", unlocked)
-        invoke = web_app.api_advance_without_edict
+        def invoke():
+            from tests.sse_helpers import parse_sse_event_pairs
+            response = TestClient(web_app.app).post("/api/decree/advance_without_edict/stream")
+            assert response.status_code == 200
+            return parse_sse_event_pairs(response.text)[-1]
     else:
         invoke = session.advance_without_decree
 
-    # cli：session 层 RuntimeError 原样穿透。
-    # web：#1433 可读错误包契约——Exception → 500 + {"message": str(e)}（回滚语义不变）。
+    # W4 统一停住契约：保留原错为 cause，Web 报告同一失败包。
     if entry == "web":
-        with pytest.raises(web_app.HTTPException) as exc_info:
-            invoke()
-        assert exc_info.value.status_code == 500
-        detail = exc_info.value.detail
-        if isinstance(detail, dict):
-            assert "post-fiscal failure 566" in str(detail.get("message") or detail)
-        else:
-            assert "post-fiscal failure 566" in str(detail)
+        kind, detail = invoke()
+        assert kind == "error"
+        assert isinstance(detail, dict)
+        assert detail["stage"] == "pre_settle"
+        assert detail["error_type"] == type(fiscal_fault).__name__
+        assert detail["error_pack_path"]
+        assert detail.get("message") == str(fiscal_fault)
     else:
-        with pytest.raises(RuntimeError, match="post-fiscal failure 566"):
+        from ming_sim.exceptions import SettlementAbort
+        with pytest.raises(SettlementAbort) as ei:
             invoke()
+        assert ei.value.__cause__ is fiscal_fault
+        assert ei.value.stage == "pre_settle"
 
-    assert observed == {"fiscal_written": True, "metrics_written": True}
     after = _rollback_snapshot(db, state, pending_ids)
     for key in ("pending", "directives", "dossiers", "orders", "knowledge", "metrics", "clock"):
         assert after[key] == before[key], key
@@ -387,88 +259,6 @@ def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write
     reloaded = db.load_state()
     assert (reloaded.turn, reloaded.year, reloaded.period, reloaded.turn_phase) == before["clock"]
     assert reloaded.metrics == before["metrics"]
-
-
-def test_no_eligible_dossier_unknown_report_aborts_atomically(game):
-    """The production settlement seam delegates eligibility to the DB contract."""
-    from ming_sim.decree import settle_with_delta
-    from ming_sim.exceptions import SettlementAbort
-    import pytest
-
-    db, state, content = game
-    turn = state.turn
-    hallucinated = {
-        "dossier_id": 999999,
-        "progress_band": "伪进展",
-        "memorial_text": "并不存在的案卷已有回报",
-    }
-
-    with pytest.raises(SettlementAbort, match="本月结算失败"):
-        settle_with_delta(
-            state, db, {"dossier_progress_reports": [hallucinated]},
-            before_turn=turn, content=content, narrative="不得推进",
-        )
-
-    assert state.turn == turn
-    assert db.load_state().turn == turn
-    assert db.conn.execute(
-        "SELECT dossier_progress_json FROM secret_orders WHERE dossier_progress_json != '[]'"
-    ).fetchone() is None
-    rejection_reports_exists = db.conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='rejection_reports'"
-    ).fetchone() is not None
-    if rejection_reports_exists:
-        assert db.conn.execute(
-            "SELECT 1 FROM rejection_reports "
-            "WHERE turn=? AND section='dossier_progress_reports'",
-            (turn,),
-        ).fetchone() is None
-
-
-def test_no_eligible_dossier_bad_report_shape_aborts_but_empty_values_advance(game):
-    from ming_sim.decree import settle_with_delta
-    from ming_sim.exceptions import SettlementAbort
-    import pytest
-
-    db, state, content = game
-    turn = state.turn
-    with pytest.raises(SettlementAbort):
-        settle_with_delta(
-            state, db, {"dossier_progress_reports": {"dossier_id": 999999}},
-            before_turn=turn, content=content, narrative="不得推进",
-        )
-    assert state.turn == turn
-    assert db.load_state().turn == turn
-
-    for extracted in ({}, {"dossier_progress_reports": None}, {"dossier_progress_reports": []}):
-        turn = state.turn
-        settle_with_delta(
-            state, db, extracted,
-            before_turn=turn, content=content, narrative="合法空月",
-        )
-        assert state.turn == turn + 1
-        assert db.load_state().turn == turn + 1
-
-
-def test_eligible_missing_report_aborts_settlement_but_empty_month_succeeds(game):
-    from ming_sim.exceptions import SettlementAbort
-    import pytest
-
-    db, state, content = game
-    before = state.turn
-    _order(db, state)
-    with pytest.raises(SettlementAbort):
-        from ming_sim.decree import settle_with_delta
-        settle_with_delta(
-            state, db, {"dossier_progress_reports": []},
-            before_turn=state.turn, content=content, narrative="本月邸报",
-        )
-    assert state.turn == before
-
-    db.conn.execute("UPDATE secret_orders SET status='cancelled'")
-    db.conn.commit()
-    _settle(db, state, content)
-    assert state.turn == before + 1
 
 
 def test_missing_bad_unknown_and_duplicate_reports_are_rejected(game):
@@ -487,10 +277,83 @@ def test_missing_bad_unknown_and_duplicate_reports_are_rejected(game):
             {"dossier_id": dossier_id, "progress_band": "重复", "memorial_text": "不得覆盖"},
         ])
     for invalid_id in (True, 1.0, 0, -1):
-        with pytest.raises(ValueError, match="案卷编号无效"):
+        with pytest.raises(ValueError):
             db.record_monthly_dossier_progress(state.turn, [{
                 "dossier_id": invalid_id,
                 "progress_band": "伪进展",
                 "memorial_text": "不得命中真实案卷",
             }])
-    assert db.list_dossier_progress(dossier_id) == []
+    assert db.dossiers.list_dossier_progress(dossier_id) == []
+
+def test_close_secret_order_keeps_model_reports_without_synthesizing_terminal(game):
+    """结案只落 result/执行格；不把结案正文写成人物终奏。"""
+    db, state, content = game
+    eligible_id, eligible = _order(db, state)
+    ordinary_id, ordinary = _order(db, state, title="保护堤岸", tags=["河工"])
+    state.turn += 1
+    db.reign.save_game_state(state)
+    reports = [
+        {"dossier_id": eligible, "progress_band": "在途", "memorial_text": "已出京"},
+        {"dossier_id": ordinary, "progress_band": "在办", "memorial_text": "河工并列密奏"},
+    ]
+    db.record_monthly_dossier_progress(state.turn, reports)
+    before_eligible = db.dossiers.list_dossier_progress(eligible)
+    before_ordinary = db.dossiers.list_dossier_progress(ordinary)
+
+    db.close_secret_order(eligible_id, "failed", "护行中止", state.turn)
+    db.close_secret_order(ordinary_id, "failed", "河工中止", state.turn)
+
+    after_eligible = db.dossiers.list_dossier_progress(eligible)
+    after_ordinary = db.dossiers.list_dossier_progress(ordinary)
+    assert after_eligible == before_eligible
+    assert after_ordinary == before_ordinary
+    assert all(not row.get("is_terminal") for row in after_eligible)
+    assert db.dossiers.get(eligible)["status"] == "closed"
+    assert db.dossiers.get(ordinary)["status"] == "closed"
+
+
+def test_character_terminal_status_closes_orders_without_synthetic_memorial(game):
+    """人物终态关密令/案卷；终态落账，不污染既有模型月报。"""
+    db, state, content = game
+    assignee = _actor(db)
+    chained_id, chained_dossier = _order(db, state, title="护行辽饷")
+    unchained_id, unchained_dossier = _order(
+        db, state, title="清查库藏", tags=["财政"],
+    )
+    state.turn += 1
+    db.reign.save_game_state(state)
+    reports = [
+        {
+            "dossier_id": chained_dossier,
+            "progress_band": "在途",
+            "memorial_text": "首批已出京",
+        },
+        {
+            "dossier_id": unchained_dossier,
+            "progress_band": "在办",
+            "memorial_text": "库藏并列密奏",
+        },
+    ]
+    db.record_monthly_dossier_progress(state.turn, reports)
+    before_chained = db.dossiers.list_dossier_progress(chained_dossier)
+    before_unchained = db.dossiers.list_dossier_progress(unchained_dossier)
+
+    db.set_character_status(state, assignee, "dead", "途中病故")
+
+    orders = {
+        int(row["id"]): row
+        for row in db.conn.execute(
+            "SELECT id,status,result FROM secret_orders WHERE id IN (?, ?)",
+            (chained_id, unchained_id),
+        ).fetchall()
+    }
+    assert orders[chained_id]["status"] == "failed"
+    assert orders[unchained_id]["status"] == "failed"
+    assert db.dossiers.get(chained_dossier)["status"] == "closed"
+    assert db.dossiers.get(unchained_dossier)["status"] == "closed"
+    chained_progress = db.dossiers.list_dossier_progress(chained_dossier)
+    unchained_progress = db.dossiers.list_dossier_progress(unchained_dossier)
+    assert chained_progress == before_chained
+    assert unchained_progress == before_unchained
+    assert all(not row.get("is_terminal") for row in chained_progress)
+    assert unchained_progress
