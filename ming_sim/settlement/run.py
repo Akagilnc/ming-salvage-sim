@@ -319,9 +319,6 @@ def _preflight(
     run.declared_person_event_by_item = {
         id(item): str(item.get("_effect_event_id") or "") for item in person_changes
     }
-    for item in person_changes:
-        item.pop("_effect_event_id", None)
-
     run.strategic_event_pool_ids = _event_pool_ids_for_strategic_foreign_nodes(
         clean, run.runtime_content,
     )
@@ -333,6 +330,8 @@ def _preflight(
     run.strategic_event_referenced_ids = (
         run.strategic_event_pool_ids | run.strategic_event_delta_ids
     )
+    for item in person_changes:
+        item.pop("_effect_event_id", None)
 
     pre_issue, post_issue = split_pre_issue_person_changes(person_changes)
     str_pre, pre_issue = _split_strategic_person_result_changes(
@@ -421,19 +420,34 @@ def _stored(run, *names: str) -> SectionResult:
     return merged
 
 
+def _persist_step_specialized(run, step_extracted: Mapping[str, object]) -> None:
+    """按序执行专属写口（如检举、密奏、暗渠等），收集拒收留痕。"""
+    from ming_sim.declaration_dispatch import _persist_specialized_extraction
+
+    _persist_specialized_extraction(
+        run.db, run.state, step_extracted,
+        rejections=run.shape_rejections, turn=int(run.state.turn),
+        source=run.ctx.source,
+        defer_monthly_secret_supply=run.ctx.defer_disclosure,
+    )
+
+
 def _run_registry(run) -> None:
     """按登记表顺序跑一遍全部段（整批路径）。"""
     for spec in registry.section_specs():
         _capture(run, spec.name, registry.load(spec)(run))
+    _persist_step_specialized(run, run.extracted)
 
 
 def _run_effect_sequence(run) -> None:
-    """C0 effects 数组按交代先后逐笔落账（#1844）。
+    """C0 effects 数组按交代先后逐笔落账（#1844 / #1843 K6R）。
 
     后交代的效果读到先交代的实际落账存量——不按实体段固定类别顺序重排跨类因果。
-    同一笔内先实体后钱：同笔的欠饷加额须先于补饷拨款可见。
+    同一笔内名册→执行格→事件结局→指标→实体→经济→专属写口：
+    名册追加先于执行格，让执行格读到同批先交代的名册；专属写口读本笔已落实体与执行格。
     """
     from ming_sim.entities.army import delta_section as army_section
+    from ming_sim.entities.dossier import delta_section as dossier_section
     from ming_sim.entities.economy import delta_section as economy_section
     from ming_sim.entities.metric import delta_section as metric_section
     from ming_sim.entities.region import delta_section as region_section
@@ -443,6 +457,12 @@ def _run_effect_sequence(run) -> None:
         run.current_extracted = step_extracted
         run.current_ordered = step_ordered
         run.current_event_ids = step_event_ids
+        if "dossier_participants" in step_extracted:
+            _capture(run, "dossier_participants", dossier_section.apply_participants(run))
+        if "secret_dossier_participants" in step_extracted:
+            _capture(run, "secret_dossier_participants", dossier_section.apply_secret_dossier_participants(run))
+        if "dossier_executions" in step_extracted:
+            _capture(run, "dossier_executions", dossier_section.apply_executions(run))
         # W4: first accepted petition outcome takes effect before later envelopes.
         from ming_sim.entities.issue.event_terminal import apply_petition_event_outcome
         from ming_sim.issues import _is_fiscal_levy_event, _event_outcome_label
@@ -460,6 +480,7 @@ def _run_effect_sequence(run) -> None:
         _capture(run, "army_changes", army_section.apply_deltas(run))
         step_moves = list(step_extracted.get("economy_moves") or [])
         _capture(run, "economy", economy_section.apply(run, step_moves))
+        _persist_step_specialized(run, step_extracted)
     run.current_extracted = run.extracted
     run.current_ordered = run.ordered_deltas
     run.current_event_ids = run.ordered_effect_event_ids
@@ -610,9 +631,12 @@ def settle_delta(
 def _run_registry_after_interleave(run) -> None:
     """逐笔交错跑完后，跑余额外段。
 
-    指标、经济、实体三段已在逐笔路径里跑过——此处不得重跑，否则同笔效果双落。
+    逐笔路径已跑过的段（见 ``already_run``）此处不得重跑，否则同笔效果双落。
     """
-    already_run = {"metric", "economy", "new_armies", "region_changes", "army_changes"}
+    already_run = {
+        "metric", "economy", "new_armies", "region_changes", "army_changes",
+        "dossier_participants", "secret_dossier_participants", "dossier_executions",
+    }
     run.current_extracted = run.extracted
     run.current_ordered = run.ordered_deltas
     run.current_event_ids = run.ordered_effect_event_ids

@@ -72,7 +72,7 @@ def test_progress_and_denunciation_project_as_memorials(game):
             "memorial_text": body_den,
         }],
         commit=True,
-    )
+    ).applied
     assert len(hits) == 1
     den_id = int(hits[0]["id"])
 

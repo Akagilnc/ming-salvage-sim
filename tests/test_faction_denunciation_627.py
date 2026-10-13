@@ -206,13 +206,14 @@ def test_ac2_scripted_accept_and_clamp(game):
     _make_forked(db, state, did, token="acc")
 
     body = f"{accuser}奏：{subject_name}清丈有私，请皇上按问。"
-    hits = db.accept_faction_denunciations(
+    res = db.accept_faction_denunciations(
         state,
         [_scripted_entry(
             accuser=accuser, subject=subject_name, dossier_id=did, body=body,
         )],
         commit=True,
     )
+    hits = res.applied
     assert len(hits) == 1
     hit = hits[0]
     assert hit["accuser_name"] == accuser
@@ -232,7 +233,8 @@ def test_ac2_scripted_accept_and_clamp(game):
         )],
         commit=True,
     )
-    assert missing == []
+    assert missing.applied == []
+    assert len(missing.rejected) == 1
 
     # 检举人不在场 → 拒
     ghost = db.accept_faction_denunciations(
@@ -242,7 +244,8 @@ def test_ac2_scripted_accept_and_clamp(game):
         )],
         commit=True,
     )
-    assert ghost == []
+    assert ghost.applied == []
+    assert len(ghost.rejected) == 1
 
 # ── AC3 真伪底派生 ────────────────────────────────────────────────
 
@@ -272,7 +275,7 @@ def test_ac3_veracity_true_and_false_from_fork(game):
             ),
         ],
         commit=True,
-    )
+    ).applied
     by_did = {int(h["target_dossier_id"]): h for h in hits}
     assert origin_has_mark(by_did[did_true]["origin"], ORIGIN_MARK_DENUNCIATION_TRUE)
     assert by_did[did_true]["is_true"] is True
@@ -298,11 +301,11 @@ def test_ac4_dedup_upgrade_closed_and_restore(game, tmp_path, content):
         accuser=accuser, subject=subject_name, dossier_id=did,
     )
 
-    first = db.accept_faction_denunciations(state, [entry], commit=True)
+    first = db.accept_faction_denunciations(state, [entry], commit=True).applied
     assert len(first) == 1
 
     # 同 turn 同键二次拒（去重由承接查询单源，非 UNIQUE）
-    same_turn_dup = db.accept_faction_denunciations(state, [entry], commit=True)
+    same_turn_dup = db.accept_faction_denunciations(state, [entry], commit=True).applied
     assert same_turn_dup == []
     assert len(db.dossiers.denunciations(target_dossier_id=did)) == 1
 
@@ -314,14 +317,14 @@ def test_ac4_dedup_upgrade_closed_and_restore(game, tmp_path, content):
             accuser=accuser, subject=subject_name, dossier_id=did,
         )],
         commit=True,
-    )
+    ).applied
     assert len(same_turn_up) == 1
     assert len(db.dossiers.denunciations(target_dossier_id=did)) == 2
 
     # 同人同案同真伪类跨 turn 亦拒（去重键不含 turn）
     state.turn = int(state.turn) + 1
     db.reign.save_game_state(state)
-    second = db.accept_faction_denunciations(state, [entry], commit=True)
+    second = db.accept_faction_denunciations(state, [entry], commit=True).applied
     assert second == []
     assert len(db.dossiers.denunciations(target_dossier_id=did)) == 2
 
@@ -333,7 +336,7 @@ def test_ac4_dedup_upgrade_closed_and_restore(game, tmp_path, content):
             accuser=accuser, subject=subject_name, dossier_id=did,
         )],
         commit=True,
-    )
+    ).applied
     assert len(upgraded) == 1
     assert len(db.dossiers.denunciations(target_dossier_id=did)) == 3
 
@@ -344,14 +347,15 @@ def test_ac4_dedup_upgrade_closed_and_restore(game, tmp_path, content):
         "UPDATE decree_dossiers SET status='closed' WHERE id=?", (did_closed,),
     )
     db.conn.commit()
-    closed_hits = db.accept_faction_denunciations(
+    closed_res = db.accept_faction_denunciations(
         state,
         [_scripted_entry(
             accuser=accuser, subject=subject_name, dossier_id=did_closed,
         )],
         commit=True,
     )
-    assert closed_hits == []
+    assert closed_res.applied == []
+    assert len(closed_res.rejected) == 1
 
     # restore 无损接续
     expected = db.dossiers.denunciations()
@@ -370,7 +374,7 @@ def test_ac4_dedup_upgrade_closed_and_restore(game, tmp_path, content):
                 accuser=accuser, subject=subject_name, dossier_id=did,
             )],
             commit=True,
-        )
+        ).applied
         assert again == []
         assert restored.dossiers.denunciations() == expected
     finally:
@@ -408,7 +412,7 @@ def test_ac5_zero_template_exposure_and_622(game):
             accuser=accuser, subject=subject_name, dossier_id=did, body=body,
         )],
         commit=True,
-    )
+    ).applied
     assert hits
     for h in hits:
         # 正文即 LLM/scripted 原文，非引擎模板壳
@@ -450,3 +454,97 @@ def test_ac5_zero_template_exposure_and_622(game):
     hit = next(s for s in signals if int(s["target_dossier_id"]) == did)
     assert hit["fork"] is True
     assert hit["fork"] == db.read_dossier_fork_state(did)["fork"]
+
+
+def test_k9_accept_faction_denunciations_bad_items_and_containers_refused(game):
+    """K9: 所有原先静默跳过的检举坏项均结构化拒收留痕，合法兄弟条目正常落账；非 list 容器经分派形状拒收。"""
+    from ming_sim.applier import Provenance
+    from ming_sim.declaration_dispatch import dispatch_declaration
+
+    db, state, _ = game
+    accuser, inactive = [row["name"] for row in db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 2"
+    )]
+    db.conn.execute("UPDATE characters SET status='dead' WHERE name=?", (inactive,))
+    did_open = db.create_decree_dossier(
+        state, action_type="policy", decree_text="在途案卷",
+        target_kind="issue", target_id="1", payload={},
+    )
+    did_closed = db.create_decree_dossier(
+        state, action_type="policy", decree_text="已结案卷",
+        target_kind="issue", target_id="1", payload={},
+    )
+    db.conn.execute("UPDATE decree_dossiers SET status='closed' WHERE id=?", (did_closed,))
+    db.conn.commit()
+
+    bad_items = [
+        "not_a_dict",
+        {"memorial_text": "缺检举人", "target_dossier_id": did_open},
+        {"accuser_name": accuser, "target_dossier_id": did_open},
+        {"accuser_name": accuser, "memorial_text": "零ID", "target_dossier_id": 0},
+        {"accuser_name": accuser, "memorial_text": "字串ID", "target_dossier_id": "not_an_int"},
+        {"accuser_name": inactive, "memorial_text": "检举人已退场", "target_dossier_id": did_open},
+        {"accuser_name": "ghost_accuser", "memorial_text": "查无此人", "target_dossier_id": did_open},
+        {"accuser_name": accuser, "memorial_text": "查无案卷", "target_dossier_id": 999999},
+        {"accuser_name": accuser, "memorial_text": "闭卷检举", "target_dossier_id": did_closed},
+    ]
+    good_item = {"accuser_name": accuser, "memorial_text": "证据确凿", "target_dossier_id": did_open}
+
+    dispatch_declaration(
+        db, state,
+        {"effects": [{"faction_denunciations": [*bad_items, good_item]}]},
+        source=Provenance.system_simulation,
+        defer_disclosure=True,
+    )
+    # 合法 sibling 存活落库
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM faction_denunciations WHERE target_dossier_id=?", (did_open,)
+    ).fetchone()[0] == 1
+    # 坏项全部持久化拒收留痕
+    rejections = db.conn.execute(
+        "SELECT category FROM rejection_reports WHERE section='faction_denunciations' ORDER BY id"
+    ).fetchall()
+    assert [r["category"] for r in rejections] == [
+        "invalid_shape", "invalid_shape", "invalid_shape", "invalid_shape",
+        "invalid_shape",
+        "missing_ref", "missing_ref", "missing_ref", "invalid_status",
+    ]
+
+    # 非 list 容器通过既有 dispatch 形状拒收
+    dispatch_declaration(
+        db, state,
+        {"effects": [{"faction_denunciations": "not_a_list"}]},
+        source=Provenance.system_simulation,
+        defer_disclosure=True,
+    )
+    non_list_count = db.conn.execute(
+        "SELECT COUNT(*) FROM rejection_reports WHERE section='faction_denunciations' AND category='invalid_shape'"
+    ).fetchone()[0]
+    assert non_list_count == 6
+
+    # K9: 密令选态坏编号与未知编号逐项拒收，合法兄弟项正常落账
+    order_id = create_test_secret_order(
+        db, state, accuser, "密查清丈", "逐月密奏", ["稽核"], deadline_months=4,
+    )
+    db.conn.execute("UPDATE secret_orders SET turn_issued=? WHERE id=?", (state.turn - 1, order_id))
+    db.conn.commit()
+
+    dispatch_declaration(
+        db, state,
+        {"effects": [{
+            "covert_exec_selections": [
+                {"order_id": "not_an_id", "fidelity": "忠实"},
+                {"order_id": 999999, "fidelity": "忠实"},
+                {"order_id": order_id, "fidelity": "忠实"},
+            ],
+        }]},
+        source=Provenance.system_simulation,
+        defer_disclosure=False,
+    )
+    secret_rejections = db.conn.execute(
+        "SELECT category FROM rejection_reports WHERE section='covert_exec_selections' ORDER BY id"
+    ).fetchall()
+    assert [r["category"] for r in secret_rejections] == ["invalid_shape", "missing_ref"]
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM dossier_actual_progress WHERE fidelity_state='忠实'"
+    ).fetchone()[0] == 1

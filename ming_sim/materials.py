@@ -1754,7 +1754,7 @@ def continuing_dossier_facts(db: Any, turn: int) -> list[dict[str, object]]:
         dossier_id = int(row["id"])
         # list_decree_dossiers_for_simulation → hydrate_dossier_row 已保证 payload 为对象。
         payload = row["payload"]
-        facts.append({
+        fact: dict[str, object] = {
             "id": dossier_id,
             "status": status,
             "decree_text": str(row.get("decree_text") or ""),
@@ -1763,7 +1763,8 @@ def continuing_dossier_facts(db: Any, turn: int) -> list[dict[str, object]]:
             "target_id": str(row.get("target_id") or ""),
             "grant_action": str(payload.get("grant_action") or ""),
             "paid": dossier_paid_amount(db, dossier_id),
-        })
+        }
+        facts.append(fact)
     return facts
 
 
@@ -1959,6 +1960,9 @@ def _scene_pending_audience_facts(db: Any, state: Any) -> list[str]:
     for summon in list_unsettled_summons(db):
         facts = {key: summon[key] for key in ("person_name", "kind", "travel_tone") if key in summon}
         lines.append(json.dumps(facts, ensure_ascii=False, sort_keys=True))
+    from ming_sim.applier import list_unresolved_player_rejections
+    lines.extend(json.dumps(fact, ensure_ascii=False, sort_keys=True)
+                 for fact in list_unresolved_player_rejections(db))
     return lines
 
 

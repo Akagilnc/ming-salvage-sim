@@ -433,6 +433,7 @@ def dispatch_month_segment(
             db, state, declaration,
             minister_name=minister_name,
             source=source,
+            decree_ref=decree_ref,
             visible_refs=refs,
             alongside=alongside,
             defer_disclosure=True,

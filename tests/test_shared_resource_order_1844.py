@@ -399,3 +399,93 @@ def test_world_segment_stamps_each_shared_item_once(game):
     assert _invalid_shape_matches(db, "economy_moves", "category", "冲突笔") == 1
     assert _invalid_shape_matches(db, "economy_moves", "category", "坏声明") == 1
     assert _invalid_shape_matches(db, "new_issues", "id", "stamp-once-bad-issue") == 1
+
+
+@pytest.mark.parametrize("order", ["denounce_first", "close_first", "participant_then_failed"])
+def test_k6_specialized_denunciation_and_dossier_execution_order(game, order):
+    """K6: 检举等专属写口与改变其前提的效果（案卷结案）按交代先后落账。"""
+    from ming_sim.applier import Provenance
+    from ming_sim.declaration_dispatch import dispatch_declaration
+
+    db, state, _ = game
+    accuser = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' ORDER BY name LIMIT 1"
+    ).fetchone()["name"]
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="在途案卷",
+        target_kind="issue", target_id="1", payload={},
+    )
+    db.dossiers.transition(dossier_id, "promulgated")
+    db.dossiers.transition(dossier_id, "executing")
+    if order == "participant_then_failed":
+        db.append_decree_dossier_participants(
+            dossier_id,
+            [{"character_id": "徐光启", "tier": "协办", "role": "协助"}],
+        )
+    db.conn.commit()
+
+    if order == "participant_then_failed":
+        part_env = {
+            "dossier_participants": [{
+                "dossier_id": dossier_id,
+                "character_id": "倪元璐",
+                "delegator_id": "徐光启",
+                "tier": "主办",
+                "role": "主理",
+            }]
+        }
+        close_env = {
+            "dossier_executions": [{
+                "dossier_id": dossier_id,
+                "outcome": "failed",
+                "note": "办结失败",
+            }]
+        }
+        dispatch_declaration(
+            db, state, {"effects": [part_env, close_env]},
+            source=Provenance.system_simulation,
+            defer_disclosure=True,
+            visible_refs={"dossiers": [dossier_id]},
+        )
+        liabilities = db.conn.execute(
+            "SELECT cost_kind, target_kind, target_id FROM decree_cost_events WHERE dossier_id=?",
+            (dossier_id,),
+        ).fetchall()
+        factions = {row["target_id"] for row in liabilities if row["cost_kind"] == "satisfaction"}
+        assert "东林" in factions
+        assert "西学" in factions
+        return
+
+    denounce_env = {
+        "faction_denunciations": [{
+            "accuser_name": accuser,
+            "target_dossier_id": dossier_id,
+            "memorial_text": "侵冒有据",
+        }]
+    }
+    close_env = {
+        "dossier_executions": [{
+            "dossier_id": dossier_id,
+            "outcome": "fulfilled",
+            "note": "结案",
+        }]
+    }
+    effects = [denounce_env, close_env] if order == "denounce_first" else [close_env, denounce_env]
+    dispatch_declaration(
+        db, state, {"effects": effects},
+        source=Provenance.system_simulation,
+        defer_disclosure=True,
+    )
+    denounce_count = db.conn.execute(
+        "SELECT COUNT(*) FROM faction_denunciations WHERE target_dossier_id=?",
+        (dossier_id,),
+    ).fetchone()[0]
+    if order == "denounce_first":
+        assert denounce_count == 1
+    else:
+        assert denounce_count == 0
+        rejections = db.conn.execute(
+            "SELECT category, section FROM rejection_reports WHERE section='faction_denunciations'"
+        ).fetchall()
+        assert len(rejections) == 1
+        assert rejections[0]["category"] == "invalid_status"
