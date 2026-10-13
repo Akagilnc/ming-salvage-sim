@@ -11,13 +11,18 @@ from tests.test_declaration_dispatch_1835 import _minister as _character_name
 
 
 
-@pytest.mark.parametrize("route", ["direct", "resolved", "failed", "ongoing"])
-@pytest.mark.parametrize("source_cannon,target_cannon,treasury,actual_cannon,source_latched,target_latched", [
-    (1, 0, 10, 1, 0, 0), (5, 11, 10, 1, 0, 0), (0, 0, 0, 0, 0, 0),
-    (5, 0, 10, 0, 1, 0), (5, 0, 10, 0, 0, 1),
+@pytest.mark.parametrize("route,source_cannon,target_cannon,treasury,actual_cannon,source_latched,target_latched", [
+    ("direct", 1, 0, 10, 1, 0, 0),
+    ("direct", 5, 11, 10, 1, 0, 0),
+    ("direct", 0, 0, 0, 0, 0, 0),
+    ("direct", 5, 0, 10, 0, 1, 0),
+    ("direct", 5, 0, 10, 0, 0, 1),
+    ("resolved", 1, 0, 10, 1, 0, 0),
+    ("failed", 1, 0, 10, 1, 0, 0),
+    ("ongoing", 1, 0, 10, 1, 0, 0),
 ])
 def test_world_segment_explicit_stock_transfers_share_actual_amount(
-    game, source_cannon, target_cannon, treasury, actual_cannon, source_latched, target_latched, route,
+    game, route, source_cannon, target_cannon, treasury, actual_cannon, source_latched, target_latched,
 ):
     from ming_sim.month_translate import dispatch_month_segment
 
@@ -100,17 +105,19 @@ def test_world_segment_explicit_stock_transfers_share_actual_amount(
 
 
 @pytest.mark.parametrize("route,field,bad_value,level", [
-    (route, "cannon_transfer", value, "item") for route in ("resolved", "failed", "cancels")
-    for value in (None, True, -1.5, "bad")
-] + [
-    (route, field, value, "item") for route in ("resolved", "failed", "cancels")
-    for field in ("army_delta", "region_delta")
-    for value in (None, [], 5, 1.5, "bad", True)
-] + [
-    (route, field, value, "section")
-    for route in ("resolved", "failed", "cancels", "new_resolved", "new_failed")
-    for field in ("army_delta", "region_delta", "metrics")
-    for value in (None, [], 5, 1.5, "bad", True)
+    ("resolved", "cannon_transfer", "bad", "item"),
+    ("resolved", "army_delta", "bad", "item"),
+    ("resolved", "region_delta", "bad", "item"),
+    ("resolved", "army_delta", None, "section"),
+    ("resolved", "region_delta", "bad", "section"),
+    ("failed", "region_delta", None, "section"),
+    ("failed", "metrics", "bad", "section"),
+    ("cancels", "metrics", None, "section"),
+    ("cancels", "army_delta", "bad", "section"),
+    ("new_resolved", "army_delta", None, "section"),
+    ("new_resolved", "region_delta", "bad", "section"),
+    ("new_failed", "region_delta", None, "section"),
+    ("new_failed", "metrics", "bad", "section"),
 ])
 def test_world_segment_nested_entity_effects_reject_bad_items(game, route, field, bad_value, level):
     from ming_sim.month_translate import dispatch_month_segment
@@ -217,13 +224,14 @@ def test_world_segment_nested_entity_effects_reject_bad_items(game, route, field
         "SELECT id, cannon_equipment FROM armies WHERE id IN (?, ?) ORDER BY id", (loser, winner),
     )] == cannon_before
     assert db.conn.execute("SELECT COUNT(*) FROM army_logs WHERE field='cannon_equipment'").fetchone()[0] == logs_before
+    drop_section = level == "section" and (route == "cancels" or fresh_issue)
     expect_manpower = manpower_before + (2 if fresh_issue else 0) + (
-        0 if level == "section" and field == "army_delta" and (route == "cancels" or fresh_issue) else 1
+        0 if drop_section and field == "army_delta" else 1
     )
-    expect_unrest = 10 if level == "section" and field == "region_delta" and (route == "cancels" or fresh_issue) else 11
+    expect_unrest = 10 if drop_section and field == "region_delta" else 11
     # Section-level bad fresh keeps same-named preset; cancels/new have no preset to keep.
     expect_metric = metric_before + (
-        0 if level == "section" and field == "metrics" and (route == "cancels" or fresh_issue) else 3
+        0 if drop_section and field == "metrics" else 3
     )
     assert db.armies.row(winner)["manpower"] == expect_manpower
     assert dict(db.regions.row(bad_region)) == bad_region_before

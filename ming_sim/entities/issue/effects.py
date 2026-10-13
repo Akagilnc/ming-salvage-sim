@@ -246,7 +246,7 @@ def _apply_issue_entities(
                                    origin_ref=origin_ref, require_origin=True, source=source)
         )
     new_armies = effect.get("new_armies")
-    if isinstance(new_armies, list) and new_armies:
+    if new_armies:
         _collect_result(
             db.create_armies_from_extraction(state, new_armies, actor=label, commit=False,
                                               origin_ref=origin_ref, require_origin=True, source=source)
@@ -263,38 +263,36 @@ def _apply_issue_entities(
                 db, state, pseudo, army_id, raw_changes,
                 origin_ref=origin_ref, actor=label, source=source,
             ))
-    power_renames = effect.get("power_renames")
-    if isinstance(power_renames, list):
-        for item in power_renames:
-            if not isinstance(item, dict):
-                tolerated.append(RejectedItem(item={"raw_value": item}, reason="势力更名项须为对象", category="invalid_shape", source=source))
-                continue
-            power_id = str(item.get("power_id") or "").strip()
-            new_name = str(item.get("new_name") or "")
-            if not power_id or not new_name.strip():
-                tolerated.append(RejectedItem(item=item, reason="势力更名缺 power_id/new_name", category="missing_field", source=source))
-                continue
-            if db.powers.presence((power_id,)) is None:
-                tolerated.append(RejectedItem(item=item, reason="势力更名目标未入库", category="missing_ref", source=source))
-                continue
-            db.apply_power_rename(
-                state,
-                power_id,
-                new_name,
-                aliases=str(item.get("aliases") or ""),
-                reason=str(item.get("reason") or label),
-                status=str(item.get("status") or ""),
-                last_action=str(item.get("last_action") or ""),
-                commit=False,
-            )
-    raw_person_changes = effect.get("人物变更")
+    power_renames = effect.get("power_renames") or []
+    for item in power_renames:
+        if not isinstance(item, dict):
+            tolerated.append(RejectedItem(item={"raw_value": item}, reason="势力更名项须为对象", category="invalid_shape", source=source))
+            continue
+        power_id = str(item.get("power_id") or "").strip()
+        new_name = str(item.get("new_name") or "")
+        if not power_id or not new_name.strip():
+            tolerated.append(RejectedItem(item=item, reason="势力更名缺 power_id/new_name", category="missing_field", source=source))
+            continue
+        if db.powers.presence((power_id,)) is None:
+            tolerated.append(RejectedItem(item=item, reason="势力更名目标未入库", category="missing_ref", source=source))
+            continue
+        db.apply_power_rename(
+            state,
+            power_id,
+            new_name,
+            aliases=str(item.get("aliases") or ""),
+            reason=str(item.get("reason") or label),
+            status=str(item.get("status") or ""),
+            last_action=str(item.get("last_action") or ""),
+            commit=False,
+        )
+    raw_person_changes = effect.get("人物变更") or []
     person_items = []
-    if isinstance(raw_person_changes, list):
-        for it in raw_person_changes:
-            if not isinstance(it, dict):
-                tolerated.append(RejectedItem(item={"raw_value": it}, reason="人物变更项须为对象", category="invalid_shape", source=source))
-            else:
-                person_items.append(it)
+    for it in raw_person_changes:
+        if not isinstance(it, dict):
+            tolerated.append(RejectedItem(item={"raw_value": it}, reason="人物变更项须为对象", category="invalid_shape", source=source))
+        else:
+            person_items.append(it)
     person_changes = normalize_person_changes({"人物变更": person_items})
     if person_changes:
         from ming_sim.settlement.run import land_person_changes_isolated
