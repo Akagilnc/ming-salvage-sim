@@ -293,8 +293,8 @@ def atomic(db: Any) -> Iterator[None]:
         conn._commit_suspended = True
         conn._atomic_depth = depth
         if depth == 1 and not conn.in_transaction:
-            # legacy 模式只有 DML 隐式开事务；不显式 BEGIN 的话，DDL 打头的
-            # 序列（如 flush_to_db 建表）跑在 autocommit 里、回滚留表（cmr S1 r2 F2）。
+            # Establish transaction ownership before yielding, even before the first DML.
+            # Nested writers use conn.in_transaction to decide whether they own the commit.
             conn.execute("BEGIN")
             started_here = True
         yield

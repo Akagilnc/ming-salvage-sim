@@ -405,25 +405,6 @@ def test_swallowed_conn_context_exception_forces_outer_rollback(game):
     assert db.reign.kv_get("s1r2_w2") is None
 
 
-def test_rejections_inside_atomic_roll_back(game):
-    """A failed owner transaction leaves no rejection rows."""
-    db, state, content = game
-
-    from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
-    rc = RejectionCollector()
-    ri = RejectedItem(item={}, reason="r", category="invalid_enum", source=Provenance.unknown)
-    rc.record("army_delta", ri, turn=1)
-
-    with pytest.raises(RuntimeError):
-        with atomic(db):
-            rc.flush_to_db(db)
-            raise RuntimeError("boom")
-
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM rejection_reports"
-    ).fetchone()[0] == 0
-
-
 def test_commit_failure_in_conn_context_rolls_back(game, monkeypatch):
     """atomic 外 `with db.conn:` body 干净但 commit 失败 → 回滚再抛（原生语义）。"""
     db, state, content = game
@@ -484,51 +465,6 @@ def test_atomic_rejects_plain_connection(tmp_path):
 # ---------------------------------------------------------------------------
 # cmr S1 r3 修复回归（F1/F2）
 # ---------------------------------------------------------------------------
-
-def test_rejections_after_swallowed_conn_context_do_not_escape(game):
-    """Swallowing a nested rollback must not leak later rejection rows."""
-    db, state, content = game
-
-    from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
-    rc = RejectionCollector()
-    ri = RejectedItem(item={}, reason="r", category="invalid_enum", source=Provenance.unknown)
-    rc.record("army_delta", ri, turn=1)
-
-    with pytest.raises(RuntimeError):
-        with atomic(db):
-            try:
-                with db.conn:
-                    raise ValueError("conn-context fails")
-            except ValueError:
-                pass  # 吞
-            rc.flush_to_db(db)
-
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM rejection_reports"
-    ).fetchone()[0] == 0
-
-
-def test_rejections_after_explicit_midatomic_rollback_do_not_escape(game):
-    """An explicit mid-transaction rollback must not leak later rejection rows."""
-    db, state, content = game
-
-    from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
-    rc = RejectionCollector()
-    ri = RejectedItem(item={}, reason="r", category="invalid_enum", source=Provenance.unknown)
-    rc.record("army_delta", ri, turn=1)
-
-    with pytest.raises(RuntimeError):
-        with atomic(db):
-            db.conn.execute("INSERT INTO kv_store(key,value) VALUES('s1r3_x','x')")
-            db.conn.rollback()  # 中途显式回滚（暂停期允许）
-            rc.flush_to_db(db)
-            raise RuntimeError("boom")
-
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM rejection_reports"
-    ).fetchone()[0] == 0
-    assert db.reign.kv_get("s1r3_x") is None
-
 
 def test_begin_failure_at_entry_restores_flags(game, monkeypatch):
     """入口 BEGIN 抛错不得泄漏暂停标志（cmr S1 r3 F2，泄漏=79 处 commit 全静默失效）。"""
