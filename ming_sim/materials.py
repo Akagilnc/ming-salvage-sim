@@ -1754,7 +1754,7 @@ def continuing_dossier_facts(db: Any, turn: int) -> list[dict[str, object]]:
         dossier_id = int(row["id"])
         # list_decree_dossiers_for_simulation → hydrate_dossier_row 已保证 payload 为对象。
         payload = row["payload"]
-        fact: dict[str, object] = {
+        facts.append({
             "id": dossier_id,
             "status": status,
             "decree_text": str(row.get("decree_text") or ""),
@@ -1763,8 +1763,7 @@ def continuing_dossier_facts(db: Any, turn: int) -> list[dict[str, object]]:
             "target_id": str(row.get("target_id") or ""),
             "grant_action": str(payload.get("grant_action") or ""),
             "paid": dossier_paid_amount(db, dossier_id),
-        }
-        facts.append(fact)
+        })
     return facts
 
 

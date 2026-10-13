@@ -25,8 +25,19 @@ CORE_SCHEMA_SQL = """
     CREATE TABLE IF NOT EXISTS rejection_resolutions (
         rejection_id INTEGER PRIMARY KEY,
         decision TEXT NOT NULL CHECK (decision IN ('succeeded', 'withdrawn')),
-        turn INTEGER NOT NULL,
-        pending_action_id INTEGER NOT NULL DEFAULT 0
+        turn INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS rejection_reports (
+        id       INTEGER PRIMARY KEY AUTOINCREMENT,
+        turn     INTEGER NOT NULL,
+        section  TEXT    NOT NULL,
+        item_json TEXT   NOT NULL,
+        reason   TEXT    NOT NULL,
+        category TEXT    NOT NULL,
+        source   TEXT    NOT NULL,
+        attempt  INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
     -- game_state（朝局头）与 metrics（余额真源）的建表归

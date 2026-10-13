@@ -9,7 +9,7 @@
 
 C0 形状真源为 `audience_translate.build_c0_declaration_shape`。未了结的 `player_decree` / `hitl_decision` 拒收按记录 id 供转译识别，场景开场只经 `materials._scene_pending_audience_facts` 供料，不按月份撤出，不另起递话模型调用。
 
-- 皇帝修正旨意：`commissions[].resolves_rejection_ids` 指明本项修正的拒收记录，关联随既有载荷保存。暂存、应允不算了结。`finish_rejection_correction` 是唯一记账判定口：案卷须授权效果、执行格非 failed、请旨已问完且暂存结算已终结。载荷所有的修正自动记 `succeeded`；叙事所有的修正由召对转译通过 `rejection_withdrawals` 声明 `{"rejection_id": ..., "decision": "succeeded", "dossier_id": ...}`。该拒收必须关联所援修正案卷；不满足时逐项拒收留痕，原拒收继续留供。部分对应关系归 LLM，不按逐笔核算或同旨连坐推断；修正后的新拒收照常留供。
+- 皇帝修正旨意：`commissions[].resolves_rejection_ids` 指明本项修正的拒收记录，关联随既有载荷保存。暂存、应允不算了结。过月邸报后由 `_advance_after_gazette` 统一扫卷（`sweep_rejection_corrections` 调用 `finish_rejection_correction`）记账：案卷须授权效果、执行格非 failed、请旨已问完且暂存结算已终结。载荷所有的修正自动记 `succeeded`；叙事所有的修正由召对转译通过 `rejection_withdrawals` 声明 `{"rejection_id": ..., "decision": "succeeded", "dossier_id": ...}`。该拒收必须关联所援修正案卷；不满足时逐项拒收留痕，原拒收继续留供。部分对应关系归 LLM，不按逐笔核算或同旨连坐推断；修正后的新拒收照常留供。
 - 皇帝明确说不做：`rejection_withdrawals[]` 声明 `rejection_id`（默认 `decision="withdrawn"`），召对分派即时记 `withdrawn`；撤回该召对轮沿既有前像还原。两类了结均持久化，原拒收记录不删改。只处理被拒收的部分，不撤掉同旨已成功落账部分。
 
 ## ADR 0055 效果分工线与 origin 槽

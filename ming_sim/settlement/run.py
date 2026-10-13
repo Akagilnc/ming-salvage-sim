@@ -421,15 +421,33 @@ def _stored(run, *names: str) -> SectionResult:
 
 
 def _persist_step_specialized(run, step_extracted: Mapping[str, object]) -> None:
-    """按序执行专属写口（如检举、密奏、暗渠等），收集拒收留痕。"""
-    from ming_sim.declaration_dispatch import _persist_specialized_extraction
+    """Persist specialized fields at their effect's ordered step.
 
-    _persist_specialized_extraction(
-        run.db, run.state, step_extracted,
-        rejections=run.shape_rejections, turn=int(run.state.turn),
-        source=run.ctx.source,
-        defer_monthly_secret_supply=run.ctx.defer_disclosure,
-    )
+    Month-chain step 4a owns monthly reports and covert selections when disclosure
+    is deferred; denunciations still land here before exposure scanning.
+    """
+    turn = int(run.state.turn)
+    if not run.ctx.defer_disclosure:
+        reports = step_extracted.get("dossier_progress_reports") or []
+        if isinstance(reports, list) and reports:
+            run.db.dossiers.record_monthly_supervision_presence(turn, commit=False)
+            run.db.record_monthly_dossier_progress(turn, reports)
+    denunciations = step_extracted.get("faction_denunciations")
+    if denunciations is not None:
+        den_res = run.db.accept_faction_denunciations(
+            run.state, denunciations, commit=False, source=run.ctx.source,
+        )
+        run.shape_rejections.extend(("faction_denunciations", item) for item in den_res.rejected)
+    if not run.ctx.defer_disclosure:
+        selections = step_extracted.get("covert_exec_selections")
+        if selections is not None:
+            from ming_sim.covert_progress import apply_monthly_covert_actual_progress
+
+            rows, rows_rejections = apply_monthly_covert_actual_progress(
+                run.db, run.state, selections=selections, only_supplied=True,
+                source=run.ctx.source,
+            )
+            run.shape_rejections.extend(("covert_exec_selections", item) for item in rows_rejections)
 
 
 def _run_registry(run) -> None:

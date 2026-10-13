@@ -413,6 +413,21 @@ class RejectedItem:
     category: str               # 机读类别，供聚合
     source: Provenance          # 来源
 
+
+def reject_item(
+    rejected: List[RejectedItem], item: object, reason: str, category: str,
+    source: Provenance,
+) -> None:
+    """Record a rejected item, preserving objects and wrapping non-object inputs."""
+    from collections.abc import Mapping
+    payload = dict(item) if isinstance(item, Mapping) else {"raw_value": item}
+    rejected.append(RejectedItem(
+        item=payload,
+        reason=reason,
+        category=category,
+        source=source,
+    ))
+
 # ---------------------------------------------------------------------------
 # 决定 1：段适配器返回值
 # ---------------------------------------------------------------------------
@@ -464,20 +479,6 @@ class RejectionCollectorRequired(ValueError):
     typed 控制流标记：catch 只认本类，禁止解析异常散文。
     """
 
-_CREATE_REJECTION_REPORTS = """
-CREATE TABLE IF NOT EXISTS rejection_reports (
-    id       INTEGER PRIMARY KEY AUTOINCREMENT,
-    turn     INTEGER NOT NULL,
-    section  TEXT    NOT NULL,
-    item_json TEXT   NOT NULL,
-    reason   TEXT    NOT NULL,
-    category TEXT    NOT NULL,
-    source   TEXT    NOT NULL,
-    attempt  INTEGER NOT NULL DEFAULT 1,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-"""
-
 
 @dataclass
 class RejectionCollector:
@@ -524,10 +525,8 @@ class RejectionCollector:
     def flush_to_db(self, db: Any) -> None:
         """把缓冲写进 rejection_reports 表，写完移入待镜像快照。
 
-        首次调用时建表（CREATE TABLE IF NOT EXISTS）——确保老存档不需要迁移脚本。
         空缓冲时直接返回（幂等）。
         """
-        db.conn.execute(_CREATE_REJECTION_REPORTS)
         if not self._buffer:
             return
         db.conn.executemany(
@@ -567,12 +566,7 @@ class RejectionCollector:
 
 
 def list_rejection_reports_for_turn(conn: Any, turn: int) -> List[Any]:
-    """Read rejection_reports rows for one turn (owner read port; table may be absent)."""
-    exists = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='rejection_reports'",
-    ).fetchone()
-    if exists is None:
-        return []
+    """Read rejection_reports rows for one turn."""
     return list(
         conn.execute(
             "SELECT section, item_json, reason, category, source FROM rejection_reports "
@@ -584,10 +578,6 @@ def list_rejection_reports_for_turn(conn: Any, turn: int) -> List[Any]:
 
 def list_unresolved_player_rejections(db: Any) -> List[dict]:
     """Scene/translation read port: rejected parts persist until explicitly resolved."""
-    if db.conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='rejection_reports'",
-    ).fetchone() is None:
-        return []
     rows = db.conn.execute(
         "SELECT r.* FROM rejection_reports r LEFT JOIN rejection_resolutions s "
         "ON s.rejection_id=r.id WHERE s.rejection_id IS NULL "
@@ -618,13 +608,13 @@ def require_player_rejection_ids(db: Any, raw: object) -> List[int]:
 
 
 def resolve_player_rejections(
-    db: Any, ids: List[int], *, decision: str, turn: int, pending_action_id: int = 0,
+    db: Any, ids: List[int], *, decision: str, turn: int,
 ) -> None:
     """Record the declared result in the caller's transaction; never rewrite the rejection."""
     db.conn.executemany(
-        "INSERT INTO rejection_resolutions (rejection_id, decision, turn, pending_action_id) "
-        "VALUES (?, ?, ?, ?) ON CONFLICT(rejection_id) DO NOTHING",
-        [(rid, decision, int(turn), int(pending_action_id)) for rid in ids],
+        "INSERT INTO rejection_resolutions (rejection_id, decision, turn) "
+        "VALUES (?, ?, ?) ON CONFLICT(rejection_id) DO NOTHING",
+        [(rid, decision, int(turn)) for rid in ids],
     )
 
 

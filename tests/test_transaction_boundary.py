@@ -405,15 +405,9 @@ def test_swallowed_conn_context_exception_forces_outer_rollback(game):
     assert db.reign.kv_get("s1r2_w2") is None
 
 
-def test_ddl_first_inside_atomic_rolls_back(game):
-    """atomic 内 DDL 打头也要随回滚消失（cmr S1 r2 F2）。
-
-    legacy 模式只有 DML 隐式开事务；最外层须显式 BEGIN，
-    否则打头的 CREATE TABLE 跑 autocommit、回滚留表。
-    """
+def test_rejections_inside_atomic_roll_back(game):
+    """A failed owner transaction leaves no rejection rows."""
     db, state, content = game
-    db.conn.execute("DROP TABLE IF EXISTS rejection_reports")
-    db.conn.commit()
 
     from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
     rc = RejectionCollector()
@@ -422,13 +416,12 @@ def test_ddl_first_inside_atomic_rolls_back(game):
 
     with pytest.raises(RuntimeError):
         with atomic(db):
-            rc.flush_to_db(db)  # 第一条语句 = CREATE TABLE
+            rc.flush_to_db(db)
             raise RuntimeError("boom")
 
-    tbl = db.conn.execute(
-        "SELECT name FROM sqlite_master WHERE name='rejection_reports'"
-    ).fetchone()
-    assert tbl is None  # 表本身也回滚
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM rejection_reports"
+    ).fetchone()[0] == 0
 
 
 def test_commit_failure_in_conn_context_rolls_back(game, monkeypatch):
@@ -492,21 +485,9 @@ def test_atomic_rejects_plain_connection(tmp_path):
 # cmr S1 r3 修复回归（F1/F2）
 # ---------------------------------------------------------------------------
 
-def _rejection_table_exists(db) -> bool:
-    return db.conn.execute(
-        "SELECT name FROM sqlite_master WHERE name='rejection_reports'"
-    ).fetchone() is not None
-
-
-def test_ddl_after_swallowed_conn_context_does_not_escape(game):
-    """吞掉 with db.conn: 异常后跑 DDL，不得逃逸外层回滚（cmr S1 r3 F1）。
-
-    中途回滚结束了 BEGIN 事务；rollback 在暂停期必须重开事务，
-    维持「atomic 内永远有开着的事务」。
-    """
+def test_rejections_after_swallowed_conn_context_do_not_escape(game):
+    """Swallowing a nested rollback must not leak later rejection rows."""
     db, state, content = game
-    db.conn.execute("DROP TABLE IF EXISTS rejection_reports")
-    db.conn.commit()
 
     from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
     rc = RejectionCollector()
@@ -520,16 +501,16 @@ def test_ddl_after_swallowed_conn_context_does_not_escape(game):
                     raise ValueError("conn-context fails")
             except ValueError:
                 pass  # 吞
-            rc.flush_to_db(db)  # DDL 打头——不得 autocommit 逃逸
+            rc.flush_to_db(db)
 
-    assert not _rejection_table_exists(db)
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM rejection_reports"
+    ).fetchone()[0] == 0
 
 
-def test_ddl_after_explicit_midatomic_rollback_does_not_escape(game):
-    """atomic 内显式 rollback 后跑 DDL，同样不得逃逸（cmr S1 r3 F1 变体②）。"""
+def test_rejections_after_explicit_midatomic_rollback_do_not_escape(game):
+    """An explicit mid-transaction rollback must not leak later rejection rows."""
     db, state, content = game
-    db.conn.execute("DROP TABLE IF EXISTS rejection_reports")
-    db.conn.commit()
 
     from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
     rc = RejectionCollector()
@@ -543,7 +524,9 @@ def test_ddl_after_explicit_midatomic_rollback_does_not_escape(game):
             rc.flush_to_db(db)
             raise RuntimeError("boom")
 
-    assert not _rejection_table_exists(db)
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM rejection_reports"
+    ).fetchone()[0] == 0
     assert db.reign.kv_get("s1r3_x") is None
 
 

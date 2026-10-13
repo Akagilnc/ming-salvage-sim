@@ -202,8 +202,8 @@ def test_reference_to_nonexistent_entity_is_rejected_without_killing_sibling_ite
         subject_kind="character", subject_id=minister,
     ) == ()
     assert db.conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='rejection_reports'",
-    ).fetchone() is None
+        "SELECT COUNT(*) FROM rejection_reports",
+    ).fetchone()[0] == 0
 
     # 恢复正常后，继续断成功路径：合法 sibling 落库、拒收落 durable（原有断言）。
     result = dispatch_declaration(db, state, declaration, minister_name=minister)
