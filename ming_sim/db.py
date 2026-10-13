@@ -11509,6 +11509,7 @@ class GameDB:
                     pending_action_id=int(pending_action_id or 0),
                     origin_chat_message_ids=provenance_message_ids,
                     fact_key=_investigation_fact_of(covert_contract or {}),
+                    resolves_rejection_ids=resolves_rejection_ids,
                 )
         active_count = self.conn.execute(
             "SELECT COUNT(*) FROM secret_orders WHERE status='active'",

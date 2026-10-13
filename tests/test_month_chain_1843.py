@@ -490,7 +490,7 @@ def test_player_rejection_lifecycle_through_translation_and_month(game, monkeypa
             "assignee": minister,
             "tags": [],
             "deadline_months": 3,
-            "covert_task": dict(TYPED_COVERT_TASK),
+            "covert_task": {**TYPED_COVERT_TASK, "investigation_target": minister},
         },
     }
     res = apply_audience_round_translation(
@@ -508,6 +508,26 @@ def test_player_rejection_lifecycle_through_translation_and_month(game, monkeypa
     so_ref = decree_ref_for_dossier(db, so_dossier)
     err = declaration_dispatch.finish_rejection_correction(
         db, state, so_ref, claimed_rejection_ids=[so_repair_id],
+    )
+    assert err is None
+    assert list_unresolved_player_rejections(db) == []
+
+    declaration_dispatch.dispatch_declaration(
+        db, state, {"effects": {"economy_moves": [bad]}}, source=Provenance.player_decree,
+        visible_refs={"affairs": [affair.id]},
+    )
+    so_repair_id2 = list_unresolved_player_rejections(db)[-1]["rejection_id"]
+    mid = db.chat_messages.insert(minister_name=minister, turn=int(state.turn), role="user", content="密令交办")
+    ctid = db.create_chat_turn(state, minister, "s", 0, night_id=nid, status="active")
+    db.reign.update_chat_turn_messages(ctid, user_message_id=int(mid))
+    res = apply_audience_round_translation(
+        db, state, {"commissions": [{**so_commission, "resolves_rejection_ids": [so_repair_id2]}]},
+        night_id=nid, chat_turn_id=ctid, minister_name=minister,
+    )
+    assert res.commissions.rejected == []
+    db.commit_pending_actions(state, content=content, minister_name=minister)
+    err = declaration_dispatch.finish_rejection_correction(
+        db, state, so_ref, claimed_rejection_ids=[so_repair_id2],
     )
     assert err is None
     assert list_unresolved_player_rejections(db) == []
