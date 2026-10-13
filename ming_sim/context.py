@@ -103,7 +103,7 @@ def victory_status(db: GameDB) -> Dict[str, object]:
     beizhili = db.regions.row("beizhili")
     if beizhili is not None and str(beizhili["controlled_by"]) != "ming":
         holder_id = str(beizhili["controlled_by"])
-        holder = db.powers.field_row('name', holder_id)
+        holder = db.powers.row(holder_id, fields="name")
         holder_name = str(holder["name"]) if holder else holder_id
         return {
             "status": ENDING_CAPITAL_FALLEN,

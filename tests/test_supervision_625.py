@@ -272,7 +272,12 @@ def test_ac2_paired_observation_slots_and_countermeasure_hard_gate(game):
     state.turn_phase = TurnPhase.SUMMONING.value
     db.reign.save_game_state(state)
     pre_settle(state, db, content=content)
-    assert db.issues.by_origin(('supervision_countermeasure', f"auditor:{upright['name']}:dossier:{sub_u}")) is None
+    assert (
+        db.issues.by_origin(
+            "supervision_countermeasure", f"auditor:{upright['name']}:dossier:{sub_u}"
+        )
+        is None
+    )
 
 
 # ── AC4 空子转移读入面差分 ────────────────────────────────────────

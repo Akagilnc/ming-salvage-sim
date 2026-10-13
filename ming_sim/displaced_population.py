@@ -86,9 +86,7 @@ def apply_levy_driven_transfers(
         if amount <= 0:
             continue
         balance = int(
-            db.classes.population_row(("农民", region_id))[
-                "population"
-            ]
+            db.classes.row(("农民", region_id), fields="population")["population"]
         )
         amount = min(amount, balance)  # clamp：原语超余额即拒，先钳免噪音
         if amount <= 0:

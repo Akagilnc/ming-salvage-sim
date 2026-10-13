@@ -842,7 +842,7 @@ def _scan_misappropriation(db: Any, state: Any) -> List[int]:
 
 def _sponsor_dismissed(db: Any, name: str) -> bool:
     """罢：status 离岗。"""
-    row = db.characters.field_row('status', name)
+    row = db.characters.row(name, fields="status")
     if row is None:
         return True
     status = str(row["status"] or "")
@@ -853,7 +853,7 @@ def _sponsor_dismissed(db: Any, name: str) -> bool:
 
 def _sponsor_transferred(db: Any, name: str, commitment_row: Any) -> bool:
     """调：status 仍 active，但职务已变（相对承诺/案卷记录的主办职）。"""
-    char = db.characters.status_office_row((name,))
+    char = db.characters.row(name, fields="status, office")
     if char is None:
         return False
     if str(char["status"] or "") != "active":

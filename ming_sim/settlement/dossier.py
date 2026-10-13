@@ -173,7 +173,7 @@ def apply_dossier_promulgation(
                         target_id = str(
                             payload.get("target_id") or row.get("target_id") or ""
                         ).strip()
-                        army = db.armies.field_row('arrears', target_id)
+                        army = db.armies.row(target_id, fields="arrears")
                         still_owed = (
                             float(army["arrears"] or 0) if army is not None else 0.0
                         )
@@ -238,7 +238,7 @@ def apply_dossier_promulgation(
             ).strip()
             if not target:
                 raise ValueError("招抚案卷缺少 canonical target")
-            person_row = db.characters.field_row('power_id', target)
+            person_row = db.characters.row(target, fields="power_id")
             if person_row is None:
                 raise ValueError(f"招抚案卷目标不存在：{target}")
             old_power = str(person_row["power_id"] or "").strip()
@@ -422,7 +422,7 @@ def _apply_military_order_station_effect(
         return
     if not army_id:
         raise ValueError("军令调驻缺少军队 target")
-    existing = db.armies.field_row('id', army_id)
+    existing = db.armies.row(army_id, fields="id")
     if existing is None:
         raise ValueError(
             f"军令调驻引用未入库军队 '{army_id}'（既有军调驻不得 new_armies）"
@@ -1245,7 +1245,7 @@ def apply_dossier_verdicts(
     # Validate the complete batch before the first write at this public seam.
     rows = list(verdicts)
     faction_names = {str(row["name"]) for row in db.factions.names()}
-    class_names = {str(row["name"]) for row in db.classes.names(())}
+    class_names = {str(row["name"]) for row in db.classes.names()}
     character_ids = {str(row["name"]) for row in db.characters.names()}
     for verdict in rows:
         if not isinstance(verdict, dict):

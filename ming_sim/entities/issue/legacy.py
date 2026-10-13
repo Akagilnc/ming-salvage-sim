@@ -29,7 +29,7 @@ def clear_gated_legacies(db: GameDB, state: GameState) -> List[str]:
         if not gate:
             continue
         if issues._gate_passed(gate, state.metrics, db):
-            db.reign.set_legacy_statuses([("cleared", int(row["id"]))])
+            db.reign.set_legacy_statuses("cleared", [int(row["id"])])
             cleared.append(str(row["name"]))
     if cleared:
         db._legacy_mod_cache = None  # active 集变了，修正符缓存失效

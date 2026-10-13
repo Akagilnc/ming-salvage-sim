@@ -1197,7 +1197,7 @@ class WebGame:
         # summary 不含官职（卡片/详情已单独显 office），避免重复
         summary = f"{character.faction}一系，行事{character.style}。"
         power_id = self.db.resolve_power_id(character)  # 权威解析单一真源（#125）
-        loc_row = self.db.characters.location_row((character.name,))
+        loc_row = self.db.characters.row(character.name, fields="location, transit_to")
         location = str(loc_row["location"] or "") if loc_row is not None else ""
         transit_to = str(loc_row["transit_to"] or "") if loc_row is not None else ""
         regions = getattr(self.content, "regions", None) or {}

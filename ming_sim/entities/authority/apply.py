@@ -56,7 +56,7 @@ def _prepare_authority_change_item(
         kind, separator, target_id = scope.partition(":")
         if not separator or not kind or not target_id:
             raise AuthorityDataError("invalid_authority_scope")
-        if not db.characters.presence((holder_id,)):
+        if not db.characters.row(holder_id, fields="1"):
             raise AuthorityDataError("授权对象不在人物档")
         origin = db.characters.find_authority_by_origin(
             dossier_id, holder_id=holder_id, privilege=privilege, scope=scope,

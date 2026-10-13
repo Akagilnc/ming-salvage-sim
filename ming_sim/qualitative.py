@@ -140,8 +140,6 @@ def building_output_effect(metric: str, amount: object, prefix: str = "") -> str
 PUBLIC_SUPPORT_BANDS = ("堪忧", "偏弱", "起伏", "尚可", "稳固")
 POWER_BANDS = ("极弱", "偏弱", "中等", "偏强", "强盛")  # also 皇威
 SATISFACTION_BANDS = ("怨愤", "不满", "平常", "顺应", "拥戴")
-# Issue/dossier bar progress — single vocabulary (was tools._progress_band).
-PROGRESS_BANDS = ("未见起色", "略有起色", "进展过半", "进展顺利", "近于收束")
 # Region resistance / military pressure — single vocabulary (db.region_report + #652 two_axis).
 GENTRY_RESISTANCE_BANDS = ("极弱", "偏弱", "中等", "偏强", "强")
 MILITARY_PRESSURE_BANDS = ("极低", "偏低", "中等", "偏高", "极高")
@@ -164,11 +162,6 @@ def imperial_authority_band(value: object) -> str:
 def satisfaction_band(value: object) -> str:
     """Present faction/class satisfaction without exposing the score."""
     return qualitative_band(value, SATISFACTION_BANDS)
-
-
-def progress_band(value: object) -> str:
-    """Present issue bar_value / 局势进度 without exposing the score."""
-    return qualitative_band(value, PROGRESS_BANDS)
 
 
 def gentry_resistance_band(value: object) -> str:

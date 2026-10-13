@@ -1251,7 +1251,12 @@ def test_historical_auto_trigger_event_expires_after_latest_window(game):
 
         assert all(item["id"] != "__test_expiring_historical_auto__" for item in triggered)
         assert db.issues.event_terminal_state("__test_expiring_historical_auto__") == "expired"
-        assert IssueStore(db.conn).by_origin(("event_pool", "__test_expiring_historical_auto__")) is None
+        assert (
+            IssueStore(db.conn).by_origin(
+                "event_pool", "__test_expiring_historical_auto__"
+            )
+            is None
+        )
     finally:
         content.events.remove(ev)
 
@@ -2296,7 +2301,7 @@ def test_huangtaiji_chengdi_lands_only_when_model_picks_it(game, monkeypatch):
 
     assert _power_name()["name"] == "后金"
     assert db.issues.event_terminal_state("huangtaiji_chengdi") is None
-    assert db.issues.by_origin(('event_pool', 'huangtaiji_chengdi')) is None
+    assert db.issues.by_origin("event_pool", "huangtaiji_chengdi") is None
     assert "huangtaiji_chengdi" in {
         ev.id for ev in issues.gather_candidate_events(state, db)
     }

@@ -139,7 +139,7 @@ def _displace_duplicate_offices(
         # 剔掉一个分项后,保留官职对应的 office_type 可能变了(如剔「兵部尚书」后只剩「左都御史」=都察院)。
         # 若独占实职被完全腾空,旧任仍 active,但其名分必须落入人才池的「听用候铨」,
         # 不能留下 active + 空 office 的半身份（ADR 0009 S5）。
-        old_type_row = db.characters.field_row('office_type', row['name'])
+        old_type_row = db.characters.row(row["name"], fields="office_type")
         old_type = old_type_row["office_type"] if old_type_row else ""
         new_type = (
             "身名分"
@@ -186,7 +186,7 @@ def _displace_duplicate_offices(
     # 绝对幂等（非白名单 return、重复无害）。去重后逐派系各调一次。
     displaced_factions = set()
     for dn in displaced_names:
-        frow = db.characters.field_row('faction', dn)
+        frow = db.characters.row(dn, fields="faction")
         # 空/None faction 提前滤掉（recompute_faction_leverage("") 虽被白名单校验 no-op，
         # 但提前过滤免去无意义调用，集合也不残留空串。线上 R5 gemini medium。
         if frow is not None and frow["faction"]:

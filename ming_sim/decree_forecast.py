@@ -332,7 +332,7 @@ def decree_ref_for_dossier(db: Any, dossier: Dict[str, Any]) -> str:
         return held_dossier_decree_ref(int(dossier["id"]))
     pending_id = int(dossier.get("pending_action_id") or 0)
     if pending_id > 0:
-        row = db.dossiers.pending_version_row(pending_id)
+        row = db.dossiers.row(pending_id, fields="version", table="pending_actions")
         version = int(row["version"] or 1) if row is not None else 1
         return pending_action_decree_ref(pending_id, version)
     return held_dossier_decree_ref(int(dossier["id"]))
@@ -530,7 +530,7 @@ def schedule_pending_decree_forecast(
         return False
     action_id = int(pending_action_id)
     nid = int(night_id)
-    row = session.db.dossiers.pending_version_row(action_id)
+    row = session.db.dossiers.row(action_id, fields="version", table="pending_actions")
     if row is None:
         return False
     version = int(row["version"] or 1)
@@ -562,7 +562,9 @@ def schedule_restored_decree_forecasts(owner_or_db: Any, pending_action_ids: lis
     db = session.db
     bind_forecast_owner(session)
     for action_id in pending_action_ids:
-        row = db.dossiers.pending_night_id_row(int(action_id))
+        row = db.dossiers.row(
+            int(action_id), fields="night_id", table="pending_actions"
+        )
         if row is not None and int(row["night_id"] or 0) > 0:
             schedule_pending_decree_forecast(
                 session, int(action_id), night_id=int(row["night_id"]),

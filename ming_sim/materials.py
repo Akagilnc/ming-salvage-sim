@@ -1829,7 +1829,7 @@ def _scene_present_rows(db: Any) -> list[tuple[str, str]]:
     rows: list[tuple[str, str]] = []
     for name in names:
         office = ""
-        row = db.characters.field_row('office', name)
+        row = db.characters.row(name, fields="office")
         if row is not None:
             office = str(row["office"] or "")
         rows.append((name, office))

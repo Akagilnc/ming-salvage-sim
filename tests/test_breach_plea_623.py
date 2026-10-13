@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests.dossier_test_helpers import _cost_events
 from ming_sim.settlement.dossier import apply_dossier_promulgation, apply_dossier_verdicts
 from ming_sim.entities.issue.tracker import apply_issue_tracker_output
 from ming_sim.applier import Provenance, atomic
@@ -46,16 +47,6 @@ Seams:
 
 
 # ── fixtures（复用 #621 三拍/_cost_events 口径）────────────────────────
-
-
-def _cost_events(db, dossier_id, *, identity="breach"):
-    return [
-        dict(row)
-        for row in db.conn.execute(
-            "SELECT * FROM decree_cost_events WHERE dossier_id=? AND cost_identity=? ORDER BY id",
-            (int(dossier_id), identity),
-        ).fetchall()
-    ]
 
 
 def _executing_policy_dossier(db, state, *, token: str = "breach-623", holder: str = ""):
@@ -147,7 +138,7 @@ def test_funding_cutoff_writes_plea_no_damage_same_turn(game):
         end_turn=state.turn + 24,
     )
     auth_before = int(state.metrics.get("皇威", 0) or 0)
-    costs_before = _cost_events(db, did)
+    costs_before = _cost_events(db, did, identity="breach")
 
     written = scan_and_write_breach_pleas(db, state)
     assert written
@@ -160,7 +151,7 @@ def test_funding_cutoff_writes_plea_no_damage_same_turn(game):
     assert db.conn.execute(
         "SELECT status FROM issues WHERE id=?", (cid,),
     ).fetchone()["status"] == "active"
-    assert _cost_events(db, did) == costs_before
+    assert _cost_events(db, did, identity="breach") == costs_before
     assert int(state.metrics.get("皇威", 0) or 0) == auth_before
 
     # 次回合场面
@@ -225,7 +216,7 @@ def test_remove_sponsor_writes_plea(game):
     assert db.conn.execute(
         "SELECT status FROM issues WHERE id=?", (cid,),
     ).fetchone()["status"] == "active"
-    assert _cost_events(db, did) == []
+    assert _cost_events(db, did, identity="breach") == []
 
 
 def test_policy_reversal_revoke_takes_effect_same_month(game):
@@ -332,7 +323,7 @@ def test_regret_via_extraction_true_entry_zero_damage(game):
     # 原 extraction 抢先消费已退出：合法 issue_advances 由领域段落账，哭谏待办不因
     # 未经验证的申报被抢先 consumed（#1835 J11）。
     out = settle_delta(state, db, {'issue_advances': [{'issue_id': cid, 'delta_bar': 1, 'narrative': '朕加拨复其供亿，前诺照旧'}]}, SettlementContext(content=content))
-    assert _cost_events(db, did) == []
+    assert _cost_events(db, did, identity="breach") == []
     assert db.dossiers.get(did)["status"] == "executing"
     assert db.conn.execute(
         "SELECT status FROM issues WHERE id=?", (cid,),
@@ -454,7 +445,7 @@ def test_commitment_due_expires_plea_without_persist_damage(game):
     assert expired[0]["reason"] == "commitment_due"
     assert _pending_pleas(db) == []
     # 不补 0056 / 事轴倒退
-    assert _cost_events(db, did) == []
+    assert _cost_events(db, did, identity="breach") == []
     assert int(state.metrics.get("皇威", 0) or 0) == auth_before
     # 承诺本身仍 active（#621 到期终局另管；此处只关挽留条）
     assert db.conn.execute(

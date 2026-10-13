@@ -112,7 +112,9 @@ def _existing_edge_id(
     if not base:
         return None
     bare = base.split("|", 1)[0]
-    row = db.person_logs.relation_by_origin((source, target, event_kind, base, f"{bare}|%"))
+    row = db.person_logs.relation_by_origin(
+        source, target, event_kind, base, f"{bare}|%"
+    )
     return int(row["id"]) if row is not None else None
 
 

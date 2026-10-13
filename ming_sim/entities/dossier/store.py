@@ -30,6 +30,8 @@ from ming_sim.participant_roster import decode_durable_participant_roster
 from ming_sim.entities.character.store import CharacterStore
 from ming_sim.exceptions import DeclarationDataError
 
+from ming_sim.entities.column_write import RowStore
+
 DOSSIER_STATUSES = frozenset({"proposed", "promulgated", "executing", "closed"})
 DOSSIER_TRANSITIONS = {
     "proposed": frozenset({"promulgated"}),
@@ -44,17 +46,7 @@ DOSSIER_MODES = frozenset({"ordinary", "midzhi"})
 # #619 / ADR 0073 reported-progress origin namespace (ID-11 open append).
 DOSSIER_REPORT_ORIGIN_NS = "dossier-report:"
 
-_DOSSIER_COLUMNS = frozenset({
-    "id", "action_type", "target_kind", "target_id", "executor_kind", "executor_id",
-    "source_chat_turn_id", "pending_action_id", "directive_id", "secret_order_id",
-    "region_id", "decree_text", "payload_json", "status", "promulgation_decision",
-    "promulgation_blocked_layer", "promulgation_reason", "rescript_pending",
-    "held_turn", "legal_reason_code", "stigma_json", "extension_json",
-    "participant_roster", "office_archive_keys", "due_turn", "execution_outcome",
-    "execution_note", "closed_turn", "interruption_reason", "created_turn",
-    "created_year", "created_period", "created_at", "updated_at", "closed_at",
-    "affair_id",
-})
+
 DOSSIER_REPORT_ORIGIN_MONTHLY = "dossier-report:monthly_errand"
 DOSSIER_REPORT_ORIGIN_VERDICT = "dossier-report:execution_verdict"
 DOSSIER_REPORT_ORIGIN_RUSH = "dossier-report:rush"
@@ -63,26 +55,7 @@ DOSSIER_EXECUTION_OUTCOMES = frozenset({
     "executing", "fulfilled", "degraded", "failed", "transformed",
 })
 
-# 事实表列白名单（ADR 0077 禁「钝化数值列」的 schema 契约；守门在 store 侧）。
 DENUNCIATION_TABLE = "faction_denunciations"
-DENUNCIATION_ALLOWED_COLS = frozenset({
-    "id", "turn", "accuser_name", "accuser_faction",
-    "subject_name", "subject_faction", "target_dossier_id",
-    "origin", "payload_json", "memorial_text",
-})
-PRESENCE_TABLE = "dossier_supervision_presence"
-EXPOSURE_TABLE = "dossier_loophole_exposures"
-PRESENCE_ALLOWED_COLS = frozenset({
-    "id", "dossier_id", "turn", "auditor_name", "audit_dossier_id",
-    "relation_type", "present",
-})
-EXPOSURE_ALLOWED_COLS = frozenset({
-    "id", "dossier_id", "turn", "action_type", "execution_form",
-})
-# 全库禁「钝化数值」列名片段（AC1）
-FORBIDDEN_DULLING_COL_FRAGMENTS = (
-    "dull", "dulling", "钝化", "陋规", "supervision_score", "dull_rate",
-)
 
 DOSSIER_SCHEMA_SQL = """
 -- #571：旨意案卷是一等 durable truth。status 主链恰四值；封驳/留中
@@ -397,83 +370,26 @@ def hydrate_dossier_row(row: Any) -> dict[str, Any]:
         raise StoredDocumentError(f"{label} 持久行损坏：{exc}") from exc
 
 
-_DECISION_COLUMNS = frozenset(
-    {
-        "id",
-        "dossier_id",
-        "turn",
-        "decision",
-        "blocked_layer",
-        "rescript_action",
-        "reason",
-        "legal_reason_code",
-        "primary_opponents_json",
-        "gatekeeper_id",
-        "criteria_snapshot_json",
-        "affected_parties_json",
-        "midzhi_unpromulgatable",
-        "created_at",
-    }
-)
-
-_PROGRESS_COLUMNS = frozenset(
-    {
-        "id",
-        "dossier_id",
-        "turn",
-        "progress_band",
-        "memorial_text",
-        "is_terminal",
-        "origin",
-        "created_at",
-    }
-)
-
-_PENDING_ACTION_COLUMNS = frozenset(
-    {
-        "id",
-        "turn",
-        "kind",
-        "action",
-        "target_id",
-        "minister_name",
-        "payload_json",
-        "status",
-        "committed_directive_id",
-        "night_id",
-        "night_approved",
-        "version",
-        "source_chat_turn_id",
-        "created_at",
-    }
-)
-
-_LINK_COLUMNS = frozenset(
-    {
-        "id",
-        "source_dossier_id",
-        "target_dossier_id",
-        "relation_type",
-        "note",
-        "created_at",
-    }
-)
-
-
-class DossierStore:
+class DossierStore(RowStore):
     """World-record home for dossiers. The row is the truth; views read it."""
 
-    def __init__(self, conn: Any) -> None:
-        self._conn = conn
+    TABLE = "decree_dossiers"
+    PK = "id"
+    TABLES = {
+        "decree_dossiers": "id",
+        "decree_dossier_decisions": "id",
+        "dossier_reported_progress": "id",
+        "pending_actions": "id",
+        "decree_dossier_links": "id",
+    }
+    AFFAIR_FIELDS = "id, action_type, affair_id"
 
     def _commit(self, commit: bool, owns: bool) -> None:
         if commit and owns:
             self._conn.commit()
 
     def get(self, dossier_id: int) -> Optional[dict[str, Any]]:
-        row = self._conn.execute(
-            "SELECT * FROM decree_dossiers WHERE id=?", (int(dossier_id),)
-        ).fetchone()
+        row = self.row(int(dossier_id))
         return None if row is None else hydrate_dossier_row(row)
 
     def get_for_directive(self, directive_id: int) -> Optional[dict[str, Any]]:
@@ -543,11 +459,9 @@ class DossierStore:
         self, dossier_id: int, new_status: str, *, commit: bool = True,
     ) -> None:
         owns = connection_owns_transaction(self._conn)
-        row = self._conn.execute(
-            "SELECT status,action_type,payload_json,execution_outcome "
-            "FROM decree_dossiers WHERE id=?",
-            (int(dossier_id),),
-        ).fetchone()
+        row = self.row(
+            int(dossier_id), fields="status,action_type,payload_json,execution_outcome"
+        )
         if row is None:
             raise KeyError(f"案卷不存在：{dossier_id}")
         old_status = str(row["status"])
@@ -741,10 +655,9 @@ class DossierStore:
                     f"{type(payload_patch).__name__}"
                 )
             patch = dict(payload_patch)
-        row = self._conn.execute(
-            "SELECT id, status, payload_json FROM next_audience_todos WHERE id=?",
-            (int(todo_id),),
-        ).fetchone()
+        row = self.row(
+            int(todo_id), fields="id, status, payload_json", table="next_audience_todos"
+        )
         if row is None:
             return False
         current = str(row["status"] or "")
@@ -782,18 +695,13 @@ class DossierStore:
             (action, kind, target_id),
         ).fetchall()
 
-    def exists(self, dossier_id: int) -> bool:
-        return self._conn.execute(
-            "SELECT 1 FROM decree_dossiers WHERE id=?", (int(dossier_id),),
-        ).fetchone() is not None
-
     def update_payload(
         self, dossier_id: int, payload: Mapping[str, object], *, commit: bool = True,
     ) -> None:
         """Replace payload_json for an existing dossier (deliberation_state 等 typed 字段)."""
         owns = connection_owns_transaction(self._conn)
         did = int(dossier_id)
-        if not self.exists(did):
+        if self.row(did, fields="1") is None:
             raise KeyError(f"案卷不存在：{did}")
         if not isinstance(payload, Mapping):
             raise ValueError("案卷 payload 须为对象")
@@ -1113,10 +1021,10 @@ class DossierStore:
         has_key = bool(dkey)
         if has_turn == has_key:
             raise ValueError("背书 provenance 须恰为 source_chat_turn_id 或 decision_key 之一")
-        if not self.exists(did):
+        if self.row(did, fields="1") is None:
             raise ValueError("背书所指案卷不存在")
         if has_turn:
-            if not ReignStateStore(self._conn).chat_turn_exists(int(cid)):
+            if ReignStateStore(self._conn).row(int(cid), fields="1") is None:
                 raise ValueError("背书来源对话轮不存在")
         if kind not in {"会签", "当面站台", "御笔手敕"}:
             raise ValueError("背书形式非法")
@@ -1126,7 +1034,7 @@ class DossierStore:
         else:
             if is_imperial or not person:
                 raise ValueError("会签/当面站台必须具名背书人")
-            if CharacterStore(self._conn).presence((person,)) is None:
+            if CharacterStore(self._conn).row(person, fields="1") is None:
                 raise ValueError("背书人物不存在")
         return did, cid, dkey, kind, person, is_imperial
 
@@ -1136,10 +1044,7 @@ class DossierStore:
         """#1842：把本轮背书挂进暂存载荷 endorsements 列表（不造待背书表）。"""
         owns = connection_owns_transaction(self._conn)
         aid = int(action_id)
-        row = self._conn.execute(
-            "SELECT payload_json, status FROM pending_actions WHERE id=?",
-            (aid,),
-        ).fetchone()
+        row = self.row(aid, fields="payload_json, status", table="pending_actions")
         if row is None:
             raise KeyError(f"暂存动作不存在：{aid}")
         if str(row["status"] or "") != "pending":
@@ -1160,11 +1065,11 @@ class DossierStore:
         else:
             if imperial or not endorser_id:
                 raise ValueError("会签/当面站台必须具名背书人")
-            if CharacterStore(self._conn).presence((endorser_id,)) is None:
+            if CharacterStore(self._conn).row(endorser_id, fields="1") is None:
                 raise ValueError("背书人物不存在")
         if source_cid <= 0:
             raise ValueError("背书来源对话轮 id 须为正整数")
-        if not ReignStateStore(self._conn).chat_turn_exists(int(source_cid)):
+        if ReignStateStore(self._conn).row(int(source_cid), fields="1") is None:
             raise ValueError("背书来源对话轮不存在")
         items = load_stored_object_list(
             payload.get("endorsements"), label="endorsements",
@@ -1244,7 +1149,7 @@ class DossierStore:
                 blocked_layer = str(row.get("promulgation_blocked_layer") or "")
             slot_reason = str(row.get("promulgation_reason") or "")
             slot_legal_reason = str(row.get("legal_reason_code") or "")
-        turn_row = ReignStateStore(self._conn).turn_row()
+        turn_row = ReignStateStore(self._conn).row(1, fields="turn", table="game_state")
         current_turn = int(turn_row["turn"] if turn_row else 0)
         if (
             decision in {"promulgated", "rejected"}
@@ -1453,10 +1358,9 @@ class DossierStore:
         ctid = int(chat_turn_id or 0)
         if aid <= 0 or ctid <= 0:
             return False
-        row = self._conn.execute(
-            "SELECT source_chat_turn_id, status FROM pending_actions WHERE id=?",
-            (aid,),
-        ).fetchone()
+        row = self.row(
+            aid, fields="source_chat_turn_id, status", table="pending_actions"
+        )
         if row is None:
             return False
         return (
@@ -1845,26 +1749,6 @@ class DossierStore:
 
     # ── affair pointer seam (ADR 0154：事务指针由 AffairStore 编排，列读写在此) ──
 
-    def affair_id_of(self, dossier_id: int) -> int:
-        row = self._conn.execute(
-            "SELECT affair_id FROM decree_dossiers WHERE id=?", (int(dossier_id),)
-        ).fetchone()
-        if row is None:
-            raise KeyError(f"案卷不存在：{dossier_id}")
-        return int(row["affair_id"] or 0)
-
-    def set_affair_id_if_unbound(self, dossier_id: int, affair_id: int) -> int:
-        from ming_sim.entities.column_write import bind_affair_once
-
-        return bind_affair_once(self._conn, "decree_dossiers", int(dossier_id), affair_id)
-
-    def rows_for_affair(self, affair_id: int) -> list[Any]:
-        return self._conn.execute(
-            "SELECT id, action_type, affair_id FROM decree_dossiers "
-            "WHERE affair_id=? ORDER BY id",
-            (int(affair_id),),
-        ).fetchall()
-
     def cost_events(self, dossier_id: int) -> list[Any]:
         return self._conn.execute(
             "SELECT * FROM decree_cost_events WHERE dossier_id=? ORDER BY id",
@@ -1917,29 +1801,13 @@ class DossierStore:
             "origin_ref": origin,
         }
 
-    def restore_row(self, row: Mapping[str, object]) -> None:
-        from ming_sim.entities.column_write import upsert_by_pk
-        upsert_by_pk(
-            self._conn, "decree_dossiers", row, pk="id",
-            allowed=_DOSSIER_COLUMNS, what="decree_dossiers",
-        )
-
     # ── pending_actions persistence primitives (fact owner) ─────────
 
-    def pending_version_row(self, action_id: int) -> Any:
-        return self._conn.execute(
-            "SELECT version FROM pending_actions WHERE id=?",
-            (int(action_id),),
-        ).fetchone()
-
-    def pending_night_id_row(self, action_id: int) -> Any:
-        return self._conn.execute(
-            "SELECT night_id FROM pending_actions WHERE id=?",
-            (int(action_id),),
-        ).fetchone()
-
     def list_pending_actions(
-        self, turn: int, status: str = "pending", minister_name: Optional[str] = None,
+        self,
+        turn: int,
+        status: str = "pending",
+        minister_name: Optional[str] = None,
     ) -> list[dict[str, object]]:
         if minister_name is None:
             rows = self._conn.execute(
@@ -2223,16 +2091,50 @@ class DossierStore:
         ).fetchone()
         return None if existing is None else int(existing["id"])
 
-    def insert_pending_action(self, params: Any) -> Any:
+    def insert_pending_action(
+        self,
+        turn: object,
+        kind: object,
+        action: object,
+        target_id: object,
+        minister_name: object,
+        payload_json: object,
+        status: object,
+        night_id: object,
+        night_approved: object,
+        source_chat_turn_id: object,
+    ) -> Any:
         return self._conn.execute(
             "INSERT INTO pending_actions "
             "(turn, kind, action, target_id, minister_name, payload_json, status, night_id, "
             "night_approved, source_chat_turn_id) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            params,
+            (
+                turn,
+                kind,
+                action,
+                target_id,
+                minister_name,
+                payload_json,
+                status,
+                night_id,
+                night_approved,
+                source_chat_turn_id,
+            ),
         )
 
-    def record_monthly_grant_reconciliation(self, params: Any) -> Optional[dict[str, object]]:
+    def record_monthly_grant_reconciliation(
+        self,
+        dossier_id: object,
+        turn: object,
+        ordered_amount: object,
+        arrived_amount: object,
+        loss_amount: object,
+        escorted: object,
+        escort_source_dossier_id: object,
+        relation_type: object,
+        note: object,
+    ) -> Optional[dict[str, object]]:
         """Record the first monthly reconciliation; later segments leave it untouched."""
         cur = self._conn.execute(
             """
@@ -2242,13 +2144,41 @@ class DossierStore:
                     VALUES (?,?,?,?,?,?,?,?,?)
                     ON CONFLICT(dossier_id, turn) DO NOTHING
                     """,
-            params,
+            (
+                dossier_id,
+                turn,
+                ordered_amount,
+                arrived_amount,
+                loss_amount,
+                escorted,
+                escort_source_dossier_id,
+                relation_type,
+                note,
+            ),
         )
-        return self.reconciliations(int(params[0]))[-1] if cur.rowcount else None
+        return (
+            self.reconciliations(
+                int(
+                    (
+                        dossier_id,
+                        turn,
+                        ordered_amount,
+                        arrived_amount,
+                        loss_amount,
+                        escorted,
+                        escort_source_dossier_id,
+                        relation_type,
+                        note,
+                    )[0]
+                )
+            )[-1]
+            if cur.rowcount
+            else None
+        )
 
-    def set_pending_action_status(self, params: Any) -> Any:
+    def set_pending_action_status(self, status: object, id: object) -> Any:
         return self._conn.execute(
-            "UPDATE pending_actions SET status=? WHERE id=?", params
+            "UPDATE pending_actions SET status=? WHERE id=?", (status, id)
         )
 
     def set_actual_progress_note(self, dossier_id: int, turn: int, note: str) -> None:
@@ -2261,95 +2191,11 @@ class DossierStore:
             (int(dossier_id), int(turn), note, f"dossier:{int(dossier_id)}"),
         )
 
-    def pending_action_source_turn(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT source_chat_turn_id FROM pending_actions WHERE id=?", params
-        ).fetchone()
-
-    def directive_version(self, params: Any = ()) -> Any:
+    def directive_version(self, id: object) -> Any:
         return self._conn.execute(
             "SELECT version FROM pending_actions WHERE id=? AND kind='directive'",
-            params,
+            (id,),
         ).fetchone()
-
-    def snapshot_rows(self, table: str) -> Any:
-        sql = {
-            "decree_dossiers": "SELECT * FROM decree_dossiers",
-            "decree_dossier_decisions": "SELECT * FROM decree_dossier_decisions",
-            "dossier_reported_progress": "SELECT * FROM dossier_reported_progress",
-            "pending_actions": "SELECT * FROM pending_actions",
-            "decree_dossier_links": "SELECT * FROM decree_dossier_links",
-        }[table]
-        return self._conn.execute(sql).fetchall()
-
-    def restore_decision(self, row: Mapping[str, object]) -> None:
-        from ming_sim.entities.column_write import upsert_by_pk
-
-        upsert_by_pk(
-            self._conn,
-            "decree_dossier_decisions",
-            row,
-            pk="id",
-            allowed=_DECISION_COLUMNS,
-            what="decree_dossier_decisions",
-        )
-
-    def restore_reported_progress(self, row: Mapping[str, object]) -> None:
-        from ming_sim.entities.column_write import upsert_by_pk
-
-        upsert_by_pk(
-            self._conn,
-            "dossier_reported_progress",
-            row,
-            pk="id",
-            allowed=_PROGRESS_COLUMNS,
-            what="dossier_reported_progress",
-        )
-
-    def restore_pending_action(self, row: Mapping[str, object]) -> None:
-        from ming_sim.entities.column_write import upsert_by_pk
-
-        upsert_by_pk(
-            self._conn,
-            "pending_actions",
-            row,
-            pk="id",
-            allowed=_PENDING_ACTION_COLUMNS,
-            what="pending_actions",
-        )
-
-    def restore_link(self, row: Mapping[str, object]) -> None:
-        from ming_sim.entities.column_write import upsert_by_pk
-
-        upsert_by_pk(
-            self._conn,
-            "decree_dossier_links",
-            row,
-            pk="id",
-            allowed=_LINK_COLUMNS,
-            what="decree_dossier_links",
-        )
-
-    def delete_dossier(self, dossier_id: object) -> None:
-        self._conn.execute("DELETE FROM decree_dossiers WHERE id=?", (dossier_id,))
-
-    def delete_decision(self, decision_id: object) -> None:
-        self._conn.execute(
-            "DELETE FROM decree_dossier_decisions WHERE id=?",
-            (decision_id,),
-        )
-
-    def delete_reported_progress(self, progress_id: object) -> None:
-        self._conn.execute(
-            "DELETE FROM dossier_reported_progress WHERE id=?",
-            (progress_id,),
-        )
-
-    def delete_pending_action(self, action_id: object) -> None:
-        self._conn.execute("DELETE FROM pending_actions WHERE id=?", (action_id,))
-
-    def delete_link(self, link_id: object) -> None:
-        self._conn.execute("DELETE FROM decree_dossier_links WHERE id=?", (link_id,))
 
     def night_approved_directive_ids(self, action_ids: Iterable[int]) -> list[int]:
         ids = sorted({int(i) for i in action_ids})

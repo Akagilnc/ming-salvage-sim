@@ -73,7 +73,7 @@ def _resolve_single_region_id(
     tid = str(target_id or "").strip()
     if not tid:
         raise DeclarationDataError("单省目标 target_id 为空")
-    by_id = RegionStore(conn).identity_row((tid,))
+    by_id = RegionStore(conn).row(tid, fields="id, kind, controlled_by")
     if by_id is not None:
         return _region_row_to_locality(by_id)
     by_name = conn.execute('SELECT id, kind, controlled_by FROM regions WHERE name=?', (tid,)).fetchall()
@@ -87,7 +87,7 @@ def _resolve_single_region_id(
     matched = match_region_id_from_text(tid, regions_content)
     if matched is None:
         raise DeclarationDataError(f"单省目标零命中或歧义：{tid!r}")
-    row = RegionStore(conn).identity_row((matched,))
+    row = RegionStore(conn).row(matched, fields="id, kind, controlled_by")
     if row is None:
         raise DeclarationDataError(f"单省目标零命中：{tid!r}")
     return _region_row_to_locality(row)

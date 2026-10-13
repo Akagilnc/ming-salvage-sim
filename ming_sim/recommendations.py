@@ -33,7 +33,7 @@ def list_recommendation_candidates(db: Any, state: Any, recommender: str) -> Lis
     allowed, so an unrelated person remains invisible.
     """
     conn = db.conn
-    source = CharacterStore(conn).field_row("faction", recommender)
+    source = CharacterStore(conn).row(recommender, fields="faction")
     if source is None:
         return []
     faction = str(source["faction"] or "")
@@ -168,7 +168,9 @@ def record_recommendation_edges(db: Any, state: Any, recommender: str,
         """荐人专属幂等：稳定 origin（|round 后缀前）+端点+腿别，跨回合、
         忽略可变 context；命中即返回原 id，不重写。"""
         base = f"recommendation:{int(event_id)}:{leg_kind}"
-        row = db.person_logs.relation_by_origin((leg_source, leg_target, leg_kind, base, f"{base}|%"))
+        row = db.person_logs.relation_by_origin(
+            leg_source, leg_target, leg_kind, base, f"{base}|%"
+        )
         return int(row["id"]) if row is not None else None
 
     grace = _existing_leg_id("恩义", source, target)

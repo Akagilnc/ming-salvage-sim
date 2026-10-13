@@ -168,7 +168,7 @@ def apply_person_changes(
         action = str(result.get("动作") or result.get("action") or "").strip()
         if not name or not action:
             return
-        if db.characters.presence((name,)) is None:
+        if db.characters.row(name, fields="1") is None:
             return
         summary = (
             str(result.get("reason") or item.get("reason") or "")
@@ -337,7 +337,7 @@ def apply_person_changes(
             if content is not None and name not in content.characters:
                 rejections.append(rejected(item, "非既有人物", "hallucinated_id", status=status))
                 continue
-            row = db.characters.field_row('name', name)
+            row = db.characters.row(name, fields="name")
             if row is None:
                 rejections.append(rejected(item, "非既有人物", "hallucinated_id", status=status))
                 continue

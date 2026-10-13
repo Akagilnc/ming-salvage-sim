@@ -62,12 +62,7 @@ def _apply_recovery_driven_transfers(
         region_id = str(row["target_id"] or payload.get("target_id") or "").strip()
         if target_kind != "region" or not region_id:
             continue
-        if (
-            db.regions.presence(
-                (region_id,)
-            )
-            is None
-        ):
+        if db.regions.row(region_id, fields="1") is None:
             continue
         outcome = str(row["execution_outcome"] or "").strip()
         if outcome not in RECOVERY_OUTCOME_FACTORS:
@@ -103,7 +98,7 @@ def _apply_recovery_driven_transfers(
         amount = int(round(raw_persons))
         if amount <= 0:
             continue
-        pool_row = db.classes.population_row(("流民", region_id))
+        pool_row = db.classes.row(("流民", region_id), fields="population")
         farmer_row = db.conn.execute("SELECT 1 FROM classes WHERE name='农民' AND region_id=?", (region_id,)).fetchone()
         if pool_row is None or farmer_row is None:
             continue

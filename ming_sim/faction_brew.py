@@ -64,7 +64,7 @@ def select_faction_brew_targets(db: Any, *, year: int, period: int) -> List[Dict
         row["faction"]: row for row in db.person_logs.get_faction_brew_pending()
     }
     latest_event_id: Dict[str, int] = {}
-    for row in db.person_logs.recent_relation_pairs((int(year), int(period))):
+    for row in db.person_logs.recent_relation_pairs(int(year), int(period)):
         max_id = int(row["max_id"])
         for endpoint in (row["source"], row["target"]):
             faction = projection.get(endpoint)

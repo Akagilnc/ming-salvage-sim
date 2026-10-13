@@ -39,7 +39,7 @@ from ming_sim.db import (
 from ming_sim.applier import (
     Provenance,
     atomic,
-    connection_owns_transaction,
+    item_savepoint_scope,
     register_runtime_outcome_callbacks,
 )
 from ming_sim.decree import (
@@ -359,31 +359,16 @@ def register_unlisted_person_record(
     ) -> None:
         bag.pop(target, None)
 
-    register_runtime_outcome_callbacks(db, on_rollback=_drop_runtime_registration)
-    # SAVEPOINT：add_character 写前已完成 seat 校验，但 characters + character_offices
-    # 仍须整项原子；外层 item_savepoint_scope / atomic 嵌套仍合法。commit 必须在
-    # RELEASE 之后、且仅当本核拥有事务时发生——否则 SAVEPOINT 期内 commit 会把
-    # 整个事务提前提交，随后 RELEASE 无点。
-    owns_transaction = connection_owns_transaction(db.conn)
     savepoint = f"register_unlisted_{abs(id(character)) & 0xFFFFFFFF:x}"
-    db.conn.execute(f"SAVEPOINT {savepoint}")
-    try:
+    with item_savepoint_scope(db, savepoint):
+        register_runtime_outcome_callbacks(db, on_rollback=_drop_runtime_registration)
         db.add_character(
             state, character,
             source=str(source_label or ""),
             llm_config=llm_config,
             commit=False,
         )
-    except Exception:
-        db.conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
-        db.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
-        roster.pop(added_name, None)
-        raise
-    else:
-        db.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
-        if owns_transaction:
-            db.conn.commit()
-    row = db.characters.field_row('portrait_id', name)
+    row = db.characters.row(name, fields="portrait_id")
     if row:
         character.portrait_id = str(row["portrait_id"])
     return character
@@ -415,7 +400,7 @@ def _appointment_intent_is_current_office_noop(
     if conn is None or not clean_name or not desired:
         return False
     canonical = _canonical_minister_key(content, clean_name, db)
-    row = CharacterStore(conn).status_office_row((canonical,))
+    row = CharacterStore(conn).row(canonical, fields="status, office")
     if row is None or str(row["status"] or "") != "active":
         return False
     current = normalize_office(str(row["office"] or ""))
@@ -513,7 +498,7 @@ def apply_appointment(
     content.characters[name] = character
     db.add_character(state, character, llm_config=llm_config, commit=commit)
     # add_character 已写入并分配 portrait_id，回写到内存对象
-    row = db.characters.field_row('portrait_id', name)
+    row = db.characters.row(name, fields="portrait_id")
     if row:
         character.portrait_id = str(row["portrait_id"])
     return (name, displaced)
@@ -634,7 +619,7 @@ class GameSession:
             self.db = GameDB(db_path, content=self.content, llm_config=llm_config)
             # #638 S7：新开档判据必须在 load_state 建 game_state 行之前取（行在＝旧档，
             # 关系 seed 导入一律不触；验收条「只对新开档生效，旧档不受影响」的机械口径）。
-            fresh_save = not self.db.reign.exists()
+            fresh_save = self.db.reign.row(1, fields="1", table="game_state") is None
             # 接档载入阶段计时（#84）：原为零日志盲区，群友以为死机；逐阶段 tlog 用时，
             # 自部署者在 server 控制台看得见进度、定位慢阶段。
             from ming_sim.token_stats import tlog
@@ -836,7 +821,7 @@ class GameSession:
         eligible, reason = self.can_summon(character)
         if not eligible:
             return AudienceAdmissionDecision(None, reason=reason)
-        row = self.db.characters.location_row((character.name,))
+        row = self.db.characters.row(character.name, fields="location, transit_to")
         # #670：无 DB 行不得 blank fail-open 入殿；在册空 location 仍 fail-open 在京。
         if row is None:
             return AudienceAdmissionDecision(
@@ -1390,7 +1375,7 @@ class GameSession:
         try:
             if phase == "court_break":
                 with gate_cm:
-                    source = self.db.reign.chat_turn_night_id(chat_turn_id)
+                    source = self.db.reign.row(chat_turn_id, fields="night_id")
                 self.close_night_after_chat_if_needed(
                     "court_break", write_gate=write_gate, night_id=int(source["night_id"]),
                 )
@@ -1463,9 +1448,7 @@ class GameSession:
             self.db.capture_chat_rollback_snapshot(),
         )
         if not turn.user_message_id:
-            user_row = self.db.reign.chat_turn_user_message_id(
-                turn.chat_turn_id
-            )
+            user_row = self.db.reign.row(turn.chat_turn_id, fields="user_message_id")
             turn.user_message_id = int(user_row["user_message_id"] or 0) if user_row else 0
         if turn.user_message_id:
             restored_ids = self.db.restore_interrupted_after_failed_retry(turn.chat_turn_id)
@@ -2061,12 +2044,6 @@ class GameSession:
             return
         self._set_phase(TurnPhase.REVIEWING)
 
-    def back_to_summoning(self) -> None:
-        if self.state.turn_phase in FRONT_HALF_DONE_PHASES:
-            return
-        self._set_phase(TurnPhase.SUMMONING)
-
-
     # #1341/#1338：set_decree 已删——裸设总诏正文绕过逐道草案结构化，违 P1；
     # Web PATCH /api/decree 同步拆除。改稿只走 add_directive / update_directive。
 
@@ -2096,7 +2073,11 @@ class GameSession:
             did = int(item.get("directive_id"))
             if self.db.dossiers.get_for_directive(did) is not None:
                 continue
-            row = self.db.issues.directive(did)
+            row = self.db.issues.row(
+                did,
+                fields="id, text, status, turn, dossier_payload_json",
+                table="turn_directives",
+            )
             if row is None or str(row["status"] or "") != "draft":
                 continue
             bad_payload = self.db.issues.directive_dossier_payload(row)

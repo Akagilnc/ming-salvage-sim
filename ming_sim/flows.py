@@ -84,7 +84,7 @@ def _substrate_hub_salt_commerce_income_split(db: GameDB) -> Tuple[float, float]
     """Salt and commerce taxes stay as central side-channel income under cutover."""
     salt_total = 0.0
     commerce_total = 0.0
-    rows = db.regions.ming_fiscal_rows(())
+    rows = db.regions.ming_fiscal_rows()
     for row in rows:
         fiscal = parse_engine_payload_json(row["fiscal"])
         salt_total += _as_finite_nonnegative_float(
@@ -101,7 +101,7 @@ def _project_substrate_hub_remittance(db: GameDB) -> float:
     from .fiscal_tick import settle_tick
 
     remittance_total = 0.0
-    rows = db.regions.ordered_ming_fiscal_rows(())
+    rows = db.regions.ordered_ming_fiscal_rows()
     for row in rows:
         region_id = str(row["id"])
         try:
@@ -329,7 +329,7 @@ class _HubOutboundResult(NamedTuple):
 def _substrate_hub_jingyun_due_by_region(db: GameDB) -> Dict[str, float]:
     """Read the existing province substrate 京运补 gross demand for the shared hub tier."""
     due_by_region: Dict[str, float] = {}
-    rows = db.regions.ming_fiscal_rows(())
+    rows = db.regions.ming_fiscal_rows()
     for row in rows:
         # 持久财政读取故障响亮上抛；不得出列成「无需求」后照常出成功预算（ADR 0005）。
         fiscal = _load_durable_json(row["fiscal"], default='{}')

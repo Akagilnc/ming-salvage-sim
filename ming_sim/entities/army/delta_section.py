@@ -87,13 +87,13 @@ def apply_army_delta_with_cannon_transfer(
                 reason=str(exc), category="invalid_enum", source=source,
             ))
             return army_changes, rejections
-        source_row = db.armies.cannon_mutiny_row((army_id,))
+        source_row = db.armies.row(army_id, fields="cannon_equipment, is_mutinied")
         origin_error = db.effect_origin_rejection(origin_ref)
         if origin_error:
             rejections.append(RejectedItem(item={"army_id": army_id, "changes": raw_changes}, reason=origin_error["reason"], category=origin_error["category"], source=source))
             return army_changes, rejections
         target = (
-            db.armies.cannon_mutiny_row((target_id,))
+            db.armies.row(target_id, fields="cannon_equipment, is_mutinied")
             if isinstance(target_id, str) and target_id
             else None
         )

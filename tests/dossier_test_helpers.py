@@ -28,11 +28,12 @@ TYPED_COVERT_EXTRACT = {
 }
 
 
-def _cost_events(db, dossier_id):
-    return [dict(row) for row in db.conn.execute(
-        "SELECT * FROM decree_cost_events WHERE dossier_id=? ORDER BY id",
-        (int(dossier_id),),
-    ).fetchall()]
+def _cost_events(db, dossier_id, *, identity=None):
+    return [
+        dict(row)
+        for row in db.dossiers.cost_events(int(dossier_id))
+        if identity is None or row["cost_identity"] == identity
+    ]
 
 
 def _sat(db, table, name):

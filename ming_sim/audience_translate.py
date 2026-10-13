@@ -75,7 +75,7 @@ def build_night_said_so_far(
     cutoff_id = int(until_chat_turn_id or 0)
     cutoff_seq: Optional[int] = None
     if cutoff_id > 0:
-        crow = db.reign.chat_turn_sequence_row((cutoff_id,))
+        crow = db.reign.row(cutoff_id, fields="night_seq")
         if crow is not None:
             cutoff_seq = int(crow["night_seq"] or 0)
 
@@ -106,7 +106,7 @@ def build_night_said_so_far(
         ):
             if not mid:
                 continue
-            row = db.chat_messages.content_row((int(mid),))
+            row = db.chat_messages.row(int(mid), fields="content")
             if row is None:
                 continue
             body = str(row["content"] or "")

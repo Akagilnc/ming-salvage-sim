@@ -8,53 +8,19 @@ persists the columns it is given.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Mapping, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
-from ming_sim.entities.column_write import bind_affair_once, checked_columns, upsert_by_pk
-
-
-CHARACTER_COLUMNS = frozenset({
-    "name", "office", "office_type", "faction", "personal_skills",
-    "loyalty", "ability", "integrity", "courage", "style",
-    "birth_year", "historical_death_year", "historical_death_month",
-    "debut_year", "debut_month", "status", "status_reason", "reason_code",
-    "status_changed_turn", "power_id", "location", "transit_to",
-    "transit_distance_remaining", "transit_speed_factor", "transit_start_turn",
-    "identity", "intrigue", "seed_guilt", "portrait_id", "court_role", "summary",
-    "aliases", "affair_id",
-})
-
-_MUTABLE_COLUMNS = CHARACTER_COLUMNS - {"name"}
+from ming_sim.entities.column_write import RowStore
 
 
-
-OFFICE_COLUMNS = frozenset(
-    {
-        "character_name",
-        "office_title",
-        "source",
-        "dossier_id",
-        "appointment_tenure",
-        "region_id",
-        "updated_at",
-    }
-)
-
-
-class CharacterStore:
+class CharacterStore(RowStore):
     """Single write port for a person and that person's office archive."""
 
-    def row(self, name: str) -> Any:
-        return self._conn.execute("SELECT * FROM characters WHERE name=?", (name,)).fetchone()
-
-    def field_row(self, field: str, name: str) -> Any:
-        """Read a schema field already validated by the gate/subject consumer."""
-        return self._conn.execute(f"SELECT {field} FROM characters WHERE name=?", (name,)).fetchone()
-
-    def has_any(self, table: str) -> bool:
-        if table not in ("characters", "character_offices", "office_slots"):
-            raise ValueError(table)
-        return self._conn.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone() is not None
+    TABLE = "characters"
+    PK = "name"
+    TABLES = {"characters": "name", "character_offices": "character_name"}
+    REQUIRE_INSERT_PK = True
+    AFFAIR_FIELDS = "name"
 
     def current_court_rows(self, year: int, period: int, names: Iterable[str] | None = None) -> Any:
         wanted = [str(name).strip() for name in (names or []) if str(name).strip()]
@@ -71,34 +37,6 @@ class CharacterStore:
             "SELECT name,office,office_type,faction,status,status_reason "
             f"FROM characters WHERE {' AND '.join(clauses)} ORDER BY name", params,
         ).fetchall()
-
-    def __init__(self, conn: Any) -> None:
-        self._conn = conn
-
-    def update(self, name: str, values: Mapping[str, object]) -> int:
-        columns = checked_columns(values, _MUTABLE_COLUMNS, what="characters")
-        if not columns:
-            raise ValueError("characters update needs fields")
-        assignments = ", ".join(f"{column}=?" for column in columns)
-        cursor = self._conn.execute(
-            f"UPDATE characters SET {assignments} WHERE name=?",
-            [values[column] for column in columns] + [name],
-        )
-        return int(cursor.rowcount or 0)
-
-    def insert(self, row: Mapping[str, object]) -> None:
-        if "name" not in row:
-            raise ValueError("characters insert needs name")
-        columns = checked_columns(row, CHARACTER_COLUMNS, what="characters")
-        placeholders = ", ".join("?" for _ in columns)
-        self._conn.execute(
-            f"INSERT INTO characters ({', '.join(columns)}) "
-            f"VALUES ({placeholders})",
-            [row[column] for column in columns],
-        )
-
-    def delete(self, name: str) -> None:
-        self._conn.execute("DELETE FROM characters WHERE name=?", (name,))
 
     def upsert_office(
         self,
@@ -147,27 +85,8 @@ class CharacterStore:
             (name, office_title, office_type, source, dossier_id, appointment_tenure),
         )
 
-    def restore_row(self, row: Mapping[str, object]) -> None:
-        """Undo writes the before-image through this store."""
-        upsert_by_pk(
-            self._conn, "characters", row,
-            pk="name", allowed=CHARACTER_COLUMNS, what="characters",
-        )
-
-    def affair_id_of(self, name: str) -> int:
-        row = self.field_row('affair_id', str(name))
-        if row is None:
-            raise KeyError(f"人物不存在：{name}")
-        return int(row["affair_id"] or 0)
-
-    def set_affair_id_if_unbound(self, name: str, affair_id: int) -> int:
-        return bind_affair_once(self._conn, "characters", str(name), affair_id, pk="name")
-
-    def presence(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT 1 FROM characters WHERE name=?', params).fetchone()
-
-    def names(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT name FROM characters', params).fetchall()
+    def names(self) -> Any:
+        return self._conn.execute("SELECT name FROM characters", ()).fetchall()
 
     def office_region(self, character_name: object) -> str:
         """Jurisdiction of the character's current appointment (一次任职)."""
@@ -175,21 +94,11 @@ class CharacterStore:
         if not name:
             return ""
         # Required table: empty name / no row stay business-empty; schema faults surface.
-        row = self._conn.execute(
-            "SELECT region_id FROM character_offices WHERE character_name=?", (name,)
-        ).fetchone()
+        row = self.row(name, fields="region_id", table="character_offices")
         return str(row["region_id"] or "").strip() if row is not None else ""
 
-    def location_status_row(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT location, transit_to, status FROM characters WHERE name=?', params).fetchone()
-
-    def location_row(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT location, transit_to FROM characters WHERE name=?', params).fetchone()
-
     def get_authority(self, authority_id: int) -> Optional[Dict[str, object]]:
-        row = self._conn.execute(
-            "SELECT * FROM authority_records WHERE id=?", (int(authority_id),)
-        ).fetchone()
+        row = self.row(int(authority_id), table="authority_records", pk="id")
         if row is None:
             return None
         result = dict(row)
@@ -245,55 +154,10 @@ class CharacterStore:
         return result
 
     def get_character_status(self, name: str) -> tuple[str, str]:
-        row = self._conn.execute(
-            "SELECT status, status_reason FROM characters WHERE name=?", (name,)
-        ).fetchone()
+        row = self.row(name, fields="status, status_reason")
         if row is None:
             return ("active", "")
         return (row["status"], row["status_reason"] or "")
-
-    def status_office_row(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT status, office FROM characters WHERE name=?", params
-        ).fetchone()
-
-    def status_power_row(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT status, power_id FROM characters WHERE name=?", params
-        ).fetchone()
-
-    def office_location_row(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT office,office_type,location FROM characters WHERE name=?", params
-        ).fetchone()
-
-    def faction_status_row(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT faction,status FROM characters WHERE name=?", params
-        ).fetchone()
-
-    def snapshot_rows(self, table: str) -> Any:
-        sql = {
-            "characters": "SELECT * FROM characters",
-            "character_offices": "SELECT * FROM character_offices",
-        }[table]
-        return self._conn.execute(sql).fetchall()
-
-    def restore_office_row(self, row: Mapping[str, object]) -> None:
-        upsert_by_pk(
-            self._conn,
-            "character_offices",
-            row,
-            pk="character_name",
-            allowed=OFFICE_COLUMNS,
-            what="character_offices",
-        )
-
-    def delete_office(self, name: str) -> None:
-        self._conn.execute(
-            "DELETE FROM character_offices WHERE character_name=?",
-            (name,),
-        )
 
     def named_status_rows(self, names: Iterable[str]) -> Any:
         names = tuple(names)
@@ -316,9 +180,4 @@ class CharacterStore:
             f"SELECT * FROM characters WHERE status='active' AND power_id='ming' "
             f"AND {office_clause} ORDER BY {order}",
             offices,
-        ).fetchall()
-
-    def rows_for_affair(self, affair_id: int) -> Any:
-        return self._conn.execute(
-            "SELECT name FROM characters WHERE affair_id=? ORDER BY name", (affair_id,)
         ).fetchall()

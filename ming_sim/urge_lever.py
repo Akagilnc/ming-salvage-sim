@@ -203,18 +203,16 @@ def _record_commitment_urge(
         "reason": str(reason or ""),
     }
     db.dossiers.insert_pending_action(
-        (
-            int(getattr(state, 'turn', 0) or 0),
-            URGE_PENDING_KIND_COMMITMENT,
-            URGE_PENDING_ACTION,
-            int(commitment_ref),
-            '',
-            json.dumps(payload, ensure_ascii=False, separators=(',', ':')),
-            'committed',
-            0,
-            0,
-            0,
-        )
+        int(getattr(state, "turn", 0) or 0),
+        URGE_PENDING_KIND_COMMITMENT,
+        URGE_PENDING_ACTION,
+        int(commitment_ref),
+        "",
+        json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+        "committed",
+        0,
+        0,
+        0,
     )
 
 

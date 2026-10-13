@@ -357,75 +357,69 @@ def test_issue_status_change_does_not_use_month_end_active_gate(game):
         ch.transit_to = old_transit_to
 
 
-def test_malformed_army_rejected_durably(game):
-    """缺 manpower 的建军耐久拒收，不阻止合法结案。"""
-    db, state, _ = game
-    issue_id = db.insert_issue(state, title="嵌套效果拒收", kind="situation")
-    dispatch_declaration(db, state, {"effects": [{"close_issues": [{"issue_id": issue_id, "reason": "resolved", "effect_on_resolve": {'new_armies': [{'id': 'broken', 'name': '残军', 'owner_power': 'ming'}]}}]}]},
-                         source=Provenance.system_simulation)
-    assert db.conn.execute("SELECT status FROM issues WHERE id=?", (issue_id,)).fetchone()[0] == "resolved"
-    reports = db.conn.execute("SELECT item_json, source FROM rejection_reports").fetchall()
-    assert reports
-    assert all(isinstance(json.loads(row["item_json"]), dict) for row in reports)
-    assert all(row["source"] == "system_simulation" for row in reports)
-
-
-def test_army_bad_owner_power_rejected_durably(game):
-    db, state, _ = game
-    issue_id = db.insert_issue(state, title="嵌套效果拒收", kind="situation")
-    dispatch_declaration(db, state, {"effects": [{"close_issues": [{"issue_id": issue_id, "reason": "resolved", "effect_on_resolve": {'new_armies': [{'id': 'x', 'name': '野军', 'owner_power': '不存在的势力', 'manpower': 1000, 'maintenance_per_turn': 1}]}}]}]},
-                         source=Provenance.system_simulation)
-    assert db.conn.execute("SELECT status FROM issues WHERE id=?", (issue_id,)).fetchone()[0] == "resolved"
-    reports = db.conn.execute("SELECT item_json, source FROM rejection_reports").fetchall()
-    assert reports
-    assert all(isinstance(json.loads(row["item_json"]), dict) for row in reports)
-    assert all(row["source"] == "system_simulation" for row in reports)
-
-
-def test_unknown_character_rejected_durably(game):
-    db, state, _ = game
-    issue_id = db.insert_issue(state, title="嵌套效果拒收", kind="situation")
-    dispatch_declaration(db, state, {"effects": [{"close_issues": [{"issue_id": issue_id, "reason": "resolved", "effect_on_resolve": {'人物变更': [{'name': '查无此人张三', '动作': '处置', 'status': 'dead'}]}}]}]},
-                         source=Provenance.system_simulation)
-    assert db.conn.execute("SELECT status FROM issues WHERE id=?", (issue_id,)).fetchone()[0] == "resolved"
-    reports = db.conn.execute("SELECT item_json, source FROM rejection_reports").fetchall()
-    assert reports
-    assert all(isinstance(json.loads(row["item_json"]), dict) for row in reports)
-    assert all(row["source"] == "system_simulation" for row in reports)
-
-
-def test_bad_status_rejected_durably(game):
+@pytest.mark.parametrize(
+    "case",
+    [
+        "missing_manpower",
+        "bad_owner",
+        "unknown_character",
+        "bad_status",
+        "unknown_army",
+        "non_dict_character",
+    ],
+)
+def test_nested_effect_rejected_durably(game, case):
+    """A rejected nested effect does not prevent the valid issue closure."""
     db, state, content = game
-    name = active_ming_character(db, content)
+    effects = {
+        "missing_manpower": {
+            "new_armies": [{"id": "broken", "name": "残军", "owner_power": "ming"}]
+        },
+        "bad_owner": {
+            "new_armies": [
+                {
+                    "id": "x",
+                    "name": "野军",
+                    "owner_power": "不存在的势力",
+                    "manpower": 1000,
+                    "maintenance_per_turn": 1,
+                }
+            ]
+        },
+        "unknown_character": {
+            "人物变更": [{"name": "查无此人张三", "动作": "处置", "status": "dead"}]
+        },
+        "bad_status": {
+            "人物变更": [
+                {
+                    "name": active_ming_character(db, content),
+                    "动作": "处置",
+                    "status": "升仙",
+                }
+            ]
+        },
+        "unknown_army": {"army_delta": {"查无此军": {"manpower": 100}}},
+        "non_dict_character": {"人物变更": ["这不是dict"]},
+    }
     issue_id = db.insert_issue(state, title="嵌套效果拒收", kind="situation")
-    dispatch_declaration(db, state, {"effects": [{"close_issues": [{"issue_id": issue_id, "reason": "resolved", "effect_on_resolve": {'人物变更': [{'name': name, '动作': '处置', 'status': '升仙'}]}}]}]},
-                         source=Provenance.system_simulation)
-    assert db.conn.execute("SELECT status FROM issues WHERE id=?", (issue_id,)).fetchone()[0] == "resolved"
-    reports = db.conn.execute("SELECT item_json, source FROM rejection_reports").fetchall()
-    assert reports
-    assert all(isinstance(json.loads(row["item_json"]), dict) for row in reports)
-    assert all(row["source"] == "system_simulation" for row in reports)
-
-
-def test_army_delta_unknown_army_rejected_durably(game):
-    """army_delta 引用未入库军队 → 抛错中断（全局严格，绝不静默）。"""
-    db, state, _ = game
-    issue_id = db.insert_issue(state, title="嵌套效果拒收", kind="situation")
-    dispatch_declaration(db, state, {"effects": [{"close_issues": [{"issue_id": issue_id, "reason": "resolved", "effect_on_resolve": {'army_delta': {'查无此军': {'manpower': 100}}}}]}]},
-                         source=Provenance.system_simulation)
-    assert db.conn.execute("SELECT status FROM issues WHERE id=?", (issue_id,)).fetchone()[0] == "resolved"
-    reports = db.conn.execute("SELECT item_json, source FROM rejection_reports").fetchall()
-    assert reports
-    assert all(isinstance(json.loads(row["item_json"]), dict) for row in reports)
-    assert all(row["source"] == "system_simulation" for row in reports)
-
-
-def test_non_dict_character_change_item_rejected_durably(game):
-    """人物变更 含非 dict 项 → 抛错，不静默丢（docstring 称全局严格，CMR F7）。"""
-    db, state, _ = game
-    issue_id = db.insert_issue(state, title="嵌套效果拒收", kind="situation")
-    dispatch_declaration(db, state, {"effects": [{"close_issues": [{"issue_id": issue_id, "reason": "resolved", "effect_on_resolve": {'人物变更': ['这不是dict']}}]}]},
-                         source=Provenance.system_simulation)
+    dispatch_declaration(
+        db,
+        state,
+        {
+            "effects": [
+                {
+                    "close_issues": [
+                        {
+                            "issue_id": issue_id,
+                            "reason": "resolved",
+                            "effect_on_resolve": effects[case],
+                        }
+                    ]
+                }
+            ]
+        },
+        source=Provenance.system_simulation,
+    )
     assert db.conn.execute("SELECT status FROM issues WHERE id=?", (issue_id,)).fetchone()[0] == "resolved"
     reports = db.conn.execute("SELECT item_json, source FROM rejection_reports").fetchall()
     assert reports

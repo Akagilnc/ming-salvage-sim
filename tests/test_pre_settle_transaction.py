@@ -186,9 +186,6 @@ def test_enter_review_preserves_front_half_done_phase(game, phase):
     sess.enter_review()
     assert state.turn_phase == phase
 
-    sess.back_to_summoning()
-    assert state.turn_phase == phase
-
 
 # ---------------------------------------------------------------------------
 # cmr S4 r2 修复回归（F1 第三推进尾 / F2 HITL 相位耐崩+守门）

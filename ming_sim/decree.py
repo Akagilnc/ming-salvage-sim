@@ -147,7 +147,7 @@ def build_promulgation_judge_context(
 ) -> Dict[str, object]:
     """Read durable evidence from dossiers, or uncased pending-action payloads."""
     faction_rows = db.conn.execute('SELECT name,leverage,agenda FROM factions ORDER BY name', ()).fetchall()
-    class_rows = db.classes.ordered_names(())
+    class_rows = db.classes.ordered_names()
     issue_rows = db.issues.active_rows()
     authority = int(state.metrics.get("皇威", 0))
     authority_band = imperial_authority_band(authority)

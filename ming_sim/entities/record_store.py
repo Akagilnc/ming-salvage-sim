@@ -9,11 +9,11 @@ from __future__ import annotations
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from ming_sim.applier import safe_json_dumps
+from ming_sim.entities.column_write import RowStore
 
 
-class ChatMessageStore:
-    def __init__(self, conn: Any) -> None:
-        self._conn = conn
+class ChatMessageStore(RowStore):
+    TABLE = "chat_messages"
 
     def insert(
         self,
@@ -75,7 +75,7 @@ class ChatMessageStore:
         return out
 
     def content_of(self, message_id: int) -> Optional[str]:
-        row = self.content_row((int(message_id),))
+        row = self.row(int(message_id), fields="content")
         if row is None:
             return None
         return str(row["content"] or "")
@@ -103,15 +103,10 @@ class ChatMessageStore:
         ).fetchall()
         return [dict(row) for row in rows]
 
-    def content_row(self, params: Any = ()) -> Any:
-        return self._conn.execute(
-            "SELECT content FROM chat_messages WHERE id=?", params
-        ).fetchone()
 
-
-class TurnReportStore:
-    def __init__(self, conn: Any) -> None:
-        self._conn = conn
+class TurnReportStore(RowStore):
+    TABLE = "turn_reports"
+    PK = "turn"
 
     def upsert(
         self,
@@ -141,11 +136,7 @@ class TurnReportStore:
         )
 
     def archive(self, turn: int) -> Optional[Dict[str, object]]:
-        row = self._conn.execute(
-            "SELECT year, period, report, attendant_message, title "
-            "FROM turn_reports WHERE turn = ?",
-            (int(turn),),
-        ).fetchone()
+        row = self.row(int(turn), fields="year, period, report, attendant_message, title")
         if row is None:
             return None
         return {
@@ -183,9 +174,9 @@ class TurnReportStore:
         ]
 
 
-class ResolveContextStore:
-    def __init__(self, conn: Any) -> None:
-        self._conn = conn
+class ResolveContextStore(RowStore):
+    TABLE = "pending_resolve_context"
+    PK = "turn"
 
     def save(
         self,
@@ -236,11 +227,7 @@ class ResolveContextStore:
         )
 
     def get(self, turn: int) -> Optional[Dict[str, object]]:
-        row = self._conn.execute(
-            "SELECT decree_text, simulator_payload_json, source, attendant_message "
-            "FROM pending_resolve_context WHERE turn = ?",
-            (int(turn),),
-        ).fetchone()
+        row = self.row(int(turn), fields="decree_text, simulator_payload_json, source, attendant_message")
         if row is None:
             return None
 
@@ -268,9 +255,9 @@ class ResolveContextStore:
         return [int(row["turn"]) for row in rows]
 
 
-class MonthOpenSnapshotStore:
-    def __init__(self, conn: Any) -> None:
-        self._conn = conn
+class MonthOpenSnapshotStore(RowStore):
+    TABLE = "month_open_snapshot"
+    PK = "turn"
 
     def insert_once(
         self,
@@ -290,17 +277,8 @@ class MonthOpenSnapshotStore:
         )
         return int(cursor.rowcount or 0) == 1
 
-    def delete(self, turn: int) -> None:
-        self._conn.execute(
-            "DELETE FROM month_open_snapshot WHERE turn = ?", (int(turn),),
-        )
-
     def get(self, turn: int) -> Optional[Dict[str, int]]:
-        row = self._conn.execute(
-            """SELECT treasury, inner_treasury, public_support, imperial_prestige
-               FROM month_open_snapshot WHERE turn = ?""",
-            (int(turn),),
-        ).fetchone()
+        row = self.row(int(turn), fields="treasury, inner_treasury, public_support, imperial_prestige")
         if row is None:
             return None
         return {

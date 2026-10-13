@@ -110,8 +110,8 @@ def test_restored_knowledge_uses_current_db_office_after_transfer(tmp_path, cont
 def test_participation_survives_restore(game):
     db, state, content = game
     minister = next(c for c in content.characters.values() if c.office_type == "内阁")
-    db.record_character_participation(
-        state, [minister.name], "audience", "召对议饷", "议定辽饷缓急"
+    db.register_character_knowledge_source(
+        state, [{"character_id": minister.name}], "audience", "召对议饷", "议定辽饷缓急"
     )
     stored = db.conn.execute(
         "SELECT source_id FROM character_knowledge_sources ORDER BY id DESC LIMIT 1"
@@ -638,8 +638,12 @@ def test_multi_lead_typed_archives_reach_only_each_office_successor(game, tmp_pa
     db.set_character_office(
         slot_lead.name, slot["office_title"], office_type="地方", region_id=slot_region,
     )
-    db.record_character_participation(
-        state, [central_lead.name], "private_matter", "私事", "PRIVATE_HISTORY_ONLY",
+    db.register_character_knowledge_source(
+        state,
+        [{"character_id": central_lead.name}],
+        "private_matter",
+        "私事",
+        "PRIVATE_HISTORY_ONLY",
     )
     joint_id = db.create_decree_dossier(
         state, action_type="assignment", decree_text="JOINT_ADMIN_ARCHIVE",

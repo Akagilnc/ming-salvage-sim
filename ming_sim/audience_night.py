@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 from ming_sim.exceptions import DeclarationDataError, DeclarationReferenceError
-from ming_sim.applier import Provenance
+from ming_sim.applier import Provenance, item_savepoint_scope
 
 from ming_sim.db import _load_durable_str_list
 
@@ -325,7 +325,7 @@ def assert_night_accepts_player_input(
 
 
 def get_night(db: Any, night_id: int) -> Optional[Dict[str, Any]]:
-    row = db.reign.night_by_id(int(night_id))
+    row = db.reign.row(int(night_id), table="audience_nights")
     return _hydrate_night(_row_dict(row)) if row is not None else None
 
 
@@ -747,12 +747,9 @@ def open_night(
     location = str(location or "").strip() or DEFAULT_LOCATION
 
     roster = resolve_standing_roster(db)
-    owns = _should_commit(db)
-
-    # 原子：实体 + 员额入殿账，SAVEPOINT 全有或全无。
+    # Entity and standing-roster entries share the existing item atomic scope.
     sp = f"open_night_{int(state.turn)}_{id(state)}"
-    db.conn.execute(f"SAVEPOINT {sp}")
-    try:
+    with item_savepoint_scope(db, sp):
         cur = db.conn.execute(
             """
             INSERT INTO audience_nights
@@ -773,7 +770,8 @@ def open_night(
         for name in roster:
             # 常在员额入殿账 body 恒空——只驱动在场，不写旁白。
             append_ledger_entry(
-                db, night_id,
+                db,
+                night_id,
                 person_names=[name],
                 audibility=AUDIBILITY_PUBLIC,
                 body="",
@@ -781,13 +779,6 @@ def open_night(
                 check_dead=True,
                 commit=False,
             )
-        db.conn.execute(f"RELEASE SAVEPOINT {sp}")
-        if owns:
-            db.conn.commit()
-    except Exception:
-        db.conn.execute(f"ROLLBACK TO SAVEPOINT {sp}")
-        db.conn.execute(f"RELEASE SAVEPOINT {sp}")
-        raise
 
     night = get_night(db, night_id)
     assert night is not None
@@ -862,8 +853,7 @@ def _set_night_fields(db: Any, night_id: int, **fields: Any) -> None:
     if not fields:
         return
     owns = _should_commit(db)
-    assignments = ", ".join(f"{k} = ?" for k in fields)
-    db.reign.update_night(assignments, int(night_id), tuple(fields.values()))
+    db.reign.update(int(night_id), fields, table="audience_nights")
     _commit_if_owns(db, owns=owns)
 
 
@@ -1188,7 +1178,7 @@ def _project_unsettled_summon_kind(
         return "fresh"
     from ming_sim.matching import is_capital_location
 
-    row = db.characters.location_status_row((person_name,))
+    row = db.characters.row(person_name, fields="location, transit_to, status")
     if row is None:
         return "in_transit"
     status = str(row["status"] or "active").strip() or "active"
@@ -1256,7 +1246,7 @@ def list_waiting_audience_summons(db: Any) -> List[Dict[str, Any]]:
     for item in list_unsettled_summons(db):
         if item["kind"] != "waiting":
             continue
-        row = db.characters.field_row('location', item['person_name'])
+        row = db.characters.row(item["person_name"], fields="location")
         location = str(row["location"] or "").strip() if row is not None else ""
         # 防御：kind 已判定 waiting；location 仍回填权威行止供汇总读端。
         if location and not is_capital_location(location):
@@ -1305,16 +1295,14 @@ def _mark_summon_entries_in_transit(db: Any, items: Sequence[Dict[str, Any]]) ->
     owns = _should_commit(db)
     for item in items:
         entry_id = int(item["entry_id"])
-        row = db.reign.ledger_tags(entry_id)
+        row = db.reign.row(entry_id, fields="tags", table="story_ledger_entries")
         if row is None:
             continue
         tags = list(_load_durable_str_list(row["tags"], surface="story_ledger_entries.tags"))
         if TAG_IN_TRANSIT in tags:
             continue
         tags.append(TAG_IN_TRANSIT)
-        db.reign.set_ledger_tags(
-            (json.dumps(tags, ensure_ascii=False), entry_id)
-        )
+        db.reign.set_ledger_tags(json.dumps(tags, ensure_ascii=False), entry_id)
     if owns:
         db.conn.commit()
 
@@ -1336,14 +1324,14 @@ def settle_summon_origin(
     if not matches:
         return False
     for item in matches:
-        row = db.reign.ledger_tags(item["entry_id"])
+        row = db.reign.row(
+            item["entry_id"], fields="tags", table="story_ledger_entries"
+        )
         tags = [
             tag for tag in _load_durable_str_list(row["tags"], surface="story_ledger_entries.tags") if tag != TAG_SUMMON_UNSETTLED
         ]
         tags.append(TAG_SUMMON_SETTLED)
-        db.reign.set_ledger_tags(
-            (json.dumps(tags, ensure_ascii=False), item["entry_id"])
-        )
+        db.reign.set_ledger_tags(json.dumps(tags, ensure_ascii=False), item["entry_id"])
     if owns:
         db.conn.commit()
     return True
@@ -1353,7 +1341,7 @@ def retire_unsettled_summons_for_inactive(db: Any) -> List[str]:
     """人物已非 active 时确定性结清其全部未结传召（ADR 0096 / ADR 0009）。"""
     settled: List[str] = []
     for item in list_unsettled_summons(db):
-        row = db.characters.field_row('status', item['person_name'])
+        row = db.characters.row(item["person_name"], fields="status")
         status = str(row["status"] or "active").strip() or "active" if row is not None else "active"
         if status == "active":
             continue
@@ -1457,7 +1445,7 @@ def update_summon_travel_tone(
     if target is None:
         raise DeclarationReferenceError(f"本夜无此人未结传召：{name}")
     entry_id = int(target["entry_id"])
-    row = db.reign.ledger_tags(entry_id)
+    row = db.reign.row(entry_id, fields="tags", table="story_ledger_entries")
     if row is None:
         raise KeyError(f"传召账不存在：{entry_id}")
     tags = [
@@ -1465,9 +1453,7 @@ def update_summon_travel_tone(
         if not t.startswith(_SUMMON_TRAVEL_TONE_PREFIX)
     ]
     tags.append(_travel_tone_tag(tone))
-    db.reign.set_ledger_tags(
-        (json.dumps(tags, ensure_ascii=False), entry_id)
-    )
+    db.reign.set_ledger_tags(json.dumps(tags, ensure_ascii=False), entry_id)
     if owns:
         db.conn.commit()
     return entry_id
@@ -1503,9 +1489,7 @@ def commit_fresh_summons_for_night(
     origins: List[str] = []
     with atomic_and_reload(db, state, content=content):
         for person_name, items in by_person.items():
-            row = db.characters.location_status_row(
-                (person_name,)
-            )
+            row = db.characters.row(person_name, fields="location, transit_to, status")
             current_transit = str(row["transit_to"] or "").strip() if row is not None else ""
             location = str(row["location"] or "").strip() if row is not None else ""
             if current_transit:

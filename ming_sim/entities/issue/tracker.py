@@ -95,7 +95,7 @@ def apply_issue_tracker_output(
         # 不裸 continue 静默丢。**必须先验、再应用 metric**：原序先 _apply_metric_dict（就地 mutate
         # state.metrics）后判 None，会让拒收项的 metric_delta 副作用已落 state、与「未落地」矛盾且结算
         # commit 无 rollback（cmr advances r1 codex high + claude concur）。
-        _chk = db.issues.status_row((issue_id,))
+        _chk = db.issues.row(issue_id, fields="status")
         if _chk is None or _chk["status"] != "active":
             entity_rejections.append(RejectedItem(item=adv, reason=f"advances 引用未找到或已非 active 的 issue {issue_id}", category="missing_ref", source=source))
             continue
@@ -732,7 +732,7 @@ def apply_issue_tracker_output(
             #   ① 未找到 / ② 已非 active → 陈旧/幻觉引用（missing_ref）；
             #   ③ 找到且仍 active 却被拒 → close_issue 唯一剩余 None 路径＝reason=failed 用于
             #      不可崩坏局势（无 effect_on_fail，保持 active）＝LLM 语义误判（invalid_enum），非「未找到」。
-            chk = db.issues.status_row((issue_id,))
+            chk = db.issues.row(issue_id, fields="status")
             if chk is None:
                 category, why = "missing_ref", f"close_issues 引用未找到的 issue {issue_id}"
             elif chk["status"] != "active":
