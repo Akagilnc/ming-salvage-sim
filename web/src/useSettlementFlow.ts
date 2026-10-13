@@ -102,7 +102,9 @@ export function useSettlementFlow({
       const next = route.pendingDecisions;
       setPendingDecisions((prev) => replacePendingDecisionsOnRefresh(prev, next) || []);
     }
-    if (route.error !== null) setPausedDecisionError(route.error);
+    if (!state.settlement_entry_inflight && route.error !== null) {
+      setPausedDecisionError(route.error);
+    }
 
     // #1625: an observation-page refresh can land while another settlement entry
     // is consuming the desk. Reuse the injected state loader until that wait ends.
