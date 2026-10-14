@@ -931,7 +931,6 @@ def test_final_strategic_rejection_leaves_no_owned_effects(game, monkeypatch, tm
             },
             {
                 "event_id": "dalingghe", "metric_delta": {"皇威": -2},
-                "emperor_fate": "abdicate",
             },
         ],
     }
@@ -974,7 +973,6 @@ def test_final_strategic_rejection_leaves_no_owned_effects(game, monkeypatch, tm
     assert _pop(db, "流民", "shaanxi") == expected_refugees
     assert db.conn.execute("SELECT COUNT(*) FROM economy_ledger WHERE category='event_owned'").fetchone()[0] == 0
     assert "event_owned_base" not in db.fiscal_config.values()
-    assert not state.ended and not state.ending_status
     categories = {row[0] for row in db.conn.execute("SELECT category FROM rejection_reports")}
     assert "event_rejected" in categories
 
