@@ -33,8 +33,8 @@ from ming_sim.settlement.outcome import (
     SettlementOutcome,
 )
 
-# C0 effects 数组的一笔：(该笔的声明效果 / 该笔的有序字段 / 该笔的效果归属 id)
-EffectStep = Tuple[Dict[str, object], Dict[str, List[Tuple[str, object]]], Dict[str, List[str]]]
+# C0 effects 数组的一笔：(声明效果 / 有序字段 / 逐项归属 id / 信封归属 id)
+EffectStep = Tuple[Dict[str, object], Dict[str, List[Tuple[str, object]]], Dict[str, List[str]], str]
 EffectSequence = List[EffectStep]
 
 
@@ -76,6 +76,7 @@ class SettlementRun:
     ordered_deltas: Dict[str, List[Tuple[str, object]]]
     ordered_effect_event_ids: Dict[str, List[str]]
     effect_sequence: Optional[EffectSequence] = None
+    deferred_event_effects: Dict[str, EffectSequence] = field(default_factory=dict)
     commit_now: bool = True
     # 前置闸产物：sanitize / 同批事务声明 identity 冲突。
     # section 名是框架上下文，与项级 RejectedItem 配对；不塞进四字段。
@@ -280,7 +281,7 @@ def _preflight(
 
     if effect_sequence is not None:
         stamped_sequence: List[Any] = []
-        for step_extracted, step_ordered, step_event_ids in effect_sequence:
+        for step_extracted, step_ordered, step_event_ids, event_id in effect_sequence:
             stamped_step = dict(step_extracted)
             for field_name in stamp_fields:
                 raw_items = stamped_step.get(field_name)
@@ -290,7 +291,7 @@ def _preflight(
                         for raw_item in raw_items
                         if id(raw_item) not in rejected_origin_ids
                     ]
-            stamped_sequence.append((stamped_step, step_ordered, step_event_ids))
+            stamped_sequence.append((stamped_step, step_ordered, step_event_ids, event_id))
         effect_sequence = stamped_sequence
 
     run = SettlementRun(
@@ -358,14 +359,107 @@ def _preflight(
         in run.strategic_event_referenced_ids
     ]
 
-    run.current_extracted = clean
-    run.current_ordered = ordered_deltas
+    _defer_event_fields(run)
+    run.current_extracted = run.extracted
+    run.current_ordered = run.ordered_deltas
     run.current_event_ids = run.ordered_effect_event_ids
     run.pseudo_event = Event(
         id="season", title="月末整体推演", kind="月末", summary="",
         urgency=0, severity=0, credibility=100, interests=[], audiences=[],
     )
     return run
+
+
+def merge_effect_steps(steps: EffectSequence):
+    """Merge step inputs through the declaration field authority."""
+    from ming_sim.declaration_dispatch import _merge_effect_field
+    from ming_sim.issues import _merge_first_event_outcome
+
+    extracted = {}
+    ordered = {}
+    event_ids = {}
+    for payload, pairs, owners, event_id in steps:
+        for key, value in payload.items():
+            if key == "事件结局" and isinstance(value, dict):
+                _merge_first_event_outcome(extracted.setdefault(key, {}), value, event_id)
+            else:
+                _merge_effect_field(extracted, key, value)
+        for key, values in pairs.items():
+            ordered.setdefault(key, []).extend(values)
+        for key, values in owners.items():
+            event_ids.setdefault(key, []).extend(values)
+    return extracted, ordered, event_ids
+
+
+def _defer_event_fields(run) -> None:
+    """Keep event declarations/results at their existing gate; defer every other field.
+
+    The issue adapter already owns the five material-result fields. All remaining
+    envelope fields use the normal registry only after that same gate accepts.
+    """
+    if run.effect_sequence is None:
+        return
+    material_fields = {"region_delta", "army_delta", "power_updates", "new_armies", "人物变更", "事件结局"}
+    retained = []
+    for payload, ordered, owners, event_id in run.effect_sequence:
+        if event_id not in run.strategic_event_referenced_ids:
+            retained.append((payload, ordered, owners, event_id))
+            continue
+        gate = {key: value for key, value in payload.items() if key in material_fields}
+        deferred = {key: value for key, value in payload.items() if key not in material_fields}
+        if "new_issues" in deferred:
+            declarations = []
+            consequences = []
+            for item in deferred["new_issues"]:
+                target = declarations if (
+                    str(item.get("origin_kind") or "").lower() == "event_pool"
+                    and str(item.get("id") or item.get("origin_ref") or "").strip() == event_id
+                ) else consequences
+                target.append(item)
+            gate["new_issues"] = declarations
+            deferred["new_issues"] = consequences
+        retained.append((gate, {k: v for k, v in ordered.items() if k in gate},
+                         {k: v for k, v in owners.items() if k in gate}, event_id))
+        run.deferred_event_effects.setdefault(event_id, []).append((
+            deferred, {k: v for k, v in ordered.items() if k in deferred}, {}, "",
+        ))
+    run.effect_sequence = retained
+    run.extracted, run.ordered_deltas, run.ordered_effect_event_ids = merge_effect_steps(retained)
+
+
+def apply_deferred_event_fields(run, event_id: str, issue_summary) -> None:
+    """Land the accepted envelope's remaining fields with the existing adapters.
+
+    This is a section input view, not another transaction or a settlement replay.
+    Birth keys were stamped once in the parent preflight; credit is derived once
+    in the parent after all accepted sections have been collected.
+    """
+    steps = run.deferred_event_effects.get(event_id)
+    if not steps:
+        return
+    extracted, ordered, owners = merge_effect_steps(steps)
+    child = replace(
+        run, extracted=extracted, ordered_deltas=ordered,
+        ordered_effect_event_ids=owners, effect_sequence=steps,
+        current_extracted=extracted, current_ordered=ordered, current_event_ids=owners,
+        deferred_event_effects={}, strategic_event_pool_ids=set(),
+        strategic_event_delta_ids=set(), strategic_event_referenced_ids=set(),
+        strategic_event_result_delta_event_ids=set(), pre_issue_person_changes=[],
+        post_issue_person_changes=[], strategic_person_result_changes=[],
+        outcomes={}, shape_rejections=[], commitment_economy_carriers=[],
+    )
+    _run_effect_sequence(child)
+    _run_registry_after_interleave(child, skip={"credit_event"})
+    run.shape_rejections.extend(child.shape_rejections)
+    run.commitment_economy_carriers.extend(child.commitment_economy_carriers)
+    for name, result in child.outcomes.items():
+        if name == "issue":
+            for field_name in ("advances", "new_issues", "closes", "cancels", "applied_person_changes", "rejected", "applied"):
+                getattr(issue_summary, field_name).extend(getattr(result, field_name))
+        else:
+            _store(run, name, result)
+    if "emperor_fate" in extracted:
+        run.extracted["emperor_fate"] = extracted["emperor_fate"]
 
 
 def split_pre_issue_person_changes(
@@ -472,7 +566,7 @@ def _run_effect_sequence(run) -> None:
     from ming_sim.entities.region import delta_section as region_section
 
     assert run.effect_sequence is not None
-    for step_extracted, step_ordered, step_event_ids in run.effect_sequence:
+    for step_extracted, step_ordered, step_event_ids, _event_id in run.effect_sequence:
         run.current_extracted = step_extracted
         run.current_ordered = step_ordered
         run.current_event_ids = step_event_ids
@@ -647,7 +741,7 @@ def settle_delta(
         db._batch_frozen_open_affair_ids = prev_frozen
 
 
-def _run_registry_after_interleave(run) -> None:
+def _run_registry_after_interleave(run, *, skip=frozenset()) -> None:
     """逐笔交错跑完后，跑余额外段。
 
     逐笔路径已跑过的段（见 ``already_run``）此处不得重跑，否则同笔效果双落。
@@ -660,7 +754,7 @@ def _run_registry_after_interleave(run) -> None:
     run.current_ordered = run.ordered_deltas
     run.current_event_ids = run.ordered_effect_event_ids
     for spec in registry.section_specs():
-        if spec.name in already_run:
+        if spec.name in already_run or spec.name in skip:
             continue
         _capture(run, spec.name, registry.load(spec)(run))
 
