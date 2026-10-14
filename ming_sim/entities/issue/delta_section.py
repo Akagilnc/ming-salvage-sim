@@ -73,7 +73,10 @@ def apply(run) -> SectionResult:
     extras = _resolve_strategic_events(run, issue_summary)
     from ming_sim.settlement.run import _store
     for extra_name, extra in extras.items():
-        _store(run, extra_name, extra)
+        if extra_name == "issue":
+            issue_summary.rejected.extend(extra.rejected)
+        else:
+            _store(run, extra_name, extra)
     return issue_summary
 
 
@@ -95,6 +98,20 @@ def _suppressed_rows(run, event_id: str, event_title: str, reason: str = "") -> 
     for item in run.event_new_armies(event_id):
         raw_item = dict(item) if isinstance(item, dict) else item
         rows["new_armies"].append(RejectedItem(item={"event_id": event_id, "new_army": raw_item}, reason=reason, category="event_rejected", source=run.ctx.source))
+    from ming_sim.settlement import registry
+    sections = {key: spec.name for spec in registry.section_specs() for key in spec.delta_keys}
+    sections["bandit_absorptions"] = "bandit_absorptions"
+    for payload, _ordered, _owners, _event_id in run.deferred_event_effects.get(event_id, []):
+        for key, value in payload.items():
+            if value:
+                refusal = RejectedItem(
+                    item={"event_id": event_id, key: value}, reason=reason,
+                    category="event_rejected", source=run.ctx.source,
+                )
+                if key in sections:
+                    rows.setdefault(sections[key], []).append(refusal)
+                else:
+                    run.shape_rejections.append((key, refusal))
     return rows
 
 
@@ -210,8 +227,10 @@ def _resolve_strategic_events(run, issue_summary) -> Dict[str, SectionResult]:
         )
         apply_event_cascading_invalidations(run.state, run.db)
         new_issue["reason"] = "事件已记为触发，软判结果已落主账"
+        from ming_sim.settlement.run import apply_deferred_event_fields
+        apply_deferred_event_fields(run, event_id, issue_summary)
     return {
-        name: SectionResult(applied=rows, rejected=reject_bucket[name])
-        for name, rows in bucket.items()
-        if rows or reject_bucket[name]
+        name: SectionResult(applied=bucket.get(name, []), rejected=reject_bucket.get(name, []))
+        for name in bucket.keys() | reject_bucket.keys()
+        if bucket.get(name) or reject_bucket.get(name)
     }

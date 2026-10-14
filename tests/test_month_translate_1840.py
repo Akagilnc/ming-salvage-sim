@@ -581,7 +581,9 @@ def test_world_segment_repeated_strategic_results_apply_in_order(
     db.conn.execute("UPDATE armies SET morale=50 WHERE id='jingying'")
     db.conn.commit()
     if first_pressure == 35 and second_pressure == -5:
-        state.metrics["民心"] = 100
+        # Event-owned effects may land after independent effects; do not lock
+        # their unprotected relative order at the metric cap (#1873).
+        state.metrics["民心"] = 90
     metric_before = state.metrics["民心"]
     treasury_before = state.metrics["国库"]
     farmers_before = _pop(db, "农民", "shaanxi")
@@ -600,7 +602,7 @@ def test_world_segment_repeated_strategic_results_apply_in_order(
         first_effect["event_id"] = "jisi_lubian"
         if first_pressure in (35, 10, "非法增量"):
             first_effect.update({
-                "metric_delta": {"民心": -10 if metric_before == 100 else -2},
+                "metric_delta": {"民心": -10 if metric_before == 90 else -2},
                 "economy_moves": [{"origin_ref": "盘面自发", "account": "国库", "delta": -1,
                                    "category": "过月支出", "reason": "被拒战果军需"}],
                 "faction_delta": {faction["name"]: {"satisfaction": -2}},
@@ -645,7 +647,7 @@ def test_world_segment_repeated_strategic_results_apply_in_order(
         }]})
     if first_pressure == "非法增量" and first_reason is not None:
         effects.append({"metric_delta": {"民心": 1}})
-    elif metric_before == 100:
+    elif metric_before == 90:
         effects.append({"metric_delta": {"民心": 5}})
     stub_month_translate(monkeypatch, lambda r, c: {"effects": effects})
     dispatch_month_segment(db, state, segment="己巳之变两笔战果")
@@ -653,8 +655,8 @@ def test_world_segment_repeated_strategic_results_apply_in_order(
     assert db.conn.execute("SELECT military_pressure FROM regions WHERE id='beizhili'").fetchone()[0] == pressure
     assert db.conn.execute("SELECT morale FROM armies WHERE id='jingying'").fetchone()[0] == morale
     if first_pressure in (35, 10, "非法增量") and first_reason is not None:
-        declared_delta = (-10 if metric_before == 100 else -2) if triggered else 0
-        independent_delta = 5 if metric_before == 100 else (1 if first_pressure == "非法增量" else 0)
+        declared_delta = (-10 if metric_before == 90 else -2) if triggered else 0
+        independent_delta = 5 if metric_before == 90 else (1 if first_pressure == "非法增量" else 0)
         assert state.metrics["民心"] == metric_before + declared_delta + independent_delta
         assert state.metrics["国库"] == treasury_before + (-1 if triggered else 0)
         assert db.conn.execute("SELECT COUNT(*) FROM economy_ledger WHERE reason='被拒战果军需'").fetchone()[0] == int(triggered)
@@ -705,6 +707,9 @@ def test_hidden_affair_strategic_result_does_not_trigger_or_land(game, monkeypat
     db.conn.commit()
     metric_before = state.metrics["民心"]
     treasury_before = state.metrics["国库"]
+    pressure_before = db.conn.execute(
+        "SELECT military_pressure FROM regions WHERE id='beizhili'"
+    ).fetchone()[0]
     stub_month_translate(monkeypatch, lambda _request, _config: {
         "effects": [{
             "event_id": "jisi_lubian",
@@ -724,6 +729,9 @@ def test_hidden_affair_strategic_result_does_not_trigger_or_land(game, monkeypat
     assert db.issues.has_event_terminal_state('jisi_lubian', "triggered") is False
     assert state.metrics["民心"] == metric_before
     assert state.metrics["国库"] == treasury_before
+    assert db.conn.execute(
+        "SELECT military_pressure FROM regions WHERE id='beizhili'"
+    ).fetchone()[0] == pressure_before
 
 
 def _closed_affair(db, state):
@@ -881,47 +889,104 @@ def test_unknown_station_region_new_army_does_not_trigger_or_land(game, monkeypa
     assert db.conn.execute("SELECT COUNT(*) FROM armies").fetchone()[0] == armies_before
 
 
-def test_final_strategic_rejection_leaves_no_owned_effects(game, monkeypatch):
-    """Owned fields and the event ledger stay one envelope.
+def test_final_strategic_rejection_leaves_no_owned_effects(game, monkeypatch, tmp_path):
+    """The real player month rejects the whole envelope after an independent change."""
+    from tests.test_month_chain_1843 import _prepare_player_month
+    from tests.test_refugee_loop_652 import _pop
+    from tests.army_pay_helpers import configure_guanning_army, _set_guanning_arrears
+    from ming_sim.db import GameDB
+    from tests.conftest import wait_for_background_jobs
 
-    An independent same-kind delta may move the board before the event is
-    judged (#1844). Whatever this entry finally records, a non-trigger must
-    not keep the event's own metric or treasury delta.
-    """
-    from ming_sim.month_translate import dispatch_month_segment
-
-    db, state, _ = game
-    state.year, state.period = 1629, 11
+    db, state, content = game
+    state.year, state.period = 1631, 8
     state.metrics["民心"] = 50
-    db.conn.execute("UPDATE regions SET military_pressure=90 WHERE id='beizhili'")
+    db.conn.execute("UPDATE regions SET controlled_by='ming' WHERE id='liaodong'")
+    configure_guanning_army(db)
+    _set_guanning_arrears(db, 5000)
+    db.conn.execute("UPDATE armies SET supply=40 WHERE id='guanning'")
+    db.conn.execute("UPDATE powers SET military_strength=80 WHERE id='houjin'")
+    # This month already handled the unrelated scheduled levy request.
+    db.mark_event_triggered(state, "liao_levy_rise_1631", terminal_reason="已驳", commit=False)
+    db.reign.save_game_state(state)
     db.conn.commit()
-    metric_before = state.metrics["民心"]
-    treasury_before = state.metrics["国库"]
-    stub_month_translate(monkeypatch, lambda _request, _config: {
+    declaration = {
         "effects": [
-            {"region_delta": {"beizhili": {
-                "origin_ref": "盘面自发", "military_pressure": 10,
-            }}},
+            {"army_delta": {"guanning": {"origin_ref": "盘面自发", "supply": 10}}},
             {
-                "event_id": "jisi_lubian",
-                "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-                "事件结局": {"jisi_lubian": "入塞被遏"},
-                "region_delta": {"beizhili": {
-                    "origin_ref": "盘面自发", "military_pressure": 5,
-                    "reason": "己巳之变敌逼京畿",
+                "event_id": "dalingghe",
+                "new_issues": [{"origin_kind": "event_pool", "id": "dalingghe"}],
+                "region_delta": {"liaodong": {
+                    "origin_ref": "盘面自发", "unrest": 1,
                 }},
                 "metric_delta": {"民心": -3},
                 "economy_moves": [{
                     "origin_ref": "盘面自发", "account": "国库", "delta": -1,
-                    "category": "过月支出", "reason": "事件所属军需",
+                    "category": "event_owned", "reason": "军需",
+                }, {
+                    "origin_ref": "盘面自发", "account": "内库", "delta": -1,
+                    "category": "event_owned", "reason": "内帑军需",
+                }],
+                "population_transfers": [{
+                    "origin_ref": "盘面自发", "source": "农民@shaanxi",
+                    "target": "流民@shaanxi", "amount": 300, "reason": "灾害",
+                }],
+                "fiscal_creates": [{
+                    "origin_ref": "盘面自发", "key": "event_owned", "account": "国库",
+                    "direction": "expense", "init_value": 1,
                 }],
             },
+            {
+                "event_id": "dalingghe", "metric_delta": {"皇威": -2},
+            },
         ],
-    })
-    dispatch_month_segment(db, state, segment="独立军压后事件战果")
-    triggered = db.issues.has_event_terminal_state('jisi_lubian', "triggered")
-    assert state.metrics["民心"] == metric_before + (-3 if triggered else 0)
-    assert state.metrics["国库"] == treasury_before + (-1 if triggered else 0)
+    }
+    # Real monthly drift still runs: compare to the same board with only the
+    # independent effect, rather than attributing every monthly change to this event.
+    control_dir = tmp_path / "control"
+    control_dir.mkdir()
+    control = GameDB(str(control_dir / "game.db"), content)
+    try:
+        db.conn.backup(control.conn)
+        control_state = control.load_state()
+        control_session = _prepare_player_month(
+            control, control_state, content, monkeypatch,
+            world=lambda *_a, **_k: "关宁补给改善。",
+            translate=lambda *_a, **_k: {"effects": declaration["effects"][:1]},
+        )
+        assert control_session.resolve_turn(allow_empty_decree=True).stage == "gazette"
+        wait_for_background_jobs(control)
+        expected_metrics = dict(control_state.metrics)
+        expected_refugees = _pop(control, "流民", "shaanxi")
+        expected_liaodong_unrest = control.conn.execute(
+            "SELECT unrest FROM regions WHERE id='liaodong'"
+        ).fetchone()[0]
+    finally:
+        wait_for_background_jobs(control)
+        control.conn.close()
+
+    def translate(request, _config):
+        assert "dalingghe" in {event["id"] for event in request.candidates["events"]}
+        return declaration
+
+    session = _prepare_player_month(db, state, content, monkeypatch,
+                                    world=lambda *_a, **_k: "关宁补给改善，本月战事未发。",
+                                    translate=translate)
+    result = session.resolve_turn(allow_empty_decree=True)
+    assert result.stage == "gazette"
+    wait_for_background_jobs(db)
+    assert not db.issues.has_event_terminal_state("dalingghe", "triggered")
+    assert db.conn.execute("SELECT supply FROM armies WHERE id='guanning'").fetchone()[0] == 50
+    assert {key: state.metrics[key] for key in ("民心", "皇威", "国库", "内库")} == {
+        key: expected_metrics[key] for key in ("民心", "皇威", "国库", "内库")
+    }
+    assert _pop(db, "流民", "shaanxi") == expected_refugees
+    assert db.conn.execute(
+        "SELECT unrest FROM regions WHERE id='liaodong'"
+    ).fetchone()[0] == expected_liaodong_unrest
+    assert db.conn.execute("SELECT COUNT(*) FROM economy_ledger WHERE category='event_owned'").fetchone()[0] == 0
+    assert "event_owned_base" not in db.fiscal_config.values()
+    categories = {row[0] for row in db.conn.execute("SELECT category FROM rejection_reports")}
+    assert "event_rejected" in categories
 
 
 

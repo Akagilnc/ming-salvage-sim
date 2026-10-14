@@ -471,14 +471,8 @@ def _dispatch_effects(
         db, state, [(event_id, clean) for _, event_id, clean in clean_items],
         open_affair_ids=set(refs.get("affairs", ())),
     )
-    extraction: dict[str, object] = {}
-    ordered_deltas: dict[str, list[tuple[str, object]]] = {field: [] for field in _ORDERED_DELTA_FIELDS}
-    ordered_effect_event_ids: dict[str, list[str]] = {}
     effect_sequence: EffectSequence = []
     accepted_effect = False
-    from ming_sim.issues import (
-        _merge_first_event_outcome,
-    )
     for index, (item, event_id, clean) in enumerate(clean_items):
         if index in rejected_events:
             rejected.append(RejectedItem(
@@ -497,21 +491,12 @@ def _dispatch_effects(
                 category="invalid_state",
                 source=source,
             ))
-        effect_sequence.append((step_extraction, step_ordered, step_event_ids))
-        for field, value in step_extraction.items():
-            if field == "事件结局" and isinstance(value, dict):
-                current = extraction.setdefault("事件结局", {})
-                if isinstance(current, dict):
-                    _merge_first_event_outcome(current, value, event_id)
-                    continue
-            _merge_effect_field(extraction, field, value)
-        for field, pairs in step_ordered.items():
-            ordered_deltas[field].extend(pairs)
-        for field, event_ids in step_event_ids.items():
-            ordered_effect_event_ids.setdefault(field, []).extend(event_ids)
+        effect_sequence.append((step_extraction, step_ordered, step_event_ids, event_id))
     if not accepted_effect:
         return SectionResult(applied=[], rejected=rejected)
 
+    from ming_sim.settlement.run import merge_effect_steps
+    extraction, ordered_deltas, ordered_effect_event_ids = merge_effect_steps(effect_sequence)
     outcome = settle_delta(
         state, db, extraction,
         SettlementContext(
