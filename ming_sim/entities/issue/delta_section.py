@@ -100,6 +100,7 @@ def _suppressed_rows(run, event_id: str, event_title: str, reason: str = "") -> 
         rows["new_armies"].append(RejectedItem(item={"event_id": event_id, "new_army": raw_item}, reason=reason, category="event_rejected", source=run.ctx.source))
     from ming_sim.settlement import registry
     sections = {key: spec.name for spec in registry.section_specs() for key in spec.delta_keys}
+    sections["bandit_absorptions"] = "bandit_absorptions"
     for payload, _ordered, _owners, _event_id in run.deferred_event_effects.get(event_id, []):
         for key, value in payload.items():
             if value:
