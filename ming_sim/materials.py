@@ -78,7 +78,8 @@ def write_identity_materials(
         name = str(raw or "").strip()
         row = (
             db.conn.execute(
-                'SELECT name, office, office_type FROM characters WHERE name=?',
+                'SELECT name, office, office_type, style, summary, personal_skills '
+                'FROM characters WHERE name=?',
                 (name,),
             ).fetchone()
             if name
@@ -87,6 +88,7 @@ def write_identity_materials(
         if row is None:
             continue  # 不是真人物（如「某类人」式题名）：没有身份材料，不编
         character = SimpleNamespace(**dict(row))
+        character.personal_skills = _json_list_field(row["personal_skills"])
         knowledge = build_character_knowledge(db, state, name)
         # Same affair-authority projection as scene materials (F45 / ADR 0154).
         matter_lines = _character_affair_lines(db, state, name, knowledge)
@@ -820,6 +822,12 @@ def _write_tree(
     index.append(_COURT_ROSTER_REL)
 
     person_dir = tmp / _PERSON_DIR / _safe_segment(name)
+    # Personality uses the same projection as scene dossiers, without adding ability axes.
+    from ming_sim.context import minister_dossier
+
+    _write_text(person_dir / "人物档料.txt", minister_dossier(character))
+    index.append(f"{_PERSON_DIR}/{_safe_segment(name)}/人物档料.txt")
+
     _write_text(person_dir / "经历.txt", _experience_text(knowledge, _person_audience_experience(db, name)))
     index.append(f"{_PERSON_DIR}/{_safe_segment(name)}/经历.txt")
 

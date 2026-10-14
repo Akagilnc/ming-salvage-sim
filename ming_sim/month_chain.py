@@ -1281,9 +1281,10 @@ def _attach_investigation_facts(
 ) -> List[Dict[str, Any]]:
     """#1896 给 4a 逐证清单：每条实有罪证的键、已投入多少、还差多少、是否已被毁。
 
-    并按身份接入办案人与被查者的可及材料（#1814）：4a 一次 run 里既扮办案人
-    决定查法与投入，也扮经真实关系网知情后的被查者决定毁证／压案／不动——
-    两个人各自只见自己身份下能接触到的材料（ADR 0034／0155），同场不等于全知。
+    每条在办密令均按执行大臣身份接入本人整套可及材料（#1904），不以查案为前提。
+    有被查者时另附其身份材料（#1814）：4a 一次 run 里既扮办案人决定查法与投入，
+    也扮经真实关系网知情后的被查者决定毁证／压案／不动。各人只见自己身份下
+    能接触到的材料（ADR 0034／0155），同场不等于全知。
 
     供料是人物"能接触到的材料"：只列真相底 live 集里的实有罪证，不塞机制说明
     以外的判定口径；空 lane 集照列空清单（清白目标也照开案，不因无证而拒开——
@@ -1303,6 +1304,10 @@ def _attach_investigation_facts(
     out: List[Dict[str, Any]] = []
     for raw in orders:
         order = dict(raw)
+        investigator = str(order.get("minister_name") or "")
+        order["investigator_identity_materials"] = _identity_materials(
+            db, state, investigator,
+        )
         dossier = db.dossiers.get_for_secret_order(int(order.get("id") or 0))
         if dossier is None:
             out.append(order)
@@ -1313,7 +1318,6 @@ def _attach_investigation_facts(
             out.append(order)
             continue
         did = int(dossier["id"])
-        investigator = str(order.get("minister_name") or "")
         lanes = {
             str(lane["fact_key"]): lane
             for lane in _lanes_from_payload(_dossier_payload_map(db, did))
@@ -1337,9 +1341,6 @@ def _attach_investigation_facts(
             })
         order["investigation_target"] = target
         order["investigation_facts"] = facts
-        order["investigator_identity_materials"] = _identity_materials(
-            db, state, investigator,
-        )
         order["investigation_target_identity_materials"] = _identity_materials(
             db, state, target,
         )
