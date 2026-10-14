@@ -1179,6 +1179,8 @@ def test_4a_rejects_unknown_reactions_and_bad_prose_without_losing_effort(
     session = make_light_session(db, state, content)
     session.llm_config = LLMConfig(api_key="sk-test", base_url="https://example.invalid", model="test")
     assert session.resolve_turn(allow_empty_decree=True).stage == "advanced"
+    from tests.conftest import wait_for_background_jobs
+    wait_for_background_jobs(db)
     chain = month_chain._load_chain(db, turn)
     assert chain.get("covert_progress_done") is True
     assert chain.get("secret_orders_supply_invalid") is not True
