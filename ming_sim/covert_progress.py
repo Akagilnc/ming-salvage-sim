@@ -17,7 +17,7 @@ from ming_sim.applier import RejectedItem, Provenance, reject_item
 import copy
 import json
 import math
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from ming_sim.constants import ECONOMY_ACCOUNTS, REGION_FIELD_ALIASES
 from ming_sim.person_archive_contract import PERSON_ACTIONS
@@ -62,17 +62,8 @@ def normalize_direction(raw: object, *, default: int = 1) -> int:
     return 1 if value >= 0 else -1
 
 FIDELITY_STATES: tuple[str, ...] = ("忠实", "打折", "阳奉阴违", "反噬")
-_FIDELITY_INDEX = {name: idx for idx, name in enumerate(FIDELITY_STATES)}
-
-PROGRESS_UNITS: Dict[str, float] = {
-    "忠实": 1.0,
-    "打折": 0.5,
-    "阳奉阴违": 0.0,
-    "反噬": 0.0,
-}
 
 CONTRACT_KEY = "covert_task_contract"
-CONTRACT_VERSION = 1
 CANONICAL_UNITS = ("万两", "人犯", "万亩")
 FACT_LANES_KEY = "fact_lanes"
 INVESTIGATION_PROVENANCE_KEY = "investigation_provenance"
@@ -157,16 +148,9 @@ def normalize_fidelity_state(raw: object) -> Optional[str]:
     text = str(raw or "").strip()
     if not text:
         return None
-    if text in _FIDELITY_INDEX:
+    if text in FIDELITY_STATES:
         return text
     return None
-
-
-def progress_units_for_state(state: object) -> float:
-    name = normalize_fidelity_state(state)
-    if name is None:
-        return 0.0
-    return float(PROGRESS_UNITS[name])
 
 
 _DEBT_SEVERITIES = frozenset({"轻", "中", "重"})
@@ -190,121 +174,6 @@ def seed_guilt_counts_as_debt(seed_guilt: object) -> bool:
     guilt = _parse_seed_guilt(seed_guilt)
     severity = str(guilt.get("severity") or "").strip()
     return severity in _DEBT_SEVERITIES
-
-
-def covert_task_from_payload(payload: object) -> Optional[Dict[str, object]]:
-    """#1376 候选 payload → typed contract 字段；不读 tags / title / content。"""
-    if not isinstance(payload, Mapping):
-        return None
-    nested = payload.get("covert_task")
-    source: Mapping[str, object]
-    if isinstance(nested, Mapping):
-        source = nested
-    else:
-        source = payload
-    kind = str(source.get("kind") or payload.get("kind") or "")
-    axes = source.get("axes")
-    if axes is None:
-        axes = payload.get("axes")
-    delivery = source.get("delivery") if isinstance(source.get("delivery"), Mapping) else source
-    unit = str(
-        delivery.get("unit")
-        or source.get("delivery_unit")
-        or payload.get("delivery_unit")
-        or ""
-    ).strip()
-    target = delivery.get("target_units")
-    if target is None:
-        target = source.get("delivery_target_units")
-    if target is None:
-        target = payload.get("delivery_target_units")
-    direction = source.get("direction")
-    if direction is None:
-        direction = payload.get("direction")
-    effect_sign = delivery.get("effect_sign")
-    if effect_sign is None:
-        effect_sign = source.get("effect_sign")
-    purpose = delivery.get("purpose")
-    if purpose is None:
-        purpose = source.get("purpose")
-    category = delivery.get("category")
-    if category is None:
-        category = source.get("category")
-    account = delivery.get("account")
-    if account is None:
-        account = source.get("account")
-    target_kind = delivery.get("target_kind")
-    if target_kind is None:
-        target_kind = source.get("target_kind")
-    if target_kind is None:
-        target_kind = payload.get("target_kind")
-    target_id = delivery.get("target_id")
-    if target_id is None:
-        target_id = source.get("target_id")
-    if target_id is None:
-        target_id = payload.get("target_id")
-    region = delivery.get("region")
-    if region is None:
-        region = source.get("region")
-    field = delivery.get("field")
-    if field is None:
-        field = source.get("field")
-    region_target = delivery.get("target")
-    if region_target is None:
-        region_target = source.get("target")
-    person_action = delivery.get("person_action")
-    if person_action is None:
-        person_action = source.get("person_action")
-    investigation_target = str(
-        delivery.get("investigation_target")
-        or source.get("investigation_target")
-        or payload.get("investigation_target")
-        or ""
-    )
-    investigation_fact = str(
-        delivery.get("investigation_fact")
-        or source.get("investigation_fact")
-        or payload.get("investigation_fact")
-        or ""
-    )
-    if not kind.strip() and not unit and target is None and not normalize_axes(axes) and not investigation_target.strip():
-        return None
-    out: Dict[str, object] = {}
-    if kind.strip():
-        out["kind"] = kind
-    if axes is not None:
-        out["axes"] = axes
-    if direction is not None:
-        out["direction"] = direction
-    if unit:
-        out["delivery_unit"] = unit
-    if target is not None:
-        out["delivery_target_units"] = target
-    if effect_sign is not None:
-        out["effect_sign"] = effect_sign
-    if purpose is not None:
-        out["purpose"] = purpose
-    if category is not None:
-        out["category"] = category
-    if account is not None:
-        out["account"] = account
-    if target_kind is not None:
-        out["target_kind"] = target_kind
-    if target_id is not None:
-        out["target_id"] = target_id
-    if region is not None:
-        out["region"] = region
-    if field is not None:
-        out["field"] = field
-    if region_target is not None:
-        out["target"] = region_target
-    if person_action is not None:
-        out["person_action"] = person_action
-    if investigation_target:
-        out["investigation_target"] = investigation_target
-    if investigation_fact:
-        out["investigation_fact"] = investigation_fact
-    return out or None
 
 
 def canonicalize_delivery_unit(unit: object, target: object) -> tuple[str, float]:
@@ -362,43 +231,27 @@ def build_covert_task_contract(
     investigation_fact: object = None,
 ) -> Dict[str, object]:
     """确认闸一次生成可被 canonical applier 接受的 typed contract。缺字段响亮失败。"""
-    extracted = covert_task_from_payload(
-        {"covert_task": covert_task} if covert_task is not None else {},
-    )
-    if extracted:
-        kind = kind or extracted.get("kind")
-        if axes is None:
-            axes = extracted.get("axes")
-        if direction is None:
-            direction = extracted.get("direction")
-        if delivery_unit is None:
-            delivery_unit = extracted.get("delivery_unit")
-        if delivery_target_units is None:
-            delivery_target_units = extracted.get("delivery_target_units")
-        if effect_sign is None:
-            effect_sign = extracted.get("effect_sign")
-        if purpose is None:
-            purpose = extracted.get("purpose")
-        if category is None:
-            category = extracted.get("category")
-        if account is None:
-            account = extracted.get("account")
-        if target_kind is None:
-            target_kind = extracted.get("target_kind")
-        if target_id is None:
-            target_id = extracted.get("target_id")
-        if region is None:
-            region = extracted.get("region")
-        if field is None:
-            field = extracted.get("field")
-        if region_target is None:
-            region_target = extracted.get("target")
-        if person_action is None:
-            person_action = extracted.get("person_action")
-        if investigation_target is None:
-            investigation_target = extracted.get("investigation_target")
-        if investigation_fact is None:
-            investigation_fact = extracted.get("investigation_fact")
+    if covert_task is not None:
+        if not isinstance(covert_task, Mapping) or not isinstance(covert_task.get("delivery"), Mapping):
+            raise CovertContractError("密令契约须为对象并带 delivery 对象")
+        delivery = covert_task["delivery"]
+        kind = covert_task.get("kind")
+        axes = covert_task.get("axes")
+        direction = covert_task.get("direction")
+        delivery_unit = delivery.get("unit")
+        delivery_target_units = delivery.get("target_units")
+        effect_sign = delivery.get("effect_sign")
+        purpose = delivery.get("purpose")
+        category = delivery.get("category")
+        account = delivery.get("account")
+        target_kind = delivery.get("target_kind")
+        target_id = delivery.get("target_id")
+        region = delivery.get("region")
+        field = delivery.get("field")
+        region_target = delivery.get("target")
+        person_action = delivery.get("person_action")
+        investigation_target = covert_task.get("investigation_target")
+        investigation_fact = covert_task.get("investigation_fact")
     resolved_kind = str(kind or "")
     if not resolved_kind.strip():
         raise CovertContractError("密令确认缺少差务类型")
@@ -418,10 +271,8 @@ def build_covert_task_contract(
             "target_units": qty,
             "effect_sign": _require_effect_sign(effect_sign),
             "canonical_fields": [],
-            "investigation_target": inv_target,
         }
         contract = {
-            "version": CONTRACT_VERSION,
             "action_type": str(action_type or "secret_order"),
             "kind": resolved_kind,
             "axes": axis_list,
@@ -433,7 +284,6 @@ def build_covert_task_contract(
         if inv_fact.strip():
             # 线索所指事实：汇案时按它把真实线索绑到对应实证（J9）。
             contract["investigation_fact"] = inv_fact
-            delivery["investigation_fact"] = inv_fact
         return contract
     unit, target = canonicalize_delivery_unit(delivery_unit, delivery_target_units)
     delivery: Dict[str, object] = {
@@ -494,7 +344,6 @@ def build_covert_task_contract(
             f"密令确认交付 identity 缺少：{','.join(missing_identity)}"
         )
     return {
-        "version": CONTRACT_VERSION,
         "action_type": str(action_type or "secret_order"),
         "kind": resolved_kind,
         "axes": axis_list,
@@ -512,10 +361,9 @@ _CONTRACT_EXAMPLES: tuple[Dict[str, object], ...] = (
         "kind": "查案",
         "axes": ["实务事功"],
         "direction": 1,
+        "investigation_target": "魏忠贤",
         "delivery": {
-            "unit": "人犯",
             "target_units": 3,
-            "person_action": "处置",
             "effect_sign": 1,
         },
     },
@@ -583,15 +431,16 @@ def describe_covert_task_contract() -> str:
     return (
         f"{samples}\n"
         f"    必填：kind（差务类型）、axes（六轴之一：{axes}）、direction（1 顺轴 / -1 逆轴）、"
-        f"delivery.unit（{units}）、delivery.target_units（正数）、delivery.effect_sign（+1 / -1）。\n"
-        f"    按 unit 另须给足交付身份：人犯 → person_action（{actions}）；"
+        f"delivery.target_units（正数）、delivery.effect_sign（+1 / -1）。\n"
+        f"    不查人的差务还须 delivery.unit（{units}），并给足交付身份：人犯 → person_action（{actions}）；"
         f"万亩 → region / field（{fields}）/ target。\n"
         f"    万两的 effect_sign 定向钱：+1 是收入（臣上交），只要 {income_keys}"
         f"（account 取 {accounts}）；"
         f"-1 是支出（皇帝拨出），须另给 {spend_keys}；"
         f"purpose=补饷 时还须 {subsidy_keys}（target_id 取军额 id）。"
         f"收入不得写 purpose=补饷。\n"
-        "    查 investigative_target 的暗查则给 investigation_target（可数目标）+ target_units + effect_sign。\n"
+        "    查人的暗查给 investigation_target（被查者）；delivery 给 target_units（取证条数）+ effect_sign，"
+        "不用交付单位及交付身份。\n"
         "    上述字段缺一即拒收该条密令；不得凭空编造闭集外的值。"
     )
 
@@ -611,8 +460,6 @@ def coerce_covert_task_contract(raw: object) -> Optional[Dict[str, object]]:
 
     if not isinstance(raw, Mapping):
         _reject(f"须为对象，得 {type(raw).__name__}")
-    if raw.get("version") != CONTRACT_VERSION:
-        _reject(f"version 非法：{raw.get('version')!r}")
     delivery = raw.get("delivery")
     if not isinstance(delivery, Mapping):
         _reject("缺少 delivery 对象")
@@ -620,9 +467,7 @@ def coerce_covert_task_contract(raw: object) -> Optional[Dict[str, object]]:
         _reject("kind/axes 无效")
     if raw.get("direction") not in (-1, 1):
         _reject("direction 非法")
-    inv_target = str(
-        raw.get("investigation_target") or delivery.get("investigation_target") or ""
-    )
+    inv_target = _investigation_target_of(raw)
     if inv_target.strip():
         try:
             qty = float(delivery.get("target_units"))
@@ -636,8 +481,6 @@ def coerce_covert_task_contract(raw: object) -> Optional[Dict[str, object]]:
             _reject("effect_sign 非法")
         if list(delivery.get("canonical_fields") or []):
             _reject("investigation 不得带 canonical_fields")
-        if str(delivery.get("investigation_target") or "").strip() != inv_target:
-            _reject("investigation_target 不一致")
         return copy.deepcopy(dict(raw))
     unit, target = canonicalize_delivery_unit(
         delivery.get("unit"), delivery.get("target_units"),
@@ -700,11 +543,9 @@ def decide_secret_order_settlement(review_input: Mapping[str, object]) -> Dict[s
     delivered = target > 0.0 and actual + 1e-9 >= target
     if delivered:
         status = "done"
-        outcome = "fulfilled"
         note = f"machine_settle delivered Σ={actual:g}/{target:g}"
     else:
         status = "failed"
-        outcome = "failed"
         note = f"machine_settle gap Σ={actual:g}/{target:g}"
         if has_reports:
             note = f"{note};表报有之、不翻实账"
@@ -712,13 +553,7 @@ def decide_secret_order_settlement(review_input: Mapping[str, object]) -> Dict[s
         note = f"{note} ({origin})"
     return {
         "status": status,
-        "outcome": outcome,
         "note": note,
-        "close": True,
-        "is_terminal": True,
-        "actual_units": actual,
-        "target_units": target,
-        "delivered": delivered,
     }
 
 
@@ -961,10 +796,7 @@ def _append_investigation_log(
     截尾会让跨月的知情／因果承接读不到上月记录（也是 R5 的一半病根）。
     """
     payload = _dossier_payload_map(db, dossier_id)
-    raw = payload.get(key)
-    if raw is not None and not isinstance(raw, list):
-        raise ValueError(f"{key} 须为数组，得 {type(raw).__name__}")
-    items = list(raw or [])
+    items = _mapping_members(payload.get(key), key)
     items.append(dict(entry))
     payload[key] = items
     db.dossiers.update_payload(int(dossier_id), payload, commit=False)
@@ -1160,6 +992,8 @@ def investigation_monthly_capacity(
 
 def record_investigation_source_clue(
     db: Any, dossier_id: int, *, fact_key: str = "", turn: int = 0,
+    pending_action_id: int = 0, origin_chat_message_ids: Sequence[int] = (),
+    origin: str = "case_opening",
 ) -> None:
     """开案时把**带指针的本案来源**记成一条真实线索（#1896 R6）。
 
@@ -1178,22 +1012,14 @@ def record_investigation_source_clue(
     key = str(fact_key or "").strip()
     if not key:
         return  # 无指针的开案不是一条来源线索，不造
-    payload = _dossier_payload_map(db, int(dossier_id))
-    clues = payload.get(INVESTIGATION_CLUES_KEY)
-    if clues is None:
-        clues = []
-    elif not isinstance(clues, list):
-        raise ValueError(f"{INVESTIGATION_CLUES_KEY} 须为数组，得 {type(clues).__name__}")
-    clues.append({
-        "pending_action_id": 0,
-        "origin_chat_message_ids": [],
+    _append_investigation_log(db, dossier_id, INVESTIGATION_CLUES_KEY, {
+        "pending_action_id": int(pending_action_id or 0),
+        "origin_chat_message_ids": [int(x) for x in origin_chat_message_ids],
         "fact_key": key,
         "turn": int(turn or 0),
         "credited": False,
-        "origin": "case_opening",
+        "origin": origin,
     })
-    payload[INVESTIGATION_CLUES_KEY] = clues
-    db.dossiers.update_payload(int(dossier_id), payload, commit=False)
 
 
 def seed_investigation_fact_lanes(
@@ -1270,7 +1096,7 @@ def _consume_monthly_clues(
     live: set[str],
     blocked: set[str],
     capacity: float,
-) -> float:
+) -> None:
     """线索只助其所指实有实证：把并入本案的真实线索按所指 fact_key 记成实投。
 
     - 指向不存在/已被别案查获的罪 → 确定性丢弃（不造罪、不重复查获）；
@@ -1290,12 +1116,11 @@ def _consume_monthly_clues(
     """
     # 未到差与零带宽：线索也不加成。不标 credited，人到场后仍可一次性消费。
     if float(capacity) <= 0.0:
-        return 0.0
+        return
     by_key = {str(lane["fact_key"]): lane for lane in lanes}
     clues = investigation_clue_records(db, dossier_id)
     if not clues:
-        return 0.0
-    credited = 0.0
+        return
     for clue in clues:
         if bool(clue.get("credited")):
             continue
@@ -1313,7 +1138,6 @@ def _consume_monthly_clues(
             clue["dropped_fact_key"] = key
             continue
         lane["effort"] = float(lane.get("effort") or 0.0) + _CLUE_ASSIST_EFFORT
-        credited += _CLUE_ASSIST_EFFORT
         difficulty = investigation_fact_difficulty(
             db, target=target, fact_key=key, investigator=investigator,
         )
@@ -1326,7 +1150,6 @@ def _consume_monthly_clues(
     payload = _dossier_payload_map(db, dossier_id)
     payload[INVESTIGATION_CLUES_KEY] = clues
     db.dossiers.update_payload(int(dossier_id), payload, commit=False)
-    return credited
 
 
 def apply_investigation_monthly_effort(
@@ -1337,7 +1160,7 @@ def apply_investigation_monthly_effort(
     *,
     fact_key: str = "",
     intensity: float = 0.0,
-) -> Dict[str, object]:
+) -> None:
     """#1896 逐证核算：人物声明"下了多大劲"，引擎核出本月实投再记到该条事实上。
 
     与旧轨的分别（ADR 0098 后出修订取代项）：
@@ -1355,99 +1178,35 @@ def apply_investigation_monthly_effort(
     lanes = seed_investigation_fact_lanes(
         db, dossier_id, target, investigator=investigator,
     )
-    declared = _declared_intensity(intensity)
-    if declared is None:
-        # 非有限／非数值不是"零投入"：调用方（4a 声明读口）已先拒收无效声明，
-        # 这里再守一道，避免任何直调把 NaN/inf 当合法强度折算成实投。
-        declared = 0.0
     live = set(live_investigation_fact_keys(db, target))
     blocked = globally_used_fact_keys(db, except_dossier_id=int(dossier_id))
     capacity = investigation_monthly_capacity(
         db, investigator, dossier_id=int(dossier_id), target=target,
     )
-    amount = declared * capacity
-
+    # The declaration reader has already validated and clamped intensity.
+    amount = intensity * capacity
     bound = str(fact_key or "").strip()
-    if bound and (bound not in live or bound in blocked):
-        # 线索只助其所指实有证据：指向不存在/已被别案查获的事实 → 确定性丢弃。
-        _consume_monthly_clues(
-            db, dossier_id, target, investigator, lanes,
-            live=live, blocked=blocked, capacity=capacity,
-        )
-        _write_fact_lanes(db, dossier_id, lanes)
-        return {
-            "bound_fact_key": "", "effort_applied": 0.0, "mastered": [],
-            "units": 0.0, "dropped_fact_key": bound,
-        }
-    if bound:
-        already = next(
-            (lane for lane in lanes
-             if str(lane["fact_key"]) == bound and lane.get("mastered")),
-            None,
-        )
-        if already is not None:
-            # 本案已掌握该证：人物不再重复投入。独立新证线索仍按到差消费。
-            credited = _consume_monthly_clues(
-                db, dossier_id, target, investigator, lanes,
-                live=live, blocked=blocked, capacity=capacity,
+    if bound in live and bound not in blocked and amount > 0.0:
+        for lane in lanes:
+            key = str(lane["fact_key"])
+            if key != bound or lane.get("mastered"):
+                continue
+            difficulty = investigation_fact_difficulty(
+                db, target=target, fact_key=key, investigator=investigator,
             )
-            _write_fact_lanes(db, dossier_id, lanes)
-            return {
-                "bound_fact_key": bound, "effort_applied": 0.0,
-                "clue_credited": credited, "mastered": [],
-                "units": investigation_lane_actual_units(db, int(dossier_id)),
-            }
-    if not bound or amount <= 0.0 or not lanes:
-        # 无下手处／敷衍停办／未到差（capacity=0）／空 lane 集：确定零投入。
-        # 人已到差时，真实线索仍各自助它所指的实证（一次性）。
-        credited = _consume_monthly_clues(
-            db, dossier_id, target, investigator, lanes,
-            live=live, blocked=blocked, capacity=capacity,
-        )
-        _write_fact_lanes(db, dossier_id, lanes)
-        return {
-            "bound_fact_key": bound, "effort_applied": 0.0,
-            "declared_intensity": declared, "capacity": capacity,
-            "clue_credited": credited, "mastered": [],
-            "units": investigation_lane_actual_units(db, int(dossier_id)),
-        }
-
-    mastered_now: List[str] = []
-    applied_amount = 0.0
-    for lane in lanes:
-        key = str(lane["fact_key"])
-        if key != bound:
-            continue
-        difficulty = investigation_fact_difficulty(
-            db, target=target, fact_key=key, investigator=investigator,
-        )
-        lane["difficulty"] = difficulty
-        # 毁证只看 spoiled 账：已毁事实不再投入。能力为零的 inf 仍入账，
-        # effort >= inf 为假所以不掌握。早退会跳过后面的独立来源消费。
-        if not investigation_fact_is_gone(db, target, key):
-            lane["effort"] = float(lane.get("effort") or 0.0) + amount
-            lane["months"] = int(lane.get("months") or 0) + 1
-            applied_amount = amount
-            # 掌握证据 ≠ 已经依法清算 ≠ 自动翻轴：只落 mastered，不写依律/翻轴。
-            if not lane.get("mastered") and float(lane["effort"]) >= float(difficulty):
-                lane["mastered"] = True
-            if lane.get("mastered"):
-                mastered_now.append(key)
-        break
-    credited = _consume_monthly_clues(
+            lane["difficulty"] = difficulty
+            # Gone evidence cannot receive effort; zero ability is not spoliation.
+            if not investigation_fact_is_gone(db, target, key):
+                lane["effort"] = float(lane.get("effort") or 0.0) + amount
+                lane["months"] = int(lane.get("months") or 0) + 1
+                if float(lane["effort"]) >= difficulty:
+                    lane["mastered"] = True
+            break
+    _consume_monthly_clues(
         db, dossier_id, target, investigator, lanes,
         live=live, blocked=blocked, capacity=capacity,
     )
     _write_fact_lanes(db, dossier_id, lanes)
-    return {
-        "bound_fact_key": bound,
-        "effort_applied": applied_amount,
-        "declared_intensity": declared,
-        "capacity": capacity,
-        "clue_credited": credited,
-        "mastered": mastered_now,
-        "units": investigation_lane_actual_units(db, int(dossier_id)),
-    }
 
 
 def _resolve_investigation_knowledge(
@@ -1466,7 +1225,7 @@ def _resolve_investigation_knowledge(
         db, target, who, dossier_id=int(dossier_id or 0),
     ):
         return who
-    for tip in _investigation_tips(db, int(dossier_id or 0), str(target or "").strip()):
+    for tip in investigation_tip_records(db, int(dossier_id or 0)):
         source = str(tip.get("source") or "").strip()
         if source and _investigation_knowledge_known(
             db, target, source, dossier_id=int(dossier_id or 0),
@@ -1497,21 +1256,13 @@ def _investigation_knowledge_known(
     # 传话记录与关系边必须是同一人。别人递过话，不能把未递话的关系人算成知情来源。
     if not any(
         str(tip.get("source") or "").strip() == who
-        for tip in _investigation_tips(db, dossier_id, name)
+        for tip in investigation_tip_records(db, dossier_id)
     ):
         return False
     return any(
         str(edge["source"]) == who or str(edge["target"]) == who
         for edge in db.person_logs.get_relation_edge_events(person=name)
     )
-
-
-def _investigation_tips(db: Any, dossier_id: int, target: str) -> List[Dict[str, object]]:
-    """本案已声明的通风报信（递话人 + 回合），知情判定的声明真源。"""
-    return [
-        tip for tip in _tip_records(db, dossier_id)
-        if not target or str(tip.get("target") or target) == target
-    ]
 
 
 def _mapping_members(raw: object, key: str) -> List[Dict[str, object]]:
@@ -1528,15 +1279,11 @@ def _mapping_members(raw: object, key: str) -> List[Dict[str, object]]:
     return out
 
 
-def _tip_records(db: Any, dossier_id: int) -> List[Dict[str, object]]:
+def investigation_tip_records(db: Any, dossier_id: int) -> List[Dict[str, object]]:
+    """本案已声明的真实通风报信；4a 供料与知情判定共用读口。"""
     if not int(dossier_id or 0):
         return []
     return _mapping_members(_dossier_payload_map(db, dossier_id).get(INVESTIGATION_TIPS_KEY), INVESTIGATION_TIPS_KEY)
-
-
-def investigation_tip_records(db: Any, dossier_id: int) -> List[Dict[str, object]]:
-    """4a 供料读口：本案已声明的真实通风报信。"""
-    return _tip_records(db, dossier_id)
 
 
 def investigation_action_records(db: Any, dossier_id: int) -> List[Dict[str, object]]:
@@ -1546,61 +1293,13 @@ def investigation_action_records(db: Any, dossier_id: int) -> List[Dict[str, obj
     return _mapping_members(_dossier_payload_map(db, dossier_id).get(INVESTIGATION_ACTS_KEY), INVESTIGATION_ACTS_KEY)
 
 
-def apply_investigation_spoliation(
-    db: Any,
-    *,
-    target: str,
-    fact_key: str,
-    effect: str = "harder",
-    knowledge_source: str = "",
-    dossier_id: int = 0,
-    origin_ref: str = "",
-    turn: Optional[int] = None,
-) -> Dict[str, object]:
-    """毁证落账口：按对应事实改可查性，不团灭、不改真相底。
-
-    知情与反应归人物（P6）：本函数只处理其**真实选择**的后果，并且要求人物确实
-    经真实传话声明知情（knowledge_source）——未知情不替其毁证，知情也不强制毁证。
-    'gone' 之后该事实永不可查——关案重开、另起新案都不恢复（真源在 (target, fact_key)）。
-    """
-    name = str(target or "").strip()
-    key = str(fact_key or "").strip()
-    if not name or not key:
-        raise CovertContractError("毁证落账缺少调查对象或事实键")
-    if not _investigation_knowledge_known(
-        db, name, knowledge_source, dossier_id=int(dossier_id or 0),
-    ):
-        # fail-closed：无真实传话声明就不毁证，也不改任何实证。
-        return {"target": name, "fact_key": key, "applied": False,
-                "reason": "无真实关系网知情来源，不代其毁证"}
-    if key not in live_investigation_fact_keys(db, name):
-        # 只毁真实存在的事实；不得凭空毁一条不存在的罪（也无从"恢复"）。
-        return {"target": name, "fact_key": key, "applied": False,
-                "reason": "该事实不在真相底 live 集内"}
-    state = db.load_state()
-    row = db.character_knowledge.record_investigation_spoiled_fact(
-        target_name=name, fact_key=key, turn=int(state.turn if turn is None else turn),
-        year=int(state.year), period=int(state.period), effect=effect,
-        origin_ref=origin_ref,
-    )
-    return {"target": name, "fact_key": key, "applied": True, "effect": str(effect),
-            "knowledge_source": str(knowledge_source or ""),
-            "row_id": row.get("id")}
-
-
 def _investigation_target_of(contract: Mapping[str, object]) -> str:
-    delivery = contract.get("delivery") if isinstance(contract.get("delivery"), Mapping) else {}
-    return str(
-        contract.get("investigation_target") or delivery.get("investigation_target") or ""
-    )
+    return str(contract.get("investigation_target") or "")
 
 
 def _investigation_fact_of(contract: Mapping[str, object]) -> str:
     """密令合同自陈的线索所指事实（空＝不带指针，按 ADR 0098 兜底路由）。"""
-    delivery = contract.get("delivery") if isinstance(contract.get("delivery"), Mapping) else {}
-    return str(
-        contract.get("investigation_fact") or delivery.get("investigation_fact") or ""
-    )
+    return str(contract.get("investigation_fact") or "")
 
 
 def find_active_investigation_order_id(db: Any, target: str) -> int:
@@ -1638,34 +1337,18 @@ def merge_investigation_confirmation(
     if dossier is None:
         raise CovertContractError("查案合流缺少案卷")
     did = int(dossier["id"])
-    payload = _dossier_payload_map(db, did)
     turn = int(getattr(state, "turn", 0) or 0)
-    sources = payload.get(INVESTIGATION_PROVENANCE_KEY)
-    if sources is None:
-        sources = []
-    elif not isinstance(sources, list):
-        raise ValueError(f"{INVESTIGATION_PROVENANCE_KEY} 须为数组，得 {type(sources).__name__}")
-    sources.append({
+    _append_investigation_log(db, did, INVESTIGATION_PROVENANCE_KEY, {
         "pending_action_id": int(pending_action_id or 0),
         "origin_chat_message_ids": [int(x) for x in origin_chat_message_ids],
         "turn": turn,
     })
-    payload[INVESTIGATION_PROVENANCE_KEY] = sources
-    key = str(fact_key or "").strip()
-    if key:
-        clues = payload.get(INVESTIGATION_CLUES_KEY)
-        if clues is None:
-            clues = []
-        elif not isinstance(clues, list):
-            raise ValueError(f"{INVESTIGATION_CLUES_KEY} 须为数组，得 {type(clues).__name__}")
-        clues.append({
-            "pending_action_id": int(pending_action_id or 0),
-            "origin_chat_message_ids": [int(x) for x in origin_chat_message_ids],
-            "fact_key": key,
-            "turn": turn,
-            "credited": False,
-        })
-        payload[INVESTIGATION_CLUES_KEY] = clues
+    record_investigation_source_clue(
+        db, did, fact_key=fact_key, turn=turn,
+        pending_action_id=pending_action_id, origin_chat_message_ids=origin_chat_message_ids,
+        origin="case_merge",
+    )
+    payload = _dossier_payload_map(db, did)
     if resolves_rejection_ids:
         payload["_resolves_rejection_ids"] = list(dict.fromkeys(
             payload.get("_resolves_rejection_ids", []) + list(resolves_rejection_ids),
@@ -1712,14 +1395,6 @@ def originated_quantity_this_turn(
             if _delivery_matches_region(row, delivery):
                 qty += abs(float(row["delta"] or 0))
     return qty
-
-
-def monthly_actual_units(*, fidelity: object, originated_quantity: float) -> float:
-    """实进度 = 执行格份额 × 当月 canonical 可数量。无 origin 实物则空转 0。"""
-    quantity = float(originated_quantity or 0)
-    if quantity <= 0.0:
-        return 0.0
-    return progress_units_for_state(fidelity) * quantity
 
 
 def _selection_map(
@@ -1823,23 +1498,14 @@ def _investigation_declaration(
             out["method"] = raw_method
     tip = item.get("tip_off", item.get("通风报信"))
     if isinstance(tip, Mapping):
-        tip_source = str(tip.get("source", tip.get("递话人")) or "").strip()
+        tip_source = str(tip.get("source") or "").strip()
         if tip_source:
             out["tip_off"] = {"source": tip_source}
-    spoil = item.get("spoliation", item.get("毁证"))
-    if isinstance(spoil, Mapping):
-        effect = str(spoil.get("effect") or "harder").strip()
-        if effect in ("harder", "gone"):
-            out["spoliation"] = {
-                "effect": effect,
-                "fact_key": str(spoil.get("fact_key") or fact or "").strip(),
-                "knowledge_source": str(
-                    spoil.get("knowledge_source", spoil.get("知情来源")) or ""
-                ),
-            }
+    if "spoliation" in item:
+        out["spoliation"] = item["spoliation"]
     suppress = item.get("suppression", item.get("压案"))
     if isinstance(suppress, Mapping):
-        raw_form = suppress["form"] if "form" in suppress else suppress.get("方式")
+        raw_form = suppress.get("form")
         if raw_form is not None:
             if not isinstance(raw_form, str):
                 rejections.append(RejectedItem(item=dict(item), reason="suppression.form 须为字符串", category="invalid_shape", source=source))
@@ -1855,7 +1521,7 @@ def apply_monthly_covert_actual_progress(
     selections: object = None,
     only_supplied: bool = False,
     source: Provenance = Provenance.system_simulation,
-) -> Tuple[List[Dict[str, object]], List[RejectedItem]]:
+) -> List[RejectedItem]:
     """当月实况轨落笔：推演者声明的真实投入/效果 → dossier_actual_progress。
 
     不发明人物/钱粮/地区固定套餐；奏报永不入 apply。
@@ -1864,7 +1530,7 @@ def apply_monthly_covert_actual_progress(
     #1896：查案密令改走逐证核算——4a 声明的 effort 记到指定事实，累计到该证难度
     才记已掌握；不再由执行态折固定增量、满统一阈自动坐实。执行态枚举对查案
     不再是必填（#1895 同批废旧查案的意愿底档），缺省只落事实投入。
-    返回 (applied, rejections)：拒收一律 canonical :class:`~ming_sim.applier.RejectedItem`。
+    返回拒收列表：拒收一律 canonical :class:`~ming_sim.applier.RejectedItem`。
     """
     rejections: List[RejectedItem] = []
     orders = list(db.character_knowledge.list_secret_orders(status="active"))
@@ -1872,7 +1538,6 @@ def apply_monthly_covert_actual_progress(
     by_sel = _selection_map(
         selections, rejections=rejections, active_oids=active_oids, source=source,
     )
-    applied: List[Dict[str, object]] = []
     turn = int(state.turn)
     for order in orders:
         oid = int(order["id"])
@@ -1882,11 +1547,6 @@ def apply_monthly_covert_actual_progress(
             continue
         minister = str(order.get("minister_name") or "")
         if not minister_eligible_for_monthly_covert(db, minister):
-            applied.append({
-                "order_id": oid,
-                "skipped": True,
-                "reason": "承办人不在场或非 active",
-            })
             continue
         dossier = db.dossiers.get_for_secret_order(oid)
         if dossier is None:
@@ -1897,7 +1557,7 @@ def apply_monthly_covert_actual_progress(
         did = int(dossier["id"])
         contract = require_covert_task_contract(dossier)
         sel = by_sel.get(oid) or {}
-        raw_note = sel.get("note", sel.get("备注"))
+        raw_note = sel.get("note")
         note: Optional[str] = None
         if raw_note is not None:
             if isinstance(raw_note, str):
@@ -1911,47 +1571,30 @@ def apply_monthly_covert_actual_progress(
                 ))
         inv_target = _investigation_target_of(contract)
         if inv_target:
-            result, item_rejections = _apply_investigation_selection(
+            item_rejections = _apply_investigation_selection(
                 db, order=order, dossier=dossier, sel=sel,
                 target=inv_target, investigator=minister, turn=turn,
                 note=note, source=source,
             )
             # #1835 S1：查案拒收（整项或反应项）只走 canonical RejectedItem。
             rejections.extend(item_rejections)
-            if result is not None:
-                applied.append(result)
             continue
         selected = sel.get("fidelity", sel.get("执行态", sel.get("state")))
         fidelity = normalize_fidelity_state(selected)
         if fidelity is None:
             rejections.append(RejectedItem(item=sel or {"order_id": oid}, reason=f"密令 {oid} 缺少有效执行态", category="invalid_enum", source=source))
             continue
-        originated = originated_quantity_this_turn(db, did, turn, contract)
-        units = monthly_actual_units(
-            fidelity=fidelity, originated_quantity=originated,
-        )
-        row = db.dossiers.record_actual_progress(
+        units = originated_quantity_this_turn(db, did, turn, contract)
+        db.dossiers.record_actual_progress(
             did,
             turn,
             units=units,
             fidelity_state=fidelity,
-            floor_state="",
             note=note,
             commit=False,
         )
         db.dossiers.mark_secret_order_in_progress(oid, commit=False)
-        applied.append({
-            "order_id": oid,
-            "dossier_id": did,
-            "units": units,
-            "fidelity": fidelity,
-            "row_id": row.get("id"),
-            "originated_quantity": originated,
-            "target_units": contract_target_units(contract),
-            "contract_kind": contract.get("kind"),
-            "contract_axes": list(contract.get("axes") or []),
-        })
-    return applied, rejections
+    return rejections
 
 
 def _apply_investigation_selection(
@@ -1965,7 +1608,7 @@ def _apply_investigation_selection(
     turn: int,
     note: Optional[str],
     source: Provenance = Provenance.system_simulation,
-) -> Tuple[Optional[Dict[str, object]], List[RejectedItem]]:
+) -> List[RejectedItem]:
     """查案密令的逐证落账（#1896）。幂等键＝(dossier, turn)，重开只续未成核算。
 
     无效声明（缺 effort／effort 非数字或非有限／只给了旧执行态）不是合法的
@@ -1975,8 +1618,7 @@ def _apply_investigation_selection(
     人物知情与反应按真实因果承接：知情来源解自案卷已落的传话记录（跨月持续），
     毁证与压案共用该判定，未知情不替其落账（见 ``_resolve_investigation_knowledge``）。
 
-    返回 (applied_or_none, rejections)：整项失败时 applied 为 None；合法实入与反应拒收
-    可并存——反应拒收走 canonical 列表，不嵌进 applied 的替代键。
+    合法实入与反应拒收可并存；拒收只走 canonical 列表，实入从账本读取。
     """
     did = int(dossier["id"])
     oid = int(order["id"])
@@ -1991,24 +1633,14 @@ def _apply_investigation_selection(
     declaration = _investigation_declaration(sel, reaction_rejections, source)
     invalid = str(declaration.get("invalid") or "")
     if invalid.strip():
-        return None, [RejectedItem(
+        return [RejectedItem(
             item=dict(sel) if isinstance(sel, Mapping) else {"order_id": oid},
             reason=f"密令 {oid} 查案声明无效：{invalid}",
             category="invalid_enum",
             source=source,
         )]
     if existing is not None:
-        return {
-            "order_id": oid,
-            "dossier_id": did,
-            "units": float(existing["units"] or 0.0),
-            "row_id": existing["id"],
-            "fact_key": "",
-            "effort_applied": 0.0,
-            "mastered_facts": [],
-            "originated_quantity": 0.0,
-            "already_applied": True,
-        }, reaction_rejections
+        return reaction_rejections
     # 真实传话声明先落账：知情判定的唯一来源就是它（关系边存在不算）。
     tip = declaration.get("tip_off")
     tip_source = str(tip.get("source") or "").strip() if isinstance(tip, Mapping) else ""
@@ -2056,51 +1688,49 @@ def _apply_investigation_selection(
         _append_investigation_log(db, did, INVESTIGATION_ACTS_KEY, {
             "turn": int(turn), "investigator": investigator, **acts,
         })
-    result = apply_investigation_monthly_effort(
+    apply_investigation_monthly_effort(
         db, did, target, investigator,
         fact_key=str(declaration.get("fact_key") or ""),
-        intensity=float(declaration.get("intensity") or 0.0),
+        intensity=declaration["intensity"],
     )
     spoliation = declaration.get("spoliation")
-    spoiled_result: Dict[str, object] = {}
-    if isinstance(spoliation, Mapping):
-        spoil_key = str(spoliation.get("fact_key") or "").strip()
-        if spoil_key:
+    if "spoliation" in declaration:
+        spoil_key = str(spoliation.get("fact_key") or "").strip() if isinstance(spoliation, Mapping) else ""
+        effect = spoliation.get("effect") if isinstance(spoliation, Mapping) else None
+        reason = ""
+        category = "invalid_shape"
+        if not spoil_key or effect not in ("harder", "gone"):
+            reason = "毁证须指定 fact_key 与 effect=harder/gone"
+        elif spoil_key not in live_investigation_fact_keys(db, target):
+            reason, category = "毁证所指事实不存在", "missing_ref"
+        elif not known:
+            reason, category = "无真实关系网知情来源，不承接毁证声明", "missing_ref"
+        if reason:
+            reaction_rejections.append(RejectedItem(
+                item={"order_id": oid, "reaction": "spoliation", "spoliation": spoliation},
+                reason=reason, category=category, source=source,
+            ))
+        else:
             # 知情来源用上面解出的（跨月承接的）那个，不再只取本次附带字段：
             # 上月真报的信本月仍然成立，无须重复声明。
-            spoiled_result = apply_investigation_spoliation(
-                db, target=target, fact_key=spoil_key,
-                effect=str(spoliation.get("effect") or "harder"),
-                knowledge_source=knowledge_source,
-                dossier_id=did,
-                origin_ref=f"dossier:{did}", turn=turn,
+            current = db.load_state()
+            db.character_knowledge.record_investigation_spoiled_fact(
+                target_name=target, fact_key=spoil_key, effect=effect,
+                turn=turn, year=int(current.year), period=int(current.period),
+                origin_ref=f"dossier:{did}",
             )
-    units = float(result.get("units") or 0.0)
+    units = investigation_lane_actual_units(db, did)
     # 查案 note = 密奏正文（可谎）：入奏报轨，不入实况轨（DELTA_SCHEMA / #1897 R1）。
     # 复用 update_secret_order_progress 既有奏报写口（自带进展档），不另造 band 前置。
-    row = db.dossiers.record_actual_progress(
-        did, turn, units=units, fidelity_state="", floor_state="",
+    db.dossiers.record_actual_progress(
+        did, turn, units=units, fidelity_state="",
         note=None, commit=False,
     )
     if note is not None:
         # 既有写口自带进展档；空/空白正文按其合同不落条，仍须标在办。
         db.update_secret_order_progress(oid, note, commit=False)
     db.dossiers.mark_secret_order_in_progress(oid, commit=False)
-    applied: Dict[str, object] = {
-        "order_id": oid,
-        "dossier_id": did,
-        "units": units,
-        "row_id": row.get("id"),
-        "fact_key": str(result.get("bound_fact_key") or ""),
-        "effort_applied": float(result.get("effort_applied") or 0.0),
-        "mastered_facts": list(result.get("mastered") or []),
-        "originated_quantity": 0.0,
-    }
-    if result.get("dropped_fact_key"):
-        applied["dropped_fact_key"] = str(result["dropped_fact_key"])
-    if spoiled_result:
-        applied["spoliation"] = spoiled_result
-    return applied, reaction_rejections
+    return reaction_rejections
 
 
 def list_due_secret_orders_for_settlement(db: Any, state: Any) -> List[Dict[str, object]]:
@@ -2117,19 +1747,13 @@ def list_due_secret_orders_for_settlement(db: Any, state: Any) -> List[Dict[str,
 def settle_due_secret_orders(
     db: Any,
     state: Any,
-    *,
-    source: Provenance = Provenance.system_simulation,
-) -> tuple[List[Dict[str, object]], List[RejectedItem]]:
-    results: List[Dict[str, object]] = []
-    rejections: List[RejectedItem] = []
+) -> None:
     for order in list_due_secret_orders_for_settlement(db, state):
         oid = int(order["id"])
         dossier = db.dossiers.get_for_secret_order(oid)
         if dossier is None:
             # #1897 / ADR0005：到期结案缺案卷响亮传播；不得拒收跳过并标阶段完成。
             raise ValueError("密令进展缺少对应案卷")
-        if str(order.get("status") or "") in {"done", "failed"}:
-            continue
         did = int(dossier["id"])
         contract = require_covert_task_contract(dossier)
         inv_target = _investigation_target_of(contract)
@@ -2159,15 +1783,3 @@ def settle_due_secret_orders(
             execution_note=close_note if close_note is not None else "",
             commit=False,
         )
-        results.append({
-            "order_id": oid,
-            "dossier_id": did,
-            "status": verdict["status"],
-            "outcome": verdict["outcome"],
-            "result": player_text,
-            "note": verdict["note"],
-            "actual_units": actual,
-            "target_units": target,
-            "delivered": bool(verdict["delivered"]),
-        })
-    return results, rejections

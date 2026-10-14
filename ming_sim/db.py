@@ -8934,12 +8934,12 @@ class GameDB:
         owns_transaction: Optional[bool] = None,
         restore_on_rollback=None,
         savepoint_prefix: str = "pending_action_apply",
-    ) -> bool:
+    ) -> bool | int:
         """暂存提交的唯一共同生命周期（#1853 J4-R）。
 
         atomic → savepoint → apply → committed/failed → 异常分流 → release → collector flush。
         拟旨输入准备与 office 内存恢复由调用方在前后处理；本方法不复制第二套生命周期。
-        返回 True 表示已 committed；软失败返回 False；真异常经既有出口上抛。
+        返回 truthy 表示已 committed（密令新建为 order id）；软失败返回 False。
         """
         if owns_transaction is None:
             owns_transaction = connection_owns_transaction(self.conn)
@@ -9272,31 +9272,9 @@ class GameDB:
                     "action": pa["action"],
                     "target_id": pa["target_id"],
                 }
-                # #1376：新建密令落库后把真实 order id 回传确认面（stage 时 target_id 为空）。
+                # The creation write returns the actual order id, including a merged case.
                 if pa["kind"] == "secret_order" and str(pa["action"] or "") == "新建":
-                    row = self.conn.execute(
-                        'SELECT secret_order_id FROM decree_dossiers WHERE '
-                        'pending_action_id=? AND secret_order_id IS NOT NULL ORDER BY'
-                        ' id DESC LIMIT 1',
-                        (int(pa['id']),),
-                    ).fetchone()
-                    if row is not None and row["secret_order_id"] is not None:
-                        item["secret_order_id"] = int(row["secret_order_id"])
-                    else:
-                        from ming_sim.covert_progress import (
-                            build_covert_task_contract,
-                            covert_task_from_payload,
-                            find_active_investigation_order_id,
-                            _investigation_target_of,
-                        )
-                        raw_task = covert_task_from_payload(payload) or payload.get("covert_task")
-                        if raw_task:
-                            frozen = build_covert_task_contract(covert_task=raw_task) or {}
-                            inv_target = _investigation_target_of(frozen)
-                            if inv_target:
-                                merged_oid = find_active_investigation_order_id(self, inv_target)
-                                if merged_oid > 0:
-                                    item["secret_order_id"] = int(merged_oid)
+                    item["secret_order_id"] = int(ok)
                 applied.append(item)
         # 镜像归外层 collector owner（0150-D2；本方法不自建不自镜像）。
         return applied
@@ -9379,7 +9357,7 @@ class GameDB:
     def _apply_pending_action(
         self, state: GameState, pa: Dict[str, object], payload: Dict[str, object],
         *, content=None,
-    ) -> bool:
+    ) -> bool | int:
         """把单条暂存动作落到真实表。
 
         明确业务目标失效返 False（commit 标 failed + 业务拒收轨）。
@@ -9433,27 +9411,12 @@ class GameDB:
                 origin_mid = self._parse_origin_chat_message_id(
                     payload,
                 )
-                from ming_sim.covert_progress import (
-                    CovertContractError,
-                    build_covert_task_contract,
-                    covert_task_from_payload,
-                )
-                raw_task = covert_task_from_payload(payload) or payload.get("covert_task")
-                # 准入已要求 covert_task；已持久缺/坏 = schema 腐坏，裸 ValueError（#1897 E1）。
-                if not raw_task:
-                    raise ValueError("持久密令缺 covert_task")
-                try:
-                    frozen_task = build_covert_task_contract(covert_task=raw_task)
-                except CovertContractError as exc:
-                    raise ValueError(
-                        f"持久 covert_task 契约腐坏：{exc}",
-                    ) from exc
                 order_id = self.create_secret_order(
                     state, assignee, title, content_text, tags, deadline_months=deadline,
                     origin_chat_message_id=origin_mid,
                     origin_chat_message_ids=[] if origin_mid is None else None,
                     pending_action_id=int(pa["id"]),
-                    covert_task=frozen_task,
+                    covert_task=payload.get("covert_task"),
                     # 各自所属事务（ADR 0154）：声明的事务归属随暂存载荷进成案
                     # payload，由既有绑定核（_resolve_affair_id_from_payload）落
                     # pointer——不在密令路上另实现一份绑定。
@@ -9474,7 +9437,7 @@ class GameDB:
                     self.dossiers.add_links(
                         int(dossier["id"]), links, commit=False,
                     )
-                return order_id is not None
+                return order_id
             if oid is None:
                 return False
             # Non-create actions consume only explicit source pins.
@@ -11403,14 +11366,17 @@ class GameDB:
         ])
         from ming_sim.covert_progress import (
             CONTRACT_KEY,
-            build_covert_task_contract,
+            CovertContractError,
+            coerce_covert_task_contract,
             find_active_investigation_order_id,
             merge_investigation_confirmation,
             _investigation_target_of,
             _investigation_fact_of,
         )
-        covert_contract = build_covert_task_contract(covert_task=covert_task)
-        inv_target = _investigation_target_of(covert_contract or {})
+        covert_contract = coerce_covert_task_contract(covert_task)
+        if covert_contract is None:
+            raise CovertContractError("持久密令缺 covert_task")
+        inv_target = _investigation_target_of(covert_contract)
         if inv_target:
             existing_oid = find_active_investigation_order_id(self, inv_target)
             if existing_oid:
@@ -11420,7 +11386,7 @@ class GameDB:
                     existing_oid,
                     pending_action_id=int(pending_action_id or 0),
                     origin_chat_message_ids=provenance_message_ids,
-                    fact_key=_investigation_fact_of(covert_contract or {}),
+                    fact_key=_investigation_fact_of(covert_contract),
                     resolves_rejection_ids=resolves_rejection_ids,
                 )
         active_count = self.conn.execute(
@@ -11543,7 +11509,7 @@ class GameDB:
                 )
                 record_investigation_source_clue(
                     self, int(dossier_id),
-                    fact_key=_investigation_fact_of(covert_contract or {}),
+                    fact_key=_investigation_fact_of(covert_contract),
                     turn=int(state.turn),
                 )
         tlog(f"[secret_order] create id={order_id} minister={minister_name} title={title}")

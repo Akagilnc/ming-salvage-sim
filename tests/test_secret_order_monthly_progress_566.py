@@ -1,3 +1,4 @@
+from ming_sim.covert_progress import build_covert_task_contract
 import threading
 import pytest
 from tests.dossier_test_helpers import create_test_secret_order
@@ -17,7 +18,7 @@ def _order(db, state, title="护行辽饷", tags=None, deadline=4):
     order_id = create_test_secret_order(db,
         state, _actor(db), title, "逐月办理", tags or ["护行"],
         deadline_months=deadline,
-        covert_task={
+        covert_task=build_covert_task_contract(covert_task={
             "kind": "护行差务",
             "axes": ["实务事功"],
             "direction": 1,
@@ -25,7 +26,7 @@ def _order(db, state, title="护行辽饷", tags=None, deadline=4):
                 "unit": "万两", "target_units": float(deadline or 1), "effect_sign": -1,
                 "purpose": "辽饷", "category": "军饷", "account": "国库",
             },
-        },
+        }),
     )
     return order_id, int(db.dossiers.get_for_secret_order(order_id)["id"])
 
@@ -128,7 +129,7 @@ def _stage_routed_secret_order(db, state, action, deadline):
             "title": "护行辽饷", "content": "逐月稽核", "tags": ["护行"],
             "new_title": "护行辽饷", "new_content": "继续逐月稽核",
             "deadline_months": deadline,
-            "covert_task": {
+            "covert_task": build_covert_task_contract(covert_task={
                 "kind": "护行差务",
                 "axes": ["实务事功"],
                 "direction": 1,
@@ -136,7 +137,7 @@ def _stage_routed_secret_order(db, state, action, deadline):
                     "unit": "万两", "target_units": float(max(deadline, 1)), "effect_sign": -1,
                     "purpose": "辽饷", "category": "军饷", "account": "国库",
                 },
-            },
+            }),
         }, target_id=target_id,
     )
     return pending_id, target_id

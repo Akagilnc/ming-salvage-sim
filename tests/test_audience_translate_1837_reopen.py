@@ -1,6 +1,7 @@
 from __future__ import annotations
 from tests.material_helpers import prepare_identity_materials
 import json
+from ming_sim.covert_progress import build_covert_task_contract
 from types import SimpleNamespace
 import pytest
 from tests.conftest import wait_for_background_jobs
@@ -617,16 +618,16 @@ def test_inquiry_named_order_reads_that_monthly_memorial(game, monkeypatch):
     memorial = "  只有部分办到。\n"
     visible = db.create_secret_order(
         state, str(assignee["name"]), "查仓储", "密查太仓", [],
-        deadline_months=2, covert_task=_covert_task(target_units=1),
+        deadline_months=2, covert_task=build_covert_task_contract(covert_task=_covert_task(target_units=1)),
     )
     hidden = db.create_secret_order(
         state, str(assignee["name"]), "查内库", "密查内库", [],
         deadline_months=2,
-        covert_task=_covert_task(target_units=1),
+        covert_task=build_covert_task_contract(covert_task=_covert_task(target_units=1)),
     )
     own = db.create_secret_order(
         state, attendant.name, "查自己", "承办人自办", [],
-        deadline_months=2, covert_task=_covert_task(target_units=1),
+        deadline_months=2, covert_task=build_covert_task_contract(covert_task=_covert_task(target_units=1)),
     )
     for order_id in (visible, hidden, own):
         dossier = db.dossiers.get_for_secret_order(order_id)

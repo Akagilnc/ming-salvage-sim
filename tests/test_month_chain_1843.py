@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json
+from ming_sim.covert_progress import build_covert_task_contract
 import pytest
 import ming_sim.declaration_dispatch as declaration_dispatch
 import ming_sim.decree as decree_mod
@@ -1062,13 +1063,13 @@ def test_month_chain_lands_specialized_facts_before_due_and_gazette(game, monkey
     order_id = db.create_secret_order(
         state, minister, "辽饷实况", "核发", [],
         deadline_months=1,
-        covert_task={
+        covert_task=build_covert_task_contract(covert_task={
             "kind": "差务", "axes": ["实务事功"], "direction": 1,
             "delivery": {
                 "unit": "万两", "target_units": 1.0, "effect_sign": -1,
                 "purpose": "其它", "category": "密令差务", "account": "内库",
             },
-        },
+        }),
     )
     db.conn.execute(
         "UPDATE secret_orders SET turn_issued=?, due_turn=? WHERE id=?",

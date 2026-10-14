@@ -254,7 +254,6 @@ CREATE TABLE IF NOT EXISTS dossier_actual_progress (
                 turn INTEGER NOT NULL,
                 units REAL, -- NULL: prose recorded, monthly actuals not yet accounted
                 fidelity_state TEXT NOT NULL,
-                floor_state TEXT NOT NULL,
                 note TEXT NOT NULL DEFAULT '',
                 origin_ref TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -1757,7 +1756,7 @@ class DossierStore(RowStore):
 
     def record_actual_progress(
         self, dossier_id: int, turn: int, *, units: float, fidelity_state: str,
-        floor_state: str, note: Optional[str] = "", commit: bool = True,
+        note: Optional[str] = "", commit: bool = True,
     ) -> dict[str, object]:
         """Record monthly actuals; note=None preserves any separately recorded prose."""
         owns = connection_owns_transaction(self._conn)
@@ -1766,12 +1765,11 @@ class DossierStore(RowStore):
         self._conn.execute(
             """
             INSERT INTO dossier_actual_progress
-                (dossier_id, turn, units, fidelity_state, floor_state, note, origin_ref)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+                (dossier_id, turn, units, fidelity_state, note, origin_ref)
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(dossier_id, turn) DO UPDATE SET
                 units=excluded.units,
                 fidelity_state=excluded.fidelity_state,
-                floor_state=excluded.floor_state,
                 note=COALESCE(?, dossier_actual_progress.note),
                 origin_ref=excluded.origin_ref
             """,
@@ -1780,7 +1778,6 @@ class DossierStore(RowStore):
                 int(turn),
                 float(units),
                 str(fidelity_state),
-                str(floor_state),
                 note if note is not None else "",
                 origin,
                 note,
@@ -1796,7 +1793,6 @@ class DossierStore(RowStore):
             "turn": int(turn),
             "units": float(units),
             "fidelity_state": str(fidelity_state),
-            "floor_state": str(floor_state),
             "note": note if note is not None else "",
             "origin_ref": origin,
         }
@@ -2167,8 +2163,8 @@ class DossierStore(RowStore):
         """Set original prose; absent actuals remain unaccounted, not a zero result."""
         self._conn.execute(
             "INSERT INTO dossier_actual_progress "
-            "(dossier_id, turn, units, fidelity_state, floor_state, note, origin_ref) "
-            "VALUES (?, ?, NULL, '', '', ?, ?) "
+            "(dossier_id, turn, units, fidelity_state, note, origin_ref) "
+            "VALUES (?, ?, NULL, '', ?, ?) "
             "ON CONFLICT(dossier_id, turn) DO UPDATE SET note=excluded.note",
             (int(dossier_id), int(turn), note, f"dossier:{int(dossier_id)}"),
         )

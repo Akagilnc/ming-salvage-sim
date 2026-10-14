@@ -461,6 +461,8 @@ ADR 0054／0058 已署修订与 #1812 删简验收一并退役。既有 `decree_
 - updates：`order_id` int + `sim_note`（本月推进实况）+ 可选 `impact` + 可选布尔 `disclosed`（中文键 `泄漏结论`；可省略）。`disclosed`/`泄漏结论`：密令情节已**实际公开**才为 true（被目击、闹至公堂、承办人被拿获、目标公开反击、明发上谕、科道公开参劾等）；为 true 时触发 `secret_order_disclosure:` 公开知识事件（简报升公共面的唯一闸）。风声/警觉/暴露风险仍为不填或 false。
 - 结案真源是 `settle_due_secret_orders`，不接受声明段结案字段。
 
+不查人的密令：`fidelity`（别名 `执行态` / `state`）仍按现有执行档留账；当月实物量只取案卷来源绑定且交付身份匹配的 canonical 效果，不按执行档折算。
+
 #### 查案密令的选择合同（#1896，唯一真源 = `ming_sim/covert_progress.py`）
 
 带 `investigation_target` 的密令不走 `fidelity`，改由步骤 4a（`covert_exec_selections`）按人物当月真实办事声明：
@@ -471,7 +473,7 @@ ADR 0054／0058 已署修订与 #1812 删简验收一并退役。既有 `decree_
 | `fact_key` | str（中文键 `所查事实`） | 本月实际下手的罪证键，取自供料 `investigation_facts`。本月无从下手则省略——引擎**不替人物挑**一条（CLAUDE.md P6）。 |
 | `method` | str（中文键 `查法`） | 本月查法，原样落账为案卷事实。 |
 | `tip_off` | `{source}`（中文键 `通风报信`） | 真实通风报信声明：确有人经关系网把话递到被查者手里。被查者知情的**唯一**来源；关系边存在 ≠ 话递到了。开案本身不算知情。 |
-| `spoliation` | `{effect, fact_key, knowledge_source?}` | 被查者知情后的毁证选择；`effect` ∈ `harder`/`gone`。未知情不承接。`knowledge_source` 可省：知情按**案卷已落的真实传话记录**跨月承接（见下），无须每月重复声明。 |
+| `spoliation` | `{effect, fact_key, knowledge_source?}` | 被查者知情后的毁证选择；`fact_key` 和 `effect` 必填，`effect` ∈ `harder`/`gone`。缺字段、非法程度、事实不存在或未知情，逐条 canonical 拒收；同月合法投入及其他密令照常落账，月链继续。`knowledge_source` 可省：知情按**案卷已落的真实传话记录**跨月承接（见下），无须每月重复声明。 |
 | `suppression` | `{form}`（中文键 `压案`） | 被查者知情后的压案声明（行贿说项之类），落账为事实。**未知情不落账**（引擎不替一个不知情的人记下他"压了案"），并以 canonical `RejectedItem` 走拒收通道留痕（与合法实入可并存）。 |
 | `note` | str | 密奏正文（可谎）。奏报不入实况轨：谎奏不造罪、不抹证。 |
 

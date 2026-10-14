@@ -21,6 +21,7 @@ from __future__ import annotations
 from concurrent.futures import wait
 
 import json
+from ming_sim.covert_progress import build_covert_task_contract
 from pathlib import Path
 
 import pytest
@@ -204,10 +205,13 @@ def test_declared_new_secret_order_lands_through_live_dispatch_and_becomes_a_cas
     """票面「怎么验」正路：声明新建密令不 ImportError，落暂存、应允成案、可读回。"""
     db, state, content = game
     minister = _minister(db)
+    from ming_sim.covert_progress import _CONTRACT_EXAMPLES, read_covert_task_contract
+    task = _CONTRACT_EXAMPLES[0]
 
     result = _emit(
         db, state, content, monkeypatch,
-        _secret_order_declaration(assignee=minister), minister=minister,
+        _secret_order_declaration(assignee=minister, covert_task=task),
+        minister=minister, words="着卿暗查魏忠贤，取证具实以闻。",
     )
     assert result.commissions.rejected == [], result.commissions.rejected
     assert len(result.commissions.applied) == 1
@@ -236,6 +240,9 @@ def test_declared_new_secret_order_lands_through_live_dispatch_and_becomes_a_cas
     assert order is not None
     assert order["status"] == "active"
     assert db.dossiers.get_for_secret_order(order_id) is not None
+    contract = read_covert_task_contract(db.dossiers.get_for_secret_order(order_id))
+    assert contract.get("investigation_target") == "魏忠贤"
+    assert contract["delivery"]["canonical_fields"] == []
     # 反向：名册里的具名承办人照常成案（身份闸不得把真承办人也拒掉）。
     assert order["minister_name"] == minister
 
@@ -736,7 +743,7 @@ def test_bad_dossier_links_reject_only_their_own_item(game, monkeypatch, bad_cas
         )
     elif bad_case == "capacity":
         for _ in range(19):
-            db.create_secret_order(state, minister, "密查", "查办", [], covert_task=_covert_task())
+            db.create_secret_order(state, minister, "密查", "查办", [], covert_task=build_covert_task_contract(covert_task=_covert_task()))
     else:
         target = 999999
         if bad_case in {"relation", "note"}:
