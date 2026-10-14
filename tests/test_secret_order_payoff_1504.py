@@ -1031,13 +1031,16 @@ def test_spoliation_requires_real_knowledge_source(game):
     spoiled = db.character_knowledge.list_investigation_spoiled_facts(target)
     assert [(row["fact_key"], row["effect"]) for row in spoiled] == [(key, "gone")]
 
-@pytest.mark.parametrize("bad_spoliation", [
-    {"effect": "gone"}, {"fact_key": "target"},
-    {"effect": "other", "fact_key": "target"},
-    {"effect": "gone", "fact_key": "missing"},
-    {"effect": "gone", "fact_key": "target"},
+@pytest.mark.parametrize("bad_spoliation, expected_category", [
+    ({"effect": "gone"}, "invalid_shape"),
+    ({"fact_key": "target"}, "invalid_shape"),
+    ({"effect": "other", "fact_key": "target"}, "invalid_shape"),
+    ({"effect": "gone", "fact_key": "missing"}, "missing_ref"),
+    ({"effect": "gone", "fact_key": "target"}, "missing_ref"),
 ])
-def test_4a_rejects_unknown_reactions_and_bad_prose_without_losing_effort(game, monkeypatch, bad_spoliation):
+def test_4a_rejects_unknown_reactions_and_bad_prose_without_losing_effort(
+    game, monkeypatch, bad_spoliation, expected_category,
+):
     """#1896 贯穿 4a：被查者不知情而声明毁证 → 落账拒，实证不动。"""
     db, state, content = game
     name = _minister(db)
@@ -1078,6 +1081,8 @@ def test_4a_rejects_unknown_reactions_and_bad_prose_without_losing_effort(game, 
     # Malformed shape / missing fact remain invalid even after a real tip.
     if bad_spoliation != {"effect": "gone", "fact_key": "target"}:
         selections[0]["tip_off"] = {"source": _relation_informer(db, name, target)}
+    else:
+        selections[0]["suppression"] = {"form": "行贿说项"}
     from tests.month_chain_helpers import make_light_session
     from tests.test_month_chain_1843 import _forbid_extractor
     import ming_sim.month_chain as month_chain
@@ -1104,13 +1109,22 @@ def test_4a_rejects_unknown_reactions_and_bad_prose_without_losing_effort(game, 
         "SELECT category, item_json FROM rejection_reports "
         "WHERE turn=? AND section='covert_exec_selections' ORDER BY id", (turn,),
     ).fetchall()
-    assert len(rejected) == 2
     reaction = next(row for row in rejected if json.loads(row["item_json"]).get("reaction") == "spoliation")
-    assert reaction["category"] in {"invalid_shape", "missing_ref"}
+    assert reaction["category"] == expected_category
     bad_note = next(row for row in rejected if "note" in json.loads(row["item_json"]))
+    assert bad_note["category"] == "invalid_shape"
     assert json.loads(bad_note["item_json"]) == {
         "order_id": oid, "note": selections[0]["note"],
     }
+    if bad_spoliation == {"effect": "gone", "fact_key": "target"}:
+        assert len(rejected) == 3
+        supp = next(row for row in rejected if json.loads(row["item_json"]).get("reaction") == "suppression")
+        assert supp["category"] == "missing_ref"
+        assert json.loads(supp["item_json"]) == {
+            "order_id": oid, "reaction": "suppression", "form": "行贿说项",
+        }
+    else:
+        assert len(rejected) == 2
     for order_id in (oid, sibling):
         dossier_id = int(db.dossiers.get_for_secret_order(order_id)["id"])
         rows = db.conn.execute(
