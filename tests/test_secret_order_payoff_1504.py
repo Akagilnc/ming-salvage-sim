@@ -685,25 +685,27 @@ def test_reaction_declarations_need_real_knowledge_across_months(game):
     assert acts[-1]["suppression"]["form"] == "托人斡旋"
 
 def test_supply_call_writes_identity_materials_into_its_own_tree(game, monkeypatch):
-    """#1896 R1/F2：4a 生产入口自己把身份材料写进树——不是测试自己动手。
+    """#1896 / #1904：4a 生产入口经真实过月链把身份材料写进树。
 
-    走真实 ``run_secret_orders_supply``，只桩掉外部模型边界（agent 构造与
-    ``run_agent_text``）：在 agent 构造那一刻抓下 ``prepared``，断言供料给出的
-    ``materials_path`` 在**模型将要读的那棵树**里指向可读索引；用列目录工具
-    取阅分列载体，核身份事务边界，不解析人读索引。调用消息不带正文。
-    身份备料失败须传播并清理本树。撤掉生产里那行
-    ``write_identity_materials(...)`` 调用，本用例即报红。
+    从真实过月入口（GameSession.resolve_turn）进入，只桩外部模型边界；
+    断言查案与非查案密令执行大臣均取得本人整套身份可及材料（经历/公事档案/事务/人物档料），
+    被查者亦含人物档料，且与各自 minister_dossier 投影一致。
+    身份备料失败须传播并清理本树。
     """
     import json as _json
+    from dataclasses import replace
+    from pathlib import Path
 
     import ming_sim.agents as agents_mod
-    import ming_sim.month_chain as month_chain
-    from pathlib import Path
+    import ming_sim.decree as decree_mod
     import ming_sim.materials as materials_mod
-    from ming_sim.materials import list_materials, material_tools, read_material
+    import ming_sim.month_chain as month_chain
+    from ming_sim.context import minister_dossier
+    from ming_sim.materials import _safe_segment, list_materials, material_tools, read_material
     from ming_sim.models import LLMConfig
+    from tests.month_chain_helpers import empty_rescript_response, make_light_session
 
-    db, state, _ = game
+    db, state, content = game
     name = _minister(db)
     target = next(
         row["name"] for row in db.conn.execute(
@@ -712,20 +714,47 @@ def test_supply_call_writes_identity_materials_into_its_own_tree(game, monkeypat
         ).fetchall()
         if live_investigation_fact_keys(db, row["name"])
     )
+    non_inv_name = next(
+        row["name"] for row in db.conn.execute(
+            "SELECT name FROM characters "
+            "WHERE status='active' AND power_id='ming' "
+            "AND office_type NOT IN ('后宫','宗藩','未仕') "
+            "AND name<>? AND name<>? ORDER BY name",
+            (name, target),
+        ).fetchall()
+    )
+
+    styles = {
+        name: "  沉得住气\r\n少作张扬。  ",
+        non_inv_name: "老成持重，深谋远虑。",
+        target: "机巧善变，广结内外。",
+    }
+    for who, style in styles.items():
+        db.conn.execute("UPDATE characters SET style=? WHERE name=?", (style, who))
+    db.conn.commit()
+
     _set_axes(db, name, loyalty=90, identity=30)
+    _set_axes(db, non_inv_name, loyalty=85, identity=40)
     _co_locate(db, name, target)
+
+    # 查案密令（带被查者）
     oid = _issue(
         db, state, name, "查核", "查核", months=3, target=1,
         kind="查核", axes=["既得利益"], investigation_target=target,
     )
+    # 非查案密令（无被查者）
+    non_inv_oid = _issue(
+        db, state, non_inv_name, "筹饷", "筹饷", months=3, target=10,
+        kind="筹饷", unit="万两", investigation_target="",
+    )
     # 下月才进在办密令（开案当月属 issuance-turn，会被在办清单滤掉）
     _next_month(db, state)
 
-    # 两条真实事务分别只授予本人，显式排除另一个同场人物。
+    # 真实事务分别授予各人，显式排除其他同场人物。
     issue_rows = db.conn.execute(
-        "SELECT id,title FROM issues WHERE status='active' ORDER BY id LIMIT 2",
+        "SELECT id,title FROM issues WHERE status='active' ORDER BY id LIMIT 3",
     ).fetchall()
-    for row, who, other in zip(issue_rows, (name, target), (target, name)):
+    for row, who in zip(issue_rows, (name, target, non_inv_name)):
         db.conn.execute(
             "UPDATE issues SET participant_roster=? WHERE id=?",
             (_json.dumps([{"character_id": who, "tier": "主办"}]), row["id"]),
@@ -739,6 +768,7 @@ def test_supply_call_writes_identity_materials_into_its_own_tree(game, monkeypat
             source_id=f"issue:{row['id']}",
         )
     db.conn.commit()
+
     captured = {}
     roots = []
     real_prepare = materials_mod.prepare_world_materials
@@ -755,11 +785,16 @@ def test_supply_call_writes_identity_materials_into_its_own_tree(game, monkeypat
         return object()
 
     def _fake_run_text(agent, prompt, tag, **_kwargs):
+        if tag == "gazette":
+            return _json.dumps({"title": "邸报", "report": "边情平稳"})
+        if tag != "secret_orders_supply":
+            return "{}"
         # 此刻树还在（run_secret_orders_supply 收尾才释放），就地读给断言用
         captured["prompt"] = prompt
         feed = _json.loads(prompt)
         bodies = {}
         paths = {}
+        dossiers = {}
         tools = {tool.__name__: tool for tool in material_tools(captured["root"])}
         for entry in feed.get("active_secret_orders") or []:
             for side in ("investigator_identity_materials",
@@ -775,53 +810,96 @@ def test_supply_call_writes_identity_materials_into_its_own_tree(game, monkeypat
                         assert tools["read_material"](path) == read_material(captured["root"], path)
                         assert read_material(captured["root"], path).strip()
                     paths[who] = {Path(path).relative_to(base).as_posix() for path in listed}
+                    for path in listed:
+                        if Path(path).name == "人物档料.txt":
+                            dossiers[who] = read_material(captured["root"], path)
         captured["bodies"] = bodies
         captured["paths"] = paths
-        return _json.dumps({"dossier_progress_reports": [], "covert_exec_selections": []})
+        captured["dossiers"] = dossiers
+        reports = [
+            {
+                "dossier_id": int(d["dossier_id"]),
+                "progress_band": "平稳推进",
+                "memorial_text": "依旨办理。",
+            }
+            for d in feed.get("eligible_dossiers") or []
+        ]
+        selections = []
+        for o in feed.get("active_secret_orders") or []:
+            if o.get("investigation_target"):
+                selections.append({"order_id": int(o["id"]), "effort": 0.5})
+            else:
+                selections.append({"order_id": int(o["id"]), "fidelity": "忠实"})
+        return _json.dumps({
+            "dossier_progress_reports": reports,
+            "covert_exec_selections": selections,
+        })
 
     monkeypatch.setattr(agents_mod, "create_secret_order_supply_agent", _fake_agent)
     monkeypatch.setattr(agents_mod, "run_agent_text", _fake_run_text)
+    monkeypatch.setattr("ming_sim.rescript_draft.run_rescript_text", empty_rescript_response)
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
+    monkeypatch.setattr(decree_mod, "llm_promulgation_verdicts", lambda dossiers, *a, **k: [
+        {"dossier_id": int(row["id"]), "decision": "promulgated"} for row in dossiers
+    ])
 
     cfg = LLMConfig(api_key="", base_url="http://unused", model="unused")
-    month_chain.run_secret_orders_supply(db, state, cfg, {})
+    session = make_light_session(db, state, content)
+    session.llm_config = cfg
+    result = session.resolve_turn(allow_empty_decree=True)
 
+    assert result.stage == "advanced"
     assert captured["root"] is not None, "生产入口没有把备好的材料树交给 agent"
+
     feed = _json.loads(captured["prompt"])
-    order = next(o for o in feed["active_secret_orders"] if int(o["id"]) == oid)
-    bodies = captured["bodies"]
-    for side, who in (
-        ("investigator_identity_materials", name),
-        ("investigation_target_identity_materials", target),
+    orders_by_id = {int(o["id"]): o for o in feed["active_secret_orders"]}
+    inv_order = orders_by_id[oid]
+    non_inv_order = orders_by_id[non_inv_oid]
+    assert "investigator_identity_materials" in non_inv_order
+    assert "investigation_target_identity_materials" not in non_inv_order
+
+    # All three perspectives use complete, identity-scoped material directories.
+    for order, side, who in (
+        (inv_order, "investigator_identity_materials", name),
+        (inv_order, "investigation_target_identity_materials", target),
+        (non_inv_order, "investigator_identity_materials", non_inv_name),
     ):
-        rel = order[side]["materials_path"]
-        assert "materials" not in order[side]
-        body = bodies[(who, rel)]
-        assert body.strip()
-        from ming_sim.materials import _safe_segment
-        visible = {int(row["id"]) for row in build_character_knowledge(db, state, who)["issues"]}
+        identity = order[side]
+        assert identity["name"] == who
+        assert "materials" not in identity
+        assert captured["bodies"][(who, identity["materials_path"])].strip()
         paths = captured["paths"][who]
+        visible = {int(row["id"]) for row in build_character_knowledge(db, state, who)["issues"]}
         assert {path for path in paths if path.startswith("事务/issue-")} == {
             f"事务/{_safe_segment(f'issue-{i}')}/当前情况.txt" for i in visible
         }
-        assert any(path.endswith("/经历.txt") for path in paths)
-        assert any(path.endswith("/公事档案.txt") for path in paths)
+        for filename in ("经历.txt", "公事档案.txt", "人物档料.txt"):
+            assert any(Path(path).name == filename for path in paths)
         assert not any(path.startswith("盘面/") for path in paths)
-    assert f"事务/{_safe_segment(f"issue-{issue_rows[0]['id']}")}/当前情况.txt" in captured["paths"][name]
-    assert f"事务/{_safe_segment(f"issue-{issue_rows[0]['id']}")}/当前情况.txt" not in captured["paths"][target]
-    assert f"事务/{_safe_segment(f"issue-{issue_rows[1]['id']}")}/当前情况.txt" in captured["paths"][target]
-    assert f"事务/{_safe_segment(f"issue-{issue_rows[1]['id']}")}/当前情况.txt" not in captured["paths"][name]
-    assert not roots[-1].exists()
+        person = replace(content.characters[who], style=styles[who])
+        assert captured["dossiers"][who] == minister_dossier(person) + "\n"
 
-    # 在身份写手读取公事档案时注入失败，仍走真实 4a 生命周期。
+    # Each explicitly assigned affair is visible only to its participant.
+    for row, who in zip(issue_rows, (name, target, non_inv_name)):
+        issue_key = _safe_segment(f"issue-{row['id']}")
+        path = f"事务/{issue_key}/当前情况.txt"
+        for reader in (name, target, non_inv_name):
+            assert (path in captured["paths"][reader]) == (reader == who)
+
+    assert all(not root.exists() for root in roots)
+
+    # 在身份写手读取公事档案时注入失败，仍走真实过月生命周期。
     error = RuntimeError("identity archive unavailable")
     def broken_archive(*args, **kwargs):
         raise error
     monkeypatch.setattr(db, "list_referenceable_dossiers", broken_archive)
-    with pytest.raises(RuntimeError) as failed:
-        month_chain.run_secret_orders_supply(db, state, cfg, {})
-    assert failed.value is error
-    assert len(roots) == 2
-    assert not roots[-1].exists()
+    session_fail = make_light_session(db, state, content)
+    session_fail.llm_config = cfg
+    with pytest.raises(SettlementAbort) as failed:
+        session_fail.resolve_turn(allow_empty_decree=True)
+    assert failed.value.stage == "secret_orders_supply"
+    assert failed.value.__cause__ is error
+    assert all(not root.exists() for root in roots)
 
 
 def test_case_opening_source_clue_assists_its_fact(game):

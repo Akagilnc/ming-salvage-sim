@@ -2300,10 +2300,18 @@ def _month_chain_of(db, turn):
 def test_model_memorial_revision_is_next_month_same_identity(game, monkeypatch, vacant):
     """真实入口覆盖无硬数量门、原批、原案改票、双缺位搁置与补任再呈。"""
     import ming_sim.rescript_draft as drafting
+    from dataclasses import replace
     from pathlib import Path
+    from ming_sim.context import minister_dossier
+    from ming_sim.materials import list_materials, read_material
     real_rescript = drafting.run_rescript_text
     db, state, content = game
     turn = int(state.turn)
+    officers = drafting.triage_officers(db)
+    styles = {row["name"]: style for row, style in zip(officers, ("  沉得住气\r\n少作张扬。  ", ""))}
+    for name, style in styles.items():
+        db.conn.execute("UPDATE characters SET style=? WHERE name=?", (style, name))
+    db.conn.commit()
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
     affair = db.affairs.open(name="急务", origin="奏折", year=state.year, period=state.period, turn=state.turn)
@@ -2348,7 +2356,13 @@ def test_model_memorial_revision_is_next_month_same_identity(game, monkeypatch, 
         payload = json.loads(prompt)
         if payload["answer"] is None:
             for officer in payload["officers"]:
-                assert (Path(prepared.root) / officer["materials"]).is_dir()
+                root = Path(prepared.root) / officer["materials"]
+                assert root.is_dir()
+                assert set(officer) == {"name", "office", "faction", "materials"}
+                (dossier_rel,) = [rel for rel in list_materials(root) if Path(rel).name == "人物档料.txt"]
+                # Deterministic input projection, not a constraint on generated prose.
+                person = replace(content.characters[officer["name"]], style=styles[officer["name"]])
+                assert read_material(root, dossier_rel) == minister_dossier(person) + "\n"
             assert payload["world"] is None
         else:
             assert (Path(prepared.root) / payload["world"]["materials"]).is_dir()
@@ -2367,6 +2381,9 @@ def test_model_memorial_revision_is_next_month_same_identity(game, monkeypatch, 
         session.resolve_turn(allow_empty_decree=True)
     assert stopped.value.stage == "rescript-draft"
     assert _month_chain_of(db, turn)["world_committed"] is True
+    styles[officers[0]["name"]] = "旧恨未消，却更沉得住气。"
+    db.conn.execute("UPDATE characters SET style=? WHERE name=?", (styles[officers[0]["name"]], officers[0]["name"]))
+    db.conn.commit()
     session = make_light_session(db, db.load_state(content), content)
     session.llm_config = object()
     state = session.state
