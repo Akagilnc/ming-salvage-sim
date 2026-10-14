@@ -164,7 +164,7 @@ def test_prepare_rebuilds_from_world_record_after_restore(game, tmp_path):
     db.dossiers.record_dossier_progress(dossier_id, state.turn, "推进", "军饷已领讫")
     db.dossiers.record_actual_progress(
         dossier_id, state.turn, units=2, fidelity_state="partial",
-        floor_state="partial", note="余饷未交付",
+        note="余饷未交付",
     )
     db.conn.execute(
         "UPDATE affairs SET status='closed', closed_turn=? WHERE id=?",

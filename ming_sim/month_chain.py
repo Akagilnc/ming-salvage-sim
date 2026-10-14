@@ -1556,7 +1556,7 @@ def _step_4a_secret_order_supply(
         invalid_declarations = False
         try:
             with atomic(db):
-                rows, rows_rejections = apply_monthly_covert_actual_progress(
+                rows_rejections = apply_monthly_covert_actual_progress(
                     db, state, selections=selections, only_supplied=False,
                     source=source)
                 # #1835 S1：只消费 canonical RejectedItem；保留 invalid_enum 停续语义。

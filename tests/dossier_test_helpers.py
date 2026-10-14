@@ -1,6 +1,8 @@
+from ming_sim.covert_progress import build_covert_task_contract
+
 # #1504 typed covert-task contract fixtures (applier-native 万亩 / 实务事功).
 
-TYPED_COVERT_TASK = {
+TYPED_COVERT_TASK = build_covert_task_contract(covert_task={
     "kind": "清丈",
     "axes": ["实务事功"],
     "direction": 1,
@@ -8,7 +10,7 @@ TYPED_COVERT_TASK = {
         "unit": "万亩", "target_units": 1.0, "effect_sign": 1,
         "region": "henan", "field": "registered_land", "target": "421",
     },
-}
+})
 def create_test_secret_order(db, state, minister, title, content, tags, **kwargs):
     """Canonical neutral contract for tests whose behavior is unrelated to delivery semantics."""
     kwargs.setdefault("covert_task", TYPED_COVERT_TASK)

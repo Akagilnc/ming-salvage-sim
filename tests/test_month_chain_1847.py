@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json
+from ming_sim.covert_progress import build_covert_task_contract
 import sqlite3
 import pytest
 import ming_sim.month_chain as month_chain
@@ -1882,7 +1883,10 @@ def test_step_4a_non_validation_failure_keeps_product_on_retry(game, monkeypatch
     assert len(db.dossiers.list_dossier_progress(dossier_id)) == 1
 
 
-def test_step_4a_settles_due_secret_order(game, monkeypatch):
+@pytest.mark.parametrize("fidelity,quantity,status", [
+    ("阳奉阴违", 2, "done"), ("忠实", 1, "failed"),
+])
+def test_step_4a_settles_due_secret_order(game, monkeypatch, fidelity, quantity, status):
     """步骤 4a：到期密令在实况落账后由步骤 4a 办理结案，且早于邸报供料。"""
     _forbid_extractor(monkeypatch)
     db, state, content = game
@@ -1893,13 +1897,13 @@ def test_step_4a_settles_due_secret_order(game, monkeypatch):
     order_id = db.create_secret_order(
         state, minister, "到期结案密令", "到期查核", [],
         deadline_months=1,
-        covert_task={
+        covert_task=build_covert_task_contract(covert_task={
             "kind": "差务", "axes": ["实务事功"], "direction": 1,
             "delivery": {
                 "unit": "万两", "target_units": 2.0, "effect_sign": -1,
                 "purpose": "其它", "category": "密令差务", "account": "内库",
             },
-        },
+        }),
     )
     # Issued last turn, due this turn
     db.conn.execute(
@@ -1912,7 +1916,7 @@ def test_step_4a_settles_due_secret_order(game, monkeypatch):
     def translate(*_a, **_k):
         return {"effects": {
             "economy_moves": [{
-                "account": "内库", "delta": -2, "category": "密令差务",
+                "account": "内库", "delta": -quantity, "category": "密令差务",
                 "purpose": "其它", "reason": "差务结项出银",
                 "origin_ref": f"dossier:{dossier_id}",
             }],
@@ -1929,7 +1933,7 @@ def test_step_4a_settles_due_secret_order(game, monkeypatch):
             }],
             "covert_exec_selections": [{
                 "order_id": order_id,
-                "fidelity": "忠实",
+                "fidelity": fidelity,
             }],
         }, ensure_ascii=False)
 
@@ -1944,8 +1948,8 @@ def test_step_4a_settles_due_secret_order(game, monkeypatch):
     result = session.resolve_turn(allow_empty_decree=True)
     assert result.stage == "advanced"
 
-    # Secret order should be settled to 'done' (delivered 2.0 / target 2.0)
-    assert db.character_knowledge.get_secret_order(order_id)["status"] == "done"
+    assert db.character_knowledge.get_secret_order(order_id)["status"] == status
+    assert db.dossiers.actual_progress_units(dossier_id) == quantity
     chain = _month_chain_of(db, turn)
     assert chain.get("due_secret_orders_settled") is True
     assert chain.get("secret_orders_supply_done") is True
@@ -1965,13 +1969,13 @@ def test_build_secret_orders_supply_feed_uses_fact_materials_not_assembled_effec
     order_id = db.create_secret_order(
         state, minister, "供料事实探针", "据实判读密令", [],
         deadline_months=2,
-        covert_task={
+        covert_task=build_covert_task_contract(covert_task={
             "kind": "差务", "axes": ["实务事功"], "direction": 1,
             "delivery": {
                 "unit": "万两", "target_units": 1.0, "effect_sign": -1,
                 "purpose": "其它", "category": "密令差务", "account": "内库",
             },
-        },
+        }),
     )
     db.conn.execute(
         "UPDATE secret_orders SET turn_issued=? WHERE id=?",
@@ -2112,13 +2116,13 @@ def test_step_4a_rescript_path_feeds_landed_not_assembled_effects(game, monkeypa
     order_id = db.create_secret_order(
         state, minister, "辽饷清核", "查清兵部饷银", [],
         deadline_months=2,
-        covert_task={
+        covert_task=build_covert_task_contract(covert_task={
             "kind": "差务", "axes": ["实务事功"], "direction": 1,
             "delivery": {
                 "unit": "万两", "target_units": 5.0, "effect_sign": -1,
                 "purpose": "其它", "category": "密令差务", "account": "内库",
             },
-        },
+        }),
     )
     db.conn.execute(
         "UPDATE secret_orders SET turn_issued=? WHERE id=?",

@@ -444,7 +444,7 @@ def _persist_step_specialized(run, step_extracted: Mapping[str, object]) -> None
         if selections is not None:
             from ming_sim.covert_progress import apply_monthly_covert_actual_progress
 
-            rows, rows_rejections = apply_monthly_covert_actual_progress(
+            rows_rejections = apply_monthly_covert_actual_progress(
                 run.db, run.state, selections=selections, only_supplied=True,
                 source=run.ctx.source,
             )
