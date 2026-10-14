@@ -690,10 +690,12 @@ def test_world_segment_repeated_strategic_results_apply_in_order(
         assert db.conn.execute("SELECT military_pressure FROM regions WHERE id='beizhili'").fetchone()[0] == pressure
 
 
-def test_hidden_affair_strategic_result_does_not_trigger_or_land(game, monkeypatch):
-    from ming_sim.month_translate import dispatch_month_segment
+def test_hidden_affair_strategic_result_does_not_trigger_or_land(game, monkeypatch, tmp_path):
+    from ming_sim.db import GameDB
+    from tests.conftest import wait_for_background_jobs
+    from tests.test_month_chain_1843 import _prepare_player_month
 
-    db, state, _ = game
+    db, state, content = game
     state.year, state.period = 1629, 11
     state.metrics["民心"] = 50
     hidden = db.affairs.open(
@@ -705,9 +707,28 @@ def test_hidden_affair_strategic_result_does_not_trigger_or_land(game, monkeypat
         (state.turn, hidden.id),
     )
     db.conn.commit()
-    metric_before = state.metrics["民心"]
-    treasury_before = state.metrics["国库"]
-    stub_month_translate(monkeypatch, lambda _request, _config: {
+    db.reign.save_game_state(state)
+    control_dir = tmp_path / "control"
+    control_dir.mkdir()
+    control = GameDB(str(control_dir / "game.db"), content)
+    try:
+        db.conn.backup(control.conn)
+        control_state = control.load_state()
+        control_session = _prepare_player_month(
+            control, control_state, content, monkeypatch,
+            world=lambda *_a, **_k: "本月战事未发。",
+        )
+        assert control_session.resolve_turn(allow_empty_decree=True).stage == "gazette"
+        wait_for_background_jobs(control)
+        expected_metrics = dict(control_state.metrics)
+        expected_pressure = control.conn.execute(
+            "SELECT military_pressure FROM regions WHERE id='beizhili'"
+        ).fetchone()[0]
+    finally:
+        wait_for_background_jobs(control)
+        control.conn.close()
+
+    declaration = {
         "effects": [{
             "event_id": "jisi_lubian",
             "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
@@ -721,11 +742,20 @@ def test_hidden_affair_strategic_result_does_not_trigger_or_land(game, monkeypat
                 "category": "过月支出", "reason": "事件所属军需",
             }],
         }],
-    })
-    dispatch_month_segment(db, state, segment="不可见事务战果")
+    }
+    session = _prepare_player_month(
+        db, state, content, monkeypatch,
+        world=lambda *_a, **_k: "本月战事未发。",
+        translate=lambda *_a, **_k: declaration,
+    )
+    assert session.resolve_turn(allow_empty_decree=True).stage == "gazette"
+    wait_for_background_jobs(db)
     assert db.issues.has_event_terminal_state('jisi_lubian', "triggered") is False
-    assert state.metrics["民心"] == metric_before
-    assert state.metrics["国库"] == treasury_before
+    assert state.metrics["民心"] == expected_metrics["民心"]
+    assert state.metrics["国库"] == expected_metrics["国库"]
+    assert db.conn.execute(
+        "SELECT military_pressure FROM regions WHERE id='beizhili'"
+    ).fetchone()[0] == expected_pressure
 
 
 def _closed_affair(db, state):
@@ -951,6 +981,9 @@ def test_final_strategic_rejection_leaves_no_owned_effects(game, monkeypatch, tm
         wait_for_background_jobs(control)
         expected_metrics = dict(control_state.metrics)
         expected_refugees = _pop(control, "流民", "shaanxi")
+        expected_liaodong_unrest = control.conn.execute(
+            "SELECT unrest FROM regions WHERE id='liaodong'"
+        ).fetchone()[0]
     finally:
         wait_for_background_jobs(control)
         control.conn.close()
@@ -971,6 +1004,9 @@ def test_final_strategic_rejection_leaves_no_owned_effects(game, monkeypatch, tm
         key: expected_metrics[key] for key in ("民心", "皇威", "国库", "内库")
     }
     assert _pop(db, "流民", "shaanxi") == expected_refugees
+    assert db.conn.execute(
+        "SELECT unrest FROM regions WHERE id='liaodong'"
+    ).fetchone()[0] == expected_liaodong_unrest
     assert db.conn.execute("SELECT COUNT(*) FROM economy_ledger WHERE category='event_owned'").fetchone()[0] == 0
     assert "event_owned_base" not in db.fiscal_config.values()
     categories = {row[0] for row in db.conn.execute("SELECT category FROM rejection_reports")}
