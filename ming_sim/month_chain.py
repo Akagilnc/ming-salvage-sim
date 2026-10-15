@@ -949,32 +949,53 @@ def _guard_month_call(
     raise AssertionError("month call abort must raise")
 
 
-def _apply_stalled_deliberation_from_declaration(
-    db: Any, state: Any, *, dossier_id: int, declaration: Any,
-) -> bool:
-    """#1917：预推声明含本原案 stalled 时落标记并返回 True（跳过颁布）。"""
-    from ming_sim.applier import Provenance
-    from ming_sim.settlement.run import SettlementContext, settle_delta
-
-    if not isinstance(declaration, Mapping):
-        return False
+def _deliberation_outcome_items(declaration: Mapping[str, object]) -> list[dict]:
+    """Collect deliberation_outcomes from a C0 declaration (object or array effects)."""
     effects = declaration.get("effects")
-    items: list = []
+    raw_items: list = []
     if isinstance(effects, Mapping):
         raw = effects.get("deliberation_outcomes") or []
         if isinstance(raw, list):
-            items = raw
+            raw_items = list(raw)
     elif isinstance(effects, list):
         for envelope in effects:
             if not isinstance(envelope, Mapping):
                 continue
             raw = envelope.get("deliberation_outcomes") or []
             if isinstance(raw, list):
-                items.extend(raw)
+                raw_items.extend(raw)
+    return [dict(item) for item in raw_items if isinstance(item, Mapping)]
+
+
+def _apply_stalled_deliberation_from_declaration(
+    db: Any, state: Any, *, dossier_id: int, decree_ref: str, declaration: Any,
+    visible_refs: Any = None,
+) -> bool:
+    """#1917：预推声明含本原案 stalled 时落标记、消费暂存，返回 True（跳过颁布）。
+
+    经 bind_decree_effect_sources 把 pending-action 本旨身份绑成案卷 id，
+    与 settle 路径同一绑定契约；落标后 mark settled，避免强推后续跑被旧声明覆盖。
+    """
+    from ming_sim.applier import Provenance
+    from ming_sim.declaration_dispatch import bind_decree_effect_sources
+    from ming_sim.settlement.run import SettlementContext, settle_delta
+
+    if not isinstance(declaration, Mapping):
+        return False
+    ref = str(decree_ref or "").strip()
+    if not ref or db.staged_declarations.is_settled(ref):
+        return False
+    current = db.dossiers.get(int(dossier_id))
+    if current is None or str(current.get("status") or "") != "proposed":
+        return False
+    if str((current.get("payload") or {}).get("deliberation_state") or "") == "backed":
+        # 皇帝已强推：不得被旧 stalled 声明回写。
+        return False
+    bound, _refs = bind_decree_effect_sources(
+        db, ref, declaration, visible_refs if isinstance(visible_refs, Mapping) else {},
+    )
     matched = []
-    for item in items:
-        if not isinstance(item, Mapping):
-            continue
+    for item in _deliberation_outcome_items(bound):
         try:
             if int(item.get("dossier_id")) != int(dossier_id):
                 continue
@@ -992,6 +1013,8 @@ def _apply_stalled_deliberation_from_declaration(
             content=getattr(db, "content", None),
         ),
     )
+    # 消费本旨暂存：无人站台不进颁布，其余效果亦不落；请旨行仍可读。
+    db.staged_declarations.mark_terminal(ref, status="settled")
     row = db.dossiers.get(int(dossier_id))
     return bool(
         row is not None
@@ -1041,16 +1064,28 @@ def _settle_edicts(
             promulgated and not db.staged_declarations.is_settled(ref)
             and bool(db.staged_declarations.staged_for(ref))
         )
-        if not pending_judgment and not pending_settle:
+        payload_state = str((dossier.get("payload") or {}).get("deliberation_state") or "")
+        # 强推后 backed 仍 proposed：即便暂存已消费，也须接回颁布（#1917 条款 2）。
+        backed_awaiting_promulgation = (
+            pending_judgment and payload_state == "backed"
+        )
+        if not pending_judgment and not pending_settle and not backed_awaiting_promulgation:
             continue
         if (
             status == "proposed"
             and (not dossier.get("promulgation_decision") or held)
-            and not db.staged_declarations.is_settled(ref)
+            and (
+                not db.staged_declarations.is_settled(ref)
+                or backed_awaiting_promulgation
+            )
         ):
             staged = db.staged_declarations.staged_for(ref, turn=int(state.turn))
             verdict = staged[0].verdict if staged and staged[0].declaration is not None else None
-            if verdict is None and session.llm_config is not None:
+            # 御笔强推后的原案：暂存已消费，直接接回颁布，禁止对已 settled ref 再预推。
+            if backed_awaiting_promulgation:
+                if not (isinstance(verdict, dict) and verdict.get("decision")):
+                    verdict = {"decision": "promulgated"}
+            elif verdict is None and session.llm_config is not None:
                 snapshot = snapshot_for_existing_dossier(session, dossier)
 
                 def _produce() -> Dict[str, Any]:
@@ -1061,11 +1096,12 @@ def _settle_edicts(
                     step="edict_forecast", operation=_produce, decree_ref=ref,
                 )
                 verdict = product["verdict"]
-            # #1917：预推转译已声明无人站台时，标 stalled 并跳过当月颁布。
+            # #1917：预推转译已声明无人站台时，经绑定落标、消费暂存，跳过当月颁布。
             staged_now = db.staged_declarations.staged_for(ref, turn=int(state.turn))
-            if _apply_stalled_deliberation_from_declaration(
-                db, state, dossier_id=int(dossier["id"]),
-                declaration=(staged_now[0].declaration if staged_now else None),
+            if staged_now and _apply_stalled_deliberation_from_declaration(
+                db, state, dossier_id=int(dossier["id"]), decree_ref=ref,
+                declaration=staged_now[0].declaration,
+                visible_refs=staged_now[0].visible_refs,
             ):
                 continue
             if isinstance(verdict, dict) and verdict.get("decision"):
