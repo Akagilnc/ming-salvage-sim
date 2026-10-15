@@ -298,18 +298,20 @@ def apply_office_appointment(
             )
         except OfficeAppointmentRejection as exc:
             return _office_appointment_failure(name, new_office, exc, source=source)
-        # 仅改任别 / 复述现职子集时，声明职名常只带其中一缺；未声明撤换的兼衔须保留
-        # （#1912 P1）。真正调任＝声明职不在现职集合内 → 整组替换语义不变。
+        # 同任所继续任职（改任别 / 复述现职子集）：声明职名常只带其中一缺，
+        # 未声明撤换的兼衔须保留（#1912 P1）。跨任所或声明职不在现职集合内
+        # ＝真正调任，整组替换且不得用旧任所覆盖已解析的新任所。
         if cur_status == "active":
             old_norm = normalize_office(str(old_office or ""))
             new_parts = {p for p in new_office.split(",") if p}
             old_parts = {p for p in old_norm.split(",") if p}
-            if new_parts and old_parts and new_parts.issubset(old_parts):
+            existing_seat = str(db.characters.office_region(name) or "").strip()
+            if (
+                new_parts and old_parts and new_parts.issubset(old_parts)
+                and seat == existing_seat
+            ):
                 new_office = old_norm
                 new_office_type = current_office_type or new_office_type
-                existing_seat = str(db.characters.office_region(name) or "").strip()
-                if existing_seat:
-                    seat = existing_seat
         if cur_status != "active":
             db.set_character_status(
                 state,

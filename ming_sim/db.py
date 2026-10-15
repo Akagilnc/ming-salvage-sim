@@ -8024,6 +8024,8 @@ class GameDB:
         # No typed region this call — only continue an existing same-office seat.
         # character_offices is required schema (init_schema); missing table
         # surfaces as SQL error (ADR 0005 / #1853).
+        # Subset restatement of concurrent local titles (tenure-only) reuses the
+        # same seat; cross-seat transfer must supply typed region_id above.
         person = str(name or "").strip()
         title = normalize_office(str(office or ""))
         if person and title:
@@ -8031,8 +8033,14 @@ class GameDB:
                 'SELECT office_title, region_id FROM character_offices WHERE character_name=?',
                 (person,),
             ).fetchone()
-            if row is not None and normalize_office(str(row["office_title"] or "")) == title:
-                return str(row["region_id"] or "").strip()
+            if row is not None:
+                archived = normalize_office(str(row["office_title"] or ""))
+                title_parts = {p for p in title.split(",") if p}
+                archived_parts = {p for p in archived.split(",") if p}
+                if archived == title or (
+                    title_parts and archived_parts and title_parts.issubset(archived_parts)
+                ):
+                    return str(row["region_id"] or "").strip()
         raise OfficeAppointmentRejection(
             f"地方任命缺 region_id 任所：{name} → {office}（{kind}）",
             category="missing_field",

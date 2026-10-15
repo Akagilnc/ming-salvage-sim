@@ -391,6 +391,7 @@ def _appointment_intent_is_current_office_noop(
     db: Any, name: str, office: str, content: Any = None,
     *,
     tenure: Optional[str] = None,
+    region_id: Optional[str] = None,
 ) -> bool:
     """任命目标已在该职时是背景复述，不生成待确认任免动作。
 
@@ -400,6 +401,7 @@ def _appointment_intent_is_current_office_noop(
 
     #1912 / ADR 0064：声明了任别且与现职任别不同（如署理→真除）不是背景复述，须再下一道任免旨。
     ``tenure is None`` 表示声明未带任别字段，仅按官职判定。
+    显式 ``region_id`` 与现任所不同＝跨任所调任，不是背景复述。
     """
     conn = getattr(db, "conn", None)
     clean_name = str(name or "").strip()
@@ -407,7 +409,8 @@ def _appointment_intent_is_current_office_noop(
     if conn is None or not clean_name or not desired:
         return False
     canonical = _canonical_minister_key(content, clean_name, db)
-    row = CharacterStore(conn).row(canonical, fields="status, office")
+    store = CharacterStore(conn)
+    row = store.row(canonical, fields="status, office")
     if row is None or str(row["status"] or "") != "active":
         return False
     current = normalize_office(str(row["office"] or ""))
@@ -417,6 +420,11 @@ def _appointment_intent_is_current_office_noop(
     current_parts = {p for p in current.split(",") if p}
     if not desired_parts or not desired_parts.issubset(current_parts):
         return False
+    desired_seat = str(region_id or "").strip()
+    if desired_seat:
+        current_seat = str(store.office_region(canonical) or "").strip()
+        if desired_seat != current_seat:
+            return False
     if tenure is None:
         return True
     from ming_sim.supervision import character_tenure
