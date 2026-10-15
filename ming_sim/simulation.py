@@ -218,8 +218,38 @@ def _canonical_item_fields(value: object) -> object:
 IDENTITY_ITEM_FIELDS = frozenset({"origin_ref", "dossier_id", "target_dossier_id"})
 
 
+def normalize_item_keys(
+    item: Mapping,
+    *,
+    domain_aliases: Mapping[str, str] | None = None,
+) -> Dict[str, object]:
+    """按段契约规范化条目键（非递归）。
+
+    - 身份槽始终走 ITEM_FIELD_ALIASES（来源引用／诏书引用 → origin_ref 等）。
+    - 其余键：有 domain_aliases 则领域表优先（建军「势力」→ owner_power），
+      否则走 ITEM_FIELD_ALIASES（投贼／财政等业务别名）。
+    - 嵌套 dict 值原样保留，不整树抢译。
+    """
+    result: Dict[str, object] = {}
+    for key, val in item.items():
+        raw = str(key).strip()
+        via_item = ITEM_FIELD_ALIASES.get(raw, raw)
+        if via_item in IDENTITY_ITEM_FIELDS:
+            result[via_item] = val
+            continue
+        if domain_aliases is not None:
+            result[domain_aliases.get(raw, raw)] = val
+        else:
+            result[via_item] = val
+    return result
+
+
 def lift_identity_field_aliases(item: Mapping) -> Dict[str, object]:
-    """只把身份槽别名升到 canonical 键；其它键（含领域字段）原样保留。"""
+    """只把身份槽别名升到 canonical 键；其它键原样保留。
+
+    适用于已有领域核自行吃 ARMY/REGION 别名、只需贯通 origin_ref 的写口。
+    需要业务字段别名的段请用 :func:`normalize_item_keys`。
+    """
     result: Dict[str, object] = {}
     for key, val in item.items():
         field = ITEM_FIELD_ALIASES.get(str(key).strip(), str(key).strip())
@@ -228,3 +258,14 @@ def lift_identity_field_aliases(item: Mapping) -> Dict[str, object]:
         else:
             result[key] = val
     return result
+
+
+def read_item_origin_ref(item: Mapping | None) -> str:
+    """从条目读取 origin_ref（含 ITEM 身份别名）；无则空串。"""
+    if not item:
+        return ""
+    for key, val in item.items():
+        field = ITEM_FIELD_ALIASES.get(str(key).strip(), str(key).strip())
+        if field == "origin_ref":
+            return str(val or "").strip()
+    return ""

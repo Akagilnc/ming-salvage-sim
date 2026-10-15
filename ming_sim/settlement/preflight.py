@@ -18,6 +18,12 @@ from ming_sim.constants import (
     ARMY_SCORE_FIELDS, ARMY_QUANTITY_FIELDS, ARMY_TEXT_FIELDS, FISCAL_SCORE_FIELDS,
     REGION_FIELD_ALIASES, ARMY_FIELD_ALIASES,
 )
+from ming_sim.simulation import (
+    IDENTITY_ITEM_FIELDS,
+    ITEM_FIELD_ALIASES,
+    lift_identity_field_aliases,
+    read_item_origin_ref,
+)
 from ming_sim.content import GameContent
 from ming_sim.db import (
     GameDB,
@@ -33,6 +39,16 @@ from ming_sim.entities.character.transit import (  # noqa: E402
     admit_transit_departure,
     load_valid_regions,
 )
+
+
+def _is_effect_meta_field(raw_field: object, domain_aliases: dict) -> bool:
+    """身份槽／reason 不是领域数值字段；别名须先认 ITEM 再认领域表。"""
+    raw = str(raw_field).strip()
+    via_item = ITEM_FIELD_ALIASES.get(raw, raw)
+    if via_item in IDENTITY_ITEM_FIELDS or via_item == "reason":
+        return True
+    field = domain_aliases.get(raw, raw)
+    return field in {"reason", "origin_ref"}
 
 
 # 会崩坏的局势：人为可控、有明确「彻底失败」时刻——镇压不住/边镇沦陷/朝局崩坏。
@@ -380,9 +396,9 @@ def _strategic_event_result_preflight_error(
             region_row = db.regions.row(region_id, fields="1")
             if region_row is not None:
                 for raw_field, value in raw_changes.items():
-                    field = REGION_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
-                    if field in ("reason", "origin_ref"):
+                    if _is_effect_meta_field(raw_field, REGION_FIELD_ALIASES):
                         continue
+                    field = REGION_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
                     if field in REGION_TEXT_FIELDS or field in seen_fields:
                         continue
                     if field not in region_numeric_fields:
@@ -392,8 +408,10 @@ def _strategic_event_result_preflight_error(
                         (raw_field, str(region_id), field, _region_world_value(str(region_id), field), value)
                     )
 
+            region_payload = lift_identity_field_aliases(raw_changes)
+            region_payload = {k: v for k, v in region_payload.items() if k != "origin_ref"}
             landed, refused = db.apply_region_deltas(
-                preview_state, preflight_event, None, "档房", {region_id: raw_changes}, commit=False,
+                preview_state, preflight_event, None, "档房", {region_id: region_payload}, commit=False,
             source=Provenance.system_simulation)
             for result in refused:
                 if isinstance(result, RejectedItem):
@@ -415,9 +433,9 @@ def _strategic_event_result_preflight_error(
             seen_fields = set()
             army_row = db.armies.row(army_id, fields="1")
             for raw_field, value in raw_changes.items():
-                field = ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
-                if field in ("reason", "origin_ref"):
+                if _is_effect_meta_field(raw_field, ARMY_FIELD_ALIASES):
                     continue
+                field = ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
                 if field == "cannon_transfer_to":
                     transfer_target = str(value)
                     target_row = db.armies.row(transfer_target, fields="1")
@@ -474,9 +492,11 @@ def _strategic_event_result_preflight_error(
         db.conn.execute("SAVEPOINT strategic_power_result_preflight")
         try:
             for power_id, raw_changes in power_items:
+                power_payload = lift_identity_field_aliases(raw_changes) if isinstance(raw_changes, dict) else {}
+                power_payload = {k: v for k, v in power_payload.items() if k != "origin_ref"}
                 landed, refused = db.apply_power_deltas(
                     state,
-                    {power_id: {key: value for key, value in raw_changes.items() if key != "origin_ref"}},
+                    {power_id: power_payload},
                     commit=False,
                 source=Provenance.system_simulation)
                 power_results.extend(landed)
@@ -579,7 +599,8 @@ def _strategic_event_result_preflight_error(
             for person_item in person_changes:
                 applied, refused = land_person_changes_isolated(
                     db, copy.deepcopy(state), [person_item], content=probe_content,
-                    llm_config=llm_config, origin_ref=str(person_item.get("origin_ref") or ""),
+                    llm_config=llm_config,
+                    origin_ref=read_item_origin_ref(person_item) if isinstance(person_item, dict) else "",
                     require_origin=True, source=Provenance.system_simulation,
                 )
                 results.extend(applied)
@@ -604,7 +625,7 @@ def _strategic_event_result_preflight_error(
             raw for raw in new_armies
             if not (
                 isinstance(raw, dict)
-                and (db.effect_origin_rejection(str(raw.get("origin_ref") or "").strip()) or {}).get("category")
+                and (db.effect_origin_rejection(read_item_origin_ref(raw)) or {}).get("category")
                 == "unauthorized_affair_origin"
             )
         ]
@@ -649,7 +670,7 @@ def _strategic_event_result_preflight_error(
     admissible_origin = False
     saw_unauthorized = False
     for kind, item in origin_items:
-        origin_ref = item.get("origin_ref") if isinstance(item, dict) else None
+        origin_ref = read_item_origin_ref(item) if isinstance(item, dict) else ""
         origin_error = db.effect_origin_rejection(origin_ref)
         if not origin_error:
             admissible_origin = True

@@ -32,14 +32,15 @@ def _apply_bandit_absorptions(
     rejected: List[RejectedItem] = []
     power_changes: List[Dict[str, object]] = []
     items = absorptions if isinstance(absorptions, list) else []
-    from ming_sim.simulation import lift_identity_field_aliases
+    from ming_sim.simulation import normalize_item_keys
 
     for raw in items:
         if not isinstance(raw, dict):
             rejected.append(RejectedItem(item={"raw_value": raw}, reason="bandit_absorptions 项必须是 object(dict)", category="invalid_shape", source=source))
             continue
-        # 只升身份槽；白名单其它字段仍按既有英文键（不抢领域「势力」语义）。
-        item = lift_identity_field_aliases(raw)
+        # 投贼字段契约在 ITEM_FIELD_ALIASES（地区编号／势力编号／请求人数／来源引用）；
+        # 无建军领域「势力」冲突，走条目规范化而非仅身份槽。
+        item = normalize_item_keys(raw)
 
         def _reject(category: str, reason: str) -> None:
             rejected.append(RejectedItem(item=item, reason=reason, category=category, source=source))

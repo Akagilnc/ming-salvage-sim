@@ -66,10 +66,10 @@ def apply_removes(run) -> SectionResult:
 
     applied: List[Dict[str, object]] = []
     rejections: List[RejectedItem] = []
-    from ming_sim.simulation import lift_identity_field_aliases
+    from ming_sim.simulation import normalize_item_keys
 
     for raw in run.current_extracted.get("fiscal_removes") or []:
-        remove = lift_identity_field_aliases(raw) if isinstance(raw, dict) else raw
+        remove = normalize_item_keys(raw) if isinstance(raw, dict) else raw
         if not isinstance(remove, dict):
             continue
         key = str(remove.get("key") or "").strip()
@@ -128,10 +128,10 @@ def apply_creates(run) -> SectionResult:
 
     applied: List[Dict[str, object]] = []
     rejections: List[RejectedItem] = []
-    from ming_sim.simulation import lift_identity_field_aliases
+    from ming_sim.simulation import normalize_item_keys
 
     for raw in run.current_extracted.get("fiscal_creates") or []:
-        create = lift_identity_field_aliases(raw) if isinstance(raw, dict) else raw
+        create = normalize_item_keys(raw) if isinstance(raw, dict) else raw
         if not isinstance(create, dict):
             continue
         # direction 同义词在唯一守门人处归一：表与清洗层共用同一张表（懒 import
@@ -214,10 +214,10 @@ def apply_changes(run) -> SectionResult:
     loss_pair_running: Dict[str, int] = {}
     loss_pair_final_by_pair: Dict[Tuple[str, str], Dict[str, int]] = {}
 
-    from ming_sim.simulation import lift_identity_field_aliases
+    from ming_sim.simulation import normalize_item_keys
 
     for raw in run.current_extracted.get("fiscal_changes") or []:
-        change = lift_identity_field_aliases(raw) if isinstance(raw, dict) else raw
+        change = normalize_item_keys(raw) if isinstance(raw, dict) else raw
         if not isinstance(change, dict):
             continue
         key = str(change.get("key") or "").strip()

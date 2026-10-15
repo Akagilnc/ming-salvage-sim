@@ -27,15 +27,16 @@ def apply_new_armies(run, items: List[object] | None = None):
         items = list(run.current_extracted.get("new_armies") or [])
     rows = []
     rejections = []
-    from ming_sim.simulation import lift_identity_field_aliases
+    from ming_sim.constants import ARMY_FIELD_ALIASES
+    from ming_sim.simulation import normalize_item_keys
 
     for raw in items:
         if not isinstance(raw, dict):
             continue
-        # id(raw) 是战略事件归属真源；只升身份槽，领域键交 ARMY_FIELD_ALIASES。
+        # id(raw) 是战略事件归属真源；身份槽走 ITEM，领域键走 ARMY（势力→owner_power）。
         if run.declared_new_army_event_by_item.get(id(raw), "") in run.strategic_event_referenced_ids:
             continue
-        item = lift_identity_field_aliases(raw)
+        item = normalize_item_keys(raw, domain_aliases=ARMY_FIELD_ALIASES)
         origin_ref = str(item.get("origin_ref") or "").strip()
         landed, refused = run.db.create_armies_from_extraction(
             run.state, [item], actor="档房", commit=False,

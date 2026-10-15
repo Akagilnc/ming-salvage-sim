@@ -177,12 +177,13 @@ def _resolve_strategic_events(run, issue_summary) -> Dict[str, SectionResult]:
                 run, event_id, str(new_issue.get("title") or ""),
             ))
             continue
-        from ming_sim.simulation import lift_identity_field_aliases
+        from ming_sim.constants import ARMY_FIELD_ALIASES
+        from ming_sim.simulation import lift_identity_field_aliases, normalize_item_keys
 
         for raw in run.event_new_armies(event_id):
             if not isinstance(raw, dict):
                 continue
-            item = lift_identity_field_aliases(raw)
+            item = normalize_item_keys(raw, domain_aliases=ARMY_FIELD_ALIASES)
             origin_ref = str(item.get("origin_ref") or "").strip()
             landed, refused = run.db.create_armies_from_extraction(
                 run.state, [item], actor="档房", commit=False,
@@ -221,9 +222,14 @@ def _resolve_strategic_events(run, issue_summary) -> Dict[str, SectionResult]:
             )
             bucket["person_issue"].extend(results)
             reject_bucket["person_issue"].extend(refused)
+        from ming_sim.simulation import lift_identity_field_aliases
+
         for power_id, raw_changes in run.ordered_strategic_items("power_updates", event_id):
-            origin_ref = str(raw_changes.get("origin_ref") or "").strip()
-            payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
+            if not isinstance(raw_changes, dict):
+                continue
+            changes = lift_identity_field_aliases(raw_changes)
+            origin_ref = str(changes.get("origin_ref") or "").strip()
+            payload = {k: v for k, v in changes.items() if k != "origin_ref"}
             landed, refused = run.db.apply_power_deltas(
                 run.state, {power_id: payload}, commit=False,
                 origin_ref=origin_ref, require_origin=True,
