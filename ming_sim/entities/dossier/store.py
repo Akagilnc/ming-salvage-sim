@@ -431,25 +431,23 @@ class DossierStore(RowStore):
         return [hydrate_dossier_row(row) for row in rows]
 
     def authorizes_effects(self, dossier_id: int) -> bool:
-        """Return whether a dossier crossed either lawful promulgation path."""
-        row = self._conn.execute(
-            """
-            SELECT d.status,d.promulgation_decision,
-                   EXISTS(
-                       SELECT 1 FROM decree_dossier_decisions h
-                       WHERE h.dossier_id=d.id
-                         AND h.rescript_action='force_promulgated'
-                   ) AS was_force_promulgated
-            FROM decree_dossiers d WHERE d.id=?
-            """,
-            (int(dossier_id),),
-        ).fetchone()
+        """Return whether a dossier crossed either lawful promulgation path.
+
+        #1917 runner 裁定：无人站台待裁期间不再授权新的本旨效果；已落不动。
+        """
+        row = self.get(int(dossier_id))
         if row is None:
             return False
+        if str((row.get("payload") or {}).get("deliberation_state") or "") == "stalled":
+            return False
         return (
-            str(row["status"] or "") in {"promulgated", "executing"}
-            or str(row["promulgation_decision"] or "") == "promulgated"
-            or bool(row["was_force_promulgated"])
+            str(row.get("status") or "") in {"promulgated", "executing"}
+            or str(row.get("promulgation_decision") or "") == "promulgated"
+            or bool(self._conn.execute(
+                "SELECT 1 FROM decree_dossier_decisions "
+                "WHERE dossier_id=? AND rescript_action='force_promulgated' LIMIT 1",
+                (int(dossier_id),),
+            ).fetchone())
         )
 
     # ── status chain ──────────────────────────────────────────────

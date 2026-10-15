@@ -854,14 +854,14 @@ def test_decree_continuation_keeps_forecast_and_lands_affair_effect(game, monkey
     before = db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE category='问后加赈'",
     ).fetchone()[0]
-    # #1917：请旨未决不颁布——问前暂存效果待问清后随颁布关落；此处只记基线。
+    # 请旨不挡颁布：问前暂存已随判决落；续推不得重落。
     pre_rows = db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE category='陕西赈灾'",
     ).fetchone()[0]
+    assert pre_rows == 1
     desk = session.pending_decisions()
     assert len(desk) == 1  # 世界段空：案头仅旨意 staged 问
     desk_row = desk[0]
-    assert db.dossiers.list_dossiers(status="proposed")
 
     session.submit_hitl_choices(
         _hitl_payload(desk_row), write_gate=session._write_gate,
@@ -882,14 +882,11 @@ def test_decree_continuation_keeps_forecast_and_lands_affair_effect(game, monkey
     assert db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE category='问后加赈'",
     ).fetchone()[0] == before + 1
-    # 问前暂存与问后效果同月落定；问前项不得重复。
+    # 问前项不得因续推重复落账。
     assert db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE category='陕西赈灾'",
-    ).fetchone()[0] == pre_rows + 1
+    ).fetchone()[0] == pre_rows
     assert not db.staged_declarations.questions_for(ref)
-    assert db.dossiers.authorizes_effects(
-        int(next(r["id"] for r in db.dossiers.list_dossiers()))
-    )
     # 批红问后已落实入须进入 4a 事实供料（#1847／#1843 4a 供料修订）。
     turn = int(state.turn)
     feed = month_chain.build_secret_orders_supply_feed(

@@ -28,18 +28,20 @@ def apply(run, moves: List[object] | None = None) -> SectionResult:
 
     rows: List[object] = []
     rejections: List[RejectedItem] = []
+    from ming_sim.simulation import _canonical_item_fields
+
     for raw_move in moves:
         move = raw_move
         origin_ref = ""
         if isinstance(move, dict):
+            canonical = _canonical_item_fields(move)
+            move = canonical if isinstance(canonical, dict) else move
             try:
                 origin_ref = run.origin_ref_from_result_item(move)
             except UnauthorizedAffairOriginRef as exc:
                 rejections.append(RejectedItem(item=raw_move, reason=str(exc), category="invalid_enum", source=run.ctx.source))
                 continue
-            if origin_ref and not str(
-                move.get("origin_ref") or move.get("来源引用") or ""
-            ).strip():
+            if origin_ref and not str(move.get("origin_ref") or "").strip():
                 move["origin_ref"] = origin_ref
             if origin_ref.startswith("dossier:"):
                 dossier = _payload_owned_dossier_for_origin(run.db, origin_ref)

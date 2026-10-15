@@ -107,9 +107,15 @@ def apply_deliberation_outcomes(run):
     rejected: List[RejectedItem] = []
     source = run.ctx.source
 
-    for item in run.current_extracted.get("deliberation_outcomes") or []:
+    from ming_sim.simulation import _canonical_item_fields
+
+    for raw_item in run.current_extracted.get("deliberation_outcomes") or []:
+        if not isinstance(raw_item, dict):
+            reject_item(rejected, raw_item, "廷议声明须为对象", "invalid_shape", source)
+            continue
+        item = _canonical_item_fields(raw_item)
         if not isinstance(item, dict):
-            reject_item(rejected, item, "廷议声明须为对象", "invalid_shape", source)
+            reject_item(rejected, raw_item, "廷议声明须为对象", "invalid_shape", source)
             continue
         try:
             dossier_id = _parse_sqlite_id(item.get("dossier_id"))
@@ -121,12 +127,14 @@ def apply_deliberation_outcomes(run):
             if not note.strip():
                 raise ValueError("廷议说明不能为空")
         except (TypeError, ValueError) as exc:
-            reject_item(rejected, item, str(exc), "invalid_transition", source)
+            reject_item(rejected, raw_item, str(exc), "invalid_transition", source)
             continue
         dossier = run.db.dossiers.get(dossier_id)
-        if dossier is None or dossier["status"] != "proposed":
+        status = str((dossier or {}).get("status") or "")
+        # #1917 runner 裁定（二）：先答效果可已颁/执行；后道 stalled 转待裁，不回滚已落。
+        if dossier is None or status not in {"proposed", "promulgated", "executing"}:
             reject_item(
-                rejected, item, "无人站台只接 proposed 原案", "invalid_transition", source,
+                rejected, raw_item, "无人站台只接原案", "invalid_transition", source,
             )
             continue
         payload = dict(dossier.get("payload") or {})
@@ -139,6 +147,13 @@ def apply_deliberation_outcomes(run):
         if note.strip() and not str(payload.get("deliberation_note") or "").strip():
             payload["deliberation_note"] = note
         run.db.dossiers.update_payload(dossier_id, payload, commit=False)
+        if status != "proposed":
+            # 回 proposed 仅供待裁案头；已落效果不动。
+            run.db.conn.execute(
+                "UPDATE decree_dossiers SET status='proposed', "
+                "updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (int(dossier_id),),
+            )
         origin = f"dossier:{dossier_id}"
         existing = run.db.conn.execute(
             "SELECT id FROM issues WHERE origin_ref=? LIMIT 1", (origin,),

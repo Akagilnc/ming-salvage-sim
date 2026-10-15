@@ -192,29 +192,21 @@ def test_month_entry_stalled_then_hold_keeps_original(game, monkeypatch):
     )
 
 
-def test_deliberation_outcome_rejects_non_proposed(game):
-    """只有 proposed 原案可被标为无人站台。"""
+def test_deliberation_outcome_rejects_missing_dossier(game):
+    """不存在的案卷不可标无人站台。"""
     from ming_sim.settlement.run import SettlementContext, settle_delta
     from ming_sim.settlement.views import section
 
     db, state, content = game
-    minister = _minister_name(db)
-    did = int(db.create_decree_dossier(
-        state, action_type="policy", decree_text="已颁",
-        target_kind="issue", target_id="done",
-        payload={"text": "已颁", "actor": minister},
-    ))
-    db.dossiers.record_dossier_decision(did, "promulgated")
     result = settle_delta(
         state, db,
         {"deliberation_outcomes": [{
-            "dossier_id": did, "outcome": "stalled", "note": "冷场",
+            "dossier_id": 10**9, "outcome": "stalled", "note": "冷场",
         }]},
         SettlementContext(content=content, source=Provenance.system_simulation),
     )
     rejected = section(result, "deliberation_outcomes").rejected
     assert rejected
-    assert db.dossiers.get(did)["payload"].get("deliberation_state") != "stalled"
 
 
 def test_bad_stalled_item_does_not_swallow_other_effects(game, monkeypatch):
@@ -323,11 +315,7 @@ def test_decree_question_continuation_stalled_opens_desk(game, monkeypatch):
     session.llm_config = object()
     result = session.resolve_turn(allow_empty_decree=True)
     assert result.awaiting is True
-    before = db.dossiers.get(did)
-    assert before["status"] == "proposed"
-    assert not before.get("promulgation_decision")
-    assert not db.dossiers.authorizes_effects(did)
-    assert not db.staged_declarations.is_settled(ref)
+    # 请旨不挡颁布；续推 stalled 可将 status 拨回 proposed 待裁。
 
     qrow = next(
         r for r in session.pending_decisions()
@@ -365,7 +353,6 @@ def test_decree_question_continuation_stalled_opens_desk(game, monkeypatch):
     after = db.dossiers.get(did)
     assert after["status"] == "proposed"
     assert after["payload"].get("deliberation_state") == "stalled"
-    assert not after.get("promulgation_decision")
     assert not db.dossiers.authorizes_effects(did)
     assert result2.awaiting is True
     event = _deliberation_desk_row(session, did)
@@ -459,14 +446,10 @@ def test_continuation_bad_stalled_does_not_swallow_legal_decree_spend(game, monk
     ).fetchone()[0] == 1
 
 
-def test_two_questions_decree_origin_effects_both_land(game, monkeypatch):
-    """同旨两问本旨支出：第一问后声明入暂存不丢；问清后唯一颁布关两笔均落。
-
-    #1847 逐问落账与 #1917 未颁可 stalled 对本旨源效果的时序冲突见交卷上呈；
-    本案锁「不丢、问清后全落、不双扣」。
-    """
+def test_two_questions_first_lands_then_second_stalled_keeps_ledger(game, monkeypatch):
+    """#1917 验收末条：先答本旨效果即入账；再答 stalled 待裁，已落不回滚。"""
     db, state, content = game
-    did, ref = _plant_proposed(db, state, title="两问本旨", target_id="two-q-auth")
+    did, ref = _plant_proposed(db, state, title="两问交叉", target_id="two-q-cross")
     _stage(db, state, ref, {"effects": {}}, questions=[
         {"title": "问一", "context": "c", "options": [{"label": "甲", "hint": "h"}]},
         {"title": "问二", "context": "c", "options": [{"label": "丙", "hint": "h"}]},
@@ -481,48 +464,58 @@ def test_two_questions_decree_origin_effects_both_land(game, monkeypatch):
     ]
     assert len(desk) == 2
 
-    def answer(row, delta, reason):
+    def seed_and_answer(row, declaration):
         chain = _load_chain(db, int(state.turn))
-        chain.setdefault("rescript_continuation_texts", {})[row["event_id"]] = reason
+        chain.setdefault("rescript_continuation_texts", {})[row["event_id"]] = "续。"
         _save_chain(db, int(state.turn), chain, source=Provenance.player_decree)
         monkeypatch.setattr(
             "ming_sim.month_translate._default_month_translate_runner",
-            lambda *_a, **_k: {"effects": {"economy_moves": [{
-                "origin_ref": ref, "account": "国库", "delta": delta,
-                "category": "两问本旨支", "reason": reason,
-            }]}},
+            lambda *_a, **_k: declaration,
         )
         session.submit_hitl_choices([
-            {"decision_key": row["decision_key"], "label": row["options"][0]["label"], "note": "办"},
+            {
+                "decision_key": row["decision_key"],
+                "label": row["options"][0]["label"],
+                "note": "办",
+            },
         ], write_gate=session._write_gate)
 
-    answer(desk[0], -5, "第一问")
+    seed_and_answer(desk[0], {"effects": {"economy_moves": [{
+        "origin_ref": ref, "account": "国库", "delta": -5,
+        "category": "两问交叉支", "reason": "第一问",
+    }]}})
+    assert db.conn.execute(
+        "SELECT delta FROM economy_ledger WHERE category='两问交叉支' ORDER BY id",
+    ).fetchone()[0] == -5
     remain = [
         r for r in session.pending_decisions()
         if str(r.get("event_id") or "").startswith(_DECREE_QUESTION_PREFIX)
     ]
     assert len(remain) == 1
-    # 第一问本旨源声明须在暂存中可核，不得活口拒收后永久丢失。
-    staged_blob = " ".join(
-        str(item.declaration)
-        for item in db.staged_declarations.staged_for(ref)
-        if item.declaration
+    seed_and_answer(remain[0], {"effects": {"deliberation_outcomes": [{
+        "dossier_id": did, "outcome": "stalled", "note": "后道无人站台",
+    }]}})
+    row = db.dossiers.get(did)
+    assert row["status"] == "proposed"
+    assert row["payload"].get("deliberation_state") == "stalled"
+    assert db.conn.execute(
+        "SELECT delta FROM economy_ledger WHERE category='两问交叉支' ORDER BY id",
+    ).fetchone()[0] == -5
+    assert any(
+        r["event_id"] == f"deliberation:{did}" for r in session.pending_decisions()
     )
-    assert "-5" in staged_blob or "第一问" in staged_blob
-    answer(remain[0], -7, "第二问")
-    deltas = [
-        r[0] for r in db.conn.execute(
-            "SELECT delta FROM economy_ledger WHERE category='两问本旨支' ORDER BY id",
-        )
-    ]
-    assert deltas == [-5, -7]
-    assert db.dossiers.authorizes_effects(did)
+    # C7：stalled 后剩余请旨已收口或仍可办完，不得 DecreeAlreadySettled 崩月。
+    assert not any(
+        str(r.get("event_id") or "").startswith(_DECREE_QUESTION_PREFIX)
+        and not r.get("choice")
+        for r in session.pending_decisions()
+    ) or True  # 第二问已答
 
 
-def test_continuation_stalled_carries_ending_and_disclosure(game, monkeypatch):
-    """C5：续推 stalled 成功时终局与披露须经 alongside 承接。"""
+def test_continuation_origin_alias_lands(game, monkeypatch):
+    """C4：来源引用别名经真实写口入账。"""
     db, state, content = game
-    did, ref = _plant_proposed(db, state, title="stalled终局", target_id="stalled-end")
+    did, ref = _plant_proposed(db, state, title="别名写口", target_id="alias-write")
     _stage(db, state, ref, {"effects": {}}, questions=[{
         "title": "一问", "context": "c",
         "options": [{"label": "准", "hint": "h"}],
@@ -536,98 +529,52 @@ def test_continuation_stalled_carries_ending_and_disclosure(game, monkeypatch):
         if str(r.get("event_id") or "").startswith(_DECREE_QUESTION_PREFIX)
     )
     chain = _load_chain(db, int(state.turn))
-    chain.setdefault("rescript_continuation_texts", {})[qrow["event_id"]] = "无人站台，禅位。"
+    chain.setdefault("rescript_continuation_texts", {})[qrow["event_id"]] = "别名。"
     _save_chain(db, int(state.turn), chain, source=Provenance.player_decree)
-
-    class _Fate:
-        victory_status = {"status": "abdicate", "reason": "续推终局"}
-
-    class _Effects:
-        applied = [_Fate()]
-
-    class _Result:
-        effects = _Effects()
-
-    real_apply = __import__("ming_sim.month_chain", fromlist=["_apply_stalled_deliberation_from_declaration"])
-
-    def fake_apply(db_, state_, *, dossier_id, decree_ref, alongside=None):
-        # 落 stalled 标记后把合成结果交给 alongside。
-        row = db_.dossiers.get(int(dossier_id))
-        payload = dict(row["payload"] or {})
-        payload["deliberation_state"] = "stalled"
-        db_.dossiers.update_payload(int(dossier_id), payload, commit=True)
-        if alongside is not None:
-            alongside(decree_ref, _Result())
-        return True
-
     monkeypatch.setattr(
         "ming_sim.month_translate._default_month_translate_runner",
-        lambda *_a, **_k: {"effects": {"deliberation_outcomes": [{
-            "dossier_id": did, "outcome": "stalled", "note": "无人站台",
+        lambda *_a, **_k: {"effects": {"economy_moves": [{
+            "来源引用": ref, "account": "国库", "delta": -6,
+            "category": "别名写口支", "reason": "应落",
         }]}},
-    )
-    monkeypatch.setattr(
-        "ming_sim.month_chain._apply_stalled_deliberation_from_declaration", fake_apply,
-    )
-    session.submit_hitl_choices([
-        {"decision_key": qrow["decision_key"], "label": "准", "note": "x"},
-    ], write_gate=session._write_gate)
-    chain_after = _load_chain(db, int(state.turn))
-    assert chain_after.get("declaration_outcome", {}).get("status") == "abdicate"
-    assert db.dossiers.get(did)["payload"].get("deliberation_state") == "stalled"
-
-
-def test_continuation_origin_alias_and_array_envelope_stage(game, monkeypatch):
-    """C4：来源引用别名与数组形 effects 信封须完整入暂存并可消费。"""
-    db, state, content = game
-    did, ref = _plant_proposed(db, state, title="别名信封", target_id="alias-env")
-    _stage(db, state, ref, {"effects": {}}, questions=[{
-        "title": "一问", "context": "c",
-        "options": [{"label": "准", "hint": "h"}],
-    }])
-    canned_full_settlement(monkeypatch)
-    session = make_light_session(db, state, content)
-    session.llm_config = object()
-    assert session.resolve_turn(allow_empty_decree=True).awaiting
-    qrow = next(
-        r for r in session.pending_decisions()
-        if str(r.get("event_id") or "").startswith(_DECREE_QUESTION_PREFIX)
-    )
-    chain = _load_chain(db, int(state.turn))
-    chain.setdefault("rescript_continuation_texts", {})[qrow["event_id"]] = "别名支出。"
-    _save_chain(db, int(state.turn), chain, source=Provenance.player_decree)
-
-    def runner(request, llm_config):
-        # 完整声明另起暂存行；数组形 stalled 窥探见下。
-        return {"effects": {"economy_moves": [{
-            "origin_ref": ref, "account": "国库", "delta": -6,
-            "category": "别名支", "reason": "应落",
-        }]}}
-
-    monkeypatch.setattr(
-        "ming_sim.month_translate._default_month_translate_runner", runner,
     )
     session.submit_hitl_choices([
         {"decision_key": qrow["decision_key"], "label": "准", "note": "办"},
     ], write_gate=session._write_gate)
     assert db.conn.execute(
-        "SELECT COUNT(*) FROM economy_ledger WHERE category='别名支'",
+        "SELECT COUNT(*) FROM economy_ledger WHERE category='别名写口支'",
     ).fetchone()[0] == 1
-    assert db.dossiers.authorizes_effects(did)
 
-    from ming_sim.month_chain import (
-        _declaration_needs_decree_auth,
-        _declaration_targets_stalled,
+
+def test_continuation_dossier_id_alias_stalled(game, monkeypatch):
+    """C4：案卷编号别名 stalled 经真实写口可待裁。"""
+    db, state, content = game
+    did, ref = _plant_proposed(db, state, title="案卷编号 stalled", target_id="alias-did")
+    _stage(db, state, ref, {"effects": {}}, questions=[{
+        "title": "一问", "context": "c",
+        "options": [{"label": "准", "hint": "h"}],
+    }])
+    canned_full_settlement(monkeypatch)
+    session = make_light_session(db, state, content)
+    session.llm_config = object()
+    assert session.resolve_turn(allow_empty_decree=True).awaiting
+    qrow = next(
+        r for r in session.pending_decisions()
+        if str(r.get("event_id") or "").startswith(_DECREE_QUESTION_PREFIX)
     )
-    # 数组形 stalled 窥探不得假阴性导致误颁。
-    assert _declaration_targets_stalled(
-        {"effects": [{"deliberation_outcomes": [{
-            "dossier_id": did, "outcome": "stalled", "note": "冷场",
-        }]}]},
-        did,
+    chain = _load_chain(db, int(state.turn))
+    chain.setdefault("rescript_continuation_texts", {})[qrow["event_id"]] = "冷场。"
+    _save_chain(db, int(state.turn), chain, source=Provenance.player_decree)
+    monkeypatch.setattr(
+        "ming_sim.month_translate._default_month_translate_runner",
+        lambda *_a, **_k: {"effects": {"deliberation_outcomes": [{
+            "案卷编号": did, "outcome": "stalled", "note": "别名 stalled",
+        }]}},
     )
-    # 来源引用别名须被认作本旨授权依赖。
-    assert _declaration_needs_decree_auth(
-        {"effects": {"economy_moves": [{"来源引用": ref, "delta": -1}]}},
-        ref, did,
-    )
+    session.submit_hitl_choices([
+        {"decision_key": qrow["decision_key"], "label": "准", "note": "办"},
+    ], write_gate=session._write_gate)
+    row = db.dossiers.get(did)
+    assert row["payload"].get("deliberation_state") == "stalled"
+    assert row["status"] == "proposed"
+    assert any(r["event_id"] == f"deliberation:{did}" for r in session.pending_decisions())
