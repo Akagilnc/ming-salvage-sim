@@ -35,6 +35,11 @@ def test_stub_declaration_lands_on_existing_staging_and_new_records_without_miss
 
     affair = db.affairs.open(name="赈济陕西", origin="遣使赈济",
                              year=state.year, period=state.period, turn=state.turn)
+    dossier_id = db.create_decree_dossier(
+        state, action_type="special_decree", decree_text="遣使赈济陕西",
+        target_kind="character", target_id=minister,
+        executor_kind="character", executor_id=minister,
+    )
     # 首尾刻意带空白：证明落账是原字符串本身，不是先 .strip() 再落账（P6）。
     commission_text = "  遣使赈济陕西  \n"
     declaration = {
@@ -43,7 +48,7 @@ def test_stub_declaration_lands_on_existing_staging_and_new_records_without_miss
         "textual_facts": [{
             "subject_kind": "character", "subject_id": minister,
             "body": "抱恙数日，仍可视事",
-            "origin_ref": "dossier:99",
+            "origin_ref": f"dossier:{dossier_id}",
             "affair_declaration": {"attach": "existing", "affair_id": affair.id},
         }],
         "public_sayings": [{
@@ -75,7 +80,7 @@ def test_stub_declaration_lands_on_existing_staging_and_new_records_without_miss
     facts = db.textual_facts.readable_materials(subject_kind="character", subject_id=minister)
     assert [int(f.id) for f in facts] == [fact_id]
     # 真实来源与事务指针正交：origin_ref 保留声明值，关联只落 affair_id。
-    assert facts[0].origin_ref == "dossier:99"
+    assert facts[0].origin_ref == f"dossier:{dossier_id}"
     assert int(facts[0].affair_id) == int(affair.id)
     linked = db.textual_facts.readable_materials(
         subject_kind="affair", subject_id=str(int(affair.id)),

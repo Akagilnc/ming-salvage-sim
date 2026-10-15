@@ -598,7 +598,25 @@ def test_c1_minister_promise_origin_not_public_visible(game, monkeypatch):
 
     # 反例：公开人物事实关联该事务后挂私诺，公开目录仍保留事务身份；
     # 同事务上的受限来源不得被洗成公开来源（dispatch 用例已核读写接缝，此处只盯材料入口）。
-    secret_source = "secret_order:1"
+    # 复用后段密令隔离案的真实来源，不能以不存在的身份获得假绿。
+    from ming_sim.covert_progress import build_covert_task_contract
+    secret_title, secret_body = "密查粮科", "密查粮科私卖"
+    order_id = db.create_secret_order(
+        state, promisor, secret_title, secret_body,
+        [], deadline_months=1,
+        covert_task=build_covert_task_contract(covert_task={
+            "kind": "查案", "axes": ["实务事功"], "direction": 1,
+            "delivery": {
+                "unit": "人犯", "target_units": 1.0,
+                "person_action": "处置", "effect_sign": 1,
+            },
+        }),
+        affair_declaration={
+            "attach": "new", "name": "密令专属查案事务",
+            "origin": "御前密谕查办",
+        },
+    )
+    secret_source = f"secret_order:{int(order_id)}"
     assert origin_visible_to(db, secret_source) is False
     fact_result = dispatch_declaration(
         db, state,
@@ -690,23 +708,6 @@ def test_c1_minister_promise_origin_not_public_visible(game, monkeypatch):
         release_material_tree(prepared_hist.root)
 
     # 密令 attach=new：出生标记无共享正文；事务不进公开目录；承办人知识无双份正文。
-    from ming_sim.covert_progress import build_covert_task_contract
-    secret_title, secret_body = "密查粮科", "密查粮科私卖"
-    order_id = db.create_secret_order(
-        state, promisor, secret_title, secret_body,
-        [], deadline_months=1,
-        covert_task=build_covert_task_contract(covert_task={
-            "kind": "查案", "axes": ["实务事功"], "direction": 1,
-            "delivery": {
-                "unit": "人犯", "target_units": 1.0,
-                "person_action": "处置", "effect_sign": 1,
-            },
-        }),
-        affair_declaration={
-            "attach": "new", "name": "密令专属查案事务",
-            "origin": "御前密谕查办",
-        },
-    )
     secret_dossier = db.dossiers.get_for_secret_order(int(order_id))
     assert secret_dossier is not None
     secret_affair_id = int(secret_dossier["affair_id"] or 0)

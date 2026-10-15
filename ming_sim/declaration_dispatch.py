@@ -103,22 +103,6 @@ _TEXTUAL_FACT_EXISTENCE_TABLES = {
 }
 _AUDIBILITIES = frozenset({AUDIBILITY_PUBLIC, AUDIBILITY_PRIVATE})
 _PRESENCE_ITEM_EFFECTS = {"enter": PRESENCE_ENTER, "exit": PRESENCE_EXIT}
-# 交办专有载荷互斥：一件声明最多一种。前序分支命中不得静默丢掉后序专有键
-# （#1916：secret_order 先落账 continue 致 minister_promise 无拒收无落账）。
-_COMMISSION_SOLE_KEYS = (
-    "strategy_selection",
-    "secret_order_progress",
-    "secret_order_update",
-    "secret_order_review",
-    "secret_order",
-    "minister_promise",
-    "assignment",
-    "revoke",
-    "punishment",
-    "pacification",
-)
-# 专有载荷与普通拟旨合成字段互斥（grant+appointment 彼此可同件，见 ADR 0028）。
-_COMMISSION_ORDINARY_KEYS = ("grant", "appointment")
 
 
 @dataclass(frozen=True)
@@ -163,6 +147,7 @@ class DeclarationDispatchResult:
     rushes: SectionResult
     travel_tones: SectionResult
     rejection_withdrawals: SectionResult
+    yamen_creates: SectionResult
 
     def merge(self, other: "DeclarationDispatchResult") -> "DeclarationDispatchResult":
         """按 section 逐个 merge，供 :func:`settle_staged_declarations_in_decree_order`
@@ -184,6 +169,7 @@ class DeclarationDispatchResult:
             rushes=self.rushes.merge(other.rushes),
             travel_tones=self.travel_tones.merge(other.travel_tones),
             rejection_withdrawals=self.rejection_withdrawals.merge(other.rejection_withdrawals),
+            yamen_creates=self.yamen_creates.merge(other.yamen_creates),
         )
 
 
@@ -192,6 +178,7 @@ _SECTION_FIELDS: Tuple[str, ...] = (
     "on_scene_facts", "presence", "scene_facts", "edge_events",
     "protagonist", "registrations", "effects",
     "inquiries", "rushes", "travel_tones", "rejection_withdrawals",
+    "yamen_creates",
 )
 _KNOWN_SECTIONS = frozenset(_SECTION_FIELDS)
 
@@ -205,7 +192,7 @@ def empty_dispatch_result() -> DeclarationDispatchResult:
         on_scene_facts=empty, presence=empty, scene_facts=empty, edge_events=empty,
         protagonist=ProtagonistResult(validated=None, rejected=[]), registrations=empty,
         effects=empty, inquiries=empty, rushes=empty, travel_tones=empty,
-        rejection_withdrawals=empty,
+        rejection_withdrawals=empty, yamen_creates=empty,
     )
 
 
@@ -356,6 +343,10 @@ def _dispatch_declaration_sections(
         rejection_withdrawals=_dispatch_rejection_withdrawals(
             db, state, declaration.get("rejection_withdrawals"), source=source,
             source_turn_error=source_turn_err or ("拒收撤回须来自召对轮" if night_id <= 0 else None),
+        ),
+        yamen_creates=_dispatch_yamen_creates(
+            db, state, declaration.get("yamen_creates"), source=source,
+            source_turn_error=source_turn_err,
         ),
     )
     _record_unknown_sections(collector, declaration, turn, source)
@@ -671,7 +662,13 @@ def discard_staged_declaration(db: Any, decree_ref: str) -> int:
 def bind_decree_effect_sources(
     db: Any, decree_ref: str, declaration: Mapping[str, object], visible_refs: Mapping[str, object],
 ) -> Tuple[Mapping[str, object], Mapping[str, object]]:
-    """Bind only this draft's structured effect identity; retain all prose and gates."""
+    """Bind this draft's structured identity slots to the formal dossier.
+
+    Walks the whole declaration: origin_ref / dossier_id / target_dossier_id
+    (and aliases) equal to the pending-action ref become dossier:<id>. Other
+    keys and prose pass through untouched. Covers effects, textual_facts,
+    yamen_creates, and any future section that carries the same slots.
+    """
     from ming_sim.decree_forecast import dossier_for_decree_ref
     from ming_sim.simulation import ITEM_FIELD_ALIASES
 
@@ -698,9 +695,7 @@ def bind_decree_effect_sources(
             return [bind(item) for item in value]
         return value
 
-    bound = dict(declaration)
-    if "effects" in bound:
-        bound["effects"] = bind(bound["effects"])
+    bound = bind(dict(declaration))
     refs = dict(visible_refs)
     refs["dossiers"] = list(dict.fromkeys([*refs.get("dossiers", ()), dossier_id]))
     return bound, refs
@@ -922,11 +917,18 @@ def _commission_appointment_fields(
                 category="invalid_enum", source=source,
             )
         payload["mode"] = mode
-    tenure = str(
-        appointment.get("appointment_tenure") or appointment.get("任别") or ""
-    ).strip()
-    if tenure:
-        payload["appointment_tenure"] = tenure
+    if any(key in appointment for key in ("任别", "appointment_tenure")):
+        from ming_sim.appointment_tenure import appointment_tenure_from
+        from ming_sim.exceptions import DeclarationDataError
+
+        try:
+            tenure = appointment_tenure_from(dict(appointment))
+        except DeclarationDataError as exc:
+            return None, RejectedItem(
+                item=dict(appointment), reason=str(exc),
+                category="invalid_enum", source=source,
+            )
+        payload["任别"] = tenure
     # Typed 任所原样透传；不从官名推断（地方/督抚/边镇任命必填；中央可空）。
     seat = str(
         appointment.get("region_id") or appointment.get("任所") or ""
@@ -934,6 +936,274 @@ def _commission_appointment_fields(
     if seat:
         payload["region_id"] = seat
     return payload, None
+
+
+# 交办互斥对象槽（不含 grant/appointment：二者可合成一件事）。
+# 禁摊派由 dossier_action_type 识别，见 _declared_commission_kinds。
+_COMMISSION_EXCLUSIVE_OBJECT_KEYS = (
+    "punishment", "pacification", "assignment", "revoke",
+    "secret_order", "secret_order_progress", "secret_order_update",
+    "secret_order_review", "strategy_selection",
+    "authorization", "revoke_authority", "minister_promise",
+)
+
+
+def _declared_object_slot(value: object) -> object | None:
+    """Optional object slot: missing/empty mapping = unused; else the declared value.
+
+    Mirrors appointment's empty-object unused semantics so stub ``{}`` does not
+    seize the commission branch or trip mutual-exclusion against a real sibling.
+    Non-empty bad payloads stay declared and are rejected downstream.
+    """
+    if value is None:
+        return None
+    if isinstance(value, Mapping) and not value:
+        return None
+    return value
+
+
+def _declared_commission_kinds(item: Mapping[str, object]) -> frozenset[str]:
+    """Non-empty commission kinds on one item (empty mapping = unused).
+
+    唯一互斥真源的种类收集：对象槽 + grant/appointment + 禁摊派动作类型。
+    """
+    kinds: set[str] = set()
+    for key in _COMMISSION_EXCLUSIVE_OBJECT_KEYS:
+        if _declared_object_slot(item.get(key)) is not None:
+            kinds.add(key)
+    grant = item.get("grant")
+    if isinstance(grant, Mapping):
+        if grant:
+            kinds.add("grant")
+    elif grant not in (None, ""):
+        kinds.add("grant")
+    appointment = item.get("appointment")
+    if isinstance(appointment, Mapping):
+        if appointment:
+            kinds.add("appointment")
+    elif appointment not in (None, ""):
+        kinds.add("appointment")
+    if _is_prohibit_covert_levy_item(item):
+        kinds.add("prohibit_covert_levy")
+    return frozenset(kinds)
+
+
+def _exclusive_commission_conflict(kinds: frozenset[str]) -> bool:
+    """True when more than one exclusive kind is declared.
+
+    Sole legal multi-kind pair: grant + appointment (一件事一份载荷).
+    """
+    if len(kinds) <= 1:
+        return False
+    return kinds != frozenset({"grant", "appointment"})
+
+
+def _stage_authorization_commission(
+    db: Any,
+    state: Any,
+    item: Mapping[str, object],
+    authorization: object,
+    *,
+    minister_name: str,
+    source: Provenance,
+    night_id: int,
+    source_chat_turn_id: int,
+    rejected: List[RejectedItem],
+) -> Optional[Dict[str, Any]]:
+    """#1912：召对授出权项 → authorization 旨意暂存。"""
+    # 与兄弟交办的互斥由 _dispatch_commission_items 入口统一闸判定。
+    if not isinstance(authorization, Mapping):
+        _reject(rejected, item, "授权交办载荷须为独立对象", "invalid_shape", source)
+        return None
+    body = _declared_prose(item.get("text"))
+    if body is None:
+        _reject(rejected, item, "授权交办缺正文", "invalid_shape", source)
+        return None
+    from ming_sim.authority_privileges import AUTHORITY_PRIVILEGE_SET
+    from ming_sim.draft_intent import resolve_directive_mode
+    from ming_sim.session import _canonical_minister_key
+
+    holder_raw = str(
+        authorization.get("name")
+        or authorization.get("holder_id")
+        or authorization.get("assignee")
+        or ""
+    ).strip()
+    if not holder_raw:
+        _reject(rejected, item, "授权交办缺授予对象", "invalid_shape", source)
+        return None
+    holder = _canonical_minister_key(db.content, holder_raw, db)
+    try:
+        _assert_characters_exist(db, [holder])
+    except KeyError as exc:
+        _reject(rejected, item, str(exc), "hallucinated_id", source)
+        return None
+    privilege = str(authorization.get("privilege") or "").strip()
+    if privilege not in AUTHORITY_PRIVILEGE_SET:
+        _reject(rejected, item, f"授权权项非法：{privilege}", "invalid_enum", source)
+        return None
+    # 事域唯一验形：entities.authority.scope（与 db 机械旨意边界共用）；不猜补持有人自身（#1912 J2/J4）
+    from ming_sim.entities.authority.scope import canonical_authority_scope
+    from ming_sim.execution_pressure import write_locality_scope_for_target_kind
+
+    try:
+        scope, kind, scoped = canonical_authority_scope(
+            scope=authorization.get("scope"),
+            target_kind=authorization.get("target_kind"),
+            target_id=authorization.get("target_id"),
+        )
+    except ValueError as exc:
+        _reject(rejected, item, str(exc), "invalid_shape", source)
+        return None
+    # 事域人物身份复用既有归一（与 holder 同口径）；不猜补、不强制等于持有人。
+    if kind == "character":
+        scoped = _canonical_minister_key(db.content, scoped, db)
+        scope = f"{kind}:{scoped}"
+    mode = resolve_directive_mode(
+        extracted=authorization.get("mode", item.get("mode")),
+    )
+    payload: Dict[str, Any] = {
+        "text": body,
+        "dossier_action_type": "authorization",
+        "privilege": privilege,
+        "scope": scope,
+        "target_kind": kind,
+        "target_id": scoped,
+        "locality_scope": write_locality_scope_for_target_kind(kind),
+        "name": holder,
+        "holder_id": holder,
+        "assignee_id": holder,
+        "mode": mode,
+    }
+    if not _attach_commission_affair(
+        db, item, payload, rejected=rejected, source=source,
+    ):
+        return None
+    actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
+    row_id = db.stage_pending_action(
+        int(state.turn), "directive", "拟旨", actor, payload,
+        night_id=int(night_id),
+        source_chat_turn_id=source_chat_turn_id,
+    )
+    return {"id": row_id, "payload": payload, "kind": "directive"}
+
+
+def _stage_revoke_authority_commission(
+    db: Any,
+    state: Any,
+    item: Mapping[str, object],
+    revoke_authority: object,
+    *,
+    minister_name: str,
+    source: Provenance,
+    night_id: int,
+    source_chat_turn_id: int,
+    rejected: List[RejectedItem],
+) -> Optional[Dict[str, Any]]:
+    """#1912：召对收回权项 → revoke_authority 旨意暂存。"""
+    # 与兄弟交办的互斥由 _dispatch_commission_items 入口统一闸判定。
+    if not isinstance(revoke_authority, Mapping):
+        _reject(rejected, item, "收权交办载荷须为独立对象", "invalid_shape", source)
+        return None
+    body = _declared_prose(item.get("text"))
+    if body is None:
+        _reject(rejected, item, "收权交办缺正文", "invalid_shape", source)
+        return None
+    from ming_sim.authority_privileges import AUTHORITY_PRIVILEGE_SET
+    from ming_sim.draft_intent import resolve_directive_mode
+    from ming_sim.session import _canonical_minister_key
+    from ming_sim.strict_types import strict_sqlite_id
+
+    holder_raw = str(
+        revoke_authority.get("name")
+        or revoke_authority.get("holder_id")
+        or revoke_authority.get("target_id")
+        or ""
+    ).strip()
+    privilege = str(revoke_authority.get("privilege") or "").strip()
+    raw_aid = revoke_authority.get("authority_id")
+    authority_id = 0
+    if raw_aid not in (None, ""):
+        try:
+            # 身份边界复用 strict_sqlite_id，超界只拒本项（#1912 J3 / #1897 C1）
+            authority_id = strict_sqlite_id(raw_aid, accept_numeric_strings=True)
+        except (TypeError, ValueError) as exc:
+            _reject(rejected, item, str(exc), "invalid_shape", source)
+            return None
+        if authority_id <= 0:
+            _reject(rejected, item, "收权授权编号非法", "invalid_shape", source)
+            return None
+    holder = ""
+    if holder_raw:
+        holder = _canonical_minister_key(db.content, holder_raw, db)
+        try:
+            _assert_characters_exist(db, [holder])
+        except KeyError as exc:
+            _reject(rejected, item, str(exc), "hallucinated_id", source)
+            return None
+    if authority_id <= 0:
+        if not holder or privilege not in AUTHORITY_PRIVILEGE_SET:
+            _reject(
+                rejected, item, "收权须有授权编号，或持有人+合法权项",
+                "invalid_shape", source,
+            )
+            return None
+        matches = [
+            row for row in db.characters.list_active_authorities(
+                int(state.turn), holder_id=holder,
+            )
+            if str(row.get("privilege") or "") == privilege
+        ]
+        if not matches:
+            _reject(rejected, item, "收权目标不在持", "invalid_state", source)
+            return None
+        if len(matches) > 1:
+            _reject(rejected, item, "收权目标不唯一", "invalid_state", source)
+            return None
+        authority_id = int(matches[0]["id"])
+    else:
+        record = db.characters.get_authority(authority_id)
+        if record is None:
+            _reject(rejected, item, "收权授权编号不存在", "missing_ref", source)
+            return None
+        if holder and str(record.get("holder_id") or "") != holder:
+            _reject(rejected, item, "收权对象与授权持有人不符", "invalid_state", source)
+            return None
+        if not holder:
+            holder = str(record.get("holder_id") or "").strip()
+        if privilege and privilege != str(record.get("privilege") or ""):
+            _reject(rejected, item, "收权权项与档案不符", "invalid_state", source)
+            return None
+        if bool(record.get("revoked")):
+            _reject(rejected, item, "收权目标已不在持", "invalid_state", source)
+            return None
+    mode = resolve_directive_mode(
+        extracted=revoke_authority.get("mode", item.get("mode")),
+    )
+    payload: Dict[str, Any] = {
+        "text": body,
+        "dossier_action_type": "revoke_authority",
+        "authority_id": int(authority_id),
+        "mode": mode,
+    }
+    if holder:
+        payload["name"] = holder
+        payload["holder_id"] = holder
+        payload["target_kind"] = "character"
+        payload["target_id"] = holder
+    if privilege in AUTHORITY_PRIVILEGE_SET:
+        payload["privilege"] = privilege
+    if not _attach_commission_affair(
+        db, item, payload, rejected=rejected, source=source,
+    ):
+        return None
+    actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
+    row_id = db.stage_pending_action(
+        int(state.turn), "directive", "拟旨", actor, payload,
+        night_id=int(night_id),
+        source_chat_turn_id=source_chat_turn_id,
+    )
+    return {"id": row_id, "payload": payload, "kind": "directive"}
 
 
 def _assert_commission_grant_target_exists(
@@ -1319,27 +1589,21 @@ def _dispatch_commission_items(
     items, rejected = _section_items(raw, label="交办声明", source=source)
     applied: List[Any] = []
     for item in items:
-        sole_present = [key for key in _COMMISSION_SOLE_KEYS if item.get(key) is not None]
-        is_prohibit = _is_prohibit_covert_levy_item(item)
-        ordinary_hit = any(item.get(key) for key in _COMMISSION_ORDINARY_KEYS)
-        # 御笔强推：件首一次解析，后序复用 push_id（#658 单权威，#1916 删重复）。
+        # 御笔强推只解析一次，复用既有种类收集与互斥闸（#1912 / #1916）。
         from ming_sim.db import imperial_push_target_dossier_id
         try:
             push_id = imperial_push_target_dossier_id(item)
         except ValueError as exc:
             _reject(rejected, item, str(exc), "invalid_shape", source)
             continue
-        # 统一准入：专有嵌套键 ∪ 禁摊派 ∪ 御笔强推，互斥且与 ordinary 互斥。
-        sole_action_count = (
-            len(sole_present) + (1 if is_prohibit else 0) + (1 if push_id is not None else 0)
-        )
-        if sole_action_count > 1 or (sole_action_count == 1 and ordinary_hit):
-            _reject(
-                rejected, item, "交办专有载荷须为独立对象", "invalid_shape", source,
-            )
+        kinds = _declared_commission_kinds(item)
+        if push_id is not None:
+            kinds = kinds | {"imperial_push"}
+        if _exclusive_commission_conflict(kinds):
+            _reject(rejected, item, "交办载荷须为独立对象", "invalid_shape", source)
             continue
         # #1837 reopen：禁摊派交办——按场面事实绑定暴露案卷，不解析自由文本。
-        if is_prohibit:
+        if _is_prohibit_covert_levy_item(item):
             try:
                 applied.append(
                     _stage_prohibit_covert_levy(
@@ -1359,7 +1623,7 @@ def _dispatch_commission_items(
             # 未分类写入故障不在此冒充拒收（#1897 E1）。
             continue
 
-        strategy = item.get("strategy_selection")
+        strategy = _declared_object_slot(item.get("strategy_selection"))
         if strategy is not None:
             from ming_sim.strict_types import strict_sqlite_id
             body = _declared_prose(item.get("text"))
@@ -1410,7 +1674,7 @@ def _dispatch_commission_items(
             applied.append({"id": row_id, "payload": payload, "kind": "directive"})
             continue
 
-        progress = item.get("secret_order_progress")
+        progress = _declared_object_slot(item.get("secret_order_progress"))
         if progress is not None:
             from ming_sim.strict_types import strict_sqlite_id
             if not isinstance(progress, Mapping):
@@ -1440,7 +1704,7 @@ def _dispatch_commission_items(
             applied.append({"id": row_id, "kind": "secret_order"})
             continue
 
-        update = item.get("secret_order_update")
+        update = _declared_object_slot(item.get("secret_order_update"))
         if update is not None:
             from ming_sim.strict_types import strict_sqlite_id
             if not isinstance(update, Mapping):
@@ -1501,7 +1765,7 @@ def _dispatch_commission_items(
             applied.append({"id": row_id, "kind": "secret_order"})
             continue
 
-        review = item.get("secret_order_review")
+        review = _declared_object_slot(item.get("secret_order_review"))
         if review is not None:
             from ming_sim.strict_types import strict_sqlite_id
             if not isinstance(review, Mapping):
@@ -1534,7 +1798,7 @@ def _dispatch_commission_items(
             applied.append({"id": row_id, "kind": "secret_order"})
             continue
 
-        secret = item.get("secret_order")
+        secret = _declared_object_slot(item.get("secret_order"))
         if secret is not None:
             if not isinstance(secret, Mapping):
                 _reject(rejected, item, "密令新建载荷须为独立对象", "invalid_shape", source)
@@ -1641,7 +1905,7 @@ def _dispatch_commission_items(
             applied.append({"id": row_id, "kind": "secret_order"})
             continue
 
-        minister_promise = item.get("minister_promise")
+        minister_promise = _declared_object_slot(item.get("minister_promise"))
         if minister_promise is not None:
             # #1916：大臣当场自诺 → 直接入承诺账，不经应允/成案/颁布。
             if not isinstance(minister_promise, Mapping):
@@ -1768,7 +2032,7 @@ def _dispatch_commission_items(
             })
             continue
 
-        assignment = item.get("assignment")
+        assignment = _declared_object_slot(item.get("assignment"))
         if assignment is not None:
             if not isinstance(assignment, Mapping):
                 _reject(rejected, item, "责成交办载荷须为独立对象", "invalid_shape", source)
@@ -1826,7 +2090,7 @@ def _dispatch_commission_items(
                 _reject(rejected, item, "责成交办未通过现有准入", "invalid_state", source)
             continue
 
-        revoke = item.get("revoke")
+        revoke = _declared_object_slot(item.get("revoke"))
         if revoke is not None:
             if not isinstance(revoke, Mapping):
                 _reject(rejected, item, "撤令交办载荷须为独立对象", "invalid_shape", source)
@@ -1874,7 +2138,7 @@ def _dispatch_commission_items(
                 )
             continue
 
-        punishment = item.get("punishment")
+        punishment = _declared_object_slot(item.get("punishment"))
         if punishment is not None:
             if not isinstance(punishment, Mapping):
                 _reject(rejected, item, "惩处交办载荷须为独立对象", "invalid_shape", source)
@@ -1913,7 +2177,7 @@ def _dispatch_commission_items(
                 _reject(rejected, item, "惩处交办未通过现有准入", "invalid_state", source)
             continue
 
-        pacification = item.get("pacification")
+        pacification = _declared_object_slot(item.get("pacification"))
         if pacification is not None:
             if not isinstance(pacification, Mapping):
                 _reject(rejected, item, "招抚交办载荷须为独立对象", "invalid_shape", source)
@@ -1945,6 +2209,32 @@ def _dispatch_commission_items(
             applied.append({"id": row_id, "kind": "directive"})
             continue
 
+        authorization = _declared_object_slot(item.get("authorization"))
+        if authorization is not None:
+            staged = _stage_authorization_commission(
+                db, state, item, authorization,
+                minister_name=minister_name, source=source,
+                night_id=int(night_id),
+                source_chat_turn_id=source_chat_turn_id,
+                rejected=rejected,
+            )
+            if staged is not None:
+                applied.append(staged)
+            continue
+
+        revoke_authority = _declared_object_slot(item.get("revoke_authority"))
+        if revoke_authority is not None:
+            staged = _stage_revoke_authority_commission(
+                db, state, item, revoke_authority,
+                minister_name=minister_name, source=source,
+                night_id=int(night_id),
+                source_chat_turn_id=source_chat_turn_id,
+                rejected=rejected,
+            )
+            if staged is not None:
+                applied.append(staged)
+            continue
+
         grant_raw = item.get("grant") or {}
         if grant_raw and not isinstance(grant_raw, Mapping):
             _reject(rejected, item, "拨帑载荷须为对象", "invalid_shape", source)
@@ -1965,7 +2255,7 @@ def _dispatch_commission_items(
         if not isinstance(mode, str) or mode not in {"ordinary", "midzhi"}:
             _reject(rejected, item, "交办模式非法", "invalid_enum", source)
             continue
-        # push_id 已在件首解析；与 grant/appointment 的互斥由统一 sole 闸承接。
+        # push_id 已在件首解析；与 grant/appointment 的互斥由统一互斥闸承接。
         if push_id is not None and db.dossiers.get(push_id) is None:
             _reject(rejected, item, "御笔强推目标案卷不存在", "missing_ref", source)
             continue
@@ -2067,9 +2357,15 @@ def _dispatch_commission_items(
                 _reject(rejected, item, "同向任免候选不唯一", "invalid_state", source)
                 return None
             if hits:
+                tenure_mark = str(
+                    appointment_fields.get("任别")
+                    or appointment_fields.get("appointment_tenure")
+                    or ""
+                ).strip() or None
                 oid = _apply_existing_appointment_hit(
                     SimpleNamespace(db=db), hits[0],
                     extracted_mode=appointment_fields.get("mode"),
+                    tenure_mark=tenure_mark,
                     region_id=str(appointment_fields.get("region_id") or ""),
                     minister_name=minister_name,
                     annotate=True,
@@ -2085,9 +2381,17 @@ def _dispatch_commission_items(
                 return {"id": oid, "kind": "office"}
             if appointment_fields["appoint_action"] == "任命":
                 from ming_sim.session import _appointment_intent_is_current_office_noop
+                declared_tenure = (
+                    appointment_fields["任别"]
+                    if "任别" in appointment_fields
+                    else None
+                )
                 if _appointment_intent_is_current_office_noop(
                     db, appointment_fields["name"], appointment_fields["office"],
                     content=db.content,
+                    tenure=declared_tenure,
+                    region_id=str(appointment_fields.get("region_id") or ""),
+                    office_type=str(appointment_fields.get("office_type") or ""),
                 ):
                     return None
             # office 成案链只吃任免字段；禁把 grant 的 execution_surface 等带进
@@ -2885,23 +3189,38 @@ def _dispatch_promises(
     return SectionResult(applied=applied, rejected=rejected)
 
 
-def _assert_textual_fact_subject_exists(db: Any, subject_kind: str, subject_id: str) -> None:
-    """格式及缺失引用为类型化数据错误；持久读取异常不转译。"""
+def _assert_textual_fact_subject_exists(db: Any, subject_kind: str, subject_id: str) -> str:
+    """格式及缺失引用为类型化数据错误；持久读取异常不转译。
+
+    数值主体（affair/yamen）在同一接缝规范化为十进制身份字符串，贯穿验证与落库
+    （#1915 F3：'02' 不得与 '2' 分裂成不可达事实）。文字型主体原样返回。
+    """
+    from ming_sim.strict_types import strict_sqlite_id
+
     if subject_kind == "affair":
         try:
-            affair_id = int(subject_id)
+            affair_id = strict_sqlite_id(subject_id)
         except (TypeError, ValueError) as exc:
             raise DeclarationDataError("事务引用须为整数") from exc
         db.affairs.get(affair_id)
-        return
+        return str(affair_id)
+    if subject_kind == "yamen":
+        try:
+            yamen_id = strict_sqlite_id(subject_id)
+        except (TypeError, ValueError) as exc:
+            raise DeclarationDataError("衙门引用须为整数") from exc
+        if db.yamens.get(yamen_id) is None:
+            raise DeclarationReferenceError(f"yamen 不存在：{subject_id}")
+        return str(yamen_id)
     store = {"character": db.characters, "army": db.armies, "region": db.regions}.get(
         subject_kind
     )
     if store is None:
-        return
+        return str(subject_id or "").strip()
     row = store.row(subject_id)
     if row is None:
         raise DeclarationReferenceError(f"{subject_kind} 不存在：{subject_id}")
+    return str(subject_id or "").strip()
 
 
 def _xiexang_reject_category(exc: DecreeMaterializationValidationError) -> str:
@@ -2949,8 +3268,12 @@ def _peek_affair_id(db: Any, item: Mapping[str, object]) -> Tuple[int | None, st
 
 
 def _resolve_affair_origin_ref(db: Any, item: Mapping[str, object]) -> Tuple[str, str | None, str | None]:
-    """同 :func:`_peek_affair_id`，但给需要 origin_ref 字符串（而非事务 id）的
-    落库口用（textual_facts / public_sayings / presence / scene_facts）。"""
+    """同 :func:`_peek_affair_id`，但返回 ``affair:<id>`` 字符串。
+
+    用于 public_sayings 的 affair_ref、presence / scene_facts 等只挂事务回指、
+    没有独立 origin_ref+affair_id 双槽的落库口。textual_facts 已改走原生
+    origin_ref 与 affair_id 两槽，不再经此函数。
+    """
     affair_id, error_category, reason = _peek_affair_id(db, item)
     if error_category is not None:
         return "", error_category, reason
@@ -2969,6 +3292,128 @@ def _attach_character_affair_pointer(db: Any, name: str, affair_id: int) -> None
     db.affairs.attach_pointer("characters", name, affair_id)
 
 
+def _canonical_yamen_founding_origin(db: Any, origin_ref: str) -> str:
+    """衙门建制来源：空＝公开；禁止 yamen 回指（身份不是来源，且可成环）。
+
+    密令/案卷身份与读口同形，且须账上真实存在（ADR 0015）；不可存储 id 与
+    幻觉引用一律拒收，不平行维护另一套语法（#1915）。
+    """
+    from ming_sim.knowledge import assert_origin_identity_exists
+
+    text = str(origin_ref or "").strip()
+    if not text:
+        return ""
+    if text.startswith("yamen:"):
+        raise DeclarationDataError("衙门建制来源不得回指另一衙门")
+    # 通过校验的原串落库（保留合法后缀）；不从正文猜测、不改写成另一套语法。
+    return assert_origin_identity_exists(db, text)
+
+
+def _dispatch_yamen_creates(
+    db: Any, state: Any, raw: object, *, source: Provenance,
+    source_turn_error: Optional[str] = None,
+) -> SectionResult:
+    """新设衙门：建账上实体 + 月费科目（#1915）。
+
+    召对转译声明名称/主官/月费；本口立即落库，不另造停续协议。
+    月度下落走 textual_facts(subject_kind=yamen)。
+    """
+    from ming_sim.entities.yamen import assert_chief_exists
+    from ming_sim.applier import item_savepoint_scope
+
+    items, rejected = _section_items(raw, label="新设衙门声明", source=source)
+    applied: List[Any] = []
+    for item in items:
+        if source_turn_error is not None:
+            _reject(rejected, item, source_turn_error, "missing_ref", source)
+            continue
+        name = str(item.get("name") or "").strip()
+        chief_raw = str(item.get("chief") or item.get("chief_name") or "").strip()
+        account = str(item.get("account") or item.get("账户") or "").strip()
+        fee_raw = item.get("monthly_fee")
+        if fee_raw is None:
+            fee_raw = item.get("月费")
+        if not name or not chief_raw:
+            _reject(
+                rejected, item, "新设衙门须含 name/chief",
+                "invalid_shape", source,
+            )
+            continue
+        if not account:
+            _reject(
+                rejected, item, "新设衙门须显式声明 account",
+                "invalid_shape", source,
+            )
+            continue
+        try:
+            chief = assert_chief_exists(db, chief_raw)
+        except DeclarationReferenceError as exc:
+            _reject(rejected, item, str(exc), "hallucinated_id", source)
+            continue
+        except DeclarationDataError as exc:
+            _reject(rejected, item, str(exc), "invalid_shape", source)
+            continue
+        origin_ref = str(item.get("origin_ref") or "").strip()
+        try:
+            origin_ref = _canonical_yamen_founding_origin(db, origin_ref)
+        except DeclarationDataError as exc:
+            _reject(rejected, item, str(exc), "invalid_shape", source)
+            continue
+        except DeclarationReferenceError as exc:
+            _reject(rejected, item, str(exc), "hallucinated_id", source)
+            continue
+        try:
+            with item_savepoint_scope(db, f"yamen_create_{int(state.turn)}_{id(item)}"):
+                # 月费严格整数/非负/存储范围：唯一权威＝YamenStore.create
+                yamen = db.yamens.create(
+                    name=name,
+                    chief_name=chief,
+                    monthly_fee=fee_raw,
+                    fee_account=account,
+                    year=int(state.year),
+                    period=int(state.period),
+                    turn=int(state.turn),
+                    origin_ref=origin_ref,
+                )
+                fiscal_key = ""
+                fee = int(yamen.monthly_fee)
+                if fee > 0:
+                    created_key = db.create_fiscal_item(
+                        f"衙门月费{int(yamen.id)}",
+                        account,
+                        "expense",
+                        f"{name}月费",
+                        fee,
+                        note=str(item.get("reason") or f"新设{name}月费"),
+                        origin_ref=f"yamen:{int(yamen.id)}",
+                        turn=int(state.turn),
+                        beyond_intent=0,
+                        commit=False,
+                    )
+                    if not created_key:
+                        raise DeclarationDataError(
+                            f"衙门「{name}」月费科目未能建项"
+                        )
+                    fiscal_key = str(created_key)
+                    db.yamens.set_fiscal_key(int(yamen.id), fiscal_key)
+                    yamen = db.yamens.get(int(yamen.id)) or yamen
+                applied.append({
+                    "id": int(yamen.id),
+                    "name": yamen.name,
+                    "chief": yamen.chief_name,
+                    "monthly_fee": int(yamen.monthly_fee),
+                    "fiscal_key": yamen.fiscal_key or fiscal_key,
+                    "account": yamen.fee_account,
+                })
+        except DeclarationDataError as exc:
+            _reject(rejected, item, str(exc), "invalid_shape", source)
+            continue
+        except DeclarationReferenceError as exc:
+            _reject(rejected, item, str(exc), "hallucinated_id", source)
+            continue
+    return SectionResult(applied=applied, rejected=rejected)
+
+
 def _dispatch_textual_facts(
     db: Any, state: Any, raw: object, *, source: Provenance,
     source_turn_error: Optional[str] = None,
@@ -2980,9 +3425,10 @@ def _dispatch_textual_facts(
             _reject(rejected, item, source_turn_error, "missing_ref", source)
             continue
         subject_kind = str(item.get("subject_kind") or "").strip()
-        subject_id = str(item.get("subject_id") or "").strip()
         try:
-            _assert_textual_fact_subject_exists(db, subject_kind, subject_id)
+            subject_id = _assert_textual_fact_subject_exists(
+                db, subject_kind, str(item.get("subject_id") or "").strip(),
+            )
         except DeclarationReferenceError as exc:
             _reject(rejected, item, str(exc), "hallucinated_id", source)
             continue
@@ -3003,6 +3449,15 @@ def _dispatch_textual_facts(
             continue
         else:
             origin_ref = raw_origin.strip()
+        try:
+            from ming_sim.knowledge import assert_origin_identity_exists
+            origin_ref = assert_origin_identity_exists(db, origin_ref)
+        except DeclarationDataError as exc:
+            _reject(rejected, item, str(exc), "invalid_shape", source)
+            continue
+        except DeclarationReferenceError as exc:
+            _reject(rejected, item, str(exc), "hallucinated_id", source)
+            continue
         try:
             fact = db.textual_facts.append(
                 subject_kind=subject_kind, subject_id=subject_id,

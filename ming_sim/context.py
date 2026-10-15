@@ -184,23 +184,42 @@ _PRIVILEGE_QUALITATIVE = {
 }
 
 
+def appointment_tenure_context(character: Character, db: GameDB) -> str:
+    """本人官职任别（ADR 0064）；无现职或默认真除不另占一行。"""
+    office = str(getattr(character, "office", "") or "").strip()
+    if not office or office in {"白身", "待选"}:
+        return ""
+    from ming_sim.supervision import character_tenure
+
+    tenure = character_tenure(db, character.name)
+    if not tenure or tenure == "真除":
+        return ""
+    return f"【任别】{tenure}。"
+
+
 def held_authority_context(
     character: Character, db: GameDB, *, turn: Optional[int] = None,
 ) -> str:
-    """大臣可见的在持授权定性摘要；裸 authority_records.id 永不入面。"""
+    """大臣可见的在持授权定性摘要；裸 authority_records.id 永不入面。
+
+    同权项不同事域各自成条（账本 scope 事实入材料，#1912 / ADR 0071 / #528）。
+    """
     if turn is None:
         turn = db.load_state().turn
     rows = db.characters.list_active_authorities(int(turn), holder_id=character.name)
     if not rows:
         return ""
     labels: List[str] = []
-    seen: set[str] = set()
+    seen: set[tuple[str, str]] = set()
     for row in rows:
         priv = str(row.get("privilege") or "").strip()
-        if not priv or priv in seen:
+        scope = str(row.get("scope") or "").strip()
+        identity = (priv, scope)
+        if not priv or identity in seen:
             continue
-        seen.add(priv)
-        labels.append(_PRIVILEGE_QUALITATIVE.get(priv, priv))
+        seen.add(identity)
+        base = _PRIVILEGE_QUALITATIVE.get(priv, priv)
+        labels.append(f"{base}（{scope}）" if scope else base)
     if not labels:
         return ""
     return f"【在持授权】{'、'.join(labels)}。"
@@ -236,6 +255,7 @@ def character_context_with_db(
     return (
         character_context(character)
         + "【通用特征】人物档料不足处，以其现职、经历与当下处境推知。"
+        + appointment_tenure_context(character, db)
         + faction_context_with_db(character, db)
         + held_authority_context(character, db, turn=turn)
         + relation_ledger_context(character, db)

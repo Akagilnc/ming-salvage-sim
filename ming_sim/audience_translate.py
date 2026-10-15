@@ -179,6 +179,16 @@ def build_translation_target_grounding(db: Any, state: Any = None) -> str:
         lines.append(
             f"character\t{row['name']}\t{str(row['office'] or row['name'])}"
         )
+    # #1912 J1：在持授权稳定身份供料，供 revoke_authority.authority_id 精确收回。
+    turn = getattr(state, "turn", None) if state is not None else None
+    if turn is None:
+        turn = db.load_state().turn
+    for row in db.characters.list_active_authorities(int(turn)):
+        lines.append(
+            "authority\t"
+            f"{int(row['id'])}\t{str(row.get('holder_id') or '')}\t"
+            f"{str(row.get('privilege') or '')}\t{str(row.get('scope') or '')}"
+        )
     from ming_sim.staged_commitment import load_commitment_stages
 
     for row in db.conn.execute(
@@ -201,6 +211,11 @@ def build_translation_target_grounding(db: Any, state: Any = None) -> str:
     for affair in db.affairs.list_open():
         lines.append(
             f"affair\t{int(affair.id)}\t{str(affair.name or '')}"
+        )
+    # #1915：新设衙门 id↔名称，月末 textual_facts(subject_kind=yamen) 回指用。
+    for yamen in db.yamens.list_active():
+        lines.append(
+            f"yamen\t{int(yamen.id)}\t{yamen.name}\t主官:{yamen.chief_name}"
         )
     # 在途拨帑与自带押解标记（普通押解随拨银旨）；专用护送目录/实况行已退役。
     for row in db.conn.execute(
@@ -239,7 +254,9 @@ def build_translation_target_grounding(db: Any, state: Any = None) -> str:
         body = "\n".join(lines)
         parts.append(
             "【权威目标目录】\n"
-            "grant.target_id / appointment.region_id / rushes.target_id / 禁摊派案卷 id 必须取对应目录中的精确 id，禁止编造。\n"
+            "grant.target_id / appointment.region_id / rushes.target_id / 禁摊派案卷 id / "
+            "revoke_authority.authority_id 必须取对应目录中的精确 id，禁止编造。"
+            "authority 行格式：id、持有人、权项、事域。\n"
             f"{body}"
         )
     if candidate_block:
@@ -259,11 +276,15 @@ def build_c0_declaration_shape() -> str:
     from ming_sim.covert_progress import describe_covert_task_contract
     covert_contract_shape = describe_covert_task_contract()
     # 案卷关联的合法类型闭集同样只投影 constants 真源，禁手抄分叉。
+    from ming_sim.appointment_tenure import APPOINTMENT_TENURES
+    from ming_sim.authority_privileges import AUTHORITY_PRIVILEGES
     from ming_sim.constants import DOSSIER_LINK_TYPES, ECONOMY_ACCOUNTS
     from ming_sim.entities.character.transit import TRAVEL_SPEED_BY_TONE
     dossier_link_types = "|".join(sorted(DOSSIER_LINK_TYPES))
     account_hint = "|".join(ECONOMY_ACCOUNTS)
     travel_tone_hint = "|".join(TRAVEL_SPEED_BY_TONE)
+    tenure_hint = "|".join(sorted(APPOINTMENT_TENURES))
+    privilege_hint = "|".join(AUTHORITY_PRIVILEGES)
     effect_shape = "\n".join(
         f"    {line}" for line in json.dumps(
             {"event_id": "仅属某事件战果时填事件 id；未填即独立", **DECLARATION_EFFECT_FIELDS},
@@ -279,7 +300,19 @@ def build_c0_declaration_shape() -> str:
         '      "target_dossier_id": "御笔强推已有案卷 id（不与 grant/appointment 同填）",\n'
         '      "appointment": {\n'
         '        "name": "人名", "office": "官职", "appoint_action": "任命|罢免",\n'
-        '        "region_id": "任所 region id（地方/督抚/边镇任命必填；中央可空）"\n'
+        '        "region_id": "任所 region id（地方/督抚/边镇任命必填；中央可空）",\n'
+        f'        "任别": "{tenure_hint}"\n'
+        "      },\n"
+        '      "authorization": {\n'
+        '        "name": "授予对象人名",\n'
+        f'        "privilege": "{privilege_hint}",\n'
+        f'        "target_kind": "{target_kind_hint}",\n'
+        '        "target_id": "事域 id（与 target_kind 同填，组成典范事域；亦可直接填 scope）"\n'
+        "      },\n"
+        '      "revoke_authority": {\n'
+        '        "name": "持有人",\n'
+        f'        "privilege": "{privilege_hint}",\n'
+        '        "authority_id": "权威目标目录 authority 行 id（精确收回必填；无则持有人+权项唯一时解析）"\n'
         "      },\n"
         '      "grant": {\n'
         '        "grant_action": "赈灾|协饷|赏赉|发内帑|项目经费|…",\n'
@@ -353,7 +386,10 @@ def build_c0_declaration_shape() -> str:
         "    }\n"
         "  ],\n"
         '  "textual_facts": [\n'
-        '    {"subject_kind": "character|army|region", "subject_id": "id", "body": "文字事实", "origin_ref": "本条事实真实来源引用（如 dossier:id / secret_order:id），与 affair_declaration 分开"}\n'
+        '    {"subject_kind": "character|army|region|yamen", "subject_id": "id", "body": "文字事实", "origin_ref": "本条事实真实来源引用（如 dossier:id / secret_order:id），与 affair_declaration 分开"}\n'
+        "  ],\n"
+        '  "yamen_creates": [\n'
+        '    {"name": "衙门名", "chief": "主官人名", "monthly_fee": "非负整数万两", "account": "国库|内库（必填）", "origin_ref": "真实来源（密令/案卷下设填 secret_order:id 或 dossier:id，且须账上存在；公开设立可空）"}\n'
         "  ],\n"
         '  "public_sayings": [\n'
         "    {\n"
@@ -440,6 +476,10 @@ def build_audience_translate_prompt(
         "指向暂存清单里那件（action_id）；御笔手敕的 endorser_id 为空。\n"
         "- 当场已发生（斩杀/拿下/伤臂/告退等）走 on_scene_facts / textual_facts / "
         "presence / public_sayings / edge_events，不要写成交办。\n"
+        "- 皇帝新设衙门（钱粮稽查司/火器局等）并指定主官、拨月费 → yamen_creates；"
+        "须填 origin_ref：密令或案卷下设写 secret_order:id / dossier:id（目标目录已列 id）；"
+        "公开设立可空。来源与 name/chief/月费/account 同为声明字段，不从正文猜测。\n"
+        "名称/主官/月费/账户齐全才成条；主官须是在事名册人物；月费为非负整数万两。\n"
         "- effects 是过月才核算的旨意办理效果；召对夜本轮留空，不得将尚未发生的效果写成当场实况。\n"
         "- 无对应事实的 section 输出空数组（protagonist 无则省略或 null），不要编造。\n"
         "- 承接不了的交办仍写入 commissions（由代码拒收），不要改写皇帝原话去猜。\n"

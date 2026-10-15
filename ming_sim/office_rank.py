@@ -39,6 +39,43 @@ def normalize_office(office: str) -> str:
     return ",".join(parts)
 
 
+def office_title_continues(current_office: object, desired_office: object) -> bool:
+    """Desired titles are a non-empty subset of current — same posting restatement.
+
+    Single authority for noop / seat reuse / appointment concurrent-title preserve.
+    Callers that apply explicit 调任 must not treat subset alone as keep-old-titles;
+    different seat is also a transfer (checked by caller).
+    """
+    current = normalize_office(str(current_office or ""))
+    desired = normalize_office(str(desired_office or ""))
+    if not current or not desired:
+        return False
+    desired_parts = {p for p in desired.split(",") if p}
+    current_parts = {p for p in current.split(",") if p}
+    return bool(desired_parts) and desired_parts.issubset(current_parts)
+
+
+def appointment_seat_continues(
+    *,
+    current_seat: object = "",
+    desired_seat: object = "",
+    office_type: object = "",
+    local_office_types: frozenset[str] = frozenset(),
+) -> bool:
+    """Same-posting seat after canonical rules (non-local ignores stuffed region).
+
+    Omitted desired seat continues the current seat. Explicit different local seat
+    is a transfer. Callers pass the archive local-type set; no parallel type table.
+    """
+    kind = str(office_type or "").strip()
+    if kind not in local_office_types:
+        return True
+    desired = str(desired_seat or "").strip()
+    if not desired:
+        return True
+    return desired == str(current_seat or "").strip()
+
+
 def concurrent_office_titles(office: object) -> list[str]:
     """Split concurrent office titles by formal conjunction / comma separators.
 
