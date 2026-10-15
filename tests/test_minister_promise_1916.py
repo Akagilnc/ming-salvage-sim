@@ -12,6 +12,7 @@ Seams:
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from types import SimpleNamespace
 
 from ming_sim.audience_night import (
@@ -368,24 +369,34 @@ def test_timed_minister_promise_due_appears_in_promisor_opening_materials(
     )
 
 
-def _land_minister_promise(db, state, *, promisor: str, title: str, deadline_months=1,
-                           affair_declaration=None, extra=None):
-    """真实召对分派入口落一笔自诺；返回 (issue_id, chat_id, night_id, applied)。"""
+def _hall_commission_batch(db, state, promisor, commissions, *, words="尔有何话说"):
+    """共用召对入口：开厅、钉源轮、dispatch 一批 commissions。"""
     night_id, chat_id = open_hall_turn(db, state, promisor)
     uid = db.conn.execute(
         "INSERT INTO chat_messages (minister_name, turn, role, content) "
         "VALUES (?, ?, 'emperor', ?)",
-        (promisor, int(state.turn), "尔有何话说"),
+        (promisor, int(state.turn), words),
     ).lastrowid
     mid = db.conn.execute(
         "INSERT INTO chat_messages (minister_name, turn, role, content) "
         "VALUES (?, ?, 'minister', ?)",
-        (promisor, int(state.turn), title),
+        (promisor, int(state.turn), words),
     ).lastrowid
     db.conn.commit()
     db.reign.update_chat_turn_messages(
         int(chat_id), user_message_id=int(uid), minister_message_id=int(mid),
     )
+    result = dispatch_declaration(
+        db, state, {"commissions": list(commissions)},
+        minister_name=promisor,
+        night_id=int(night_id),
+        chat_turn_id=int(chat_id),
+    )
+    return result, int(chat_id), int(night_id)
+
+def _land_minister_promise(db, state, *, promisor: str, title: str, deadline_months=1,
+                           affair_declaration=None, extra=None):
+    """真实召对分派入口落一笔自诺；复用共用批派入口。"""
     item = {
         "text": title,
         "minister_promise": {
@@ -399,13 +410,7 @@ def _land_minister_promise(db, state, *, promisor: str, title: str, deadline_mon
         item["affair_declaration"] = affair_declaration
     if extra:
         item.update(extra)
-    result = dispatch_declaration(
-        db, state, {"commissions": [item]},
-        minister_name=promisor,
-        night_id=int(night_id),
-        chat_turn_id=int(chat_id),
-    )
-    return result, int(chat_id), int(night_id)
+    return _hall_commission_batch(db, state, promisor, [item], words=title)
 
 
 def test_c1_minister_promise_origin_not_public_visible(game, monkeypatch):
@@ -493,16 +498,38 @@ def test_c1_minister_promise_origin_not_public_visible(game, monkeypatch):
     knowledge = build_character_knowledge(db, state, promisor)
     assert any(int(i.get("id") or 0) == issue_id for i in knowledge.get("issues") or [])
 
-    # 一次安装写手观测：事务键/标题 + audience id；密源 history 由事务键排除覆盖。
-    captured = {"affair_keys": set(), "affair_titles": {}, "audience_ids": []}
+    # 一次安装写手观测：事务键/标题 + audience id + 序列化前案卷记录 id。
+    captured = {
+        "affair_keys": set(), "affair_titles": {}, "audience_ids": [],
+        "written_dossier_ids": set(), "written_secret_dossier_ids": set(),
+    }
     real_write = materials_mod._write_world_tree
     real_exp = materials_mod._experience_text
+    real_mft = materials_mod._material_facts_text
 
     def spy_exp(knowledge, audible_entries=()):
         captured["audience_ids"].extend(
             int(entry.get("id") or 0) for entry in audible_entries
         )
         return real_exp(knowledge, audible_entries)
+
+    def spy_mft(value, indent=""):
+        # 序列化边界：观察待写案卷记录的 id / secret_order_id，不锁人读标签。
+        if isinstance(value, Mapping):
+            for block in value.values():
+                if not isinstance(block, Mapping):
+                    continue
+                dossier_section = block.get("案卷")
+                if not isinstance(dossier_section, Mapping):
+                    continue
+                record = dossier_section.get("案卷")
+                if not isinstance(record, Mapping) or "id" not in record:
+                    continue
+                did = int(record["id"])
+                captured["written_dossier_ids"].add(did)
+                if int(record.get("secret_order_id") or 0) > 0:
+                    captured["written_secret_dossier_ids"].add(did)
+        return real_mft(value, indent)
 
     def spy_write(
         tmp, db_, state_, public_events, affair_lines, board_text, roster_text,
@@ -518,6 +545,7 @@ def test_c1_minister_promise_origin_not_public_visible(game, monkeypatch):
         )
 
     monkeypatch.setattr(materials_mod, "_experience_text", spy_exp)
+    monkeypatch.setattr(materials_mod, "_material_facts_text", spy_mft)
     monkeypatch.setattr(materials_mod, "_write_world_tree", spy_write)
 
     prepared = prepare_gazette_author_materials(db, state)
@@ -713,9 +741,14 @@ def test_c1_minister_promise_origin_not_public_visible(game, monkeypatch):
     assert f"secret_order_brief:{int(order_id)}" in event_sources
     captured["affair_keys"] = set()
     captured["affair_titles"] = {}
+    captured["written_dossier_ids"] = set()
+    captured["written_secret_dossier_ids"] = set()
     prepared_secret = prepare_gazette_author_materials(db, state)
     try:
         assert f"affair-{secret_affair_id}" not in captured["affair_keys"]
+        # 密令案卷不得进入公开序列化边界。
+        assert int(secret_dossier["id"]) not in captured["written_dossier_ids"]
+        assert int(secret_dossier["id"]) not in captured["written_secret_dossier_ids"]
         assert not any(
             part.startswith(f"affair-{secret_affair_id}-")
             for path in list_materials(prepared_secret.root)
@@ -724,8 +757,7 @@ def test_c1_minister_promise_origin_not_public_visible(game, monkeypatch):
     finally:
         release_material_tree(prepared_secret.root)
 
-    # 私诺新建后挂公开案卷：目录 key 在、投影 title 空；案卷 pointer 与公开可见性结构化。
-    from ming_sim.materials import secret_order_dossier_ids
+    # 私诺新建后挂公开案卷：目录 key 在、title 空；序列化边界实收公开案卷 id。
     priv2_name = "私密后挂事务"
     priv2, _pc, _pn = _land_minister_promise(
         db, state, promisor=promisor, title="私诺后挂公开案",
@@ -751,16 +783,20 @@ def test_c1_minister_promise_origin_not_public_visible(game, monkeypatch):
     db.conn.commit()
     assert int(db.dossiers.affair_id_of(int(pub_dossier_id))) == priv2_id
     assert origin_visible_to(db, "", linked_dossier_id=int(pub_dossier_id)) is True
-    assert int(pub_dossier_id) not in secret_order_dossier_ids(db)
     captured["affair_keys"] = set()
     captured["affair_titles"] = {}
+    captured["written_dossier_ids"] = set()
+    captured["written_secret_dossier_ids"] = set()
     prepared_mix = prepare_gazette_author_materials(db, state)
     try:
         key = f"affair-{priv2_id}"
         assert key in captured["affair_keys"]
-        # 私密出生名不进公开投影 title 字段（结构化，非正文哨兵）。
         assert captured["affair_titles"].get(key) == ""
         assert captured["affair_titles"].get(key) != priv2_name
+        # 真实写出边界：公开案卷 id 进入序列化；密令案卷不在。
+        assert int(pub_dossier_id) in captured["written_dossier_ids"]
+        assert int(secret_dossier["id"]) not in captured["written_dossier_ids"]
+        assert captured["written_secret_dossier_ids"] == set()
         assert any(
             part.startswith(f"affair-{priv2_id}-")
             for path in list_materials(prepared_mix.root)
@@ -827,30 +863,6 @@ def test_c2_minister_promise_applied_has_no_pending_id_field(game):
     assert "id" not in applied
 
 
-def _hall_commission_batch(db, state, promisor, commissions, *, words="尔有何话说"):
-    """共用召对入口：开厅、钉源轮、dispatch 一批 commissions。"""
-    night_id, chat_id = open_hall_turn(db, state, promisor)
-    uid = db.conn.execute(
-        "INSERT INTO chat_messages (minister_name, turn, role, content) "
-        "VALUES (?, ?, 'emperor', ?)",
-        (promisor, int(state.turn), words),
-    ).lastrowid
-    mid = db.conn.execute(
-        "INSERT INTO chat_messages (minister_name, turn, role, content) "
-        "VALUES (?, ?, 'minister', ?)",
-        (promisor, int(state.turn), words),
-    ).lastrowid
-    db.conn.commit()
-    db.reign.update_chat_turn_messages(
-        int(chat_id), user_message_id=int(uid), minister_message_id=int(mid),
-    )
-    result = dispatch_declaration(
-        db, state, {"commissions": list(commissions)},
-        minister_name=promisor,
-        night_id=int(night_id),
-        chat_turn_id=int(chat_id),
-    )
-    return result, int(chat_id), int(night_id)
 
 
 def test_sole_commission_actions_reject_when_mixed_with_minister_promise(game):
