@@ -933,6 +933,14 @@ _AUTHORITY_EXCLUSIVE_KEYS = (
     "secret_order_review", "strategy_selection", "revoke",
 )
 
+# 交办互斥对象槽（不含 grant/appointment：二者可合成一件事）。
+_COMMISSION_EXCLUSIVE_OBJECT_KEYS = (
+    "punishment", "pacification", "assignment", "revoke",
+    "secret_order", "secret_order_progress", "secret_order_update",
+    "secret_order_review", "strategy_selection",
+    "authorization", "revoke_authority",
+)
+
 
 def _declared_object_slot(value: object) -> object | None:
     """Optional object slot: missing/empty mapping = unused; else the declared value.
@@ -946,6 +954,37 @@ def _declared_object_slot(value: object) -> object | None:
     if isinstance(value, Mapping) and not value:
         return None
     return value
+
+
+def _declared_commission_kinds(item: Mapping[str, object]) -> frozenset[str]:
+    """Non-empty commission object kinds on one item (empty mapping = unused)."""
+    kinds: set[str] = set()
+    for key in _COMMISSION_EXCLUSIVE_OBJECT_KEYS:
+        if _declared_object_slot(item.get(key)) is not None:
+            kinds.add(key)
+    grant = item.get("grant")
+    if isinstance(grant, Mapping):
+        if grant:
+            kinds.add("grant")
+    elif grant not in (None, ""):
+        kinds.add("grant")
+    appointment = item.get("appointment")
+    if isinstance(appointment, Mapping):
+        if appointment:
+            kinds.add("appointment")
+    elif appointment not in (None, ""):
+        kinds.add("appointment")
+    return frozenset(kinds)
+
+
+def _exclusive_commission_conflict(kinds: frozenset[str]) -> bool:
+    """True when more than one exclusive kind is declared.
+
+    Sole legal multi-kind pair: grant + appointment (一件事一份载荷).
+    """
+    if len(kinds) <= 1:
+        return False
+    return kinds != frozenset({"grant", "appointment"})
 
 
 def _stage_authorization_commission(
@@ -1006,6 +1045,10 @@ def _stage_authorization_commission(
     except ValueError as exc:
         _reject(rejected, item, str(exc), "invalid_shape", source)
         return None
+    # 事域人物身份复用既有归一（与 holder 同口径）；不猜补、不强制等于持有人。
+    if kind == "character":
+        scoped = _canonical_minister_key(db.content, scoped, db)
+        scope = f"{kind}:{scoped}"
     mode = resolve_directive_mode(
         extracted=authorization.get("mode", item.get("mode")),
     )
@@ -1547,6 +1590,11 @@ def _dispatch_commission_items(
                     getattr(exc, "category", None) or "invalid_shape", source,
                 )
             # 未分类写入故障不在此冒充拒收（#1897 E1）。
+            continue
+
+        # 互斥一次收拢：前序分支不得静默择一丢掉非空授收权等同槽（#1912）。
+        if _exclusive_commission_conflict(_declared_commission_kinds(item)):
+            _reject(rejected, item, "交办载荷须为独立对象", "invalid_shape", source)
             continue
 
         strategy = item.get("strategy_selection")

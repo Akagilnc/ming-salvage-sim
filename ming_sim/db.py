@@ -6113,6 +6113,9 @@ class GameDB:
             ).strip()
             if not holder:
                 raise DecreeMaterializationValidationError("委任授权缺少 holder_id")
+            if content is not None:
+                from ming_sim.session import _canonical_minister_key
+                holder = _canonical_minister_key(content, holder, self)
             normalized["holder_id"] = holder
             normalized["name"] = holder
             normalized["assignee_id"] = holder
@@ -6347,6 +6350,11 @@ class GameDB:
         if final_kind not in TARGET_KINDS:
             raise DecreeMaterializationValidationError(f"target_kind 非法：{final_kind!r}")
         normalized["target_kind"] = final_kind
+        # 授权事域与典范 target 同身份：别名归一后回写 scope，恢复查重语义（#1912）。
+        if action == "authorization":
+            final_tid = str(normalized.get("target_id") or "").strip()
+            if final_kind and final_tid:
+                normalized["scope"] = f"{final_kind}:{final_tid}"
         normalized["locality_scope"] = normalize_locality_scope(
             normalized.get("locality_scope"),
         )
