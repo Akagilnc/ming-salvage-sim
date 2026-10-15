@@ -784,37 +784,30 @@ class GameSession:
             return self.content.characters[clean_name]
         raise DeclarationDataError(f"人物未建档：{clean_name}")
 
-    def _resolve_one_xuan_target(self, fragment: str) -> Optional[Character]:
-        """单个人名/别名/官职片段 → 在册人物；复用既有 match，不另造启发式。"""
-        text = str(fragment or "").strip()
-        if not text:
-            return None
-        chars = getattr(getattr(self, "content", None), "characters", None) or {}
-        target = chars.get(text) or match_minister_from_text(text)
-        if target is not None:
-            return target
-        try:
-            return self.summon_character(text)
-        except ValueError:
-            return None
-
     def _resolve_xuan_targets(self, fragment: str) -> List[Character]:
         """#1913：宣召人名片段 → 目标列表。
 
-        先整段身份匹配（保住「懋和」等含连接字的合法别名）；整段失败才按标点拆多人。
+        身份解析只走 summon_character（内含 match_minister_from_text）；
+        整段先匹配以保住合法别名，失败才按标点拆多人。
         """
         from ming_sim.audience_night import split_xuan_name_fragments
 
-        text = str(fragment or "").strip()
-        if not text:
-            return []
-        whole = self._resolve_one_xuan_target(text)
+        def _one(text: str) -> Optional[Character]:
+            cleaned = str(text or "").strip()
+            if not cleaned:
+                return None
+            try:
+                return self.summon_character(cleaned)
+            except DeclarationDataError:
+                return None
+
+        whole = _one(fragment)
         if whole is not None:
             return [whole]
         targets: List[Character] = []
         seen: set[str] = set()
-        for part in split_xuan_name_fragments(text):
-            target = self._resolve_one_xuan_target(part)
+        for part in split_xuan_name_fragments(fragment):
+            target = _one(part)
             if target is None or target.name in seen:
                 continue
             seen.add(target.name)

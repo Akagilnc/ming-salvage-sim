@@ -27,7 +27,7 @@ from ming_sim.session_write_queue import SessionWriteQueue
 Seams:
 - GameSession.scene_chat（真实召对入口「宣…」）
 - 入殿／传召账（list_ledger / list_unsettled_summons / present_names_at）
-- create_scene_agent 收到的 PreparedMaterials（场景调用边界，非事后另 prepare）
+- create_scene_agent 收到的 PreparedMaterials（场景调用边界）
 - 存档重开后 list_ledger 召法 tag
 """
 
@@ -72,20 +72,6 @@ def _enter_methods(db, night_id: int, person: str) -> list[str]:
     return methods
 
 
-def _summon_ledger_tags_for(db, person: str) -> list[str]:
-    tags_out: list[str] = []
-    for row in list_unsettled_summons(db):
-        if row["person_name"] != person:
-            continue
-        entry = next(
-            (e for e in list_ledger(db, int(row["night_id"])) if int(e["id"]) == int(row["entry_id"])),
-            None,
-        )
-        if entry is not None:
-            tags_out.extend(entry.get("tags") or [])
-    return tags_out
-
-
 def _blocked_facts_from_opening(opening: str) -> list[dict]:
     facts: list[dict] = []
     for line in str(opening or "").splitlines():
@@ -99,6 +85,16 @@ def _blocked_facts_from_opening(opening: str) -> list[dict]:
         if isinstance(payload, dict) and payload.get("kind") == "summon_blocked":
             facts.append(payload)
     return facts
+
+
+def _unsettled_entry_tags(db, person: str) -> list[str]:
+    for row in list_unsettled_summons(db):
+        if row["person_name"] != person:
+            continue
+        for entry in list_ledger(db, int(row["night_id"])):
+            if int(entry["id"]) == int(row["entry_id"]):
+                return list(entry.get("tags") or [])
+    return []
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
@@ -128,21 +124,23 @@ def test_xuan_two_in_capital_both_enter_with_materials(game, monkeypatch):
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_xuan_capital_and_remote_splits_enter_and_summon(game, monkeypatch):
-    """「宣甲、丙」丙在京外：甲入殿，丙记传召不入殿。"""
+    """「宣甲、乙」乙为合法别名且在京外：甲入殿，别名主体记传召不入殿。"""
     db, state, content = game
     open_night(db, state, location="乾清宫", time_of_day="夜")
     night_id = int(get_open_night(db)["id"])
-    capital, remote = "毕自严", "洪承畴"
+    capital = "毕自严"
+    # 懋和 = 朱燮元别名（含「和」）；开局在贵州，走传召分流。
+    remote_alias, remote_name = "懋和", "朱燮元"
 
     sess = _sess(db, state, content, monkeypatch)
-    sess.scene_chat(f"宣{capital}、{remote}", write_gate=sess._write_gate)
+    sess.scene_chat(f"宣{capital}、{remote_alias}", write_gate=sess._write_gate)
 
     assert capital in present_names_at(db, night_id)
-    assert remote not in present_names_at(db, night_id)
+    assert remote_name not in present_names_at(db, night_id)
     unsettled = {
         row["person_name"]: row["kind"] for row in list_unsettled_summons(db)
     }
-    assert unsettled.get(remote) in {"fresh", "in_transit"}
+    assert unsettled.get(remote_name) in {"fresh", "in_transit"}
     assert capital not in unsettled
 
 
@@ -173,26 +171,32 @@ def test_xuan_blocked_offstage_feeds_materials_not_enter(game, monkeypatch):
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_yueci_explicit_lands_method_and_survives_reopen(game, monkeypatch, tmp_path):
-    """越次点名：召见方式为越次；关库重开仍可读。"""
+    """越次点名：在京记入殿越次；京外记传召账越次；关库重开仍可读。"""
     db, state, content = game
     open_night(db, state, location="乾清宫", time_of_day="夜")
     night_id = int(get_open_night(db)["id"])
-    person = "杨嗣昌"
+    capital, remote = "杨嗣昌", "洪承畴"
 
     sess = _sess(db, state, content, monkeypatch)
-    sess.scene_chat(f"越次宣{person}", write_gate=sess._write_gate)
+    sess.scene_chat(f"越次点名{capital}、{remote}", write_gate=sess._write_gate)
 
-    methods = _enter_methods(db, night_id, person)
+    methods = _enter_methods(db, night_id, capital)
     assert METHOD_YUECI in methods
     assert METHOD_XUANRU not in methods
+    assert capital in present_names_at(db, night_id)
+
+    assert remote not in present_names_at(db, night_id)
+    unsettled = [row for row in list_unsettled_summons(db) if row["person_name"] == remote]
+    assert unsettled and unsettled[0]["kind"] in {"fresh", "in_transit"}
+    assert METHOD_YUECI in _unsettled_entry_tags(db, remote)
 
     db.conn.commit()
     copy_path = Path(tmp_path) / "reopen.db"
     shutil.copyfile(db.path, copy_path)
     restored = GameDB(str(copy_path), content)
     try:
-        methods_after = _enter_methods(restored, night_id, person)
-        assert METHOD_YUECI in methods_after
+        assert METHOD_YUECI in _enter_methods(restored, night_id, capital)
+        assert METHOD_YUECI in _unsettled_entry_tags(restored, remote)
     finally:
         restored.conn.close()
 
@@ -211,41 +215,3 @@ def test_ordinary_xuan_low_rank_is_xuanru_not_yueci(game, monkeypatch):
     methods = _enter_methods(db, night_id, person)
     assert METHOD_XUANRU in methods
     assert METHOD_YUECI not in methods
-
-
-@pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_xuan_alias_containing_he_not_split(game, monkeypatch):
-    """在册别名「懋和」整段匹配，不被「和」切开。"""
-    db, state, content = game
-    open_night(db, state, location="乾清宫", time_of_day="夜")
-    person = "朱燮元"
-    # 别名「懋和」；场外以便落传召账可观察
-    db.conn.execute(
-        "UPDATE characters SET location=? WHERE name=?",
-        ("sichuan", person),
-    )
-    db.conn.commit()
-
-    sess = _sess(db, state, content, monkeypatch)
-    sess.scene_chat("宣懋和", write_gate=sess._write_gate)
-
-    unsettled = [row for row in list_unsettled_summons(db) if row["person_name"] == person]
-    assert unsettled, "alias 懋和 must resolve to 朱燮元 and record summons"
-
-
-@pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_yueci_remote_method_lands_on_summon_ledger(game, monkeypatch):
-    """越次点名京外：传召账保留越次召法，同时仍是传召分流。"""
-    db, state, content = game
-    open_night(db, state, location="乾清宫", time_of_day="夜")
-    night_id = int(get_open_night(db)["id"])
-    remote = "洪承畴"
-
-    sess = _sess(db, state, content, monkeypatch)
-    sess.scene_chat(f"越次点名{remote}", write_gate=sess._write_gate)
-
-    assert remote not in present_names_at(db, night_id)
-    unsettled = [row for row in list_unsettled_summons(db) if row["person_name"] == remote]
-    assert unsettled and unsettled[0]["kind"] in {"fresh", "in_transit"}
-    tags = _summon_ledger_tags_for(db, remote)
-    assert METHOD_YUECI in tags
