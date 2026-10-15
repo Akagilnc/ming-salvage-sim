@@ -550,13 +550,36 @@ def test_c1_minister_promise_origin_not_public_visible(game, monkeypatch):
         (origin_ref,),
     ).fetchone()["n"]) == 0
 
-    # 反例：既有公开事务落公开收支后挂私诺，同一写手观测仍收到该事务身份。
-    public_origin = db.affairs.origin_ref(public_affair_id)
-    db.record_issue_economy_move(
-        state, "国库", -1, "边饷", "公开收支",
-        origin_ref=public_origin,
+    # 反例 1：公开人物文字事实已关联该事务——挂私诺后目录身份仍须保留。
+    fact_result = dispatch_declaration(
+        db, state,
+        {
+            "textual_facts": [{
+                "subject_kind": "character",
+                "subject_id": promisor,
+                "body": "边饷旧案仍在清核",
+                "affair_declaration": {
+                    "attach": "existing", "affair_id": public_affair_id,
+                },
+            }],
+        },
+        minister_name=promisor,
     )
-    assert any(db.list_world_effect_history(public_origin).values())
+    assert fact_result.textual_facts.rejected == []
+    assert fact_result.textual_facts.applied
+    linked_facts = db.textual_facts.readable_materials(
+        subject_kind="affair", subject_id=str(public_affair_id),
+    )
+    assert any(f.body == "边饷旧案仍在清核" for f in linked_facts)
+    assert all(int(f.affair_id) == public_affair_id for f in linked_facts
+               if f.body == "边饷旧案仍在清核")
+    captured["affair_keys"] = set()
+    prepared_fact = prepare_gazette_author_materials(db, state)
+    try:
+        assert f"affair-{public_affair_id}" in captured["affair_keys"]
+    finally:
+        release_material_tree(prepared_fact.root)
+
     linked, _chat, _nid = _land_minister_promise(
         db, state, promisor=promisor, title="私诺挂既有公开事务",
         deadline_months=0,
@@ -576,6 +599,31 @@ def test_c1_minister_promise_origin_not_public_visible(game, monkeypatch):
         )
     finally:
         release_material_tree(prepared_after.root)
+
+    # 反例 2：仅有公开收支历史时，挂私诺同样不得整份隐藏。
+    public_affair_2 = db.affairs.open(
+        name="公开河工事务", origin="廷议河工",
+        year=int(state.year), period=int(state.period), turn=int(state.turn),
+    )
+    public_affair_2_id = int(public_affair_2.id)
+    public_origin_2 = db.affairs.origin_ref(public_affair_2_id)
+    db.record_issue_economy_move(
+        state, "国库", -1, "河工", "公开收支",
+        origin_ref=public_origin_2,
+    )
+    assert any(db.list_world_effect_history(public_origin_2).values())
+    linked2, _c2, _n2 = _land_minister_promise(
+        db, state, promisor=promisor, title="私诺挂公开河工",
+        deadline_months=0,
+        affair_declaration={"attach": "existing", "affair_id": public_affair_2_id},
+    )
+    assert linked2.commissions.rejected == []
+    captured["affair_keys"] = set()
+    prepared_hist = prepare_gazette_author_materials(db, state)
+    try:
+        assert f"affair-{public_affair_2_id}" in captured["affair_keys"]
+    finally:
+        release_material_tree(prepared_hist.root)
 
 
 def test_c2_correction_ids_rejected_on_minister_promise(game):

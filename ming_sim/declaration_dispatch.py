@@ -2984,15 +2984,21 @@ def _dispatch_textual_facts(
         except DeclarationDataError as exc:
             _reject(rejected, item, str(exc), "invalid_shape", source)
             continue
-        origin_ref, error_category, reason = _resolve_affair_origin_ref(db, item)
+        # 事务关联必须同时落 origin_ref（来源可见性）与 affair_id（结构化指针）；
+        # 只写其一会导致 readable_materials 按事务读时漏接公开人物事实。
+        affair_id, error_category, reason = _peek_affair_id(db, item)
         if error_category is not None:
             _reject(rejected, item, reason, error_category, source)
             continue
+        origin_ref = (
+            db.affairs.origin_ref(affair_id) if affair_id is not None else ""
+        )
         try:
             fact = db.textual_facts.append(
                 subject_kind=subject_kind, subject_id=subject_id,
                 body=item.get("body"), year=state.year, period=state.period,
                 turn=state.turn, origin_ref=origin_ref,
+                affair_id=int(affair_id or 0),
             )
         except DeclarationDataError as exc:
             _reject(rejected, item, str(exc), "invalid_shape", source)

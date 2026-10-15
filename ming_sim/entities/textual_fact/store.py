@@ -109,15 +109,33 @@ class TextualFactStore(RowStore):
     def readable_materials(
         self, *, subject_kind: str, subject_id: str
     ) -> tuple[TextualFact, ...]:
-        """All textual facts on this object, oldest month first. No collapse, no expiry."""
+        """All textual facts on this object, oldest month first. No collapse, no expiry.
+
+        Affair reads accept both structured pointers: ``affair_id`` and
+        ``origin_ref='affair:<id>'``. Character/army/region facts linked only by
+        either form must still surface on the affair material feed.
+        """
         kind, target = _parse_subject(subject_kind, subject_id)
-        rows = self._conn.execute(
-            "SELECT id, subject_kind, subject_id, year, period, turn, body, origin_ref, affair_id "
-            "FROM textual_facts "
-            "WHERE (subject_kind = ? AND subject_id = ?) OR (affair_id = ? AND affair_id > 0) "
-            "ORDER BY year ASC, period ASC, id ASC",
-            (kind, target, int(target) if kind == "affair" and target.isdecimal() else 0),
-        ).fetchall()
+        if kind == "affair" and target.isdecimal():
+            affair_id = int(target)
+            origin = f"affair:{affair_id}"
+            rows = self._conn.execute(
+                "SELECT id, subject_kind, subject_id, year, period, turn, body, origin_ref, affair_id "
+                "FROM textual_facts "
+                "WHERE (subject_kind = ? AND subject_id = ?) "
+                "   OR (affair_id = ? AND affair_id > 0) "
+                "   OR origin_ref = ? "
+                "ORDER BY year ASC, period ASC, id ASC",
+                (kind, target, affair_id, origin),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT id, subject_kind, subject_id, year, period, turn, body, origin_ref, affair_id "
+                "FROM textual_facts "
+                "WHERE (subject_kind = ? AND subject_id = ?) OR (affair_id = ? AND affair_id > 0) "
+                "ORDER BY year ASC, period ASC, id ASC",
+                (kind, target, 0),
+            ).fetchall()
         return tuple(_row_to_fact(row) for row in rows)
 
     def subject_ids(self, table: str, subject_kind: str) -> Any:

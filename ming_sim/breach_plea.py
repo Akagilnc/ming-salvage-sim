@@ -35,11 +35,12 @@ ORIGIN_KIND_MINISTER_PROMISE = "minister_promise"
 
 
 def _is_minister_self_promise(row: Any) -> bool:
-    """#1916 C5：臣下自诺共用承诺账，但不构成皇命违诺责任。"""
-    try:
-        return str(row["origin_kind"] or "") == ORIGIN_KIND_MINISTER_PROMISE
-    except (KeyError, IndexError, TypeError):
-        return str(getattr(row, "origin_kind", "") or "") == ORIGIN_KIND_MINISTER_PROMISE
+    """#1916 C5：臣下自诺共用承诺账，但不构成皇命违诺责任。
+
+    调用方只喂 ``issues.active_commitments()`` 的 SELECT * 行；缺字段/类型异常
+    是内部契约错误，不得静默当成普通承诺。
+    """
+    return str(row["origin_kind"] or "") == ORIGIN_KIND_MINISTER_PROMISE
 
 
 # 哭谏 todo.payload_json 判决痕迹（#626 path① 真源；不扩三态枚举）
