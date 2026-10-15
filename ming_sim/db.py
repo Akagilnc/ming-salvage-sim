@@ -11472,6 +11472,12 @@ class GameDB:
             # #1896：开案 lane 只由下方 seed_investigation_fact_lanes 写一次并冻结
             # 难度；禁在此预写旧 progress/used 形状（缺 difficulty → 读口填 0 →
             # seed 见 seen 跳过，难度永久钉死为 0）。
+            # 密令 attach=new 新建事务：登记事务自身出生来源为受限（与私诺新建同缝）。
+            # attach=existing 不改既有事务来源。peek 须在成案 resolve 之前。
+            preexisting_affair_id = (
+                self.affairs.peek_declared_id(affair_declaration)
+                if isinstance(affair_declaration, Mapping) else None
+            )
             dossier_id = self.create_decree_dossier(
                 state,
                 action_type="secret_order",
@@ -11489,6 +11495,20 @@ class GameDB:
                 commit=False,
                 _issued_secret_order=True,
             )
+            linked_affair_id = int(
+                self.dossiers.affair_id_of(int(dossier_id)) or 0
+            )
+            if linked_affair_id > 0 and preexisting_affair_id is None:
+                # kind 不得用 secret_order（#883 禁共享知识源）；source_id=affair:id。
+                self.register_character_knowledge_source(
+                    state,
+                    [{"character_id": minister_name, "tier": "主办"}],
+                    "private_affair_birth",
+                    title,
+                    content,
+                    source_id=self.affairs.origin_ref(linked_affair_id),
+                    commit=False,
+                )
             self.conn.execute(
                 """
                 UPDATE decree_dossiers

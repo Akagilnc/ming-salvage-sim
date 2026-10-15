@@ -1320,18 +1320,17 @@ def _dispatch_commission_items(
     applied: List[Any] = []
     for item in items:
         sole_present = [key for key in _COMMISSION_SOLE_KEYS if item.get(key) is not None]
-        if len(sole_present) > 1:
-            _reject(
-                rejected, item, "交办专有载荷须为独立对象", "invalid_shape", source,
-            )
-            continue
-        if sole_present and any(item.get(key) for key in _COMMISSION_ORDINARY_KEYS):
+        is_prohibit = _is_prohibit_covert_levy_item(item)
+        ordinary_hit = any(item.get(key) for key in _COMMISSION_ORDINARY_KEYS)
+        # 统一准入按实际动作条件：专有嵌套键 ∪ 禁摊派动作，互斥且与 ordinary 互斥。
+        sole_action_count = len(sole_present) + (1 if is_prohibit else 0)
+        if sole_action_count > 1 or (sole_action_count == 1 and ordinary_hit):
             _reject(
                 rejected, item, "交办专有载荷须为独立对象", "invalid_shape", source,
             )
             continue
         # #1837 reopen：禁摊派交办——按场面事实绑定暴露案卷，不解析自由文本。
-        if _is_prohibit_covert_levy_item(item):
+        if is_prohibit:
             try:
                 applied.append(
                     _stage_prohibit_covert_levy(
