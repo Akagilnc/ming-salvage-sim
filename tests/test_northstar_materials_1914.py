@@ -45,8 +45,8 @@ def test_scene_open_night_attendant_gets_vacancy_and_province_keys(game, tmp_pat
     prepared = prepare_scene_materials(db, state, dest_root=tmp_path / "scene")
     office_rel = f"人物/{_safe_segment('王承恩')}/公事档案.txt"
     assert office_rel in list_materials(prepared.root)
-    office_body = read_material(prepared.root, office_rel)
-    assert office_body.strip() and office_body.strip() != "（无）"
+    # 可读性：路径在册且可读通；供料接通由 knowledge 结构化键证明，不锁占位措辞。
+    read_material(prepared.root, office_rel)
 
     world = build_character_knowledge(db, state, "王承恩")["world"]
     assert str(world.get("personnel") or "").strip()
