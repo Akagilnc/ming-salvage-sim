@@ -146,6 +146,9 @@ def apply_deliberation_outcomes(run):
         payload["deliberation_state"] = "stalled"
         if note.strip() and not str(payload.get("deliberation_note") or "").strip():
             payload["deliberation_note"] = note
+        if status != "proposed":
+            # 记拨回前状态，强推恢复办理时不重放载荷（#1917 C1）。
+            payload["_pre_stall_status"] = status
         run.db.dossiers.update_payload(dossier_id, payload, commit=False)
         if status != "proposed":
             # 回 proposed 仅供待裁案头；已落效果不动。

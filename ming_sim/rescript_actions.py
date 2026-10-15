@@ -96,6 +96,10 @@ def apply_imperial_deliberation_push(
     payload = dict(row["payload"])
     if payload.get("deliberation_state") != "stalled":
         raise ValueError("御笔强推只接无人站台原案")
+    # 已用同一 decision_key 落过手敕则幂等跳过（防历史强推被再次消费）。
+    for end in db.dossiers.endorsements(did):
+        if str(end.get("decision_key") or "") == str(decision_key):
+            return did
     origin = f"dossier:{did}"
     issue = db.conn.execute(
         "SELECT id FROM issues WHERE origin_ref=? AND status='active' LIMIT 1",
@@ -111,4 +115,31 @@ def apply_imperial_deliberation_push(
         decision_key=decision_key, source_chat_turn_id=0, commit=False,
     )
     db.close_issue(state, int(issue["id"]), reason="resolved", narrative=decree_text, commit=False)
+    return did
+
+
+def apply_imperial_deliberation_hold(
+    db: Any, state: Any, *, target_dossier_id: int, note: str = "",
+) -> int:
+    """#1917：留中结束本次无人站台等待，原案留存，不再开案头。"""
+    did = int(target_dossier_id)
+    row = db.dossiers.get(did)
+    if row is None or row["status"] != "proposed":
+        raise ValueError("留中要求原 proposed 案卷")
+    payload = dict(row["payload"] or {})
+    if payload.get("deliberation_state") != "stalled":
+        return did
+    payload["deliberation_state"] = "held"
+    if note.strip():
+        payload["deliberation_hold_note"] = note.strip()
+    db.dossiers.update_payload(did, payload, commit=False)
+    origin = f"dossier:{did}"
+    issue = db.conn.execute(
+        "SELECT id FROM issues WHERE origin_ref=? AND status='active' LIMIT 1",
+        (origin,),
+    ).fetchone()
+    if issue is not None:
+        db.close_issue(
+            state, int(issue["id"]), reason="resolved", narrative=note or "留中", commit=False,
+        )
     return did

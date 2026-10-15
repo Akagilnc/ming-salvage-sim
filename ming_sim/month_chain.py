@@ -1271,22 +1271,45 @@ def _settle_edicts(
                     # 失效快照只在实际顺颁时拒，不因未判/打回阻断整月。
                     if int(dossier["id"]) in invalid and verdict["decision"] in {"promulgated", "force_promulgated"}:
                         raise ValueError("任免案卷载荷物化失败")
-                    # 判决与元数据、预声明中旨代价同一事务；两种入口共用 DB 写口。
+                    prior_decision = str(current.get("promulgation_decision") or "")
+                    pre_stall = str(
+                        (current.get("payload") or {}).get("_pre_stall_status") or ""
+                    )
+                    # 已颁后 stalled→强推：只恢复办理态，不重放载荷物化（C1）。
+                    resume_only = (
+                        backed_awaiting_promulgation
+                        and prior_decision in {"promulgated", "force_promulgated"}
+                    )
                     previous = getattr(db.conn, "_recommendation_snapshots_prevalidated", False)
                     db.conn._recommendation_snapshots_prevalidated = previous or int(dossier["id"]) in prevalidated
                     try:
                         with atomic(db):
-                            apply_dossier_promulgation(db,
-                                state, int(dossier["id"]), str(verdict["decision"]),
-                                blocked_layer=str(verdict.get("blocked_layer") or ""),
-                                reason=str(verdict.get("reason") or ""),
-                                legal_reason_code=str(verdict.get("legal_reason_code") or ""),
-                                primary_opponents=verdict.get("primary_opponents") or [],
-                                gatekeeper_id=verdict.get("gatekeeper_id"),
-                                criteria_snapshot=verdict.get("criteria_snapshot") or {},
-                                content=session.content,
-                            )
-                            apply_dossier_verdict_metadata(db, state, int(dossier["id"]), verdict)
+                            if resume_only:
+                                restore = pre_stall if pre_stall in {"promulgated", "executing"} else "promulgated"
+                                payload = dict(current.get("payload") or {})
+                                payload.pop("_pre_stall_status", None)
+                                db.dossiers.update_payload(
+                                    int(dossier["id"]), payload, commit=False,
+                                )
+                                db.conn.execute(
+                                    "UPDATE decree_dossiers SET status=?, "
+                                    "updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                                    (restore, int(dossier["id"])),
+                                )
+                            else:
+                                apply_dossier_promulgation(db,
+                                    state, int(dossier["id"]), str(verdict["decision"]),
+                                    blocked_layer=str(verdict.get("blocked_layer") or ""),
+                                    reason=str(verdict.get("reason") or ""),
+                                    legal_reason_code=str(verdict.get("legal_reason_code") or ""),
+                                    primary_opponents=verdict.get("primary_opponents") or [],
+                                    gatekeeper_id=verdict.get("gatekeeper_id"),
+                                    criteria_snapshot=verdict.get("criteria_snapshot") or {},
+                                    content=session.content,
+                                )
+                                apply_dossier_verdict_metadata(
+                                    db, state, int(dossier["id"]), verdict,
+                                )
                     finally:
                         db.conn._recommendation_snapshots_prevalidated = previous
         current = db.dossiers.get(int(dossier["id"])) or dossier
@@ -2119,14 +2142,24 @@ def _eligible_rescript_answers(
             if choice_decision(row.get("choice")) in {"force_promulgated", "withdrawn", "hold"}:
                 eligible.append(row)
         elif event.startswith("deliberation:"):
-            # Decided imperial push still stalled blocks month-tail (#1847 K2/K6).
+            # 本次待裁未消费的强推／留中仍挡月尾；已落手敕的历史强推不再入选（C7）。
             did = _deliberation_dossier_id(event)
             if did is None:
                 continue
-            if choice_decision(row.get("choice")) != "imperial_push":
+            action = choice_decision(row.get("choice"))
+            if action not in {"imperial_push", "hold"}:
                 continue
             original = db.dossiers.get(did)
-            if original is not None and (original.get("payload") or {}).get("deliberation_state") == "stalled":
+            if original is None:
+                continue
+            state = str((original.get("payload") or {}).get("deliberation_state") or "")
+            if action == "hold" and state == "stalled":
+                eligible.append(row)
+                continue
+            if action == "imperial_push" and state == "stalled":
+                key = str(row.get("decision_key") or "")
+                if any(str(e.get("decision_key") or "") == key for e in db.dossiers.endorsements(did)):
+                    continue
                 eligible.append(row)
     return eligible
 
@@ -2164,16 +2197,26 @@ def _consume_rescript_answers(
         for row in eligible:
             event_id = str(row.get("event_id") or "")
             if event_id.startswith("deliberation:"):
-                from ming_sim.rescript_actions import apply_imperial_deliberation_push
+                from ming_sim.rescript_actions import (
+                    apply_imperial_deliberation_hold,
+                    apply_imperial_deliberation_push,
+                )
                 original_id = _deliberation_dossier_id(event_id)
                 if original_id is None:
                     continue
+                action = choice_decision(row.get("choice"))
                 with atomic(db):
-                    apply_imperial_deliberation_push(
-                        db, state, target_dossier_id=original_id,
-                        decision_key=row["decision_key"],
-                        decree_text=(row.get("choice") or {}).get("note", ""),
-                    )
+                    if action == "hold":
+                        apply_imperial_deliberation_hold(
+                            db, state, target_dossier_id=original_id,
+                            note=(row.get("choice") or {}).get("note", ""),
+                        )
+                    else:
+                        apply_imperial_deliberation_push(
+                            db, state, target_dossier_id=original_id,
+                            decision_key=row["decision_key"],
+                            decree_text=(row.get("choice") or {}).get("note", ""),
+                        )
             elif event_id.startswith("dossier:"):
                 dossier_id = int(event_id.split(":", 1)[1])
                 apply_dossier_promulgation(

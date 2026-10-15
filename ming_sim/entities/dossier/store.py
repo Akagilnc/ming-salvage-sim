@@ -438,7 +438,8 @@ class DossierStore(RowStore):
         row = self.get(int(dossier_id))
         if row is None:
             return False
-        if str((row.get("payload") or {}).get("deliberation_state") or "") == "stalled":
+        delib = str((row.get("payload") or {}).get("deliberation_state") or "")
+        if delib in {"stalled", "held"}:
             return False
         return (
             str(row.get("status") or "") in {"promulgated", "executing"}

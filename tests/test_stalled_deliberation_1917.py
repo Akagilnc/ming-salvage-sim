@@ -163,7 +163,7 @@ def test_month_entry_stalled_then_imperial_push_promulgates_same_dossier(game, m
 
 
 def test_month_entry_stalled_then_hold_keeps_original(game, monkeypatch):
-    """贯通：生产 stalled → 留中 → 原案留存，本次等待结束。"""
+    """贯通：生产 stalled → 留中 → 原案留存，本次等待结束（无新案头）。"""
     db, state, content = game
     did, ref = _plant_proposed(db, state, title="留中原案")
     _stage_stalled(db, state, ref)
@@ -176,20 +176,20 @@ def test_month_entry_stalled_then_hold_keeps_original(game, monkeypatch):
     result = session.submit_hitl_choices([choice], write_gate=session._write_gate)
     kept = db.dossiers.get(did)
     assert kept["status"] == "proposed"
-    assert kept["payload"].get("deliberation_state") == "stalled"
-    assert not kept.get("promulgation_decision")
-    assert not db.dossiers.authorizes_effects(did)
+    assert kept["payload"].get("deliberation_state") == "held"
+    assert not any(
+        str(r.get("event_id") or "").startswith(f"deliberation:{did}")
+        and str(r.get("status") or "") == "pending"
+        for r in session.pending_decisions()
+    )
     assert db.conn.execute(
         "SELECT id FROM issues WHERE origin_ref=? AND status='active'",
         (f"dossier:{did}",),
-    ).fetchone() is not None
+    ).fetchone() is None
     assert db.staged_declarations.is_settled(ref)
     answered = db.issues.get_rescript_desk_rows_by_keys([choice["decision_key"]])
     assert answered and answered[0]["choice"]
-    assert result.awaiting is False or not any(
-        r["event_id"] == f"deliberation:{did}" and not r.get("choice")
-        for r in session.pending_decisions()
-    )
+    assert result.awaiting is False or not result.decisions
 
 
 def test_deliberation_outcome_rejects_missing_dossier(game):
