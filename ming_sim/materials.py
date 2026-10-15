@@ -1138,51 +1138,41 @@ def _world_board_text(
     return "\n\n".join(parts) or "（无）"
 
 
-def _region_place_label(db: Any, region_id: object) -> str:
-    """region_id → 人读地名；未知 id 原样回传，空串保持空。"""
-    rid = str(region_id or "").strip()
-    if not rid:
-        return ""
-    row = db.regions.row(rid)
-    if row is None:
-        return rid
-    name = str(row["name"] or "").strip()
-    return name or rid
-
-
 def _world_roster_text(db: Any, state: Any) -> str:
-    """在朝名册含所在地与在途去向（#1914 / ADR 0155 推演实况）。"""
-    year, period = int(state.year), int(state.period)
-    rows = db.conn.execute(
-        """
-        SELECT name, office, office_type, status, location, transit_to
-        FROM characters
-        WHERE power_id='ming' AND status='active'
-          AND office_type NOT IN ('后宫','宗藩','未仕')
-          AND (debut_year=0 OR debut_year<? OR (debut_year=? AND debut_month<=?))
-        ORDER BY name
-        """,
-        (year, year, period),
-    ).fetchall()
+    """在朝名册：资格唯一真源 characters.current_court_rows（#1914 F3）。"""
+    rows = db.characters.current_court_rows(int(state.year), int(state.period))
     if not rows:
         return "在朝名册：暂无。"
+    return "在朝名册：\n" + "\n".join(
+        f"{row['name']}：{row['office'] or '无现任官职'}，{row['office_type']}，{row['status']}"
+        for row in rows
+    )
+
+
+def _person_whereabouts_text(location: object, transit_to: object) -> str:
+    """人物行止结构化投影（机器字段；#1914 所在地／在途，不限在朝资格）。"""
     lines: list[str] = []
-    for row in rows:
-        base = (
-            f"{row['name']}：{row['office'] or '无现任官职'}，"
-            f"{row['office_type']}，{row['status']}"
+    loc = str(location or "").strip()
+    if loc:
+        lines.append(f"location_id：{loc}")
+    dest = str(transit_to or "").strip()
+    if dest:
+        lines.append(f"transit_to_id：{dest}")
+    return "\n".join(lines) if lines else "（无行止记录）"
+
+
+def _character_whereabouts_map(db: Any) -> dict[str, tuple[str, str]]:
+    """name → (location, transit_to)；一次读全表，供世界人物子树写入。"""
+    return {
+        str(row["name"]): (
+            str(row["location"] or ""),
+            str(row["transit_to"] or ""),
         )
-        extras: list[str] = []
-        place = _region_place_label(db, row["location"])
-        if place:
-            extras.append(f"所在{place}")
-        dest = _region_place_label(db, row["transit_to"])
-        if dest:
-            extras.append(f"在途赴{dest}")
-        if extras:
-            base = f"{base}，{'，'.join(extras)}"
-        lines.append(base)
-    return "在朝名册：\n" + "\n".join(lines)
+        for row in db.conn.execute(
+            "SELECT name, location, transit_to FROM characters", (),
+        ).fetchall()
+        if str(row["name"] or "").strip()
+    }
 
 
 def faction_stance_material_text(db: Any) -> str:
@@ -1604,6 +1594,7 @@ def _write_world_tree(
     _write_text(tmp / _COURT_ROSTER_REL, roster_text)
     index.append(_COURT_ROSTER_REL)
 
+    whereabouts = _character_whereabouts_map(db)
     for name in _world_roster_names(db):
         knowledge = build_character_knowledge(db, state, name)
         person_dir = f"{_PERSON_DIR}/{_safe_segment(name)}"
@@ -1622,6 +1613,11 @@ def _write_world_tree(
             include_fact=include_fact,
         ))
         index.append(facts_rel)
+        # #1914：所在地／在途按人物全量供推演（不限在朝名册资格）。
+        loc, transit = whereabouts.get(name, ("", ""))
+        where_rel = f"{person_dir}/行止.txt"
+        _write_text(tmp / where_rel, _person_whereabouts_text(loc, transit))
+        index.append(where_rel)
 
     for army_id in _world_subject_ids(db, "armies", "army"):
         # 路径片段走 _safe_segment；subject_id 仍用原对象身份供文字事实投影。

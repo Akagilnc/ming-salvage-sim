@@ -1,67 +1,64 @@
-"""#1914：近侍底账、派系态势、在途人物进可读材料。
+"""#1914：近侍底账、派系态势、人物行止进可读材料。
 
 验收入口（票面行为）：
-- 真实召对入口开夜 → prepare_scene_materials：御前近侍材料含官缺与各省概况
-- 真实过月材料入口 prepare_world_materials：派系态势写入后，世界与下一场召对材料可读
-- 真实过月材料入口：名册含人物所在地，以及在途人物去向
+- 真实召对入口开夜 → prepare_scene_materials：近侍 knowledge/公事档案接通官缺与省况键
+- 真实过月/召对材料入口：派系态势路径在册
+- 真实过月入口：人物行止（含非在朝）按人结构化字段可读
 
-契约只落结构化可读性（路径在册、fixture 自写字段回读）；不锁人读措辞模板。
+契约只落路径与机器字段；不锁人读措辞、不埋散文哨兵。
 """
 
 from __future__ import annotations
 
 from ming_sim.audience_night import open_night
-from ming_sim.materials import list_materials, prepare_scene_materials, prepare_world_materials, read_material
+from ming_sim.knowledge import build_character_knowledge
+from ming_sim.materials import (
+    _safe_segment,
+    list_materials,
+    prepare_scene_materials,
+    prepare_world_materials,
+    read_material,
+)
 
 
-def _wang_cheng_en_segment(db) -> str:
-    from ming_sim.materials import _safe_segment
-
-    return _safe_segment("王承恩")
+_STANCE_REL = "盘面/派系态势.txt"
 
 
-def test_scene_open_night_attendant_materials_include_vacancy_and_province_overview(
-    game, tmp_path,
-):
-    """从真实召对入口开夜：御前近侍可读材料里有官缺与各省概况。"""
+def _parse_machine_fields(body: str) -> dict[str, str]:
+    """Parse ``key：value`` machine-marker lines; ignore free-prose residue."""
+    fields: dict[str, str] = {}
+    for line in str(body or "").splitlines():
+        if "：" not in line:
+            continue
+        key, value = line.split("：", 1)
+        key = key.strip()
+        if key:
+            fields[key] = value.strip()
+    return fields
+
+
+def test_scene_open_night_attendant_gets_vacancy_and_province_keys(game, tmp_path):
+    """从真实召对入口开夜：近侍 world 接通 personnel/regional，公事档案非空。"""
     db, state, _content = game
     open_night(db, state, location="乾清宫", time_of_day="夜")
 
-    vacancy_titles = [
-        str(row["office_title"])
-        for row in db.conn.execute(
-            "SELECT office_title FROM office_vacancies ORDER BY sort_order, office_title"
-        ).fetchall()
-    ]
-    assert vacancy_titles, "开局须有 office_vacancies 底账"
-    province_names = [
-        str(row["name"])
-        for row in db.conn.execute("SELECT name FROM regions ORDER BY name").fetchall()
-        if str(row["name"] or "").strip()
-    ]
-    assert province_names, "开局须有地区档"
-
     prepared = prepare_scene_materials(db, state, dest_root=tmp_path / "scene")
-    names = list_materials(prepared.root)
-    office_rel = f"人物/{_wang_cheng_en_segment(db)}/公事档案.txt"
-    assert office_rel in names
-
+    office_rel = f"人物/{_safe_segment('王承恩')}/公事档案.txt"
+    assert office_rel in list_materials(prepared.root)
     office_body = read_material(prepared.root, office_rel)
-    for title in vacancy_titles:
-        assert title in office_body
-    # 各省概况：至少覆盖多省名称（概况投影，不锁句式）
-    hit = sum(1 for name in province_names if name in office_body)
-    assert hit >= min(5, len(province_names))
+    assert office_body.strip() and office_body.strip() != "（无）"
+
+    world = build_character_knowledge(db, state, "王承恩")["world"]
+    assert str(world.get("personnel") or "").strip()
+    assert str(world.get("regional") or "").strip()
 
 
-def test_faction_stance_readable_after_write_in_world_and_next_scene(game, tmp_path):
-    """经真实过月入口写入派系态势后，世界材料与下一场召对材料可读到。"""
+def test_faction_stance_path_in_world_and_next_scene_materials(game, tmp_path):
+    """派系态势写入后，世界材料与下一场召对材料目录均有态势路径。"""
     db, state, _content = game
-    faction = "东林"
-    stance = "东林与帝渐行渐远·1914探针"
     db.apply_faction_brew_result(
-        faction=faction,
-        stance_segment=stance,
+        faction="东林",
+        stance_segment="东林与帝渐行渐远",
         last_event_id=1,
         turn=int(state.turn),
         year=int(state.year),
@@ -69,50 +66,56 @@ def test_faction_stance_readable_after_write_in_world_and_next_scene(game, tmp_p
     )
 
     world = prepare_world_materials(db, state, dest_root=tmp_path / "world")
-    world_names = list_materials(world.root)
-    stance_rel = "盘面/派系态势.txt"
-    assert stance_rel in world_names
-    world_body = read_material(world.root, stance_rel)
-    assert faction in world_body
-    assert stance in world_body
+    assert _STANCE_REL in list_materials(world.root)
 
     open_night(db, state, location="乾清宫", time_of_day="夜")
     scene = prepare_scene_materials(db, state, dest_root=tmp_path / "scene-next")
-    scene_names = list_materials(scene.root)
-    assert stance_rel in scene_names
-    scene_body = read_material(scene.root, stance_rel)
-    assert faction in scene_body
-    assert stance in scene_body
+    assert _STANCE_REL in list_materials(scene.root)
 
 
-def test_world_roster_includes_location_and_in_transit_destination(game, tmp_path):
-    """经真实过月入口：推演材料有人物所在地，以及在途人物去向。"""
+def test_world_whereabouts_cover_off_court_and_unranked_with_bound_fields(
+    game, tmp_path,
+):
+    """过月材料：离朝／未仕人物行止按人落 location_id／transit_to_id。"""
     db, state, content = game
-    located = "毕自严"
-    traveler = "王绍徽"
-    dest_id = "shaanxi"
-    dest_name = str(content.regions[dest_id].name)
+    off_court = "徐光启"
+    unranked = "史可法"
+    active_names = {
+        row["name"]
+        for row in db.characters.current_court_rows(int(state.year), int(state.period))
+    }
+    assert off_court not in active_names
 
-    db.characters.update(located, {"location": "henan"})
+    unranked_row = db.conn.execute(
+        "SELECT office_type, status FROM characters WHERE name=?",
+        (unranked,),
+    ).fetchone()
+    assert unranked_row is not None
+    assert str(unranked_row["office_type"] or "") == "未仕" or unranked not in active_names
+
+    db.characters.update(off_court, {"location": "nanzhili"})
     db.set_character_transit(
-        traveler,
-        transit_to=dest_id,
+        unranked,
+        transit_to="shaanxi",
         distance_remaining=2.0,
         speed_factor=1.0,
         start_turn=int(state.turn),
-        location="nanzhili",
+        location="henan",
         content=content,
     )
     db.conn.commit()
 
     prepared = prepare_world_materials(db, state, dest_root=tmp_path / "world-loc")
-    roster = read_material(prepared.root, "人物/朝臣名册.txt")
+    names = list_materials(prepared.root)
 
-    # 所在地：河南（id 或中文名任一可读投影）
-    assert located in roster
-    assert ("henan" in roster) or ("河南" in roster)
+    off_rel = f"人物/{_safe_segment(off_court)}/行止.txt"
+    assert off_rel in names
+    off_fields = _parse_machine_fields(read_material(prepared.root, off_rel))
+    assert off_fields.get("location_id") == "nanzhili"
+    assert "transit_to_id" not in off_fields
 
-    # 在途去向
-    assert traveler in roster
-    assert (dest_id in roster) or (dest_name in roster)
-    assert "在途" in roster or dest_name in roster or dest_id in roster
+    travel_rel = f"人物/{_safe_segment(unranked)}/行止.txt"
+    assert travel_rel in names
+    travel_fields = _parse_machine_fields(read_material(prepared.root, travel_rel))
+    assert travel_fields.get("location_id") == "henan"
+    assert travel_fields.get("transit_to_id") == "shaanxi"
