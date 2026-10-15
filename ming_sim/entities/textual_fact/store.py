@@ -11,7 +11,7 @@ from ming_sim.entities.column_write import RowStore
 from ming_sim.models import reign_period_label
 
 
-TEXTUAL_FACT_SUBJECT_KINDS = frozenset({"character", "army", "region", "affair"})
+TEXTUAL_FACT_SUBJECT_KINDS = frozenset({"character", "army", "region", "affair", "yamen"})
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS textual_facts (
@@ -151,4 +151,15 @@ def _parse_subject(subject_kind: object, subject_id: object) -> tuple[str, str]:
     target = str(subject_id or "").strip()
     if not target:
         raise DeclarationDataError("textual fact subject_id cannot be empty")
+    # 数值主体身份规范化：纯数字（含前导零）收成十进制，避免 '02'/'2' 分裂（#1915 F3）。
+    # yamen 必须是整数 id；affair 历史测试/材料偶有非数字键，非数字原样保留。
+    if kind in {"affair", "yamen"} and target.lstrip("-").isdecimal():
+        from ming_sim.strict_types import strict_sqlite_id
+
+        try:
+            target = str(strict_sqlite_id(target))
+        except (TypeError, ValueError) as exc:
+            raise DeclarationDataError(f"textual fact {kind} subject_id must be an integer id") from exc
+    elif kind == "yamen":
+        raise DeclarationDataError("textual fact yamen subject_id must be an integer id")
     return kind, target
