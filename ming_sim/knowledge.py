@@ -151,15 +151,16 @@ def project_court_roster_rows(
 ) -> list[Any]:
     """Project complete structured roster rows through one character's view.
 
-    The complete roster remains an internal query result.  A personnel-domain
-    capability may expose it; otherwise only the reader's current role roster
-    crosses the output boundary. Free-prose name hits in event bodies are not
-    an admission grant (ADR 0142 / #1834 F46).
+    The complete roster remains an internal query result.  Full-court admission
+    is the 吏部 appointment-register capability (office_type), not the mere
+    presence of a personnel archive key — 近侍 also carries that key for 官缺
+    without full-roster grant (#1914 / ADR 0034). Otherwise only the reader's
+    current role roster crosses the output boundary. Free-prose name hits in
+    event bodies are not an admission grant (ADR 0142 / #1834 F46).
     """
-    world = knowledge.get("world") or {}
-    if "personnel" in world:
-        return list(rows)
     current_office_type = str(knowledge.get("office_type") or office_type or "")
+    if current_office_type == "吏部":
+        return list(rows)
     return [
         row for row in rows
         if str(row["office_type"] or "") == current_office_type
@@ -211,6 +212,41 @@ def _army_register(db: Any) -> str:
     )
 
 
+def _office_vacancy_register(db: Any) -> str:
+    """官缺底账：office_vacancies 视图（静态职缺 + 现任）。"""
+    rows = db.conn.execute(
+        """
+        SELECT office_title, jurisdiction, holder_name
+        FROM office_vacancies
+        ORDER BY sort_order, office_title
+        """,
+        (),
+    ).fetchall()
+    if not rows:
+        return "官缺：暂无。"
+    lines: list[str] = []
+    for row in rows:
+        # office_slots.office_title 是 PRIMARY KEY，视图侧不会空。
+        title = str(row["office_title"])
+        jur = str(row["jurisdiction"] or "").strip()
+        holder = str(row["holder_name"] or "").strip()
+        place = f"（{jur}）" if jur else ""
+        if holder:
+            lines.append(f"{title}{place}：现任{holder}")
+        else:
+            lines.append(f"{title}{place}：空缺")
+    return "官缺：\n" + "\n".join(lines)
+
+
+def _province_overview(db: Any) -> str:
+    """各省概况：两京／布政司定性警讯（输入侧收窄既有 PROVINCE_KINDS）。"""
+    from ming_sim.execution_pressure import PROVINCE_KINDS
+
+    # region_report 无行时固定返回「地区尚未建档。」，不另写空串兜底。
+    body = _prose(db.region_report(limit=None, kinds=PROVINCE_KINDS))
+    return f"各省概况：\n{body}"
+
+
 def _world(
     db: Any, state: Any, character_name: str, office_name: str, office_type: str,
 ) -> tuple[Dict[str, str], Dict[str, tuple[str, ...]]]:
@@ -241,6 +277,14 @@ def _world(
         result["construction"] = _prose(
             db.buildings_report(region_id=primary, qualitative=True)
         )
+
+    # #1914 / ADR 0034 局部例外：御前近侍可读官缺与各省概况（非全体人物全知）。
+    # 放在辖域投影之后直接覆盖 regional，省掉「键是否已有」条件。
+    from ming_sim.audience_night import is_inner_court_attendant
+
+    if is_inner_court_attendant({"office": office_name}):
+        result["personnel"] = _office_vacancy_register(db)
+        result["regional"] = _province_overview(db)
 
     armies = db.conn.execute(
         'SELECT id,name FROM armies WHERE commander=? OR controller=? ORDER BY name',

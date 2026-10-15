@@ -3711,25 +3711,38 @@ class GameDB:
             )
         return payload
 
-    def region_report(self, limit: int = 5) -> str:
-        rows = self.regions.rows(limit=limit, danger_order=True)
-        if not rows:
+    def region_report(
+        self, limit: int = 5, *, kinds: Optional[Iterable[str]] = None,
+    ) -> str:
+        # One filtered set drives both display and totals: limit only slices the
+        # listing; the tax sum always covers every match (#1914 B).
+        kind_filter = None if kinds is None else tuple(kinds)
+        matched = self.regions.rows(
+            limit=None, danger_order=True, kinds=kind_filter,
+        )
+        if not matched:
             return "地区尚未建档。"
-        total_tax = self.conn.execute('SELECT SUM(tax_per_turn) AS total FROM regions', ()).fetchone()
-        total_tax_value = int(total_tax["total"] or 0)
+        rows = matched if limit is None else matched[: int(limit)]
+        total_tax_value = sum(int(row["tax_per_turn"] or 0) for row in matched)
+        # Label tracks the summed set, not a fixed provincial slogan (#1914 B/C1).
+        scope_label = "、".join(sorted({str(row["kind"]) for row in matched}))
         parts = []
         for row in rows:
             held = ""
             if str(row["controlled_by"]) != "ming":
                 held = f"【已为{self.powers.display_name(row['controlled_by'])}所据】"
-            defense = f"，城防炮{int(row['cannon'])}门" if int(row["cannon"] or 0) > 0 else ""
+            defense = f"，城防炮{int(row['cannon'])}门" if int(row['cannon'] or 0) > 0 else ""
             parts.append(
                 f"{row['name']}{held}：{_public_support_description(row['public_support'])}，"
                 f"{_unrest_description(row['unrest'])}，"
                 f"粮情{qualitative_band(row['grain_security'], ('告急', '偏紧', '平稳', '充裕', '丰足'))}，"
                 f"税{format_money(monthly_amount(int(row['tax_per_turn'])))}/{TURN_UNIT}{defense}，{row['status']}"
             )
-        return f"地区警讯：{'；'.join(parts)}。两京十三省账面{TURN_UNIT}税合计{format_money(monthly_amount(total_tax_value))}。"
+        return (
+            f"地区警讯：{'；'.join(parts)}。"
+            f"{scope_label}账面{TURN_UNIT}税合计"
+            f"{format_money(monthly_amount(total_tax_value))}。"
+        )
 
     def region_detail(self, raw_name: str, qualitative: bool = False) -> str:
         region_id = match_region_id_from_text(raw_name, self.content.regions)
