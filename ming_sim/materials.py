@@ -2154,6 +2154,7 @@ def prepare_scene_materials(
     state: Any,
     *,
     dest_root: Optional[Path] = None,
+    extra_pending_facts: Sequence[str] = (),
 ) -> PreparedMaterials:
     """#1836 / ADR 0155：整场场景 LLM 材料目录。
 
@@ -2161,6 +2162,8 @@ def prepare_scene_materials(
     人物/<名>/ 子树，互不覆盖；人物档料复用 character_context_with_db）；
     开场最小集 = 在场身份职位、日期、各人正经手事务一句、本场已说的话。
     CLI cwd / API list-read 同树。
+
+    extra_pending_facts：#1913 本轮宣召被拦等包侧结构化事实，并入开场「当前待裁场面」。
     """
     present_rows = _scene_present_rows(db)
     spoken = _scene_spoken_text(db)
@@ -2184,6 +2187,7 @@ def prepare_scene_materials(
         lambda tmp: _write_scene_tree(tmp, db, state, person_payloads),
     )
     pending_facts = _scene_pending_audience_facts(db, state)
+    pending_facts.extend(str(fact) for fact in extra_pending_facts if str(fact or "").strip())
     opening = _scene_opening_text(
         state, present_rows, spoken, handling_by_person, pending_facts,
     )

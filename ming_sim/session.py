@@ -10,6 +10,7 @@ from ming_sim.entities.character.store import CharacterStore
 from ming_sim.exceptions import DeclarationDataError
 
 import contextlib
+import json
 import logging
 import threading
 import time
@@ -1677,6 +1678,7 @@ class GameSession:
             get_open_night,
             open_night,
             recognize_xuan_command,
+            split_xuan_name_fragments,
         )
         from ming_sim.llm_model import extract_agent_text
 
@@ -1710,18 +1712,22 @@ class GameSession:
             return result
 
 
-        # 「宣 X」→ 确定性落入殿账，再起场景调用（X 开不开口由 LLM 演）。
-        xuan_fragment = recognize_xuan_command(message_text)
-        if xuan_fragment:
-            fragment = str(xuan_fragment).strip()
+        # 「宣 X」／「宣甲、乙」／「越次宣 X」→ 逐人按现行宣召规则落账，再起场景调用。
+        # #1913：多人口令拆开各走 admission；拒召 reason 进本场材料；越次点名写 METHOD_YUECI。
+        xuan = recognize_xuan_command(message_text)
+        blocked_summon_facts: list[str] = []
+        if xuan is not None:
             chars = getattr(getattr(self, "content", None), "characters", None) or {}
-            target = chars.get(fragment) or match_minister_from_text(fragment)
-            if target is None:
-                try:
-                    target = self.summon_character(fragment)
-                except ValueError:
-                    target = None
-            if target is not None:
+            protagonist_changed = False
+            for fragment in split_xuan_name_fragments(xuan.fragment):
+                target = chars.get(fragment) or match_minister_from_text(fragment)
+                if target is None:
+                    try:
+                        target = self.summon_character(fragment)
+                    except ValueError:
+                        target = None
+                if target is None:
+                    continue
                 with gate:
                     decision = self.consume_audience_admission(
                         target,
@@ -1731,6 +1737,7 @@ class GameSession:
                     if decision.allowed:
                         ensure_summon_enter(
                             self.db, night_id, target.name,
+                            method=xuan.method,
                             origin_chat_turn_id=int(chat_turn_id or 0),
                         )
                         # #1838 / ADR 0158：宣 X 当场先切御前主角（不等转译）。
@@ -1752,13 +1759,24 @@ class GameSession:
                                 and int(getattr(self.db.conn, "_atomic_depth", 0) or 0) == 0
                             ):
                                 self.db.conn.commit()
-                if decision.allowed and on_protagonist_changed is not None:
-                    on_protagonist_changed()
+                        protagonist_changed = True
+                    elif decision.result is None and str(decision.reason or "").strip():
+                        # #1913：资格拦下——事实进本场材料，不记入殿；怎么演归场景 LLM。
+                        blocked_summon_facts.append(json.dumps({
+                            "kind": "summon_blocked",
+                            "person_name": target.name,
+                            "reason": str(decision.reason),
+                        }, ensure_ascii=False, sort_keys=True))
+            if protagonist_changed and on_protagonist_changed is not None:
+                on_protagonist_changed()
             # 被拒的宣召仍是一轮殿上戏文；只在合法入殿时先写入殿账。
             # #1838 reopen：不再等入殿旁白。
 
         # 材料目录：在场诸人各一份；开场最小集 + 只读工具。
-        prepared = prepare_scene_materials(self.db, self.state)
+        prepared = prepare_scene_materials(
+            self.db, self.state,
+            extra_pending_facts=blocked_summon_facts,
+        )
         llm_config = getattr(self, "llm_config", None)
         if llm_config is None:
             raise RuntimeError("scene_chat 需要 llm_config。")

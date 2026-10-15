@@ -21,6 +21,7 @@ import re
 import time
 import tempfile
 import traceback
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from collections.abc import Mapping
@@ -1592,21 +1593,46 @@ def recognize_audience_command(message: str) -> str:
     return CMD_NONE
 
 
-# #1836：一夜一场入口的「宣 X」口令——封闭前缀 + 人名片段；引擎落入殿账（ADR 0037），
-# 不另立 summon 动作类型。后缀可有可无（「宣王绍徽」与「宣王绍徽来」同形）。
+# #1836 / #1913：一夜一场入口的宣召口令——封闭前缀 + 人名片段（可多人分隔）；
+# 引擎落入殿账（ADR 0037），不另立 summon 动作类型。
+# 越次点名 / 越次宣 X 记 METHOD_YUECI；普通宣/召仍记 METHOD_XUANRU。
+# 后缀可有可无（「宣王绍徽」与「宣王绍徽来」同形）。
 _XUAN_COMMAND_RE = re.compile(
-    r"^(?:传召|传|召|宣|叫|带)(.{1,12}?)(?:来|到|入殿|上殿|面圣|见我)?$"
+    r"^(?:"
+    r"越次点名|"
+    r"(?:越次(?:地)?)?(?:传召|传|召|宣|叫|带)"
+    r")"
+    r"(.+?)"
+    r"(?:来|到|入殿|上殿|面圣|见我)?$"
 )
+_XUAN_NAME_SPLIT_RE = re.compile(r"[,，、;；/|]|与|及|和")
 
 # 场景对话轮挂名：整场戏文不绑单人；归档 involved_people 投影会滤非人（#1331）。
 SCENE_CHAT_SPEAKER = "殿上"
 
 
-def recognize_xuan_command(message: str) -> Optional[str]:
-    """解析皇帝「宣 X」口令，返回人名片段；非宣召口令 → None。
+@dataclass(frozen=True)
+class RecognizedXuanCommand:
+    """#1913：宣召口令解析结果——人名片段 + 召法（宣入/越次）。"""
 
-    #1836 / ADR 0035 / 0037：玩家口令确定性落账的前半——只认封闭前缀形状，
-    不靠自由散文启发；人名解析交给调用方 match。
+    fragment: str
+    method: str = METHOD_XUANRU
+
+
+def split_xuan_name_fragments(fragment: str) -> List[str]:
+    """#1913：一句口令里的多人名按顿号等分隔符拆开；单名保持原样。"""
+    text = str(fragment or "").strip()
+    if not text:
+        return []
+    parts = [part.strip() for part in _XUAN_NAME_SPLIT_RE.split(text)]
+    return [part for part in parts if part]
+
+
+def recognize_xuan_command(message: str) -> Optional[RecognizedXuanCommand]:
+    """解析皇帝宣召口令；非宣召口令 → None。
+
+    #1836 / #1913 / ADR 0035 / 0037：只认封闭前缀形状，不靠自由散文启发；
+    人名解析交给调用方逐人 match。明确以越次方式召见时 method=越次。
     """
     text = str(message or "").strip()
     if not text:
@@ -1618,7 +1644,10 @@ def recognize_xuan_command(message: str) -> Optional[str]:
     if not m:
         return None
     name = str(m.group(1) or "").strip()
-    return name or None
+    if not name:
+        return None
+    method = METHOD_YUECI if text.startswith("越次") else METHOD_XUANRU
+    return RecognizedXuanCommand(fragment=name, method=method)
 
 
 def _presence_delta(entry: Dict[str, Any]) -> Optional[str]:
