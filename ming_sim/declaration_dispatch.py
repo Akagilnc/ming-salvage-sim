@@ -1322,18 +1322,16 @@ def _dispatch_commission_items(
         sole_present = [key for key in _COMMISSION_SOLE_KEYS if item.get(key) is not None]
         is_prohibit = _is_prohibit_covert_levy_item(item)
         ordinary_hit = any(item.get(key) for key in _COMMISSION_ORDINARY_KEYS)
-        # 御笔强推：复用既有解析器（#658），不另写一份键名平行规则。
+        # 御笔强推：件首一次解析，后序复用 push_id（#658 单权威，#1916 删重复）。
         from ming_sim.db import imperial_push_target_dossier_id
         try:
-            has_imperial_push = imperial_push_target_dossier_id(item) is not None
-        except ValueError:
-            # 坏 shape 仍占动作位，避免与其它 sole 并存后被前序吃掉。
-            has_imperial_push = (
-                "target_dossier_id" in item or "目标案卷ID" in item
-            )
+            push_id = imperial_push_target_dossier_id(item)
+        except ValueError as exc:
+            _reject(rejected, item, str(exc), "invalid_shape", source)
+            continue
         # 统一准入：专有嵌套键 ∪ 禁摊派 ∪ 御笔强推，互斥且与 ordinary 互斥。
         sole_action_count = (
-            len(sole_present) + (1 if is_prohibit else 0) + (1 if has_imperial_push else 0)
+            len(sole_present) + (1 if is_prohibit else 0) + (1 if push_id is not None else 0)
         )
         if sole_action_count > 1 or (sole_action_count == 1 and ordinary_hit):
             _reject(
@@ -1967,19 +1965,10 @@ def _dispatch_commission_items(
         if not isinstance(mode, str) or mode not in {"ordinary", "midzhi"}:
             _reject(rejected, item, "交办模式非法", "invalid_enum", source)
             continue
-        from ming_sim.db import imperial_push_target_dossier_id
-        try:
-            push_id = imperial_push_target_dossier_id(item)
-        except ValueError as exc:
-            _reject(rejected, item, str(exc), "invalid_shape", source)
+        # push_id 已在件首解析；与 grant/appointment 的互斥由统一 sole 闸承接。
+        if push_id is not None and db.dossiers.get(push_id) is None:
+            _reject(rejected, item, "御笔强推目标案卷不存在", "missing_ref", source)
             continue
-        if push_id is not None:
-            if grant_raw or appointment_fields:
-                _reject(rejected, item, "御笔强推不可与普通拨帑或任免交办并存", "invalid_shape", source)
-                continue
-            if db.dossiers.get(push_id) is None:
-                _reject(rejected, item, "御笔强推目标案卷不存在", "missing_ref", source)
-                continue
         text = item.get("text")
         try:
             if grant_raw:
