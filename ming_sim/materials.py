@@ -1183,10 +1183,7 @@ def _write_faction_stance_material(tmp: Path, db: Any) -> str:
         segment = str(row.get("stance_segment") or "")
         if not segment.strip():
             continue
-        # faction_stance_summaries 按 faction 键控，空键不出现。
-        faction = str(row.get("faction") or "").strip()
-        if not faction:
-            continue
+        faction = str(row["faction"])
         lines.append(f"{faction}：{segment}")
     text = "\n".join(lines) if lines else "（暂无派系态势摘要）"
     rel = f"{_BOARD_DIR}/派系态势.txt"
