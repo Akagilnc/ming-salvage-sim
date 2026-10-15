@@ -391,14 +391,19 @@ def apply_due_review_for_todo(
             "forged_dossier": False,
             "outcome": None,
         }
-        # 无案卷桥：不伪造案卷终值。承诺仍 active 时保留 pending，
-        # 供首次入对送达（#1916）；承诺已收尾后再消费清理。
+        # 无案卷桥：不伪造案卷终值。仅大臣自诺（#1916）在承诺仍 active 时
+        # 保留 pending，供错过入对后仍可复命；旧分段待办恢复既有消费语义。
         commitment_ref = int(todo.get("commitment_ref") or 0)
         issue_row = (
-            db.issues.row(commitment_ref, fields="status")
+            db.issues.row(commitment_ref, fields="status,origin_kind")
             if commitment_ref > 0 else None
         )
-        if issue_row is not None and str(issue_row["status"] or "") == "active":
+        retain_minister_promise = (
+            issue_row is not None
+            and str(issue_row["status"] or "") == "active"
+            and str(issue_row["origin_kind"] or "") == "minister_promise"
+        )
+        if retain_minister_promise:
             consumed = False
         else:
             consumed = bool(db.dossiers.mark_next_audience_todo_status(

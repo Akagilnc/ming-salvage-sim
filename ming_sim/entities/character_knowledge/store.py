@@ -78,7 +78,12 @@ class CharacterKnowledgeStore(RowStore):
 
     TABLE = "secret_orders"
     PK = "id"
-    TABLES = {"secret_orders": "id", "public_sayings": "id"}
+    # character_knowledge_sources 入前像：自诺受限来源随 chat_turn 撤回删除（#1916 C1）。
+    TABLES = {
+        "secret_orders": "id",
+        "public_sayings": "id",
+        "character_knowledge_sources": "id",
+    }
 
     # ── delete port ──────────────────────────────────────────────
 

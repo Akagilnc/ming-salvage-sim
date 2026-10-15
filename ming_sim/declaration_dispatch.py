@@ -1192,6 +1192,13 @@ def _dispatch_commissions(
         if ids and (night_id <= 0 or source_chat_turn_id <= 0):
             _reject(rejected, item, "拒收修正须来自召对轮", "missing_ref", source)
             continue
+        # #1916 C2：自诺直接入承诺账，不是 pending_actions；修正 id 不得挂其上。
+        if ids and item.get("minister_promise") is not None:
+            _reject(
+                rejected, item,
+                "大臣自诺不经旨意修正链路", "invalid_shape", source,
+            )
+            continue
         # 明确修正是皇帝的新旨，不沿用召对实况的 system_simulation 来源。
         item_source = Provenance.player_decree if ids and source == Provenance.system_simulation else source
         result = _dispatch_commission_items(
@@ -1201,15 +1208,21 @@ def _dispatch_commissions(
         )
         if ids:
             for staged in result.applied:
+                # 只把修正挂到真实 pending_actions 行；禁把 issue id 当 pending id。
+                pending_id = staged.get("id")
+                if pending_id is None or str(staged.get("kind") or "") == "minister_promise":
+                    continue
                 row = db.conn.execute(
-                    "SELECT payload_json FROM pending_actions WHERE id=?", (staged["id"],),
+                    "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
                 ).fetchone()
+                if row is None:
+                    continue
                 payload = parse_engine_payload_json(row["payload_json"])
                 # 复用改草保留控制键的契约，任免改路径也不丢修正关联。
                 payload["_resolves_rejection_ids"] = list(dict.fromkeys(
                     payload.get("_resolves_rejection_ids", []) + ids,
                 ))
-                db.dossiers.set_pending_payload(staged["id"], json.dumps(payload, ensure_ascii=False))
+                db.dossiers.set_pending_payload(pending_id, json.dumps(payload, ensure_ascii=False))
                 if "payload" in staged:
                     staged["payload"] = payload
         applied.extend(result.applied)
@@ -1704,8 +1717,18 @@ def _dispatch_commission_items(
                 )
             else:
                 issue_id = db.insert_issue(state, **issue_fields)
+            # #1916 C1：自诺来源登记为受限见闻，公开邸报/非当事人不得见。
+            db.register_character_knowledge_source(
+                state,
+                [{"character_id": promisor, "tier": "主办"}],
+                "minister_promise",
+                title,
+                content,
+                source_id=origin_ref,
+                commit=False,
+            )
+            # 不写 pending 形 id 字段：issue 主键 ≠ pending_actions.id（#1916 C2）。
             applied.append({
-                "id": int(issue_id),
                 "issue_id": int(issue_id),
                 "kind": "minister_promise",
                 "promisor": promisor,

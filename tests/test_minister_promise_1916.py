@@ -15,16 +15,23 @@ import json
 from types import SimpleNamespace
 
 from ming_sim.audience_night import close_night, ensure_summon_enter, open_night
+from ming_sim.audience_translate import (
+    build_c0_declaration_shape,
+    build_translation_target_grounding,
+)
+from ming_sim.breach_plea import scan_and_write_breach_pleas
 from ming_sim.declaration_dispatch import dispatch_declaration
-from ming_sim.due_review import list_due_review_scenes
-from ming_sim.knowledge import build_character_knowledge
+from ming_sim.due_review import apply_pending_due_reviews, list_due_review_scenes
+from ming_sim.knowledge import build_character_knowledge, origin_visible_to
 from ming_sim.materials import (
     _scene_pending_audience_facts,
     prepare_scene_materials,
     release_material_tree,
 )
+from ming_sim.month_chain import _gazette_feed
 from ming_sim.settlement import SettlementContext, settle_delta
-from ming_sim.staged_commitment import TODO_STATUS_PENDING
+from ming_sim.settlement_payload import list_due_commitments
+from ming_sim.staged_commitment import ENTRY_KIND_STAGED, TODO_STATUS_PENDING
 from tests.conftest import (
     offline_empty_audience_translate,
     open_hall_turn,
@@ -329,3 +336,301 @@ def test_timed_minister_promise_due_appears_in_promisor_opening_materials(
     assert not any(
         int(i.get("id") or 0) == issue_id for i in knowledge_after.get("issues") or []
     )
+
+
+def _land_minister_promise(db, state, *, promisor: str, title: str, deadline_months=1,
+                           affair_declaration=None, extra=None):
+    """真实召对分派入口落一笔自诺；返回 (issue_id, chat_id, night_id, applied)。"""
+    night_id, chat_id = open_hall_turn(db, state, promisor)
+    uid = db.conn.execute(
+        "INSERT INTO chat_messages (minister_name, turn, role, content) "
+        "VALUES (?, ?, 'emperor', ?)",
+        (promisor, int(state.turn), "尔有何话说"),
+    ).lastrowid
+    mid = db.conn.execute(
+        "INSERT INTO chat_messages (minister_name, turn, role, content) "
+        "VALUES (?, ?, 'minister', ?)",
+        (promisor, int(state.turn), title),
+    ).lastrowid
+    db.conn.commit()
+    db.reign.update_chat_turn_messages(
+        int(chat_id), user_message_id=int(uid), minister_message_id=int(mid),
+    )
+    item = {
+        "text": title,
+        "minister_promise": {
+            "title": title,
+            "content": title,
+            "promisor": promisor,
+            "deadline_months": deadline_months,
+        },
+    }
+    if affair_declaration is not None:
+        item["affair_declaration"] = affair_declaration
+    if extra:
+        item.update(extra)
+    result = dispatch_declaration(
+        db, state, {"commissions": [item]},
+        minister_name=promisor,
+        night_id=int(night_id),
+        chat_turn_id=int(chat_id),
+    )
+    return result, int(chat_id), int(night_id)
+
+
+def test_c1_minister_promise_origin_not_public_visible(game):
+    """C1：自诺来源受限；公开邸报 due_commitments 不见，承诺人可见。"""
+    db, state, content = game
+    promisor = "魏忠贤"
+    result, chat_id, _nid = _land_minister_promise(
+        db, state, promisor=promisor, title="私密自诺不入邸报",
+        deadline_months=0,
+    )
+    assert result.commissions.rejected == []
+    assert len(result.commissions.applied) == 1
+    applied = result.commissions.applied[0]
+    assert applied["kind"] == "minister_promise"
+    issue_id = int(applied["issue_id"])
+    row = db.conn.execute(
+        "SELECT origin_ref, end_turn FROM issues WHERE id=?", (issue_id,),
+    ).fetchone()
+    origin_ref = str(row["origin_ref"] or "")
+    assert origin_ref
+    assert origin_visible_to(db, origin_ref) is False
+    assert origin_visible_to(db, origin_ref, promisor) is True
+    assert origin_visible_to(db, origin_ref, "杨嗣昌") is False
+
+    # 到期供料：把 end_turn 置当前，公开 feed 不得收录。
+    db.conn.execute(
+        "UPDATE issues SET end_turn=? WHERE id=?",
+        (int(state.turn), issue_id),
+    )
+    db.conn.commit()
+    due_ids = {int(i["issue_id"]) for i in list_due_commitments(db, state)}
+    assert issue_id in due_ids
+    feed = _gazette_feed(db, state)
+    public_ids = {int(i["issue_id"]) for i in feed.get("due_commitments") or []}
+    assert issue_id not in public_ids
+
+    knowledge = build_character_knowledge(db, state, promisor)
+    assert any(int(i.get("id") or 0) == issue_id for i in knowledge.get("issues") or [])
+
+    # 受限来源随撤回前像删除。
+    src_before = int(db.conn.execute(
+        "SELECT COUNT(*) AS n FROM character_knowledge_sources WHERE source_id=?",
+        (origin_ref,),
+    ).fetchone()["n"])
+    assert src_before == 1
+    db.reign.set_chat_turn_status("active", int(chat_id))
+    db.conn.commit()
+    db.undo_chat_turn(int(chat_id))
+    assert int(db.conn.execute(
+        "SELECT COUNT(*) AS n FROM character_knowledge_sources WHERE source_id=?",
+        (origin_ref,),
+    ).fetchone()["n"]) == 0
+
+
+def test_c2_correction_ids_rejected_on_minister_promise(game):
+    """C2：自诺不得挂 resolves_rejection_ids；不崩批、不污染 pending_actions。"""
+    from ming_sim.applier import Provenance
+
+    db, state, content = game
+    promisor = "魏忠贤"
+    affair = db.affairs.open(
+        name="拒收夹具", origin="test", year=int(state.year),
+        period=int(state.period), turn=int(state.turn),
+    )
+    bad = {
+        "origin_ref": f"affair:{affair.id}",
+        "account": "不存在", "delta": -1,
+        "category": "待修正", "reason": "原旨",
+    }
+    dispatch_declaration(
+        db, state, {"effects": {"economy_moves": [bad]}},
+        source=Provenance.player_decree,
+    )
+    rid = int(db.conn.execute(
+        "SELECT id FROM rejection_reports ORDER BY id DESC LIMIT 1",
+    ).fetchone()["id"])
+
+    # 先塞一条无关 pending，id 可能与后续 issue 撞号时也不得被改。
+    pending_before = {
+        int(r["id"]): str(r["payload_json"] or "")
+        for r in db.conn.execute("SELECT id, payload_json FROM pending_actions").fetchall()
+    }
+
+    result, _chat_id, _nid = _land_minister_promise(
+        db, state, promisor=promisor, title="自诺不得修正旨意",
+        extra={"resolves_rejection_ids": [rid]},
+    )
+    assert result.commissions.applied == []
+    assert result.commissions.rejected
+    assert all(r.category in {"invalid_shape", "hallucinated_id", "missing_ref"}
+               for r in result.commissions.rejected)
+    pending_after = {
+        int(r["id"]): str(r["payload_json"] or "")
+        for r in db.conn.execute("SELECT id, payload_json FROM pending_actions").fetchall()
+    }
+    assert pending_after == pending_before
+    assert _active_commitments_for(db, promisor) == []
+
+
+def test_c2_minister_promise_applied_has_no_pending_id_field(game):
+    """C2：自诺 applied 只报 issue_id，不冒充 pending_actions.id。"""
+    db, state, content = game
+    result, _c, _n = _land_minister_promise(
+        db, state, promisor="魏忠贤", title="字段隔离",
+    )
+    assert result.commissions.rejected == []
+    applied = result.commissions.applied[0]
+    assert "issue_id" in applied
+    assert "id" not in applied
+
+
+def test_c3_affair_identity_supplied_in_translation_grounding(game):
+    """C3：权威目标目录供合法事务 id；C0 形状含 affair_declaration 字段。"""
+    db, state, content = game
+    affair = db.affairs.open(
+        name="田尔耕案", origin="test",
+        year=int(state.year), period=int(state.period), turn=int(state.turn),
+    )
+    grounding = build_translation_target_grounding(db, state)
+    affair_lines = [
+        line for line in grounding.splitlines()
+        if line.startswith("affair\t")
+    ]
+    assert any(
+        parts[1] == str(int(affair.id)) and parts[2] == "田尔耕案"
+        for line in affair_lines
+        for parts in [line.split("\t")]
+        if len(parts) >= 3
+    ), affair_lines
+
+    # 形状是契约投影：字段名须可被转译填出（非自由叙述锁句）。
+    shape = build_c0_declaration_shape()
+    assert "affair_declaration" in shape
+    assert "minister_promise" in shape
+
+    # 真实入口：existing 关联可经 grounding 中的 id 落账。
+    result, _c, _n = _land_minister_promise(
+        db, state, promisor="魏忠贤", title="关联已有事务",
+        affair_declaration={"attach": "existing", "affair_id": int(affair.id)},
+    )
+    assert result.commissions.rejected == []
+    issue_id = int(result.commissions.applied[0]["issue_id"])
+    assert int(db.issues.affair_id_of(issue_id)) == int(affair.id)
+
+
+def test_c4_due_retention_only_for_minister_promise(game):
+    """C4：无案卷桥时仅自诺保留 pending；旧分段承诺仍消费。"""
+    db, state, content = game
+    # 旧分段：active、无案卷桥（origin 非 dossier）。
+    old_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="旧分段无桥之诺",
+        origin_kind="decree",
+        origin_ref="legacy-no-dossier",
+        stage_text="中段待办",
+        participants=[{"character_id": "徐光启", "tier": "主办"}],
+        end_turn=int(state.turn) + 5,
+        commitment_kind="until_stop",
+        stages_json=[
+            {"stage_idx": 0, "due_turn": int(state.turn), "criterion_text": "中段"},
+            {"stage_idx": 1, "due_turn": int(state.turn) + 3, "criterion_text": "末段"},
+        ],
+        commit=True,
+    )
+    db.dossiers.insert_next_audience_todo(
+        commitment_ref=int(old_id),
+        stage_idx=0,
+        due_turn=int(state.turn),
+        criterion_text="中段",
+        origin_context="中段",
+        entry_kind=ENTRY_KIND_STAGED,
+        created_turn=int(state.turn) - 1,
+    )
+
+    # 自诺：无案卷桥，应保留。
+    result, _c, _n = _land_minister_promise(
+        db, state, promisor="魏忠贤", title="自诺待办保留",
+        deadline_months=1,
+    )
+    promise_id = int(result.commissions.applied[0]["issue_id"])
+    db.dossiers.insert_next_audience_todo(
+        commitment_ref=int(promise_id),
+        stage_idx=0,
+        due_turn=int(state.turn),
+        criterion_text="自诺到期",
+        origin_context="自诺到期",
+        entry_kind=ENTRY_KIND_STAGED,
+        created_turn=int(state.turn) - 1,
+        payload_json={"origin_ref": str(
+            db.conn.execute(
+                "SELECT origin_ref FROM issues WHERE id=?", (promise_id,),
+            ).fetchone()["origin_ref"] or ""
+        )},
+    )
+
+    outcomes = {
+        int(r["todo_id"]): r
+        for r in apply_pending_due_reviews(db, state)
+    }
+    old_todos = [
+        t for t in db.dossiers.list_next_audience_todos()
+        if int(t["commitment_ref"]) == int(old_id)
+    ]
+    promise_todos = [
+        t for t in db.dossiers.list_next_audience_todos()
+        if int(t["commitment_ref"]) == int(promise_id)
+    ]
+    assert old_todos and str(old_todos[0]["status"]) != TODO_STATUS_PENDING
+    assert promise_todos and str(promise_todos[0]["status"]) == TODO_STATUS_PENDING
+    old_todo_id = int(old_todos[0]["id"])
+    promise_todo_id = int(promise_todos[0]["id"])
+    if old_todo_id in outcomes:
+        assert outcomes[old_todo_id].get("consumed") is True
+    if promise_todo_id in outcomes:
+        assert outcomes[promise_todo_id].get("consumed") is False
+
+
+def test_c5_minister_promise_excluded_from_imperial_breach_scan(game):
+    """C5：罢免自诺承诺人不得写皇命违诺哭谏/辜负边。"""
+    db, state, content = game
+    promisor = "魏忠贤"
+    result, _c, _n = _land_minister_promise(
+        db, state, promisor=promisor, title="臣下自诺非皇命",
+        deadline_months=0,
+    )
+    issue_id = int(result.commissions.applied[0]["issue_id"])
+    edges_before = int(db.conn.execute(
+        "SELECT COUNT(*) AS n FROM relation_edge_events",
+    ).fetchone()["n"])
+
+    db.conn.execute(
+        "UPDATE characters SET status='dismissed' WHERE name=?", (promisor,),
+    )
+    db.conn.commit()
+    written = scan_and_write_breach_pleas(db, state)
+
+    linked = [
+        t for t in db.dossiers.list_next_audience_todos()
+        if int(t.get("commitment_ref") or 0) == issue_id
+        and str(t.get("entry_kind") or "") == "midcourse_breach_plea"
+    ]
+    assert linked == []
+    if written:
+        written_refs = {
+            int(t.get("commitment_ref") or 0)
+            for t in db.dossiers.list_next_audience_todos()
+            if int(t["id"]) in {int(x) for x in written}
+        }
+        assert issue_id not in written_refs
+    edges_after = int(db.conn.execute(
+        "SELECT COUNT(*) AS n FROM relation_edge_events",
+    ).fetchone()["n"])
+    assert edges_after == edges_before
+    assert str(db.conn.execute(
+        "SELECT status FROM issues WHERE id=?", (issue_id,),
+    ).fetchone()["status"]) == "active"
+
