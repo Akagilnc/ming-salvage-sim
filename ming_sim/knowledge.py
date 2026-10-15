@@ -92,8 +92,18 @@ def origin_visible_to(
 
     Empty reader denotes the public feed, not the all-seeing world simulator.
     Affairs are associations, not access boundaries for their individual facts.
+    ``yamen:<id>`` chases the office's own origin_ref (#1915 F1), same shape as
+    dossier→secret_order; no separate permission model.
     """
     source = str(origin or "")
+    yamen_match = re.match(r"yamen:(\d+)(?:[:/]|$)", source)
+    if yamen_match is not None:
+        yamen = db.yamens.get(int(yamen_match.group(1)))
+        nested = str(getattr(yamen, "origin_ref", "") or "").strip() if yamen is not None else ""
+        if nested and nested != source:
+            return origin_visible_to(
+                db, nested, character_name, linked_dossier_id=linked_dossier_id,
+            )
     registered = db.conn.execute(
         'SELECT kind, participant_roster FROM character_knowledge_sources WHERE source_id=?',
         (source,),

@@ -116,7 +116,7 @@ class YamenStore(RowStore):
         account = str(fee_account or "").strip() or "国库"
         if account not in ECONOMY_ACCOUNTS:
             raise DeclarationDataError(f"衙门月费账户非法：{account!r}")
-        from ming_sim.strict_types import strict_int
+        from ming_sim.strict_types import SQLITE_INT_MAX, SQLITE_INT_MIN, strict_int
 
         try:
             fee = strict_int(monthly_fee)
@@ -124,6 +124,8 @@ class YamenStore(RowStore):
             raise DeclarationDataError("衙门月费须为整数") from exc
         if fee < 0:
             raise DeclarationDataError(f"衙门月费不得为负：{fee}")
+        if not (SQLITE_INT_MIN <= fee <= SQLITE_INT_MAX):
+            raise DeclarationDataError("衙门月费超出 SQLite 64-bit 范围")
         existing = self._conn.execute(
             "SELECT id FROM yamens WHERE status='active' AND name=?",
             (yamen_name,),

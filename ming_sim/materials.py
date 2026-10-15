@@ -790,14 +790,20 @@ def _write_chief_yamen_files(
     return index
 
 
-def _write_world_yamen_files(tmp: Path, db: Any, *, include_fact: Any = None) -> list[str]:
+def _write_world_yamen_files(
+    tmp: Path, db: Any, *, include_fact: Any = None, public_only: bool = False,
+) -> list[str]:
     """过月推演/邸报材料：在职衙门及其月度下落。
 
-    世界推演 ``include_fact=None`` 保留完整事实；邸报 ``public_feed`` 传入既有
-    来源可见性过滤，与人物/军队/地区按月实况同一接缝。
+    世界推演保留完整实体与事实；邸报 ``public_only`` 先按衙门 origin_ref 过滤整本
+    （名称/主官/月费不得泄漏），再对月度下落复用 ``include_fact``。
     """
+    from ming_sim.knowledge import origin_visible_to
+
     index: list[str] = []
     for yamen in db.yamens.list_active():
+        if public_only and not origin_visible_to(db, yamen.origin_ref, ""):
+            continue
         rel = f"{_YAMEN_DIR}/{_safe_segment(yamen.name)}/详情.txt"
         _write_text(
             tmp / rel,
@@ -1614,7 +1620,9 @@ def _write_world_tree(
     _write_text(tmp / _COURT_ROSTER_REL, roster_text)
     index.append(_COURT_ROSTER_REL)
 
-    index.extend(_write_world_yamen_files(tmp, db, include_fact=include_fact))
+    index.extend(_write_world_yamen_files(
+        tmp, db, include_fact=include_fact, public_only=public_only,
+    ))
 
     for name in _world_roster_names(db):
         knowledge = build_character_knowledge(db, state, name)

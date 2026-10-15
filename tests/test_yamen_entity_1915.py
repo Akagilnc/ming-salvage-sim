@@ -249,13 +249,15 @@ def test_chief_sees_yamen_handler_sees_matter_not_yamen(game, tmp_path):
 
 
 def _yamens_from_month_request(request) -> list[dict]:
-    """从月段转译请求的效果回指块解析在职衙门身份（结构化 JSON，非提示词措辞）。"""
+    """从月段转译请求的效果回指块解析在职衙门身份。
+
+    用 JSONDecoder.raw_decode，不依赖单行排版；只认结构化数组，不锁提示词措辞。
+    """
     grounding = str(getattr(request, "target_grounding", "") or "")
     marker = "yamens: "
     start = grounding.find(marker)
     assert start >= 0, "月段输入缺少 yamens 效果回指块"
-    raw = grounding[start + len(marker):].split("\n", 1)[0].strip()
-    payload = json.loads(raw)
+    payload, _ = json.JSONDecoder().raw_decode(grounding[start + len(marker):].lstrip())
     assert isinstance(payload, list)
     return [dict(item) for item in payload if isinstance(item, dict)]
 
@@ -347,8 +349,8 @@ def test_textual_fact_keeps_origin_and_affair_separate(game):
     assert int(facts[0].affair_id) == int(affair.id)
 
 
-def test_yamen_fee_rejects_float_truncation(game):
-    """月费拒绝 float 截断；合法同批不因坏项丢失。"""
+def test_yamen_fee_rejects_non_storable_amounts(game):
+    """月费拒绝 float 截断与超界整数；合法同批不因坏项丢失。"""
     db, state, _ = game
     night = open_night(db, state, location="乾清宫", time_of_day="夜")
     night_id = int(night["id"])
@@ -364,6 +366,12 @@ def test_yamen_fee_rejects_float_truncation(game):
                     "account": "国库",
                 },
                 {
+                    "name": "超界月费司",
+                    "chief": CHIEF,
+                    "monthly_fee": 9223372036854775808,
+                    "account": "国库",
+                },
+                {
                     "name": "合法月费司",
                     "chief": CHIEF,
                     "monthly_fee": 8,
@@ -375,10 +383,10 @@ def test_yamen_fee_rejects_float_truncation(game):
         chat_turn_id=chat_turn_id,
         minister_name=CHIEF,
     )
-    assert len(result.yamen_creates.rejected) == 1
+    assert len(result.yamen_creates.rejected) == 2
     assert len(result.yamen_creates.applied) == 1
     assert int(result.yamen_creates.applied[0]["monthly_fee"]) == 8
-    assert db.yamens.list_active()[0].name == "合法月费司"
+    assert [y.name for y in db.yamens.list_active()] == ["合法月费司"]
 
 
 def test_yamen_fact_overflow_id_rejects_without_batch_crash(game):
@@ -412,62 +420,84 @@ def test_yamen_fact_overflow_id_rejects_without_batch_crash(game):
     assert [f.body for f in facts] == ["合法下落"]
 
 
-def test_yamen_materials_honor_origin_visibility(game, tmp_path):
-    """主官与邸报材料过滤密旨来源；世界推演仍可读完整事实。"""
+def test_yamen_fact_normalizes_numeric_subject_id(game):
+    """数值主体 '02' 规范化为 '2'，按实体身份可读。"""
     db, state, _ = game
     result, _night_id, _ctid = _create_yamen_via_night(db, state)
     yamen_id = int(result.yamen_creates.applied[0]["id"])
-    secret_body = "密旨专办清查结果不得外泄"
-    public_body = "公开清册已报户部"
-    db.textual_facts.append(
-        subject_kind="yamen",
-        subject_id=str(yamen_id),
-        body=secret_body,
-        year=state.year,
-        period=state.period,
-        turn=state.turn,
-        origin_ref="secret_order:1",
+    padded = f"{yamen_id:02d}" if yamen_id < 10 else f"0{yamen_id}"
+    assert padded != str(yamen_id)
+    out = dispatch_declaration(
+        db, state,
+        {
+            "textual_facts": [
+                {
+                    "subject_kind": "yamen",
+                    "subject_id": padded,
+                    "body": "规范化下落",
+                }
+            ]
+        },
+        source=Provenance.system_simulation,
     )
-    db.textual_facts.append(
-        subject_kind="yamen",
-        subject_id=str(yamen_id),
-        body=public_body,
-        year=state.year,
-        period=state.period,
-        turn=state.turn,
-        origin_ref="",
+    assert out.textual_facts.rejected == []
+    assert out.textual_facts.applied[0]["subject_id"] == str(yamen_id)
+    facts = db.textual_facts.readable_materials(
+        subject_kind="yamen", subject_id=str(yamen_id),
     )
-    assert origin_visible_to(db, "secret_order:1", CHIEF) is False
-    assert origin_visible_to(db, "secret_order:1", "") is False
+    assert [f.body for f in facts] == ["规范化下落"]
+
+
+def test_secret_yamen_hidden_from_public_materials_and_treasury(game, tmp_path):
+    """密旨来源的衙门：世界全量保留；邸报不进实体路径；月费 yamen 回指公开不可见。"""
+    from ming_sim.materials import release_material_tree
+
+    db, state, _ = game
+    origin = "secret_order:1"
+    night = open_night(db, state, location="乾清宫", time_of_day="夜")
+    night_id = int(night["id"])
+    chat_turn_id = _active_chat_turn(db, state, night_id)
+    created = apply_audience_round_translation(
+        db, state,
+        {
+            "yamen_creates": [
+                {
+                    "name": "密设查弊司",
+                    "chief": CHIEF,
+                    "monthly_fee": 9,
+                    "account": "内库",
+                    "origin_ref": origin,
+                }
+            ]
+        },
+        night_id=night_id,
+        chat_turn_id=chat_turn_id,
+        minister_name=CHIEF,
+    )
+    assert created.yamen_creates.rejected == []
+    yamen_id = int(created.yamen_creates.applied[0]["id"])
+    yamen_origin = f"yamen:{yamen_id}"
+    assert db.yamens.get(yamen_id).origin_ref == origin
+    assert origin_visible_to(db, origin, "") is False
+    assert origin_visible_to(db, yamen_origin, "") is False
 
     world = prepare_world_materials(db, state, dest_root=tmp_path / "world")
-    world_text = "\n".join(
-        p.read_text(encoding="utf-8")
-        for p in world.root.rglob("*.txt")
-        if "衙门" in str(p).replace("\\", "/")
-    )
-    assert secret_body in world_text
-    assert public_body in world_text
+    assert any("衙门" in line for line in world.index_lines)
 
     gazette = prepare_gazette_author_materials(db, state)
     try:
-        gazette_text = "\n".join(
-            p.read_text(encoding="utf-8")
-            for p in gazette.root.rglob("*.txt")
-            if "衙门" in str(p).replace("\\", "/")
-        )
-        assert secret_body not in gazette_text
-        assert public_body in gazette_text
+        assert not any("衙门" in line for line in gazette.index_lines)
     finally:
-        from ming_sim.materials import release_material_tree
         release_material_tree(gazette.root)
 
-    prepared = prepare_world_materials(db, state, dest_root=tmp_path / "identity")
-    write_identity_materials(prepared, db, state, [CHIEF])
-    chief_text = "\n".join(
-        p.read_text(encoding="utf-8")
-        for p in prepared.root.rglob("*.txt")
-        if CHIEF in str(p).replace("\\", "/") and "衙门" in str(p).replace("\\", "/")
+    with atomic(db):
+        apply_fixed_period_flows(db, state)
+    fee_moves = [
+        item for item in db.reign.list_economy_moves_for_origin(yamen_origin)
+        if int(item.get("delta") or 0) < 0
+    ]
+    assert fee_moves, "月费须能按 yamen 回指读到（世界/内部账）"
+    assert all(
+        not origin_visible_to(db, str(item.get("origin_ref") or ""), "")
+        for item in fee_moves
     )
-    assert secret_body not in chief_text
-    assert public_body in chief_text

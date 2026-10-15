@@ -2755,8 +2755,12 @@ def _dispatch_promises(
     return SectionResult(applied=applied, rejected=rejected)
 
 
-def _assert_textual_fact_subject_exists(db: Any, subject_kind: str, subject_id: str) -> None:
-    """格式及缺失引用为类型化数据错误；持久读取异常不转译。"""
+def _assert_textual_fact_subject_exists(db: Any, subject_kind: str, subject_id: str) -> str:
+    """格式及缺失引用为类型化数据错误；持久读取异常不转译。
+
+    数值主体（affair/yamen）在同一接缝规范化为十进制身份字符串，贯穿验证与落库
+    （#1915 F3：'02' 不得与 '2' 分裂成不可达事实）。文字型主体原样返回。
+    """
     from ming_sim.strict_types import strict_sqlite_id
 
     if subject_kind == "affair":
@@ -2765,7 +2769,7 @@ def _assert_textual_fact_subject_exists(db: Any, subject_kind: str, subject_id: 
         except (TypeError, ValueError) as exc:
             raise DeclarationDataError("事务引用须为整数") from exc
         db.affairs.get(affair_id)
-        return
+        return str(affair_id)
     if subject_kind == "yamen":
         try:
             yamen_id = strict_sqlite_id(subject_id)
@@ -2773,15 +2777,16 @@ def _assert_textual_fact_subject_exists(db: Any, subject_kind: str, subject_id: 
             raise DeclarationDataError("衙门引用须为整数") from exc
         if db.yamens.get(yamen_id) is None:
             raise DeclarationReferenceError(f"yamen 不存在：{subject_id}")
-        return
+        return str(yamen_id)
     store = {"character": db.characters, "army": db.armies, "region": db.regions}.get(
         subject_kind
     )
     if store is None:
-        return
+        return str(subject_id or "").strip()
     row = store.row(subject_id)
     if row is None:
         raise DeclarationReferenceError(f"{subject_kind} 不存在：{subject_id}")
+    return str(subject_id or "").strip()
 
 
 def _xiexang_reject_category(exc: DecreeMaterializationValidationError) -> str:
@@ -2884,11 +2889,13 @@ def _dispatch_yamen_creates(
             )
             continue
         try:
-            from ming_sim.strict_types import strict_int
+            from ming_sim.strict_types import SQLITE_INT_MAX, SQLITE_INT_MIN, strict_int
 
             fee = strict_int(fee_raw)
             if fee < 0:
                 raise ValueError("monthly_fee 不得为负")
+            if not (SQLITE_INT_MIN <= fee <= SQLITE_INT_MAX):
+                raise ValueError("monthly_fee 超出 SQLite 64-bit 范围")
         except (TypeError, ValueError) as exc:
             _reject(rejected, item, f"月费非法：{exc}", "invalid_shape", source)
             continue
@@ -2962,9 +2969,10 @@ def _dispatch_textual_facts(
             _reject(rejected, item, source_turn_error, "missing_ref", source)
             continue
         subject_kind = str(item.get("subject_kind") or "").strip()
-        subject_id = str(item.get("subject_id") or "").strip()
         try:
-            _assert_textual_fact_subject_exists(db, subject_kind, subject_id)
+            subject_id = _assert_textual_fact_subject_exists(
+                db, subject_kind, str(item.get("subject_id") or "").strip(),
+            )
         except DeclarationReferenceError as exc:
             _reject(rejected, item, str(exc), "hallucinated_id", source)
             continue
