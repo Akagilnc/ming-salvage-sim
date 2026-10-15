@@ -6079,20 +6079,19 @@ class GameDB:
             if priv not in AUTHORITY_PRIVILEGE_SET:
                 raise DecreeMaterializationValidationError("委任授权 privilege 非法")
             normalized["privilege"] = priv
-            scope = str(normalized.get("scope") or "").strip()
-            if not scope or ":" not in scope:
-                t_kind = str(normalized.get("target_kind") or "").strip()
-                t_id = str(normalized.get("target_id") or "").strip()
-                if t_id and ":" in t_id and not t_kind:
-                    scope = t_id
-                elif t_kind and t_id:
-                    scope = f"{t_kind}:{t_id}"
-            kind, separator, target = scope.partition(":")
-            if not separator or not kind.strip() or not target.strip():
-                raise DecreeMaterializationValidationError("委任授权缺少典范 scope")
-            normalized["scope"] = f"{kind.strip()}:{target.strip()}"
-            normalized["target_kind"] = kind.strip()
-            normalized["target_id"] = target.strip()
+            from ming_sim.entities.authority.scope import canonical_authority_scope
+
+            try:
+                scope, kind, target = canonical_authority_scope(
+                    scope=normalized.get("scope"),
+                    target_kind=normalized.get("target_kind"),
+                    target_id=normalized.get("target_id"),
+                )
+            except ValueError as exc:
+                raise DecreeMaterializationValidationError(str(exc)) from exc
+            normalized["scope"] = scope
+            normalized["target_kind"] = kind
+            normalized["target_id"] = target
             holder = str(
                 normalized.get("holder_id")
                 or normalized.get("assignee_id")
@@ -6111,7 +6110,8 @@ class GameDB:
             if raw_aid in (None, ""):
                 raise DecreeMaterializationValidationError("收权旨意缺少 authority_id")
             try:
-                aid = strict_int(raw_aid, accept_numeric_strings=True)
+                # 身份边界复用 strict_sqlite_id（#1912 J3 / #1897 C1）
+                aid = strict_sqlite_id(raw_aid, accept_numeric_strings=True)
             except (TypeError, ValueError) as exc:
                 raise DecreeMaterializationValidationError(str(exc)) from exc
             if aid <= 0:

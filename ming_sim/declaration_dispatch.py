@@ -979,32 +979,30 @@ def _stage_authorization_commission(
     if privilege not in AUTHORITY_PRIVILEGE_SET:
         _reject(rejected, item, f"授权权项非法：{privilege}", "invalid_enum", source)
         return None
-    target_kind = str(authorization.get("target_kind") or "").strip()
-    target_id = str(authorization.get("target_id") or "").strip()
-    scope = str(authorization.get("scope") or "").strip()
-    if not scope:
-        if target_kind and target_id:
-            scope = f"{target_kind}:{target_id}"
-        else:
-            scope = f"character:{holder}"
-    kind, separator, scoped = scope.partition(":")
-    if not separator or not kind.strip() or not scoped.strip():
-        _reject(rejected, item, "授权交办事域非法", "invalid_shape", source)
+    # 事域唯一验形：entities.authority.scope（与 db 机械旨意边界共用）；不猜补持有人自身（#1912 J2/J4）
+    from ming_sim.entities.authority.scope import canonical_authority_scope
+    from ming_sim.execution_pressure import write_locality_scope_for_target_kind
+
+    try:
+        scope, kind, scoped = canonical_authority_scope(
+            scope=authorization.get("scope"),
+            target_kind=authorization.get("target_kind"),
+            target_id=authorization.get("target_id"),
+        )
+    except ValueError as exc:
+        _reject(rejected, item, str(exc), "invalid_shape", source)
         return None
-    scope = f"{kind.strip()}:{scoped.strip()}"
     mode = resolve_directive_mode(
         extracted=authorization.get("mode", item.get("mode")),
     )
-    from ming_sim.execution_pressure import write_locality_scope_for_target_kind
-
     payload: Dict[str, Any] = {
         "text": body,
         "dossier_action_type": "authorization",
         "privilege": privilege,
         "scope": scope,
-        "target_kind": kind.strip(),
-        "target_id": scoped.strip(),
-        "locality_scope": write_locality_scope_for_target_kind(kind.strip()),
+        "target_kind": kind,
+        "target_id": scoped,
+        "locality_scope": write_locality_scope_for_target_kind(kind),
         "name": holder,
         "holder_id": holder,
         "assignee_id": holder,
@@ -1048,7 +1046,7 @@ def _stage_revoke_authority_commission(
     from ming_sim.authority_privileges import AUTHORITY_PRIVILEGE_SET
     from ming_sim.draft_intent import resolve_directive_mode
     from ming_sim.session import _canonical_minister_key
-    from ming_sim.strict_types import strict_int
+    from ming_sim.strict_types import strict_sqlite_id
 
     holder_raw = str(
         revoke_authority.get("name")
@@ -1061,7 +1059,8 @@ def _stage_revoke_authority_commission(
     authority_id = 0
     if raw_aid not in (None, ""):
         try:
-            authority_id = strict_int(raw_aid, accept_numeric_strings=True)
+            # 身份边界复用 strict_sqlite_id，超界只拒本项（#1912 J3 / #1897 C1）
+            authority_id = strict_sqlite_id(raw_aid, accept_numeric_strings=True)
         except (TypeError, ValueError) as exc:
             _reject(rejected, item, str(exc), "invalid_shape", source)
             return None

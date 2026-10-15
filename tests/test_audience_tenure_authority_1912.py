@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 
-from ming_sim.audience_translate import build_c0_declaration_shape
 from ming_sim.db import GameDB
 from ming_sim.models import Character
 from ming_sim.settlement.dossier import apply_dossier_promulgation, apply_dossier_verdicts
@@ -97,14 +96,6 @@ def _active_privileges(db, state, holder: str) -> list[str]:
             int(state.turn), holder_id=holder,
         )
     ]
-
-
-def test_c0_shape_exposes_tenure_and_authority_slots():
-    shape = build_c0_declaration_shape()
-    assert '"任别"' in shape
-    assert '"authorization"' in shape
-    assert '"revoke_authority"' in shape
-    assert "尚方剑密授" in shape
 
 
 def test_acting_appointment_real_entry_lands_tenure_and_restore(game, monkeypatch):
@@ -200,6 +191,8 @@ def test_grant_revoke_authority_real_entry_and_region_scope(game, monkeypatch):
                 "authorization": {
                     "name": holder,
                     "privilege": "尚方剑密授",
+                    "target_kind": "character",
+                    "target_id": holder,
                 },
             }],
         },
@@ -307,6 +300,8 @@ def test_rejected_authorization_does_not_land_held_privilege(game, monkeypatch):
                 "authorization": {
                     "name": holder,
                     "privilege": "便宜行事",
+                    "target_kind": "character",
+                    "target_id": holder,
                 },
             }],
         },

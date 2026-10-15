@@ -179,6 +179,16 @@ def build_translation_target_grounding(db: Any, state: Any = None) -> str:
         lines.append(
             f"character\t{row['name']}\t{str(row['office'] or row['name'])}"
         )
+    # #1912 J1：在持授权稳定身份供料，供 revoke_authority.authority_id 精确收回。
+    turn = getattr(state, "turn", None) if state is not None else None
+    if turn is None:
+        turn = db.load_state().turn
+    for row in db.characters.list_active_authorities(int(turn)):
+        lines.append(
+            "authority\t"
+            f"{int(row['id'])}\t{str(row.get('holder_id') or '')}\t"
+            f"{str(row.get('privilege') or '')}\t{str(row.get('scope') or '')}"
+        )
     from ming_sim.staged_commitment import load_commitment_stages
 
     for row in db.conn.execute(
@@ -234,7 +244,9 @@ def build_translation_target_grounding(db: Any, state: Any = None) -> str:
         body = "\n".join(lines)
         parts.append(
             "【权威目标目录】\n"
-            "grant.target_id / appointment.region_id / rushes.target_id / 禁摊派案卷 id 必须取对应目录中的精确 id，禁止编造。\n"
+            "grant.target_id / appointment.region_id / rushes.target_id / 禁摊派案卷 id / "
+            "revoke_authority.authority_id 必须取对应目录中的精确 id，禁止编造。"
+            "authority 行格式：id、持有人、权项、事域。\n"
             f"{body}"
         )
     if candidate_block:
@@ -284,13 +296,13 @@ def build_c0_declaration_shape() -> str:
         '      "authorization": {\n'
         '        "name": "授予对象人名",\n'
         f'        "privilege": "{privilege_hint}",\n'
-        f'        "target_kind": "{target_kind_hint}（可空；空则事域为 character:授予对象）",\n'
-        '        "target_id": "事域 id（可空）"\n'
+        f'        "target_kind": "{target_kind_hint}",\n'
+        '        "target_id": "事域 id（与 target_kind 同填，组成典范事域；亦可直接填 scope）"\n'
         "      },\n"
         '      "revoke_authority": {\n'
         '        "name": "持有人",\n'
         f'        "privilege": "{privilege_hint}",\n'
-        '        "authority_id": "在持授权 id（有则填；无则按持有人+权项解析）"\n'
+        '        "authority_id": "权威目标目录 authority 行 id（精确收回必填；无则持有人+权项唯一时解析）"\n'
         "      },\n"
         '      "grant": {\n'
         '        "grant_action": "赈灾|协饷|赏赉|发内帑|项目经费|…",\n'

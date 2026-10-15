@@ -613,12 +613,13 @@ def _apply_revoke_authority_verdict_effect(
     人物是否结怨走既有关系声明口（#1895），不走 0056 毁约轨。
     """
     from ming_sim.settlement import SettlementContext, settle_delta
-    from ming_sim.strict_types import strict_int
+    from ming_sim.strict_types import strict_sqlite_id
 
     raw_aid = payload.get("authority_id")
     if raw_aid in (None, ""):
         raise ValueError("收权案卷缺少 authority_id")
-    authority_id = strict_int(raw_aid, accept_numeric_strings=True)
+    # 身份边界复用 strict_sqlite_id（#1912 J3 / #1897 C1）
+    authority_id = strict_sqlite_id(raw_aid, accept_numeric_strings=True)
     if authority_id <= 0:
         raise ValueError("收权案卷缺少 authority_id")
     outcome = settle_delta(
