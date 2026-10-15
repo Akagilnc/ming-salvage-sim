@@ -714,7 +714,9 @@ def test_c1_minister_promise_origin_not_public_visible(game, monkeypatch):
     assert secret_affair_id > 0
     secret_affair_ref = db.affairs.origin_ref(secret_affair_id)
     assert origin_visible_to(db, secret_affair_ref) is False
-    # #883：出生标记结构化字段为空；不进见闻事件。
+    # #883：无共享密令正文；body 只钉出生密令 id，知识投影仍跳过本 kind。
+    from ming_sim.materials import SECRET_ORDER_ORIGIN_PREFIX
+
     birth_row = db.conn.execute(
         "SELECT kind, title, body FROM character_knowledge_sources WHERE source_id=?",
         (secret_affair_ref,),
@@ -722,7 +724,9 @@ def test_c1_minister_promise_origin_not_public_visible(game, monkeypatch):
     assert birth_row is not None
     assert str(birth_row["kind"] or "") == "private_affair_birth"
     assert str(birth_row["title"] or "") == ""
-    assert str(birth_row["body"] or "") == ""
+    assert str(birth_row["body"] or "") == (
+        f"{SECRET_ORDER_ORIGIN_PREFIX}{int(order_id)}"
+    )
     knowledge = build_character_knowledge(db, state, promisor)
     event_sources = {
         str(e.get("source_id") or "")
@@ -868,6 +872,91 @@ def test_c1_minister_promise_origin_not_public_visible(game, monkeypatch):
         assert person_delivered.get(promisor, {}).get(key) == priv2_name
     finally:
         release_material_tree(prepared_p.root)
+
+    # 同出生密令名册追加：主办/协办/知情得原名；后挂另一密令不得解锁出生名。
+    secret_name = "密令专属查案事务"
+    secret_dossier_id = int(secret_dossier["id"])
+    db.append_decree_dossier_participants(secret_dossier_id, [{
+        "character_id": promisor, "tier": "主办", "role": "密访",
+    }])
+    host, aide, witness = "乔允升", "周延儒", "孙承宗"
+    for name in (host, aide, witness):
+        assert name != promisor
+    added = settle_delta(
+        state, db,
+        {"secret_dossier_participants": [
+            {"dossier_id": secret_dossier_id, "character_id": host,
+             "tier": "主办", "role": "续办", "delegator_id": promisor},
+            {"dossier_id": secret_dossier_id, "character_id": aide,
+             "tier": "协办", "role": "随员", "delegator_id": promisor},
+            {"dossier_id": secret_dossier_id, "character_id": witness,
+             "tier": "知情", "role": "知会", "delegator_id": promisor},
+        ]},
+        SettlementContext(secret_dossier_ids_at_input={secret_dossier_id}),
+    )
+    assert added is not None
+    for name in (promisor, host, aide, witness):
+        assert origin_visible_to(db, secret_affair_ref, name) is True
+    secret_key = f"affair-{secret_affair_id}"
+    close_night(db, state, content=content)
+    night_co = open_night(db, state, location="乾清宫", time_of_day="昼")
+    for name in (promisor, host, aide, witness):
+        ensure_summon_enter(db, int(night_co["id"]), name)
+    person_delivered.clear()
+    prepared_co = prepare_scene_materials(db, state)
+    try:
+        for name in (promisor, host, aide, witness):
+            assert person_delivered.get(name, {}).get(secret_key) == secret_name
+    finally:
+        release_material_tree(prepared_co.root)
+
+    # 后挂另一密令 attach=existing：承办人可见案卷路径，不得见出生原名。
+    later_handler = later
+    later_secret_id = db.create_secret_order(
+        state, later_handler, "后挂密令", "后挂密查",
+        [], deadline_months=1,
+        covert_task=build_covert_task_contract(covert_task={
+            "kind": "查案", "axes": ["实务事功"], "direction": 1,
+            "delivery": {
+                "unit": "人犯", "target_units": 1.0,
+                "person_action": "处置", "effect_sign": 1,
+            },
+        }),
+        affair_declaration={
+            "attach": "existing", "affair_id": secret_affair_id,
+        },
+    )
+    later_secret_dossier = db.dossiers.get_for_secret_order(int(later_secret_id))
+    assert later_secret_dossier is not None
+    assert origin_visible_to(db, secret_affair_ref, later_handler) is False
+    assert origin_visible_to(db, secret_affair_ref) is False
+    # 私诺出生事务同样：后挂密令不得解锁 priv2 原名。
+    promise_later_id = db.create_secret_order(
+        state, later_handler, "挂私诺密令", "挂私诺密查",
+        [], deadline_months=1,
+        covert_task=build_covert_task_contract(covert_task={
+            "kind": "查案", "axes": ["实务事功"], "direction": 1,
+            "delivery": {
+                "unit": "人犯", "target_units": 1.0,
+                "person_action": "处置", "effect_sign": 1,
+            },
+        }),
+        affair_declaration={
+            "attach": "existing", "affair_id": priv2_id,
+        },
+    )
+    assert db.dossiers.get_for_secret_order(int(promise_later_id)) is not None
+    assert origin_visible_to(db, birth_ref, later_handler) is False
+    close_night(db, state, content=content)
+    night_x = open_night(db, state, location="乾清宫", time_of_day="昼")
+    ensure_summon_enter(db, int(night_x["id"]), later_handler)
+    person_delivered.clear()
+    prepared_x = prepare_scene_materials(db, state)
+    try:
+        assert person_delivered.get(later_handler, {}).get(secret_key, "") != secret_name
+        assert person_delivered.get(later_handler, {}).get(key, "") != priv2_name
+    finally:
+        release_material_tree(prepared_x.root)
 
 
 def test_c2_correction_ids_rejected_on_minister_promise(game):

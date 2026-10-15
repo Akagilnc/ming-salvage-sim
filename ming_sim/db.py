@@ -11518,14 +11518,16 @@ class GameDB:
                 self.dossiers.affair_id_of(int(dossier_id)) or 0
             )
             if linked_affair_id > 0 and preexisting_affair_id is None:
-                # 纯出生可见性标记：空 title/body，不进共享正文（#883）。
+                # 纯出生可见性标记：空 title；body 只钉出生密令 id（非共享正文）。
                 # kind=private_affair_birth 仅供 origin_visible_to，知识投影跳过。
+                from ming_sim.materials import SECRET_ORDER_ORIGIN_PREFIX
+
                 self.register_character_knowledge_source(
                     state,
                     [{"character_id": minister_name, "tier": "主办"}],
                     "private_affair_birth",
                     "",
-                    "",
+                    f"{SECRET_ORDER_ORIGIN_PREFIX}{int(order_id)}",
                     source_id=self.affairs.origin_ref(linked_affair_id),
                     commit=False,
                 )
