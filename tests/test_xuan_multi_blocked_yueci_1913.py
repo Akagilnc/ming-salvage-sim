@@ -101,15 +101,18 @@ def _unsettled_entry_tags(db, person: str) -> list[str]:
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_xuan_two_in_capital_both_enter_with_materials(game, monkeypatch):
-    """「宣甲、乙」二人均可即时入殿：均记入殿；场景调用边界材料目录各备。"""
+    """「宣甲来、乙」二人均可即时入殿：均记入殿；场景调用边界材料目录各备。
+
+    甲带语气尾、乙名以「来」结尾——覆盖整串预剥会截坏身份、逐人须先全名再试尾的接缝。
+    """
     db, state, content = game
     open_night(db, state, location="乾清宫", time_of_day="夜")
     night_id = int(get_open_night(db)["id"])
-    a, b = "毕自严", "王绍徽"
+    a, b = "毕自严", "施凤来"
 
     prepared_box: list = []
     sess = _sess(db, state, content, monkeypatch, capture_prepared=prepared_box)
-    sess.scene_chat(f"宣{a}、{b}", write_gate=sess._write_gate)
+    sess.scene_chat(f"宣{a}来、{b}", write_gate=sess._write_gate)
 
     assert a in present_names_at(db, night_id)
     assert b in present_names_at(db, night_id)
@@ -173,14 +176,14 @@ def test_xuan_blocked_offstage_feeds_materials_not_enter(game, monkeypatch):
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_yueci_explicit_lands_method_and_survives_reopen(game, monkeypatch, tmp_path):
-    """越次点名：在京记入殿越次；京外记传召账越次；关库重开仍可读。"""
+    """越次召见：完整前缀不截身份；在京记入殿越次；京外记传召账越次；关库重开仍可读。"""
     db, state, content = game
     open_night(db, state, location="乾清宫", time_of_day="夜")
     night_id = int(get_open_night(db)["id"])
     capital, remote = "杨嗣昌", "洪承畴"
 
     sess = _sess(db, state, content, monkeypatch)
-    sess.scene_chat(f"越次点名{capital}、{remote}", write_gate=sess._write_gate)
+    sess.scene_chat(f"越次召见{capital}、{remote}", write_gate=sess._write_gate)
 
     methods = _enter_methods(db, night_id, capital)
     assert METHOD_YUECI in methods

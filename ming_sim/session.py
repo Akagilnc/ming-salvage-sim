@@ -789,8 +789,12 @@ class GameSession:
 
         身份解析只走 summon_character（内含 match_minister_from_text）；
         整段先匹配以保住合法别名，失败才按标点拆多人。
+        每人先全名，未中再试剥可选语气尾——不整串预剥，单人多人同一路径。
         """
-        from ming_sim.audience_night import split_xuan_name_fragments
+        from ming_sim.audience_night import (
+            split_xuan_name_fragments,
+            strip_xuan_person_tail,
+        )
 
         def _one(text: str) -> Optional[Character]:
             cleaned = str(text or "").strip()
@@ -798,6 +802,13 @@ class GameSession:
                 return None
             try:
                 return self.summon_character(cleaned)
+            except DeclarationDataError:
+                pass
+            stripped = strip_xuan_person_tail(cleaned)
+            if not stripped or stripped == cleaned:
+                return None
+            try:
+                return self.summon_character(stripped)
             except DeclarationDataError:
                 return None
 

@@ -1595,16 +1595,18 @@ def recognize_audience_command(message: str) -> str:
 
 # #1836 / #1913：一夜一场入口的宣召口令——封闭前缀 + 人名片段（可多人分隔）；
 # 引擎落入殿账（ADR 0037），不另立 summon 动作类型。
-# 越次点名 / 越次宣 X 记 METHOD_YUECI；普通宣/召仍记 METHOD_XUANRU。
-# 后缀可有可无（「宣王绍徽」与「宣王绍徽来」同形）。
-_XUAN_COMMAND_RE = re.compile(
+# 越次点名 / 越次宣|召见 X 记 METHOD_YUECI；普通宣/召仍记 METHOD_XUANRU。
+# 完整动词列在短前缀之前（召见 before 召），避免「越次召见X」截成「见X」。
+# 语气尾不在整串预剥——「施凤来」等以尾字入名的身份须先全名匹配；
+# 逐人未中再试剥尾（strip_xuan_person_tail），多人同形。
+_XUAN_PREFIX_RE = re.compile(
     r"^(?:"
     r"越次点名|"
-    r"(?:越次(?:地)?)?(?:传召|传|召|宣|叫|带)"
+    r"(?:越次(?:地)?)?(?:传召|召见|传|召|宣|叫|带)"
     r")"
-    r"(.+?)"
-    r"(?:来|到|入殿|上殿|面圣|见我)?$"
 )
+# 语气尾长词在前；只作逐人全名失败后的一次回退，不是第二套解析器。
+_XUAN_PERSON_TAILS = ("入殿", "上殿", "面圣", "见我", "来", "到")
 # 多人分隔只用标点；禁「和/与/及」等可侵入在册别名（如朱燮元「懋和」）的字。
 _XUAN_NAME_SPLIT_RE = re.compile(r"[,，、;；/|]")
 
@@ -1632,11 +1634,25 @@ def split_xuan_name_fragments(fragment: str) -> List[str]:
     return [part for part in parts if part]
 
 
+def strip_xuan_person_tail(fragment: str) -> str:
+    """可选语气尾（来/到/入殿…）。全名未命中时由调用方再试；不整串预剥。
+
+    「宣王绍徽来」与「宣王绍徽」同形；「宣施凤来」须先按全名命中，不得先剥「来」。
+    """
+    text = str(fragment or "").strip()
+    if not text:
+        return ""
+    for tail in _XUAN_PERSON_TAILS:
+        if len(text) > len(tail) and text.endswith(tail):
+            return text[: -len(tail)].strip()
+    return text
+
+
 def recognize_xuan_command(message: str) -> Optional[RecognizedXuanCommand]:
     """解析皇帝宣召口令；非宣召口令 → None。
 
     #1836 / #1913 / ADR 0035 / 0037：只认封闭前缀形状，不靠自由散文启发；
-    人名解析交给调用方逐人 match。明确以越次方式召见时 method=越次。
+    人名解析交给调用方逐人 match（含可选语气尾回退）。明确越次时 method=越次。
     """
     text = str(message or "").strip()
     if not text:
@@ -1644,10 +1660,10 @@ def recognize_xuan_command(message: str) -> Optional[RecognizedXuanCommand]:
     # 收夜口令优先，避免「退下」等被宣召形状误吞。
     if recognize_audience_command(text) != CMD_NONE:
         return None
-    m = _XUAN_COMMAND_RE.match(text)
+    m = _XUAN_PREFIX_RE.match(text)
     if not m:
         return None
-    name = str(m.group(1) or "").strip()
+    name = text[m.end():].strip()
     if not name:
         return None
     method = METHOD_YUECI if text.startswith("越次") else METHOD_XUANRU

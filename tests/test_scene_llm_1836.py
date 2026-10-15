@@ -95,7 +95,8 @@ def test_xuan_lands_enter_then_present_on_next_prepare(game, monkeypatch, tmp_pa
 
     monkeypatch.setattr("ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent())
     sess = _sess(db, state, content, llm_config=SimpleNamespace(channel=""))
-    result = sess.scene_chat(f"宣{target}", write_gate=sess._write_gate)
+    # 语气尾与无尾同形；不得整串预剥把合法名截坏（#1913 身份与尾缀统一解析）。
+    result = sess.scene_chat(f"宣{target}来", write_gate=sess._write_gate)
 
     # 本次宣入必须新落一条 TAG_ENTER（非常在员额开夜账）。
     enters = [
