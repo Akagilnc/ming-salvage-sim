@@ -1726,6 +1726,7 @@ class GameSession:
         - stream_emit 非空：同核走 transport 流式（SSE delta / 重试 / 失败路径）
         """
         from ming_sim.audience_night import (
+            METHOD_YUECI,
             SCENE_CHAT_SPEAKER,
             ensure_summon_enter,
             get_open_night,
@@ -1781,12 +1782,18 @@ class GameSession:
                         method=xuan.method,
                     )
                     if decision.allowed:
-                        # 入殿 ensure 不带 #657 消费账 origin_ref：普通在场宣召仍走
-                        # 在场去重；明确越次靠 method 留账（在场去重 ≠ 召法留账）。
+                        # 普通宣：不传 origin_ref，已在场走去重，不重复入殿。
+                        # 明确越次：正数源轮带同源 origin_ref——method 留账，且同轮
+                        # 恢复重试复用既有账（ADR 0036），不叠第二条越次入殿。
                         ensure_summon_enter(
                             self.db, night_id, target.name,
                             method=xuan.method,
                             origin_chat_turn_id=xuan_ctid,
+                            origin_ref=(
+                                origin_id
+                                if xuan_ctid > 0 and xuan.method == METHOD_YUECI
+                                else ""
+                            ),
                         )
                         # #1838 / ADR 0158：宣 X 当场先切御前主角（不等转译）。
                         # 夜当前值是投影；ctid>0 时同步写 chat_turns.protagonist_name

@@ -176,7 +176,7 @@ def test_xuan_blocked_offstage_feeds_materials_not_enter(game, monkeypatch):
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_yueci_explicit_lands_method_and_survives_reopen(game, monkeypatch, tmp_path):
-    """越次召见：完整前缀不截身份；在京记入殿越次；京外记传召账越次；已在场仍留越次；关库重开仍可读。"""
+    """越次召见：完整前缀不截身份；在京记入殿越次；京外记传召账越次；已在场仍留越次；同轮恢复不叠账；关库重开仍可读。"""
     db, state, content = game
     open_night(db, state, location="乾清宫", time_of_day="夜")
     night_id = int(get_open_night(db)["id"])
@@ -184,21 +184,28 @@ def test_yueci_explicit_lands_method_and_survives_reopen(game, monkeypatch, tmp_
     standing = "王承恩"
     assert standing in present_names_at(db, night_id)
 
-    def _scene(msg: str) -> None:
-        # 正数源轮：与生产 scene 入口一致（chat_turn_id>0）。
-        ctid = db.create_chat_turn(
-            state, "殿上", f"xuan-1913:{msg}", 0,
-            night_id=night_id, status="generating",
-        )
-        sess.scene_chat(msg, write_gate=sess._write_gate, chat_turn_id=int(ctid))
+    def _scene(msg: str, *, chat_turn_id: int = 0) -> int:
+        # 正数源轮：与生产 scene 入口一致；可复用同 ctid 模拟中断恢复重试。
+        ctid = int(chat_turn_id or 0)
+        if ctid <= 0:
+            ctid = int(db.create_chat_turn(
+                state, "殿上", f"xuan-1913:{msg}", 0,
+                night_id=night_id, status="generating",
+            ))
+        sess.scene_chat(msg, write_gate=sess._write_gate, chat_turn_id=ctid)
+        return ctid
 
-    def _enter_count(person: str) -> int:
-        return sum(
-            1 for entry in list_ledger(db, night_id)
+    def _enter_ids(person: str) -> list[int]:
+        return [
+            int(entry["id"])
+            for entry in list_ledger(db, night_id)
             if TAG_ENTER in (entry.get("tags") or [])
             and "常在员额" not in (entry.get("tags") or [])
             and person in (entry.get("person_names") or [])
-        )
+        ]
+
+    def _enter_count(person: str) -> int:
+        return len(_enter_ids(person))
 
     sess = _sess(db, state, content, monkeypatch)
     _scene(f"越次召见{capital}、{remote}")
@@ -219,9 +226,15 @@ def test_yueci_explicit_lands_method_and_survives_reopen(game, monkeypatch, tmp_
     assert _enter_count(standing) == standing_before
     assert METHOD_XUANRU not in _enter_methods(db, night_id, standing)
     assert standing in present_names_at(db, night_id)
-    _scene(f"越次点名{standing}")
+    yueci_msg = f"越次点名{standing}"
+    yueci_ctid = _scene(yueci_msg)
+    standing_ids = _enter_ids(standing)
     assert METHOD_YUECI in _enter_methods(db, night_id, standing)
     assert standing in present_names_at(db, night_id)
+    # 同轮恢复重试（execute_interrupted_reply_retry 共核 = 同 ctid 再 scene_chat）：
+    # 越次账复用，不新增第二条入殿。
+    _scene(yueci_msg, chat_turn_id=yueci_ctid)
+    assert _enter_ids(standing) == standing_ids
 
     # 已在场·先普通宣入再越次：保留宣入，另留越次账；重复普通宣不叠加入殿。
     prior = "毕自严"
@@ -231,10 +244,13 @@ def test_yueci_explicit_lands_method_and_survives_reopen(game, monkeypatch, tmp_
     assert prior_enters == 1
     _scene(f"宣{prior}")
     assert _enter_count(prior) == prior_enters
-    _scene(f"越次点名{prior}")
+    prior_yueci_ctid = _scene(f"越次点名{prior}")
+    prior_ids = _enter_ids(prior)
     prior_methods = _enter_methods(db, night_id, prior)
     assert METHOD_XUANRU in prior_methods
     assert METHOD_YUECI in prior_methods
+    _scene(f"越次点名{prior}", chat_turn_id=prior_yueci_ctid)
+    assert _enter_ids(prior) == prior_ids
 
     db.conn.commit()
     copy_path = Path(tmp_path) / "reopen.db"

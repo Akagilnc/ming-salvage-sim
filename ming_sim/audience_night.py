@@ -1837,9 +1837,9 @@ def ensure_summon_enter(
         raise AudienceNightError("宣召人名不能为空", code="empty_person")
     method = _validate_summon_method(method, default=METHOD_XUANRU)
     origin = str(origin_ref or "").strip()
-    # #657 召见消费账：独立 origin_ref 按 origin 复用/新落，不与普通在场去重混用。
-    # 无 origin 时：普通宣入已在场跳过；明确越次仍留召法账
-    # （#1913：在场去重 ≠ 召法留账；ADR 0037 怎么召的 ≠ 是否还需入殿）。
+    # 带 origin_ref（#657 消费账 / 明确越次同源）：按 origin 复用或新落，
+    # 同轮恢复重试不叠账（ADR 0036）。无 origin 时：普通宣入已在场跳过；
+    # 无源轮越次仍靠 method 留账（#1913：在场去重 ≠ 召法留账）。
     if origin:
         for entry in list_ledger(db, night_id):
             if (
