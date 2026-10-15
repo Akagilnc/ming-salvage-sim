@@ -176,14 +176,24 @@ def test_xuan_blocked_offstage_feeds_materials_not_enter(game, monkeypatch):
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_yueci_explicit_lands_method_and_survives_reopen(game, monkeypatch, tmp_path):
-    """越次召见：完整前缀不截身份；在京记入殿越次；京外记传召账越次；关库重开仍可读。"""
+    """越次召见：完整前缀不截身份；在京记入殿越次；京外记传召账越次；已在场仍留越次；关库重开仍可读。"""
     db, state, content = game
     open_night(db, state, location="乾清宫", time_of_day="夜")
     night_id = int(get_open_night(db)["id"])
     capital, remote = "杨嗣昌", "洪承畴"
+    standing = "王承恩"
+    assert standing in present_names_at(db, night_id)
+
+    def _scene(msg: str) -> None:
+        # 正数源轮：与生产 scene 入口一致，origin 按轮区分召法账。
+        ctid = db.create_chat_turn(
+            state, "殿上", f"xuan-1913:{msg}", 0,
+            night_id=night_id, status="generating",
+        )
+        sess.scene_chat(msg, write_gate=sess._write_gate, chat_turn_id=int(ctid))
 
     sess = _sess(db, state, content, monkeypatch)
-    sess.scene_chat(f"越次召见{capital}、{remote}", write_gate=sess._write_gate)
+    _scene(f"越次召见{capital}、{remote}")
 
     methods = _enter_methods(db, night_id, capital)
     assert METHOD_YUECI in methods
@@ -195,6 +205,20 @@ def test_yueci_explicit_lands_method_and_survives_reopen(game, monkeypatch, tmp_
     assert unsettled and unsettled[0]["kind"] in {"fresh", "in_transit"}
     assert METHOD_YUECI in _unsettled_entry_tags(db, remote)
 
+    # 已在场·常在员额：越次点名仍记召法，不因在场早退吞账。
+    _scene(f"越次点名{standing}")
+    assert METHOD_YUECI in _enter_methods(db, night_id, standing)
+    assert standing in present_names_at(db, night_id)
+
+    # 已在场·先普通宣入再越次：保留宣入，另留越次账。
+    prior = "毕自严"
+    _scene(f"宣{prior}")
+    assert METHOD_XUANRU in _enter_methods(db, night_id, prior)
+    _scene(f"越次点名{prior}")
+    prior_methods = _enter_methods(db, night_id, prior)
+    assert METHOD_XUANRU in prior_methods
+    assert METHOD_YUECI in prior_methods
+
     db.conn.commit()
     copy_path = Path(tmp_path) / "reopen.db"
     shutil.copyfile(db.path, copy_path)
@@ -202,5 +226,9 @@ def test_yueci_explicit_lands_method_and_survives_reopen(game, monkeypatch, tmp_
     try:
         assert METHOD_YUECI in _enter_methods(restored, night_id, capital)
         assert METHOD_YUECI in _unsettled_entry_tags(restored, remote)
+        assert METHOD_YUECI in _enter_methods(restored, night_id, standing)
+        restored_prior = _enter_methods(restored, night_id, prior)
+        assert METHOD_XUANRU in restored_prior
+        assert METHOD_YUECI in restored_prior
     finally:
         restored.conn.close()

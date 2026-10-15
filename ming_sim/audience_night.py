@@ -1835,14 +1835,25 @@ def ensure_summon_enter(
     name = str(person_name or "").strip()
     if not name:
         raise AudienceNightError("宣召人名不能为空", code="empty_person")
-    # #657：带 origin_ref 的召见消费账即使人物已在场也必须落/复用独立 origin TAG_ENTER，
-    # 不得 ensure_summon_enter 早退 None 当消费（S6）。
-    if not origin_ref and name in present_names_at(db, night_id):
-        return None
+    method = _validate_summon_method(method, default=METHOD_XUANRU)
+    origin = str(origin_ref or "").strip()
+    # #657：带 origin_ref 的召见消费账即使人物已在场也必须落/复用独立 origin TAG_ENTER。
+    if origin:
+        for entry in list_ledger(db, night_id):
+            if (
+                str(entry.get("origin_ref") or "") == origin
+                and TAG_ENTER in (entry.get("tags") or [])
+            ):
+                return int(entry["id"])
+    else:
+        # 已在场只免重复「入殿」presence ensure；明确越次召法仍须留账
+        # （#1913 条款3 / ADR 0037：怎么召的 ≠ 是否还需入殿）。
+        if method == METHOD_XUANRU and name in present_names_at(db, night_id):
+            return None
     return summon_enter(
         db, night_id, name, method=method,
         origin_chat_turn_id=origin_chat_turn_id,
-        origin_ref=origin_ref,
+        origin_ref=origin,
         commit=commit,
     )
 
