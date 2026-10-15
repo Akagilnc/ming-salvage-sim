@@ -790,42 +790,57 @@ def test_c1_minister_promise_origin_not_public_visible(game, monkeypatch):
     birth_ref = db.affairs.origin_ref(priv2_id)
     assert origin_visible_to(db, birth_ref, later) is False
     assert origin_visible_to(db, birth_ref, promisor) is True
-    # 个人投影结构化字段：路径在、title 空；知情人仍可读原名。
-    from ming_sim.materials import _character_affair_lines, _opening_affair_lines
-
-    later_knowledge = build_character_knowledge(db, state, later)
-    later_lines = _character_affair_lines(db, state, later, later_knowledge)
-    later_by_key = {key: title for key, title, *_ in later_lines}
+    # 真实 prepare_scene_materials 交付边界：写手收到的 matter title + opening handling title。
     key = f"affair-{priv2_id}"
-    assert key in later_by_key
-    assert later_by_key[key] == ""
-    assert later_by_key[key] != priv2_name
-    later_opening = _opening_affair_lines(db, later, later_lines)
-    assert all(title != priv2_name for title, _situation in later_opening)
-    # 路径进入真实场景材料树（不锁 opening 自由正文）。
+    person_delivered: dict[str, dict[str, str]] = {}
+    handling_delivered: dict[str, list[tuple[str, str]]] = {}
+    real_wop = materials_mod._write_one_present_person
+    real_oal = materials_mod._opening_affair_lines
+
+    def spy_wop(tmp, db_, state_, character, knowledge, matter_lines):
+        n = str(getattr(character, "name", "") or "")
+        person_delivered[n] = {ln[0]: ln[1] for ln in matter_lines}
+        return real_wop(tmp, db_, state_, character, knowledge, matter_lines)
+
+    def spy_oal(db_, character_name, matter_lines):
+        rows = real_oal(db_, character_name, matter_lines)
+        handling_delivered[character_name] = [(t, s) for t, s in rows]
+        return rows
+
+    monkeypatch.setattr(materials_mod, "_write_one_present_person", spy_wop)
+    monkeypatch.setattr(materials_mod, "_opening_affair_lines", spy_oal)
+
     close_night(db, state, content=content)
     night_later = open_night(db, state, location="乾清宫", time_of_day="昼")
     ensure_summon_enter(db, int(night_later["id"]), later)
+    person_delivered.clear()
+    handling_delivered.clear()
     prepared_later = prepare_scene_materials(db, state)
     try:
+        assert later in person_delivered
+        assert key in person_delivered[later]
+        assert person_delivered[later][key] == ""
+        assert person_delivered[later][key] != priv2_name
+        assert all(t != priv2_name for t, _s in handling_delivered.get(later) or [])
         assert any(
             part.startswith(f"affair-{priv2_id}-") or part == f"affair-{priv2_id}"
             for path in list_materials(prepared_later.root)
             for part in str(path).split("/")
         )
-        scene_lines = _character_affair_lines(
-            db, state, later, build_character_knowledge(db, state, later),
-        )
-        scene_titles = {k: t for k, t, *_ in scene_lines}
-        assert scene_titles.get(key) == ""
-        assert priv2_name not in scene_titles.values()
     finally:
         release_material_tree(prepared_later.root)
-    promisor_lines = _character_affair_lines(
-        db, state, promisor, build_character_knowledge(db, state, promisor),
-    )
-    promisor_titles = {k: t for k, t, *_ in promisor_lines}
-    assert promisor_titles.get(key) == priv2_name
+
+    # 知情人同入口：写手实收原名。
+    close_night(db, state, content=content)
+    night_p = open_night(db, state, location="乾清宫", time_of_day="昼")
+    ensure_summon_enter(db, int(night_p["id"]), promisor)
+    person_delivered.clear()
+    handling_delivered.clear()
+    prepared_p = prepare_scene_materials(db, state)
+    try:
+        assert person_delivered.get(promisor, {}).get(key) == priv2_name
+    finally:
+        release_material_tree(prepared_p.root)
 
 
 def test_c2_correction_ids_rejected_on_minister_promise(game):
