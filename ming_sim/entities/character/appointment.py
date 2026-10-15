@@ -18,6 +18,7 @@ from ming_sim.db import (
     normalize_office,
     resolve_office_type_preserving_title,
 )
+from ming_sim.office_rank import office_title_continues
 from ming_sim.exceptions import OfficeAppointmentRejection
 from ming_sim.models import GameState, is_vassal_prince
 from ming_sim.supervision import character_tenure
@@ -299,17 +300,12 @@ def apply_office_appointment(
         except OfficeAppointmentRejection as exc:
             return _office_appointment_failure(name, new_office, exc, source=source)
         # 同任所继续任职（改任别 / 复述现职子集）：声明职名常只带其中一缺，
-        # 未声明撤换的兼衔须保留（#1912 P1）。跨任所或声明职不在现职集合内
-        # ＝真正调任，整组替换且不得用旧任所覆盖已解析的新任所。
+        # 未声明撤换的兼衔须保留（#1912 P1）。身份判定唯一权威 office_title_continues
+        # + 已解析 seat；跨任所不得用旧任所覆盖新 seat。
         if cur_status == "active":
             old_norm = normalize_office(str(old_office or ""))
-            new_parts = {p for p in new_office.split(",") if p}
-            old_parts = {p for p in old_norm.split(",") if p}
             existing_seat = str(db.characters.office_region(name) or "").strip()
-            if (
-                new_parts and old_parts and new_parts.issubset(old_parts)
-                and seat == existing_seat
-            ):
+            if office_title_continues(old_norm, new_office) and seat == existing_seat:
                 new_office = old_norm
                 new_office_type = current_office_type or new_office_type
         if cur_status != "active":

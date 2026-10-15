@@ -37,6 +37,7 @@ from ming_sim.db import (
     normalize_office,
     resolve_office_type_preserving_title,
 )
+from ming_sim.office_rank import appointment_seat_continues, office_title_continues
 from ming_sim.applier import (
     Provenance,
     atomic,
@@ -410,21 +411,19 @@ def _appointment_intent_is_current_office_noop(
         return False
     canonical = _canonical_minister_key(content, clean_name, db)
     store = CharacterStore(conn)
-    row = store.row(canonical, fields="status, office")
+    row = store.row(canonical, fields="status, office, office_type")
     if row is None or str(row["status"] or "") != "active":
         return False
     current = normalize_office(str(row["office"] or ""))
-    if not current:
+    if not office_title_continues(current, desired):
         return False
-    desired_parts = {p for p in desired.split(",") if p}
-    current_parts = {p for p in current.split(",") if p}
-    if not desired_parts or not desired_parts.issubset(current_parts):
+    if not appointment_seat_continues(
+        current_seat=store.office_region(canonical),
+        desired_seat=region_id,
+        office_type=row["office_type"],
+        local_office_types=GameDB._LOCAL_ARCHIVE_OFFICE_TYPES,
+    ):
         return False
-    desired_seat = str(region_id or "").strip()
-    if desired_seat:
-        current_seat = str(store.office_region(canonical) or "").strip()
-        if desired_seat != current_seat:
-            return False
     if tenure is None:
         return True
     from ming_sim.supervision import character_tenure
