@@ -2,6 +2,9 @@
 
 Monthly progress lives on textual_facts with subject_kind='yamen' (ADR 0156).
 Monthly fee is a fiscal_config fixed expense keyed from this row.
+
+No lifecycle status: presence on the ledger is the only existence signal.
+Withdraw removes the row (undo); this ticket has no suspend/dissolve protocol.
 """
 
 from __future__ import annotations
@@ -23,18 +26,14 @@ CREATE TABLE IF NOT EXISTS yamens (
     monthly_fee INTEGER NOT NULL DEFAULT 0,
     fee_account TEXT NOT NULL DEFAULT '国库',
     fiscal_key TEXT NOT NULL DEFAULT '',
-    status TEXT NOT NULL DEFAULT 'active'
-        CHECK(status = 'active'),
     origin_ref TEXT NOT NULL DEFAULT '',
     created_turn INTEGER NOT NULL,
     created_year INTEGER NOT NULL,
     created_period INTEGER NOT NULL,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
-CREATE INDEX IF NOT EXISTS idx_yamens_status ON yamens(status, id);
-CREATE INDEX IF NOT EXISTS idx_yamens_chief ON yamens(chief_name, status, id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_yamens_active_name
-    ON yamens(name) WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS idx_yamens_chief ON yamens(chief_name, id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_yamens_name ON yamens(name);
 """
 
 
@@ -48,11 +47,16 @@ class Yamen:
     monthly_fee: int
     fee_account: str
     fiscal_key: str
-    status: str
     origin_ref: str
     created_turn: int
     created_year: int
     created_period: int
+
+
+_YAMEN_COLS = (
+    "id, name, chief_name, monthly_fee, fee_account, fiscal_key, "
+    "origin_ref, created_turn, created_year, created_period"
+)
 
 
 class YamenStore(RowStore):
@@ -68,18 +72,15 @@ class YamenStore(RowStore):
 
     def get(self, yamen_id: int) -> Optional[Yamen]:
         row = self._conn.execute(
-            "SELECT id, name, chief_name, monthly_fee, fee_account, fiscal_key, "
-            "status, origin_ref, created_turn, created_year, created_period "
-            "FROM yamens WHERE id=?",
+            f"SELECT {_YAMEN_COLS} FROM yamens WHERE id=?",
             (int(yamen_id),),
         ).fetchone()
         return _row_to_yamen(row) if row is not None else None
 
     def list_active(self) -> tuple[Yamen, ...]:
+        """All on-ledger yamens (existence = active; no status column)."""
         rows = self._conn.execute(
-            "SELECT id, name, chief_name, monthly_fee, fee_account, fiscal_key, "
-            "status, origin_ref, created_turn, created_year, created_period "
-            "FROM yamens WHERE status='active' ORDER BY id ASC",
+            f"SELECT {_YAMEN_COLS} FROM yamens ORDER BY id ASC",
         ).fetchall()
         return tuple(_row_to_yamen(row) for row in rows)
 
@@ -88,9 +89,7 @@ class YamenStore(RowStore):
         if not name:
             return ()
         rows = self._conn.execute(
-            "SELECT id, name, chief_name, monthly_fee, fee_account, fiscal_key, "
-            "status, origin_ref, created_turn, created_year, created_period "
-            "FROM yamens WHERE status='active' AND chief_name=? ORDER BY id ASC",
+            f"SELECT {_YAMEN_COLS} FROM yamens WHERE chief_name=? ORDER BY id ASC",
             (name,),
         ).fetchall()
         return tuple(_row_to_yamen(row) for row in rows)
@@ -127,7 +126,7 @@ class YamenStore(RowStore):
         if not (SQLITE_INT_MIN <= fee <= SQLITE_INT_MAX):
             raise DeclarationDataError("衙门月费超出 SQLite 64-bit 范围")
         existing = self._conn.execute(
-            "SELECT id FROM yamens WHERE status='active' AND name=?",
+            "SELECT id FROM yamens WHERE name=?",
             (yamen_name,),
         ).fetchone()
         if existing is not None:
@@ -135,9 +134,9 @@ class YamenStore(RowStore):
         owns = connection_owns_transaction(self._conn)
         cur = self._conn.execute(
             "INSERT INTO yamens "
-            "(name, chief_name, monthly_fee, fee_account, fiscal_key, status, "
+            "(name, chief_name, monthly_fee, fee_account, fiscal_key, "
             " origin_ref, created_turn, created_year, created_period) "
-            "VALUES (?, ?, ?, ?, '', 'active', ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, '', ?, ?, ?, ?)",
             (
                 yamen_name,
                 chief,
@@ -177,7 +176,6 @@ def _row_to_yamen(row: Any) -> Yamen:
         monthly_fee=int(row["monthly_fee"] or 0),
         fee_account=str(row["fee_account"] or "国库"),
         fiscal_key=str(row["fiscal_key"] or ""),
-        status=str(row["status"] or "active"),
         origin_ref=str(row["origin_ref"] or ""),
         created_turn=int(row["created_turn"] or 0),
         created_year=int(row["created_year"] or 0),

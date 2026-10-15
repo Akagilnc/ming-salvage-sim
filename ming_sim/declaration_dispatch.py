@@ -662,7 +662,13 @@ def discard_staged_declaration(db: Any, decree_ref: str) -> int:
 def bind_decree_effect_sources(
     db: Any, decree_ref: str, declaration: Mapping[str, object], visible_refs: Mapping[str, object],
 ) -> Tuple[Mapping[str, object], Mapping[str, object]]:
-    """Bind only this draft's structured effect identity; retain all prose and gates."""
+    """Bind this draft's structured identity slots to the formal dossier.
+
+    Walks the whole declaration: origin_ref / dossier_id / target_dossier_id
+    (and aliases) equal to the pending-action ref become dossier:<id>. Other
+    keys and prose pass through untouched. Covers effects, textual_facts,
+    yamen_creates, and any future section that carries the same slots.
+    """
     from ming_sim.decree_forecast import dossier_for_decree_ref
     from ming_sim.simulation import ITEM_FIELD_ALIASES
 
@@ -689,9 +695,7 @@ def bind_decree_effect_sources(
             return [bind(item) for item in value]
         return value
 
-    bound = dict(declaration)
-    if "effects" in bound:
-        bound["effects"] = bind(bound["effects"])
+    bound = bind(dict(declaration))
     refs = dict(visible_refs)
     refs["dossiers"] = list(dict.fromkeys([*refs.get("dossiers", ()), dossier_id]))
     return bound, refs
@@ -2916,17 +2920,6 @@ def _dispatch_yamen_creates(
             )
             continue
         try:
-            from ming_sim.strict_types import SQLITE_INT_MAX, SQLITE_INT_MIN, strict_int
-
-            fee = strict_int(fee_raw)
-            if fee < 0:
-                raise ValueError("monthly_fee 不得为负")
-            if not (SQLITE_INT_MIN <= fee <= SQLITE_INT_MAX):
-                raise ValueError("monthly_fee 超出 SQLite 64-bit 范围")
-        except (TypeError, ValueError) as exc:
-            _reject(rejected, item, f"月费非法：{exc}", "invalid_shape", source)
-            continue
-        try:
             chief = assert_chief_exists(db, chief_raw)
         except DeclarationReferenceError as exc:
             _reject(rejected, item, str(exc), "hallucinated_id", source)
@@ -2942,10 +2935,11 @@ def _dispatch_yamen_creates(
             continue
         try:
             with item_savepoint_scope(db, f"yamen_create_{int(state.turn)}_{id(item)}"):
+                # 月费严格整数/非负/存储范围：唯一权威＝YamenStore.create
                 yamen = db.yamens.create(
                     name=name,
                     chief_name=chief,
-                    monthly_fee=fee,
+                    monthly_fee=fee_raw,
                     fee_account=account,
                     year=int(state.year),
                     period=int(state.period),
@@ -2953,6 +2947,7 @@ def _dispatch_yamen_creates(
                     origin_ref=origin_ref,
                 )
                 fiscal_key = ""
+                fee = int(yamen.monthly_fee)
                 if fee > 0:
                     created_key = db.create_fiscal_item(
                         f"衙门月费{int(yamen.id)}",

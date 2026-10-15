@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-
 from ming_sim.applier import Provenance, atomic
 from ming_sim.audience_night import open_night
 from ming_sim.audience_translation import apply_audience_round_translation
@@ -13,7 +11,7 @@ from ming_sim.flows import apply_fixed_period_flows
 from ming_sim.knowledge import origin_visible_to
 from ming_sim.materials import prepare_world_materials, write_identity_materials
 from ming_sim.month_chain import prepare_gazette_author_materials
-from ming_sim.month_translate import dispatch_month_segment
+from ming_sim.month_translate import _visible_effect_refs, dispatch_month_segment
 from tests.conftest import stub_month_translate
 
 
@@ -111,18 +109,23 @@ def test_monthly_fee_by_origin_and_month_segment_progress(game, monkeypatch):
 
     captured: dict = {}
 
+    # 结构化效果回指（与提示词排版无关）：月段可见引用须含在职衙门身份
+    effect_refs = _visible_effect_refs(db, int(state.turn))
+    assert any(
+        int(row["id"]) == int(yamen_id) and row["name"] == YAMEN_NAME
+        for row in effect_refs.get("yamens") or ()
+    ), "月段结构化引用须含在职衙门身份"
+
     def _month_runner(request, _config):
         captured["request"] = request
-        # 只从真实转译输入里取在职衙门 id，禁止闭包预制外层 yamen_id
-        yamens = _yamens_from_month_request(request)
-        assert yamens, "月段转译输入须含在职衙门身份 grounding"
-        assert any(int(row["id"]) == int(yamen_id) and row["name"] == YAMEN_NAME for row in yamens)
-        subject_id = str(next(row["id"] for row in yamens if int(row["id"]) == int(yamen_id)))
+        # 主体身份取自账本在职衙门，不解析 target_grounding 排版
+        active = [y for y in db.yamens.list_active() if int(y.id) == int(yamen_id)]
+        assert active and active[0].name == YAMEN_NAME
         return {
             "textual_facts": [
                 {
                     "subject_kind": "yamen",
-                    "subject_id": subject_id,
+                    "subject_id": str(int(active[0].id)),
                     "body": PROGRESS_BODY,
                 }
             ]
@@ -248,20 +251,6 @@ def test_chief_sees_yamen_handler_sees_matter_not_yamen(game, tmp_path):
     assert not _paths_for(HANDLER, "衙门"), "经手人不应有无关衙门路径"
 
 
-def _yamens_from_month_request(request) -> list[dict]:
-    """从月段转译请求的效果回指块解析在职衙门身份。
-
-    用 JSONDecoder.raw_decode，不依赖单行排版；只认结构化数组，不锁提示词措辞。
-    """
-    grounding = str(getattr(request, "target_grounding", "") or "")
-    marker = "yamens: "
-    start = grounding.find(marker)
-    assert start >= 0, "月段输入缺少 yamens 效果回指块"
-    payload, _ = json.JSONDecoder().raw_decode(grounding[start + len(marker):].lstrip())
-    assert isinstance(payload, list)
-    return [dict(item) for item in payload if isinstance(item, dict)]
-
-
 def test_reload_preserves_yamen_chief_fee_and_progress(game, content, monkeypatch):
     """存档重开后只读账本：衙门、主官、月费与历月下落完整接续。"""
     db, state, _ = game
@@ -269,13 +258,13 @@ def test_reload_preserves_yamen_chief_fee_and_progress(game, content, monkeypatc
     yamen_id = int(result.yamen_creates.applied[0]["id"])
 
     def _month_runner(request, _config):
-        yamens = _yamens_from_month_request(request)
-        subject_id = str(next(row["id"] for row in yamens if int(row["id"]) == int(yamen_id)))
+        active = [y for y in db.yamens.list_active() if int(y.id) == int(yamen_id)]
+        assert active
         return {
             "textual_facts": [
                 {
                     "subject_kind": "yamen",
-                    "subject_id": subject_id,
+                    "subject_id": str(int(active[0].id)),
                     "body": "首月清查完成",
                 }
             ]

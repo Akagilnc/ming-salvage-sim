@@ -755,7 +755,6 @@ def _yamen_material_text(db: Any, yamen: Any, *, include_fact: Any = None) -> st
         f"名称：{yamen.name}",
         f"主官：{yamen.chief_name or '（未指定）'}",
         f"月费：{format_money(int(yamen.monthly_fee))}（{yamen.fee_account}）",
-        f"状态：{yamen.status}",
         "月度下落：",
         _textual_facts_text(
             db.textual_facts,
