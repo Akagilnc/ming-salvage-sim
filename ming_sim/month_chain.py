@@ -570,18 +570,20 @@ def continue_decree_after_answers(
             consume()
         return
 
-    # #1917／#1847：请旨未决故未颁时，续推不得走平行颁布。
-    # · 含 stalled：并入暂存后走唯一 stalled 试消费；落成则待裁，未落成则效果仍暂存，
-    #   问清后由 _settle_edicts 颁布消费（坏 stalled 不牵连合法项）。
-    # · 本答将清空请旨，或效果依赖本旨授权：并入暂存，问清后唯一颁布关消费。
-    # · 仍有未答请旨且效果不依赖本旨授权：活口分派，逐问落账。
+    # #1917／#1847：请旨未决故未颁时，不平行颁布。
+    # · stalled 或本旨源效果：整份声明另起暂存行（既有 stage_declaration），与答复消费同事务；
+    #   stalled 再走唯一试消费并 alongside 承接终局／披露；未落成则保留暂存，问清后 _settle_edicts。
+    # · 不依赖本旨授权：活口逐问落账。
     dossier_id = int(dossier["id"])
     held_pre_promulgation = (
         str(dossier.get("status") or "") == "proposed"
         and not db.dossiers.authorizes_effects(dossier_id)
     )
     if held_pre_promulgation:
-        from ming_sim.declaration_dispatch import bind_decree_effect_sources
+        from ming_sim.declaration_dispatch import (
+            bind_decree_effect_sources,
+            stage_declaration,
+        )
         from ming_sim.month_translate import prepare_month_segment
 
         prepared_pair = prepared if prepared is not None else prepare_month_segment(
@@ -595,20 +597,26 @@ def continue_decree_after_answers(
         needs_auth = _declaration_needs_decree_auth(bound, decree_ref, dossier_id)
         stalled_peek = _declaration_targets_stalled(bound, dossier_id)
         if stalled_peek or needs_auth:
+            # 同事务：暂存整份续推声明 + 收口请旨／产品，失败则全回滚，重试不双写。
             with atomic(db):
-                _merge_continuation_into_staged(
+                stage_declaration(
                     db, decree_ref=decree_ref, turn=turn,
                     declaration=declaration, visible_refs=refs,
                 )
-            # stalled 试消费自带事务：落成则 settled；未落成回滚试消费、保留暂存。
+                consume()
             if stalled_peek:
+                def _alongside_stalled(_ref: str, result: Any) -> None:
+                    candidate = _ending_from_dispatch_result(result)
+                    if candidate is not None:
+                        chain["declaration_outcome"] = candidate
+                    _collect_disclosures_from_result(chain, result)
+                    _save_chain(db, turn, chain, source=source)
+
                 _apply_stalled_deliberation_from_declaration(
                     db, state, dossier_id=dossier_id, decree_ref=decree_ref,
+                    alongside=_alongside_stalled,
                 )
-            with atomic(db):
-                consume()
             return
-        # 不依赖本旨授权的续推（如 affair 源）：活口逐问落账（#1847）。
         dispatch_month_segment(
             db, state, segment=prefix,
             decree_payload=payload,
@@ -999,65 +1007,15 @@ def _guard_month_call(
     raise AssertionError("month call abort must raise")
 
 
-def _merge_continuation_into_staged(
-    db: Any, *, decree_ref: str, turn: int,
-    declaration: Mapping[str, object],
-    visible_refs: Mapping[str, object],
-) -> None:
-    """将请旨续推效果并入该旨最新暂存行，不另插行、不触 verdict／questions／forecast。"""
-    import json as _json
-
-    ref = str(decree_ref or "").strip()
-    staged = db.staged_declarations.staged_for(ref)
-    if not staged:
-        from ming_sim.declaration_dispatch import stage_declaration
-        stage_declaration(
-            db, decree_ref=ref, turn=int(turn),
-            declaration=declaration, visible_refs=visible_refs,
-        )
-        return
-    latest = staged[-1]
-    base = dict(latest.declaration or {}) if isinstance(latest.declaration, Mapping) else {}
-    incoming = dict(declaration or {})
-    base_effects = (
-        dict(base["effects"]) if isinstance(base.get("effects"), Mapping) else {}
-    )
-    inc_effects = (
-        dict(incoming["effects"]) if isinstance(incoming.get("effects"), Mapping) else {}
-    )
-    merged_effects = dict(base_effects)
-    for key, value in inc_effects.items():
-        prior = merged_effects.get(key)
-        if isinstance(value, list) and isinstance(prior, list):
-            merged_effects[key] = list(prior) + list(value)
-        else:
-            merged_effects[key] = value
-    merged = dict(base)
-    if merged_effects:
-        merged["effects"] = merged_effects
-    for key, value in incoming.items():
-        if key != "effects" and key not in merged:
-            merged[key] = value
-    refs = dict(latest.visible_refs or {})
-    for key, value in dict(visible_refs or {}).items():
-        if isinstance(value, list):
-            refs[key] = list(dict.fromkeys([*(refs.get(key) or []), *value]))
-        else:
-            refs[key] = value
-    db.conn.execute(
-        "UPDATE staged_declarations SET declaration_json=?, visible_refs_json=? "
-        "WHERE id=? AND status='staged'",
-        (_json.dumps(merged, ensure_ascii=False),
-         _json.dumps(refs, ensure_ascii=False),
-         int(latest.id)),
-    )
-
-
 def _declaration_needs_decree_auth(
     bound: Mapping[str, object], decree_ref: str, dossier_id: int,
 ) -> bool:
-    """续推效果是否回指本旨／本案卷，因而必须等颁布关授权。"""
+    """续推效果是否回指本旨／本案卷，因而必须等颁布关授权。
+
+    认 ITEM_FIELD_ALIASES 与 effects 对象／对象数组两种信封（与月段转译一致）。
+    """
     from ming_sim.declaration_dispatch import held_dossier_decree_ref
+    from ming_sim.simulation import ITEM_FIELD_ALIASES
 
     targets = {
         str(decree_ref),
@@ -1065,14 +1023,16 @@ def _declaration_needs_decree_auth(
         f"dossier:{int(dossier_id)}",
         str(int(dossier_id)),
     }
-    effects = bound.get("effects")
-    if not isinstance(effects, Mapping):
-        return False
+    auth_fields = {
+        key for key, canon in ITEM_FIELD_ALIASES.items()
+        if canon in {"origin_ref", "dossier_id", "target_dossier_id"}
+    } | {"origin_ref", "dossier_id", "target_dossier_id"}
 
     def walk(value: object) -> bool:
         if isinstance(value, Mapping):
             for key, item in value.items():
-                if key in {"origin_ref", "dossier_id", "target_dossier_id"}:
+                field = ITEM_FIELD_ALIASES.get(str(key).strip(), str(key).strip())
+                if field in {"origin_ref", "dossier_id", "target_dossier_id"} or key in auth_fields:
                     if str(item) in targets or item == int(dossier_id):
                         return True
                 if walk(item):
@@ -1081,12 +1041,13 @@ def _declaration_needs_decree_auth(
             return any(walk(item) for item in value)
         return False
 
-    return walk(effects)
+    return walk(bound)
 
 
 def _declaration_targets_stalled(bound: Mapping[str, object], dossier_id: int) -> bool:
     """Peek: bound declaration names stalled for this dossier (any shape)."""
     from ming_sim.strict_types import _parse_sqlite_id
+    from ming_sim.simulation import ITEM_FIELD_ALIASES
 
     effects = bound.get("effects")
     envelopes: list = []
@@ -1101,14 +1062,26 @@ def _declaration_targets_stalled(bound: Mapping[str, object], dossier_id: int) -
         for item in raw:
             if not isinstance(item, Mapping):
                 continue
+            raw_id = item.get("dossier_id")
+            if raw_id is None:
+                for key, val in item.items():
+                    if ITEM_FIELD_ALIASES.get(str(key).strip(), str(key).strip()) == "dossier_id":
+                        raw_id = val
+                        break
             try:
-                item_id = _parse_sqlite_id(item.get("dossier_id"))
+                item_id = _parse_sqlite_id(raw_id)
             except (TypeError, ValueError):
                 # 坏编号留给正式写口逐项拒收；窥探不得 OverflowError 中止整月。
                 continue
             if item_id != int(dossier_id):
                 continue
-            if str(item.get("outcome") or "").strip() == "stalled":
+            outcome = item.get("outcome")
+            if outcome is None:
+                for key, val in item.items():
+                    if str(key).strip() in {"outcome", "结果"}:
+                        outcome = val
+                        break
+            if str(outcome or "").strip() == "stalled":
                 return True
     return False
 
