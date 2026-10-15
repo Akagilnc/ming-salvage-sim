@@ -906,11 +906,18 @@ def _commission_appointment_fields(
                 category="invalid_enum", source=source,
             )
         payload["mode"] = mode
-    tenure = str(
-        appointment.get("appointment_tenure") or appointment.get("任别") or ""
-    ).strip()
-    if tenure:
-        payload["appointment_tenure"] = tenure
+    if any(key in appointment for key in ("任别", "appointment_tenure")):
+        from ming_sim.appointment_tenure import appointment_tenure_from
+        from ming_sim.exceptions import DeclarationDataError
+
+        try:
+            tenure = appointment_tenure_from(dict(appointment))
+        except DeclarationDataError as exc:
+            return None, RejectedItem(
+                item=dict(appointment), reason=str(exc),
+                category="invalid_enum", source=source,
+            )
+        payload["任别"] = tenure
     # Typed 任所原样透传；不从官名推断（地方/督抚/边镇任命必填；中央可空）。
     seat = str(
         appointment.get("region_id") or appointment.get("任所") or ""
@@ -918,6 +925,217 @@ def _commission_appointment_fields(
     if seat:
         payload["region_id"] = seat
     return payload, None
+
+
+_AUTHORITY_EXCLUSIVE_KEYS = (
+    "grant", "appointment", "punishment", "pacification", "assignment",
+    "secret_order", "secret_order_progress", "secret_order_update",
+    "secret_order_review", "strategy_selection", "revoke",
+)
+
+
+def _stage_authorization_commission(
+    db: Any,
+    state: Any,
+    item: Mapping[str, object],
+    authorization: object,
+    *,
+    minister_name: str,
+    source: Provenance,
+    night_id: int,
+    source_chat_turn_id: int,
+    rejected: List[RejectedItem],
+) -> Optional[Dict[str, Any]]:
+    """#1912：召对授出权项 → authorization 旨意暂存。"""
+    if not isinstance(authorization, Mapping) or any(
+        item.get(key) for key in _AUTHORITY_EXCLUSIVE_KEYS
+    ) or item.get("revoke_authority") is not None:
+        _reject(rejected, item, "授权交办载荷须为独立对象", "invalid_shape", source)
+        return None
+    body = _declared_prose(item.get("text"))
+    if body is None:
+        _reject(rejected, item, "授权交办缺正文", "invalid_shape", source)
+        return None
+    from ming_sim.authority_privileges import AUTHORITY_PRIVILEGE_SET
+    from ming_sim.draft_intent import resolve_directive_mode
+    from ming_sim.session import _canonical_minister_key
+
+    holder_raw = str(
+        authorization.get("name")
+        or authorization.get("holder_id")
+        or authorization.get("assignee")
+        or ""
+    ).strip()
+    if not holder_raw:
+        _reject(rejected, item, "授权交办缺授予对象", "invalid_shape", source)
+        return None
+    holder = _canonical_minister_key(db.content, holder_raw, db)
+    try:
+        _assert_characters_exist(db, [holder])
+    except KeyError as exc:
+        _reject(rejected, item, str(exc), "hallucinated_id", source)
+        return None
+    privilege = str(authorization.get("privilege") or "").strip()
+    if privilege not in AUTHORITY_PRIVILEGE_SET:
+        _reject(rejected, item, f"授权权项非法：{privilege}", "invalid_enum", source)
+        return None
+    target_kind = str(authorization.get("target_kind") or "").strip()
+    target_id = str(authorization.get("target_id") or "").strip()
+    scope = str(authorization.get("scope") or "").strip()
+    if not scope:
+        if target_kind and target_id:
+            scope = f"{target_kind}:{target_id}"
+        else:
+            scope = f"character:{holder}"
+    kind, separator, scoped = scope.partition(":")
+    if not separator or not kind.strip() or not scoped.strip():
+        _reject(rejected, item, "授权交办事域非法", "invalid_shape", source)
+        return None
+    scope = f"{kind.strip()}:{scoped.strip()}"
+    mode = resolve_directive_mode(
+        extracted=authorization.get("mode", item.get("mode")),
+    )
+    payload: Dict[str, Any] = {
+        "text": body,
+        "dossier_action_type": "authorization",
+        "privilege": privilege,
+        "scope": scope,
+        "target_kind": kind.strip(),
+        "target_id": scoped.strip(),
+        "name": holder,
+        "holder_id": holder,
+        "assignee_id": holder,
+        "mode": mode,
+    }
+    if not _attach_commission_affair(
+        db, item, payload, rejected=rejected, source=source,
+    ):
+        return None
+    actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
+    row_id = db.stage_pending_action(
+        int(state.turn), "directive", "拟旨", actor, payload,
+        night_id=int(night_id),
+        source_chat_turn_id=source_chat_turn_id,
+    )
+    return {"id": row_id, "payload": payload, "kind": "directive"}
+
+
+def _stage_revoke_authority_commission(
+    db: Any,
+    state: Any,
+    item: Mapping[str, object],
+    revoke_authority: object,
+    *,
+    minister_name: str,
+    source: Provenance,
+    night_id: int,
+    source_chat_turn_id: int,
+    rejected: List[RejectedItem],
+) -> Optional[Dict[str, Any]]:
+    """#1912：召对收回权项 → revoke_authority 旨意暂存。"""
+    if not isinstance(revoke_authority, Mapping) or any(
+        item.get(key) for key in _AUTHORITY_EXCLUSIVE_KEYS
+    ) or item.get("authorization") is not None:
+        _reject(rejected, item, "收权交办载荷须为独立对象", "invalid_shape", source)
+        return None
+    body = _declared_prose(item.get("text"))
+    if body is None:
+        _reject(rejected, item, "收权交办缺正文", "invalid_shape", source)
+        return None
+    from ming_sim.authority_privileges import AUTHORITY_PRIVILEGE_SET
+    from ming_sim.draft_intent import resolve_directive_mode
+    from ming_sim.session import _canonical_minister_key
+    from ming_sim.strict_types import strict_int
+
+    holder_raw = str(
+        revoke_authority.get("name")
+        or revoke_authority.get("holder_id")
+        or revoke_authority.get("target_id")
+        or ""
+    ).strip()
+    privilege = str(revoke_authority.get("privilege") or "").strip()
+    raw_aid = revoke_authority.get("authority_id")
+    authority_id = 0
+    if raw_aid not in (None, ""):
+        try:
+            authority_id = strict_int(raw_aid, accept_numeric_strings=True)
+        except (TypeError, ValueError) as exc:
+            _reject(rejected, item, str(exc), "invalid_shape", source)
+            return None
+        if authority_id <= 0:
+            _reject(rejected, item, "收权授权编号非法", "invalid_shape", source)
+            return None
+    holder = ""
+    if holder_raw:
+        holder = _canonical_minister_key(db.content, holder_raw, db)
+        try:
+            _assert_characters_exist(db, [holder])
+        except KeyError as exc:
+            _reject(rejected, item, str(exc), "hallucinated_id", source)
+            return None
+    if authority_id <= 0:
+        if not holder or privilege not in AUTHORITY_PRIVILEGE_SET:
+            _reject(
+                rejected, item, "收权须有授权编号，或持有人+合法权项",
+                "invalid_shape", source,
+            )
+            return None
+        matches = [
+            row for row in db.characters.list_active_authorities(
+                int(state.turn), holder_id=holder,
+            )
+            if str(row.get("privilege") or "") == privilege
+        ]
+        if not matches:
+            _reject(rejected, item, "收权目标不在持", "invalid_state", source)
+            return None
+        if len(matches) > 1:
+            _reject(rejected, item, "收权目标不唯一", "invalid_state", source)
+            return None
+        authority_id = int(matches[0]["id"])
+    else:
+        record = db.characters.get_authority(authority_id)
+        if record is None:
+            _reject(rejected, item, "收权授权编号不存在", "missing_ref", source)
+            return None
+        if holder and str(record.get("holder_id") or "") != holder:
+            _reject(rejected, item, "收权对象与授权持有人不符", "invalid_state", source)
+            return None
+        if not holder:
+            holder = str(record.get("holder_id") or "").strip()
+        if privilege and privilege != str(record.get("privilege") or ""):
+            _reject(rejected, item, "收权权项与档案不符", "invalid_state", source)
+            return None
+        if bool(record.get("revoked")):
+            _reject(rejected, item, "收权目标已不在持", "invalid_state", source)
+            return None
+    mode = resolve_directive_mode(
+        extracted=revoke_authority.get("mode", item.get("mode")),
+    )
+    payload: Dict[str, Any] = {
+        "text": body,
+        "dossier_action_type": "revoke_authority",
+        "authority_id": int(authority_id),
+        "mode": mode,
+    }
+    if holder:
+        payload["name"] = holder
+        payload["holder_id"] = holder
+        payload["target_kind"] = "character"
+        payload["target_id"] = holder
+    if privilege in AUTHORITY_PRIVILEGE_SET:
+        payload["privilege"] = privilege
+    if not _attach_commission_affair(
+        db, item, payload, rejected=rejected, source=source,
+    ):
+        return None
+    actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
+    row_id = db.stage_pending_action(
+        int(state.turn), "directive", "拟旨", actor, payload,
+        night_id=int(night_id),
+        source_chat_turn_id=source_chat_turn_id,
+    )
+    return {"id": row_id, "payload": payload, "kind": "directive"}
 
 
 def _assert_commission_grant_target_exists(
@@ -1799,6 +2017,32 @@ def _dispatch_commission_items(
             applied.append({"id": row_id, "kind": "directive"})
             continue
 
+        authorization = item.get("authorization")
+        if authorization is not None:
+            staged = _stage_authorization_commission(
+                db, state, item, authorization,
+                minister_name=minister_name, source=source,
+                night_id=int(night_id),
+                source_chat_turn_id=source_chat_turn_id,
+                rejected=rejected,
+            )
+            if staged is not None:
+                applied.append(staged)
+            continue
+
+        revoke_authority = item.get("revoke_authority")
+        if revoke_authority is not None:
+            staged = _stage_revoke_authority_commission(
+                db, state, item, revoke_authority,
+                minister_name=minister_name, source=source,
+                night_id=int(night_id),
+                source_chat_turn_id=source_chat_turn_id,
+                rejected=rejected,
+            )
+            if staged is not None:
+                applied.append(staged)
+            continue
+
         grant_raw = item.get("grant") or {}
         if grant_raw and not isinstance(grant_raw, Mapping):
             _reject(rejected, item, "拨帑载荷须为对象", "invalid_shape", source)
@@ -1930,9 +2174,15 @@ def _dispatch_commission_items(
                 _reject(rejected, item, "同向任免候选不唯一", "invalid_state", source)
                 return None
             if hits:
+                tenure_mark = str(
+                    appointment_fields.get("任别")
+                    or appointment_fields.get("appointment_tenure")
+                    or ""
+                ).strip() or None
                 oid = _apply_existing_appointment_hit(
                     SimpleNamespace(db=db), hits[0],
                     extracted_mode=appointment_fields.get("mode"),
+                    tenure_mark=tenure_mark,
                     region_id=str(appointment_fields.get("region_id") or ""),
                     minister_name=minister_name,
                     annotate=True,

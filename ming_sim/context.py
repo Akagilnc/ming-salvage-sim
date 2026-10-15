@@ -184,6 +184,19 @@ _PRIVILEGE_QUALITATIVE = {
 }
 
 
+def appointment_tenure_context(character: Character, db: GameDB) -> str:
+    """本人官职任别（ADR 0064）；无现职或默认真除不另占一行。"""
+    office = str(getattr(character, "office", "") or "").strip()
+    if not office or office in {"白身", "待选"}:
+        return ""
+    from ming_sim.supervision import character_tenure
+
+    tenure = character_tenure(db, character.name)
+    if not tenure or tenure == "真除":
+        return ""
+    return f"【任别】{tenure}。"
+
+
 def held_authority_context(
     character: Character, db: GameDB, *, turn: Optional[int] = None,
 ) -> str:
@@ -236,6 +249,7 @@ def character_context_with_db(
     return (
         character_context(character)
         + "【通用特征】人物档料不足处，以其现职、经历与当下处境推知。"
+        + appointment_tenure_context(character, db)
         + faction_context_with_db(character, db)
         + held_authority_context(character, db, turn=turn)
         + relation_ledger_context(character, db)

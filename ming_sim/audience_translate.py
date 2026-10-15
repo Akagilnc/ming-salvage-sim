@@ -254,11 +254,15 @@ def build_c0_declaration_shape() -> str:
     from ming_sim.covert_progress import describe_covert_task_contract
     covert_contract_shape = describe_covert_task_contract()
     # 案卷关联的合法类型闭集同样只投影 constants 真源，禁手抄分叉。
+    from ming_sim.appointment_tenure import APPOINTMENT_TENURES
+    from ming_sim.authority_privileges import AUTHORITY_PRIVILEGES
     from ming_sim.constants import DOSSIER_LINK_TYPES, ECONOMY_ACCOUNTS
     from ming_sim.entities.character.transit import TRAVEL_SPEED_BY_TONE
     dossier_link_types = "|".join(sorted(DOSSIER_LINK_TYPES))
     account_hint = "|".join(ECONOMY_ACCOUNTS)
     travel_tone_hint = "|".join(TRAVEL_SPEED_BY_TONE)
+    tenure_hint = "|".join(sorted(APPOINTMENT_TENURES))
+    privilege_hint = "|".join(AUTHORITY_PRIVILEGES)
     effect_shape = "\n".join(
         f"    {line}" for line in json.dumps(
             {"event_id": "仅属某事件战果时填事件 id；未填即独立", **DECLARATION_EFFECT_FIELDS},
@@ -274,7 +278,19 @@ def build_c0_declaration_shape() -> str:
         '      "target_dossier_id": "御笔强推已有案卷 id（不与 grant/appointment 同填）",\n'
         '      "appointment": {\n'
         '        "name": "人名", "office": "官职", "appoint_action": "任命|罢免",\n'
-        '        "region_id": "任所 region id（地方/督抚/边镇任命必填；中央可空）"\n'
+        '        "region_id": "任所 region id（地方/督抚/边镇任命必填；中央可空）",\n'
+        f'        "任别": "{tenure_hint}"\n'
+        "      },\n"
+        '      "authorization": {\n'
+        '        "name": "授予对象人名",\n'
+        f'        "privilege": "{privilege_hint}",\n'
+        f'        "target_kind": "{target_kind_hint}（可空；空则事域为 character:授予对象）",\n'
+        '        "target_id": "事域 id（可空）"\n'
+        "      },\n"
+        '      "revoke_authority": {\n'
+        '        "name": "持有人",\n'
+        f'        "privilege": "{privilege_hint}",\n'
+        '        "authority_id": "在持授权 id（有则填；无则按持有人+权项解析）"\n'
         "      },\n"
         '      "grant": {\n'
         '        "grant_action": "赈灾|协饷|赏赉|发内帑|项目经费|…",\n'
