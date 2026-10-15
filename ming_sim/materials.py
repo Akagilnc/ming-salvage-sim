@@ -2061,20 +2061,76 @@ def _scene_spoken_text(db: Any) -> str:
     return "\n".join(lines)
 
 
-def _scene_pending_audience_facts(db: Any, state: Any) -> list[str]:
+def _pending_todo_origin_by_id(db: Any) -> dict[int, str]:
+    """Map pending next-audience todo id → durable origin_ref (empty = open)."""
+    from ming_sim.due_review import _todo_origin_ref
+    from ming_sim.staged_commitment import TODO_STATUS_PENDING
+
+    issue_origins: dict[int, str] = {}
+    origins: dict[int, str] = {}
+    for todo in db.dossiers.list_next_audience_todos(status=TODO_STATUS_PENDING):
+        commitment_ref = int(todo["commitment_ref"] or 0)
+        meta_origin = ""
+        if commitment_ref > 0:
+            if commitment_ref not in issue_origins:
+                row = db.conn.execute(
+                    "SELECT origin_ref FROM issues WHERE id=?",
+                    (commitment_ref,),
+                ).fetchone()
+                issue_origins[commitment_ref] = (
+                    str(row["origin_ref"] or "") if row is not None else ""
+                )
+            meta_origin = issue_origins[commitment_ref]
+        origins[int(todo["id"])] = _todo_origin_ref(todo, meta_origin)
+    return origins
+
+
+def _origin_readable_to_present(
+    db: Any, origin_ref: str, present_names: Sequence[str],
+) -> bool:
+    """Scene opening may carry a fact only if some present reader may know it.
+
+    ADR 0034 / 0155: shared opening is not an omniscient dump. Empty present
+    set falls back to the public-feed reader (empty character_name).
+    """
+    from ming_sim.knowledge import origin_visible_to
+
+    names = [str(name) for name in present_names if str(name or "")]
+    if not names:
+        return origin_visible_to(db, origin_ref, "")
+    return any(origin_visible_to(db, origin_ref, name) for name in names)
+
+
+def _scene_pending_audience_facts(
+    db: Any,
+    state: Any,
+    present_names: Sequence[str] | None = None,
+) -> list[str]:
     """#1838 reopen：待裁场面原样事实（到期复命 / 暗渠摊派暴露与缺口重开 / 谏催）。
 
     原喂开夜旁白；现并入场景开场最小集。结构化事实原样，不加措辞模板。
+    #1916：受限来源按在场人物 origin_visible_to 裁切；待办本身不消费。
+    present_names=None 时取当前夜在场；显式空序列表示无人在场。
     """
     from ming_sim.audience_night import list_unsettled_summons
     from ming_sim.due_review import list_due_review_scenes
     from ming_sim.urge_lever import list_urge_audience_scenes
 
+    readers: Sequence[str]
+    if present_names is None:
+        readers = [name for name, _office in _scene_present_rows(db)]
+    else:
+        readers = present_names
+    origin_by_todo = _pending_todo_origin_by_id(db)
     lines: list[str] = []
     for scene in list(list_due_review_scenes(db)) + list(
         list_urge_audience_scenes(db, state)
     ):
         if not isinstance(scene, dict):
+            continue
+        todo_id = int(scene.get("todo_id") or 0)
+        origin = origin_by_todo.get(todo_id, str(scene.get("origin_ref") or ""))
+        if not _origin_readable_to_present(db, origin, readers):
             continue
         lines.append(json.dumps(scene, ensure_ascii=False, sort_keys=True))
     for summon in list_unsettled_summons(db):
@@ -2297,7 +2353,9 @@ def prepare_scene_materials(
         scene_materials_root(db, state),
         lambda tmp: _write_scene_tree(tmp, db, state, person_payloads),
     )
-    pending_facts = _scene_pending_audience_facts(db, state)
+    pending_facts = _scene_pending_audience_facts(
+        db, state, present_names=[name for name, _office in present_rows],
+    )
     opening = _scene_opening_text(
         state, present_rows, spoken, handling_by_person, pending_facts,
     )

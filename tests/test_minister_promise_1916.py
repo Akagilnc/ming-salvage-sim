@@ -279,8 +279,50 @@ def test_timed_minister_promise_due_appears_in_promisor_opening_materials(
     ]
     assert len(scenes_after_skip) == 1
 
-    # 承诺人首次入对：真实 prepare_scene_materials 开场须含到期项身份（J4 接缝）。
+    def _opening_commitment_ids(opening: str) -> list[int]:
+        # 真实 opening 交付边界：JSON 事实按字段读 commitment_ref（禁正文哨兵）。
+        ids: list[int] = []
+        for line in str(opening or "").splitlines():
+            text = line.strip()
+            if not text.startswith("{"):
+                continue
+            try:
+                obj = json.loads(text)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(obj, dict) and obj.get("commitment_ref") is not None:
+                ids.append(int(obj.get("commitment_ref") or 0))
+        return ids
+
+    # #1916 C1：非知情在场时，私诺到期不得进共享开场；待办仍 pending。
     night2 = open_night(db, state, location="乾清宫", time_of_day="昼")
+    uninformed = "杨嗣昌"
+    ensure_summon_enter(db, int(night2["id"]), uninformed)
+    assert origin_visible_to(
+        db,
+        str(db.conn.execute(
+            "SELECT origin_ref FROM issues WHERE id=?", (issue_id,),
+        ).fetchone()["origin_ref"] or ""),
+        uninformed,
+    ) is False
+    pending_uninformed = _scene_pending_audience_facts(db, state)
+    assert not any(
+        isinstance(item, dict) and int(item.get("commitment_ref") or 0) == issue_id
+        for item in (json.loads(fact) for fact in pending_uninformed)
+    ), pending_uninformed
+    prepared_uninformed = prepare_scene_materials(db, state)
+    try:
+        assert issue_id not in _opening_commitment_ids(prepared_uninformed.opening), (
+            prepared_uninformed.opening
+        )
+    finally:
+        release_material_tree(prepared_uninformed.root)
+    assert len([
+        t for t in db.dossiers.list_next_audience_todos(status=TODO_STATUS_PENDING)
+        if int(t["commitment_ref"]) == issue_id
+    ]) == 1
+
+    # 承诺人首次入对：真实 prepare_scene_materials 开场须含到期项身份（J4 接缝）。
     ensure_summon_enter(db, int(night2["id"]), promisor)
     pending_facts = _scene_pending_audience_facts(db, state)
     parsed = [json.loads(fact) for fact in pending_facts]
@@ -292,23 +334,7 @@ def test_timed_minister_promise_due_appears_in_promisor_opening_materials(
     assert any(int(i.get("id") or 0) == issue_id for i in knowledge.get("issues") or [])
     prepared = prepare_scene_materials(db, state)
     try:
-        # R2：对交付 opening 中 JSON 事实反序列化，按字段等值核对身份
-        # （禁子串：commitment_ref=4 不得匹配 40）。
-        opening_facts = []
-        for line in str(prepared.opening or "").splitlines():
-            text = line.strip()
-            if not text.startswith("{"):
-                continue
-            try:
-                obj = json.loads(text)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(obj, dict):
-                opening_facts.append(obj)
-        assert any(
-            int(item.get("commitment_ref") or 0) == int(issue_id)
-            for item in opening_facts
-        ), opening_facts
+        assert issue_id in _opening_commitment_ids(prepared.opening), prepared.opening
     finally:
         release_material_tree(prepared.root)
 
