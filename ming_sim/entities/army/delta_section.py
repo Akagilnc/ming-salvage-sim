@@ -27,10 +27,16 @@ def apply_new_armies(run, items: List[object] | None = None):
         items = list(run.current_extracted.get("new_armies") or [])
     rows = []
     rejections = []
-    for item in items:
-        if not isinstance(item, dict):
+    from ming_sim.simulation import _canonical_item_fields
+
+    for raw in items:
+        if not isinstance(raw, dict):
             continue
-        if run.declared_new_army_event_by_item.get(id(item), "") in run.strategic_event_referenced_ids:
+        # id(raw) 是战略事件归属真源；规范化后换对象不得丢归属。
+        if run.declared_new_army_event_by_item.get(id(raw), "") in run.strategic_event_referenced_ids:
+            continue
+        item = _canonical_item_fields(raw)
+        if not isinstance(item, dict):
             continue
         origin_ref = str(item.get("origin_ref") or "").strip()
         landed, refused = run.db.create_armies_from_extraction(

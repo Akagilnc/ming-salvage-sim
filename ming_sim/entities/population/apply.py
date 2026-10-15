@@ -38,8 +38,14 @@ def _apply_population_transfers(
 
     applied: List[Dict[str, object]] = []
     rejected: List[RejectedItem] = []
+    from ming_sim.simulation import _canonical_item_fields
+
     items = transfers if isinstance(transfers, list) else []
     for item in items:
+        if not isinstance(item, dict):
+            rejected.append(RejectedItem(item={"raw_value": item}, reason="population_transfers 项必须是 object(dict)", category="invalid_shape", source=source))
+            continue
+        item = _canonical_item_fields(item)
         if not isinstance(item, dict):
             rejected.append(RejectedItem(item={"raw_value": item}, reason="population_transfers 项必须是 object(dict)", category="invalid_shape", source=source))
             continue

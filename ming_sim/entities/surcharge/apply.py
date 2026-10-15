@@ -40,8 +40,14 @@ def _apply_surcharge_decrees(
     from ming_sim.constants import _SETTLE_META_JIAPIAI_KEY
     applied: List[Dict[str, object]] = []
     rejected: List[RejectedItem] = []
+    from ming_sim.simulation import _canonical_item_fields
+
     claimed_origins: set[tuple[str, str]] = set()
     for item in (items if isinstance(items, list) else []):
+        if not isinstance(item, dict):
+            rejected.append(RejectedItem(item={"raw_value": item}, reason="surcharge_decrees 项必须是 object(dict)", category="invalid_shape", source=source))
+            continue
+        item = _canonical_item_fields(item)
         if not isinstance(item, dict):
             rejected.append(RejectedItem(item={"raw_value": item}, reason="surcharge_decrees 项必须是 object(dict)", category="invalid_shape", source=source))
             continue

@@ -32,7 +32,13 @@ def _apply_bandit_absorptions(
     rejected: List[RejectedItem] = []
     power_changes: List[Dict[str, object]] = []
     items = absorptions if isinstance(absorptions, list) else []
+    from ming_sim.simulation import _canonical_item_fields
+
     for item in items:
+        if not isinstance(item, dict):
+            rejected.append(RejectedItem(item={"raw_value": item}, reason="bandit_absorptions 项必须是 object(dict)", category="invalid_shape", source=source))
+            continue
+        item = _canonical_item_fields(item)
         if not isinstance(item, dict):
             rejected.append(RejectedItem(item={"raw_value": item}, reason="bandit_absorptions 项必须是 object(dict)", category="invalid_shape", source=source))
             continue

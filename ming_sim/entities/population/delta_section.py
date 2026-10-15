@@ -18,9 +18,12 @@ from ming_sim.applier import SectionResult
 def apply(run):
     from ming_sim.entities.population.apply import _apply_population_transfers
 
+    from ming_sim.simulation import _canonical_item_fields
+
     transfer_items: List[object] = []
     transfer_rejections: List[RejectedItem] = []
-    for item in (run.current_extracted.get("population_transfers") or []):
+    for raw in (run.current_extracted.get("population_transfers") or []):
+        item = _canonical_item_fields(raw) if isinstance(raw, dict) else raw
         source = str(item.get("source") or "") if isinstance(item, dict) else ""
         region_id = source.rpartition("@")[2]
         claim = (

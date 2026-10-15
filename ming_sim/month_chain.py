@@ -1203,10 +1203,20 @@ def _settle_edicts(
             )
         ):
             staged = db.staged_declarations.staged_for(ref, turn=int(state.turn))
-            verdict = staged[0].verdict if staged and staged[0].declaration is not None else None
-            # 强推：当月已持久判决可复用（#1846）；已颁恢复不依赖判决（见下）。
-            if backed_awaiting_promulgation and not (
-                isinstance(verdict, dict) and verdict.get("decision")
+            # #1846：判决+声明（及推演）三步齐全才算本月产物完成；仅有裸判决不算。
+            product_complete = bool(
+                staged
+                and staged[0].declaration is not None
+                and isinstance(staged[0].verdict, dict)
+                and staged[0].verdict.get("decision")
+            )
+            verdict = staged[0].verdict if product_complete else None
+            # 强推且未留中：当月已持久判决可复用（#1846）。次月普通留中不取裸判决
+            # 冒充完成——未完成产物须回共享补跑（#1917 R1）。
+            if (
+                backed_awaiting_promulgation
+                and not held
+                and not (isinstance(verdict, dict) and verdict.get("decision"))
             ):
                 verdict = _persisted_staged_verdict(db, ref, int(state.turn))
             # 已颁事实优先：跨月 stalled→强推只恢复办理，不重开判官、不重放物化。
@@ -1215,10 +1225,12 @@ def _settle_edicts(
                 and db.dossiers.authorizes_effects(int(dossier["id"]))
             )
             # 过月补跑：先 produce（可新产 stalled 声明），再消费 stalled，最后颁布（F7）。
-            # 未颁原案首次过判仍可走 produce／判官；已颁恢复跳过。
+            # 已办理恢复跳过；次月普通留中（held）即便历史 backed 也走共享补跑（#1917 R1），
+            # 不得与已办理恢复混同为「只判不产」。produce 自身会续上部分预推。
             if (
-                not backed_awaiting_promulgation
-                and verdict is None
+                not resume_promulgated
+                and (held or not backed_awaiting_promulgation)
+                and not product_complete
                 and session.llm_config is not None
             ):
                 snapshot = snapshot_for_existing_dossier(session, dossier)
@@ -1234,6 +1246,7 @@ def _settle_edicts(
             elif (
                 backed_awaiting_promulgation
                 and not resume_promulgated
+                and not held
                 and not (isinstance(verdict, dict) and verdict.get("decision"))
             ):
                 from ming_sim.decree_forecast import judge_dossier_verdict
