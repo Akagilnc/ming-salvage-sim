@@ -197,6 +197,12 @@ def build_translation_target_grounding(db: Any, state: Any = None) -> str:
             f"secret_order\t{int(row['id'])}\t{str(row['status'] or '')}\t"
             f"{str(row['title'] or '')}"
         )
+    # #1915：新设衙门 id↔名称，月末 textual_facts(subject_kind=yamen) 回指用。
+    if hasattr(db, "yamens"):
+        for yamen in db.yamens.list_active():
+            lines.append(
+                f"yamen\t{int(yamen.id)}\t{yamen.name}\t主官:{yamen.chief_name}"
+            )
     # 在途拨帑与自带押解标记（普通押解随拨银旨）；专用护送目录/实况行已退役。
     for row in db.conn.execute(
         'SELECT id, action_type, target_kind, target_id FROM decree_dossiers WHERE '
@@ -346,7 +352,7 @@ def build_c0_declaration_shape() -> str:
         '    {"subject_kind": "character|army|region|yamen", "subject_id": "id", "body": "文字事实", "origin_ref": "本条事实真实来源引用（如 dossier:id / secret_order:id），与 affair_declaration 分开"}\n'
         "  ],\n"
         '  "yamen_creates": [\n'
-        '    {"name": "衙门名", "chief": "主官人名", "monthly_fee": "正整数两", "account": "国库|内库"}\n'
+        '    {"name": "衙门名", "chief": "主官人名", "monthly_fee": "正整数万两", "account": "国库|内库"}\n'
         "  ],\n"
         '  "public_sayings": [\n'
         "    {\n"

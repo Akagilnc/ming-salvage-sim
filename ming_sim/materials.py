@@ -742,26 +742,26 @@ def _write_region_detail_files(tmp: Path, db: Any, knowledge: dict) -> list[str]
 
 
 def _yamen_material_text(db: Any, yamen: Any) -> str:
-    """主官/推演可读的衙门账：名称、主官、月费与历月下落。"""
+    """主官/推演可读的衙门账：名称、主官、月费与历月下落。
+
+    月度下落复用既有 ``_textual_facts_text``（保留 body 原样，P6），不另写投影循环。
+    月费单位＝账本万两（与 fiscal_config / MONEY_UNIT 同契约）。
+    """
+    from ming_sim.assets import format_money
+
     lines = [
+        f"id：{int(yamen.id)}",
         f"名称：{yamen.name}",
         f"主官：{yamen.chief_name or '（未指定）'}",
-        f"月费：{int(yamen.monthly_fee)}两（{yamen.fee_account}）",
+        f"月费：{format_money(int(yamen.monthly_fee))}（{yamen.fee_account}）",
         f"状态：{yamen.status}",
+        "月度下落：",
+        _textual_facts_text(
+            db.textual_facts,
+            subject_kind="yamen",
+            subject_id=str(int(yamen.id)),
+        ),
     ]
-    facts = db.textual_facts.readable_materials(
-        subject_kind="yamen", subject_id=str(int(yamen.id)),
-    )
-    if facts:
-        lines.append("月度下落：")
-        for fact in facts:
-            body = str(fact.body or "").strip()
-            if not body:
-                continue
-            month = getattr(fact, "occurred_month", "") or f"{fact.year}年{fact.period}月"
-            lines.append(f"{month}：{body}")
-    else:
-        lines.append("月度下落：（尚无）")
     return "\n".join(lines)
 
 

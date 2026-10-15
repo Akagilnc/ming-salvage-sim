@@ -16,6 +16,8 @@ _HISTORY = {
 class FiscalConfigStore(RowStore):
     TABLE = "fiscal_config"
     PK = "key"
+    # #1915：召对轮撤回须能逆转本轮新建的月费科目（与 yamens 同进前像）。
+    TABLES = {"fiscal_config": "key"}
 
     def values(self) -> dict[str, int]:
         return {str(r["key"]): int(r["value"]) for r in self._conn.execute(

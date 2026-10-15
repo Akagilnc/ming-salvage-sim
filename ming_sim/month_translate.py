@@ -34,9 +34,12 @@ def _visible_effect_refs(
         # 唯一判法：案卷.secret_order_id；供 declaration_dispatch → secret_dossier_participants
         "secret_dossiers": sorted(secret_order_dossier_ids(db)),
     }
-    # #1915：在职衙门 id，供月末 textual_facts(subject_kind=yamen) 回指。
+    # #1915：在职衙门 id+名称，供月末 textual_facts 回指；名称映射亦在权威目标目录。
     if hasattr(db, "yamens"):
-        refs["yamens"] = [int(row.id) for row in db.yamens.list_active()]
+        refs["yamens"] = [
+            {"id": int(row.id), "name": row.name}
+            for row in db.yamens.list_active()
+        ]
     return refs
 
 

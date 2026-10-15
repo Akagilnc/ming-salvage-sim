@@ -854,10 +854,20 @@ class GameDB:
         from ming_sim.entities.textual_fact import TextualFactStore
         from ming_sim.entities.affair import AffairStore
         from ming_sim.entities.yamen import YamenStore
+        from ming_sim.entities.fiscal_container.config import FiscalConfigStore
+        from ming_sim.entities.staged_declaration import StagedDeclarationStore
+        from ming_sim.entities.record_store import (
+            ChatMessageStore,
+            MonthOpenSnapshotStore,
+            ResolveContextStore,
+            TurnReportStore,
+        )
         TextualFactStore.ensure_schema(self.conn)
         self.textual_facts = TextualFactStore(self.conn)
         YamenStore.ensure_schema(self.conn)
         self.yamens = YamenStore(self.conn)
+        # fiscal_config 须先于 _rollback_stores：#1915 轮级撤回逆转新建月费科目。
+        self.fiscal_config = FiscalConfigStore(self.conn)
         self._rollback_stores = {
             table: store
             for store in (
@@ -868,25 +878,16 @@ class GameDB:
                 self.factions,
                 self.textual_facts,
                 self.yamens,
+                self.fiscal_config,
                 self.person_logs,
                 self.reign,
             )
             for table in store.TABLES
         }
-        from ming_sim.entities.staged_declaration import StagedDeclarationStore
         StagedDeclarationStore.ensure_schema(self.conn)
         self.staged_declarations = StagedDeclarationStore(self.conn)
         AffairStore.ensure_schema(self.conn)
         self.affairs = AffairStore(self.conn)
-        from ming_sim.entities.record_store import (
-            ChatMessageStore,
-            MonthOpenSnapshotStore,
-            ResolveContextStore,
-            TurnReportStore,
-        )
-        from ming_sim.entities.fiscal_container.config import FiscalConfigStore
-
-        self.fiscal_config = FiscalConfigStore(self.conn)
         self.chat_messages = ChatMessageStore(self.conn)
         self.turn_reports = TurnReportStore(self.conn)
         self.resolve_contexts = ResolveContextStore(self.conn)
