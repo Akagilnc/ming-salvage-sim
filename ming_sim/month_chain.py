@@ -1102,7 +1102,7 @@ def _apply_stalled_deliberation_from_declaration(
 
     try:
         results = settle_staged_declarations_in_decree_order(
-            db, state, [ref], source=Provenance.system_simulation,
+            db, state, [ref], source=Provenance.player_decree,
             alongside=accept_stalled,
         )
     except _StalledApplyMiss as miss:
@@ -1177,8 +1177,16 @@ def _settle_edicts(
         payload_state = str((dossier.get("payload") or {}).get("deliberation_state") or "")
         # 强推后 backed 仍 proposed：即便曾有旧 promulgation_decision / 暂存已结，
         # 也须接回颁布（#1917 条款 2 / C1）。
+        # 当月留中锁（held_turn）与批红待抉期间不重入——ADR0055 下月再判，不覆盖留中。
+        same_month_hold_lock = (
+            int(dossier.get("held_turn") or 0) > 0
+            and int(state.turn) <= int(dossier.get("held_turn") or 0)
+        )
         backed_awaiting_promulgation = (
-            status == "proposed" and payload_state == "backed"
+            status == "proposed"
+            and payload_state == "backed"
+            and not same_month_hold_lock
+            and not bool(dossier.get("rescript_pending"))
         )
         if not pending_judgment and not pending_settle and not backed_awaiting_promulgation:
             continue

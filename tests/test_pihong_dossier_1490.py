@@ -68,7 +68,7 @@ def _658_plant_stalled_deliberation(db, state, *, title='议而不决'):
         state, action_type="special_decree", decree_text=title, target_kind="issue", target_id=key,
         payload={"decision_key": key, "deliberation_state": "stalled"},
     )
-    db.insert_issue(state, kind="situation", title=title, origin_kind="decree", origin_ref=f"dossier:{did}")
+    db.insert_issue(state, kind="situation", title=title, origin_kind="deliberation", origin_ref=f"dossier:{did}")
     return db.dossiers.get(did), key
 
 

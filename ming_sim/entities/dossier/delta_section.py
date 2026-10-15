@@ -129,7 +129,12 @@ def apply_deliberation_outcomes(run):
         dossier = run.db.dossiers.get(dossier_id)
         status = str((dossier or {}).get("status") or "")
         # #1917 runner 裁定（二）：先答效果可已颁/执行；后道 stalled 转待裁，不回滚已落。
-        if dossier is None or status not in {"proposed", "promulgated", "executing"}:
+        # ADR0055：密令绕外廷，不入无人站台待裁。
+        if (
+            dossier is None
+            or status not in {"proposed", "promulgated", "executing"}
+            or dossier.get("secret_order_id")
+        ):
             reject_item(
                 rejected, raw_item, "无人站台只接原案", "invalid_transition", source,
             )
@@ -155,10 +160,8 @@ def apply_deliberation_outcomes(run):
                 (int(dossier_id),),
             )
         origin = f"dossier:{dossier_id}"
-        existing = run.db.conn.execute(
-            "SELECT id, status FROM issues WHERE origin_ref=? ORDER BY id DESC LIMIT 1",
-            (origin,),
-        ).fetchone()
+        # 廷议局势身份＝origin_kind=deliberation + origin_ref；不与同 ref 国策/承诺混同。
+        existing = run.db.issues.by_origin("deliberation", origin)
         if existing is None:
             title = str(dossier.get("decree_text") or "").strip() or note.strip() or "无人站台原案"
             run.db.insert_issue(

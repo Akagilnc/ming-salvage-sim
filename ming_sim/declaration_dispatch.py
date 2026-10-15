@@ -662,15 +662,15 @@ def discard_staged_declaration(db: Any, decree_ref: str) -> int:
 def bind_decree_effect_sources(
     db: Any, decree_ref: str, declaration: Mapping[str, object], visible_refs: Mapping[str, object],
 ) -> Tuple[Mapping[str, object], Mapping[str, object]]:
-    """Bind this draft's structured identity slots to the formal dossier.
+    """Bind only this draft's structured identity slots to the formal dossier.
 
-    Walks the whole declaration: origin_ref / dossier_id / target_dossier_id
-    (and aliases) equal to the pending-action ref become dossier:<id>. Other
-    keys and prose pass through untouched. Covers effects, textual_facts,
-    yamen_creates, and any future section that carries the same slots.
+    Walks the declaration for origin_ref / dossier_id / target_dossier_id
+    (and aliases) equal to the pending-action ref → dossier:<id>. Domain keys
+    (e.g. faction names inside faction_delta) and prose pass through untouched;
+    field aliasing for write remains at section apply, not here.
     """
     from ming_sim.decree_forecast import dossier_for_decree_ref
-    from ming_sim.simulation import _canonical_item_fields
+    from ming_sim.simulation import ITEM_FIELD_ALIASES
 
     if not decree_ref.startswith("pending-action:"):
         return declaration, visible_refs
@@ -680,17 +680,16 @@ def bind_decree_effect_sources(
     dossier_id = int(dossier["id"])
 
     def bind(value: object) -> object:
-        # 与写口／窥探同一权威键规范化（strip + ITEM_FIELD_ALIASES），禁止平行解释。
         if isinstance(value, Mapping):
-            canonical = _canonical_item_fields(dict(value))
             result = {}
-            for field, item in canonical.items():
+            for key, item in value.items():
+                field = ITEM_FIELD_ALIASES.get(str(key).strip(), str(key).strip())
                 if field == "origin_ref" and item == decree_ref:
-                    result[field] = held_dossier_decree_ref(dossier_id)
+                    result[key] = held_dossier_decree_ref(dossier_id)
                 elif field in {"dossier_id", "target_dossier_id"} and item == decree_ref:
-                    result[field] = dossier_id
+                    result[key] = dossier_id
                 else:
-                    result[field] = bind(item)
+                    result[key] = bind(item)
             return result
         if isinstance(value, list):
             return [bind(item) for item in value]

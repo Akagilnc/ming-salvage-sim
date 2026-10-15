@@ -97,10 +97,7 @@ def apply_imperial_deliberation_push(
     if payload.get("deliberation_state") != "stalled":
         raise ValueError("御笔强推只接无人站台原案")
     origin = f"dossier:{did}"
-    issue = db.conn.execute(
-        "SELECT id FROM issues WHERE origin_ref=? AND status='active' LIMIT 1",
-        (origin,),
-    ).fetchone()
+    issue = db.issues.active_by_origin("deliberation", origin)
     if issue is None:
         raise ValueError("无人站台原案缺局势记录")
     payload["deliberation_state"] = "backed"
@@ -130,10 +127,7 @@ def apply_imperial_deliberation_hold(
         payload["deliberation_hold_note"] = note.strip()
     db.dossiers.update_payload(did, payload, commit=False)
     origin = f"dossier:{did}"
-    issue = db.conn.execute(
-        "SELECT id FROM issues WHERE origin_ref=? AND status='active' LIMIT 1",
-        (origin,),
-    ).fetchone()
+    issue = db.issues.active_by_origin("deliberation", origin)
     if issue is not None:
         db.close_issue(
             state, int(issue["id"]), reason="resolved", narrative=note or "留中", commit=False,
