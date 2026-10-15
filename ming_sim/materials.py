@@ -1138,14 +1138,70 @@ def _world_board_text(
     return "\n\n".join(parts) or "（无）"
 
 
+def _region_place_label(db: Any, region_id: object) -> str:
+    """region_id → 人读地名；未知 id 原样回传，空串保持空。"""
+    rid = str(region_id or "").strip()
+    if not rid:
+        return ""
+    row = db.regions.row(rid)
+    if row is None:
+        return rid
+    name = str(row["name"] or "").strip()
+    return name or rid
+
+
 def _world_roster_text(db: Any, state: Any) -> str:
-    rows = db.characters.current_court_rows(int(state.year), int(state.period))
+    """在朝名册含所在地与在途去向（#1914 / ADR 0155 推演实况）。"""
+    year, period = int(state.year), int(state.period)
+    rows = db.conn.execute(
+        """
+        SELECT name, office, office_type, status, location, transit_to
+        FROM characters
+        WHERE power_id='ming' AND status='active'
+          AND office_type NOT IN ('后宫','宗藩','未仕')
+          AND (debut_year=0 OR debut_year<? OR (debut_year=? AND debut_month<=?))
+        ORDER BY name
+        """,
+        (year, year, period),
+    ).fetchall()
     if not rows:
         return "在朝名册：暂无。"
-    return "在朝名册：\n" + "\n".join(
-        f"{row['name']}：{row['office'] or '无现任官职'}，{row['office_type']}，{row['status']}"
-        for row in rows
-    )
+    lines: list[str] = []
+    for row in rows:
+        base = (
+            f"{row['name']}：{row['office'] or '无现任官职'}，"
+            f"{row['office_type']}，{row['status']}"
+        )
+        extras: list[str] = []
+        place = _region_place_label(db, row["location"])
+        if place:
+            extras.append(f"所在{place}")
+        dest = _region_place_label(db, row["transit_to"])
+        if dest:
+            extras.append(f"在途赴{dest}")
+        if extras:
+            base = f"{base}，{'，'.join(extras)}"
+        lines.append(base)
+    return "在朝名册：\n" + "\n".join(lines)
+
+
+def faction_stance_material_text(db: Any) -> str:
+    """派系态势摘要人读投影（faction_stance_summaries；#1914 / ADR 0084）。"""
+    rows = db.factions.get_faction_stance_summaries()
+    lines: list[str] = []
+    for row in rows:
+        segment = str(row.get("stance_segment") or "")
+        if not segment.strip():
+            continue
+        faction = str(row.get("faction") or "").strip() or "（未名派系）"
+        lines.append(f"{faction}：{segment}")
+    return "\n".join(lines) if lines else "（暂无派系态势摘要）"
+
+
+def _write_faction_stance_material(tmp: Path, db: Any) -> str:
+    rel = f"{_BOARD_DIR}/派系态势.txt"
+    _write_text(tmp / rel, faction_stance_material_text(db))
+    return rel
 
 
 def _keep_fact(fact: Any, include_fact: Any) -> bool:
@@ -1528,6 +1584,8 @@ def _write_world_tree(
     board_rel = f"{_BOARD_DIR}/全局.txt"
     _write_text(tmp / board_rel, board_text)
     index.append(board_rel)
+
+    index.append(_write_faction_stance_material(tmp, db))
 
     denunciation_rel = f"{_BOARD_DIR}/派系检举事实.txt"
     _write_text(tmp / denunciation_rel, _material_facts_text(world_facts["denunciation"]))
@@ -2138,6 +2196,9 @@ def _write_scene_tree(
         if rel and rel not in seen_rel:
             seen_rel.add(rel)
             index.append(rel)
+
+    # #1914：派系态势进大臣可读材料（场景根盘面，在场诸人共用取阅）。
+    _add(_write_faction_stance_material(tmp, db))
 
     for character, knowledge, matter_lines in person_payloads:
         for rel in _write_one_present_person(

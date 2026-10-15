@@ -211,6 +211,40 @@ def _army_register(db: Any) -> str:
     )
 
 
+def _office_vacancy_register(db: Any) -> str:
+    """官缺底账：office_vacancies 视图（静态职缺 + 现任）。"""
+    rows = db.conn.execute(
+        """
+        SELECT office_title, jurisdiction, holder_name
+        FROM office_vacancies
+        ORDER BY sort_order, office_title
+        """,
+        (),
+    ).fetchall()
+    if not rows:
+        return "官缺：暂无。"
+    lines: list[str] = []
+    for row in rows:
+        title = str(row["office_title"] or "").strip() or "（未名职缺）"
+        jur = str(row["jurisdiction"] or "").strip()
+        holder = str(row["holder_name"] or "").strip()
+        place = f"（{jur}）" if jur else ""
+        if holder:
+            lines.append(f"{title}{place}：现任{holder}")
+        else:
+            lines.append(f"{title}{place}：空缺")
+    return "官缺：\n" + "\n".join(lines)
+
+
+def _province_overview(db: Any) -> str:
+    """各省概况：全量地区定性警讯（复用 region_report，不另造投影）。"""
+    body = _prose(db.region_report(limit=None))
+    text = str(body or "").strip()
+    if not text:
+        return "各省概况：暂无。"
+    return f"各省概况：\n{text}"
+
+
 def _world(
     db: Any, state: Any, character_name: str, office_name: str, office_type: str,
 ) -> tuple[Dict[str, str], Dict[str, tuple[str, ...]]]:
@@ -225,6 +259,13 @@ def _world(
     elif office_type == "吏部":
         result["personnel"] = _appointment_register(db, state)
 
+    # #1914 / ADR 0034 局部例外：御前近侍可读官缺与各省概况（非全体人物全知）。
+    from ming_sim.audience_night import is_inner_court_attendant
+
+    if is_inner_court_attendant({"office": office_name}):
+        result["personnel"] = _office_vacancy_register(db)
+        result["regional"] = _province_overview(db)
+
     # Authoritative office→辖域 projection (shared with dossier archive keys).
     # Region from the holder's appointment (character_offices.region_id) — never location.
     projected = db.project_office_identity(
@@ -236,8 +277,10 @@ def _world(
     if region_ids:
         scope["region_ids"] = region_ids
         # Materials/region detail use the primary jurisdiction when several.
+        # 近侍已持各省概况时不覆盖（#1914 例外内容优先于本官辖域切片）。
         primary = region_ids[0]
-        result["regional"] = _prose(db.region_detail(primary, qualitative=True))
+        if "regional" not in result:
+            result["regional"] = _prose(db.region_detail(primary, qualitative=True))
         result["construction"] = _prose(
             db.buildings_report(region_id=primary, qualitative=True)
         )
