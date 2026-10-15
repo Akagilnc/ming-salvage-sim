@@ -874,8 +874,8 @@ def test_decree_continuation_keeps_forecast_and_lands_affair_effect(game, monkey
     assert db.staged_declarations.forecast_text_for(ref) == "预推不可见:陕西赈灾\n问后续推已发生。"
     assert payload["answers"][0]["context"] == question_context
     assert payload["this_decree"]["decree_text"] == "陕西赈灾"
-    # 续推调用时原案仍可为 proposed（请旨未决不先颁）；问清后同月颁布。
-    assert payload["this_decree"]["status"] in {"proposed", "promulgated", "executing"}
+    # #1861：续推供料本旨事实统一按已颁投影，与库内 status 是否已转 executing 无关。
+    assert payload["this_decree"]["status"] == "promulgated"
     from pathlib import Path
     assert not Path(str(captured["prepared_root"])).exists()
     assert str(affair.id) in str(captured.get("grounding") or "")

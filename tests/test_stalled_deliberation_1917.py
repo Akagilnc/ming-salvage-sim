@@ -416,3 +416,93 @@ def test_bad_dossier_id_in_stalled_peek_does_not_abort_month(game, monkeypatch):
     assert db.conn.execute(
         "SELECT COUNT(*) FROM rejection_reports WHERE section='deliberation_outcomes'",
     ).fetchone()[0] >= 1
+
+
+def test_continuation_bad_stalled_does_not_swallow_legal_decree_spend(game, monkeypatch):
+    """续推非法 stalled 不得牵连同批本旨合法支出；问清后唯一颁布关落账。"""
+    db, state, content = game
+    did, ref = _plant_proposed(db, state, title="坏stalled旁支", target_id="bad-st-spend")
+    _stage(db, state, ref, {"effects": {}}, questions=[{
+        "title": "一问", "context": "c",
+        "options": [{"label": "准", "hint": "h"}],
+    }])
+    canned_full_settlement(monkeypatch)
+    session = make_light_session(db, state, content)
+    session.llm_config = object()
+    assert session.resolve_turn(allow_empty_decree=True).awaiting
+    qrow = next(
+        r for r in session.pending_decisions()
+        if str(r.get("event_id") or "").startswith(_DECREE_QUESTION_PREFIX)
+    )
+    chain = _load_chain(db, int(state.turn))
+    chain.setdefault("rescript_continuation_texts", {})[qrow["event_id"]] = "冷场兼支出。"
+    _save_chain(db, int(state.turn), chain, source=Provenance.player_decree)
+    monkeypatch.setattr(
+        "ming_sim.month_translate._default_month_translate_runner",
+        lambda *_a, **_k: {"effects": {
+            "deliberation_outcomes": [{
+                "dossier_id": did, "outcome": "stalled", "note": "",
+            }],
+            "economy_moves": [{
+                "origin_ref": ref, "account": "国库", "delta": -4,
+                "category": "续推坏项旁合法", "reason": "应落",
+            }],
+        }},
+    )
+    session.submit_hitl_choices([
+        {"decision_key": qrow["decision_key"], "label": "准", "note": "办"},
+    ], write_gate=session._write_gate)
+    assert db.dossiers.get(did)["payload"].get("deliberation_state") != "stalled"
+    assert db.dossiers.authorizes_effects(did)
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE category='续推坏项旁合法'",
+    ).fetchone()[0] == 1
+
+
+def test_two_questions_decree_origin_effects_both_land(game, monkeypatch):
+    """同旨两问：各问本旨支出在问清后均落，不因未颁丢第一问。"""
+    db, state, content = game
+    did, ref = _plant_proposed(db, state, title="两问本旨", target_id="two-q-auth")
+    _stage(db, state, ref, {"effects": {}}, questions=[
+        {"title": "问一", "context": "c", "options": [{"label": "甲", "hint": "h"}]},
+        {"title": "问二", "context": "c", "options": [{"label": "丙", "hint": "h"}]},
+    ])
+    canned_full_settlement(monkeypatch)
+    session = make_light_session(db, state, content)
+    session.llm_config = object()
+    assert session.resolve_turn(allow_empty_decree=True).awaiting
+    desk = [
+        r for r in session.pending_decisions()
+        if str(r.get("event_id") or "").startswith(_DECREE_QUESTION_PREFIX)
+    ]
+    assert len(desk) == 2
+
+    def answer(row, delta, reason):
+        chain = _load_chain(db, int(state.turn))
+        chain.setdefault("rescript_continuation_texts", {})[row["event_id"]] = reason
+        _save_chain(db, int(state.turn), chain, source=Provenance.player_decree)
+        monkeypatch.setattr(
+            "ming_sim.month_translate._default_month_translate_runner",
+            lambda *_a, **_k: {"effects": {"economy_moves": [{
+                "origin_ref": ref, "account": "国库", "delta": delta,
+                "category": "两问本旨支", "reason": reason,
+            }]}},
+        )
+        session.submit_hitl_choices([
+            {"decision_key": row["decision_key"], "label": row["options"][0]["label"], "note": "办"},
+        ], write_gate=session._write_gate)
+
+    answer(desk[0], -5, "第一问")
+    remain = [
+        r for r in session.pending_decisions()
+        if str(r.get("event_id") or "").startswith(_DECREE_QUESTION_PREFIX)
+    ]
+    assert len(remain) == 1
+    answer(remain[0], -7, "第二问")
+    deltas = [
+        r[0] for r in db.conn.execute(
+            "SELECT delta FROM economy_ledger WHERE category='两问本旨支' ORDER BY id",
+        )
+    ]
+    assert deltas == [-5, -7]
+    assert db.dossiers.authorizes_effects(did)

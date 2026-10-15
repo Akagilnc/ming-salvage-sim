@@ -570,10 +570,11 @@ def continue_decree_after_answers(
             consume()
         return
 
-    # #1917：请旨未决故未颁时——
-    # · 续推声明 stalled → 对 proposed 原案即时落成；
-    # · 本答将清空请旨且无新问 → 先按既有判决颁布，再活口分派（效果跟判决走）；
-    # · 仍有未答请旨 → 照常活口分派（affair 等不依赖颁布的效果当回合落）。
+    # #1917／#1847：请旨未决故未颁时，续推不得走平行颁布。
+    # · 含 stalled：并入暂存后走唯一 stalled 试消费；落成则待裁，未落成则效果仍暂存，
+    #   问清后由 _settle_edicts 颁布消费（坏 stalled 不牵连合法项）。
+    # · 本答将清空请旨，或效果依赖本旨授权：并入暂存，问清后唯一颁布关消费。
+    # · 仍有未答请旨且效果不依赖本旨授权：活口分派，逐问落账。
     dossier_id = int(dossier["id"])
     held_pre_promulgation = (
         str(dossier.get("status") or "") == "proposed"
@@ -591,15 +592,23 @@ def continue_decree_after_answers(
         bound, _bound_refs = bind_decree_effect_sources(
             db, decree_ref, declaration, refs,
         )
-        if not _declaration_targets_stalled(bound, dossier_id):
-            remaining = [
-                q for q in db.staged_declarations.questions_for(decree_ref)
-                if q.get("event_id") != event_id
-            ]
-            if not remaining and not extra:
-                _promulgate_held_decree_if_ready(
-                    session, dossier=dossier, decree_ref=decree_ref,
+        needs_auth = _declaration_needs_decree_auth(bound, decree_ref, dossier_id)
+        stalled_peek = _declaration_targets_stalled(bound, dossier_id)
+        if stalled_peek or needs_auth:
+            with atomic(db):
+                _merge_continuation_into_staged(
+                    db, decree_ref=decree_ref, turn=turn,
+                    declaration=declaration, visible_refs=refs,
                 )
+            # stalled 试消费自带事务：落成则 settled；未落成回滚试消费、保留暂存。
+            if stalled_peek:
+                _apply_stalled_deliberation_from_declaration(
+                    db, state, dossier_id=dossier_id, decree_ref=decree_ref,
+                )
+            with atomic(db):
+                consume()
+            return
+        # 不依赖本旨授权的续推（如 affair 源）：活口逐问落账（#1847）。
         dispatch_month_segment(
             db, state, segment=prefix,
             decree_payload=payload,
@@ -990,35 +999,89 @@ def _guard_month_call(
     raise AssertionError("month call abort must raise")
 
 
-def _promulgate_held_decree_if_ready(
-    session: Any, *, dossier: Mapping[str, object], decree_ref: str,
+def _merge_continuation_into_staged(
+    db: Any, *, decree_ref: str, turn: int,
+    declaration: Mapping[str, object],
+    visible_refs: Mapping[str, object],
 ) -> None:
-    """#1917：请旨将清空且无 stalled 时，按已持久判决先颁布，供续推效果授权。"""
-    db, state = session.db, session.state
-    dossier_id = int(dossier["id"])
-    current = db.dossiers.get(dossier_id) or dict(dossier)
-    if str(current.get("status") or "") != "proposed":
-        return
-    if db.dossiers.authorizes_effects(dossier_id):
-        return
-    staged = db.staged_declarations.staged_for(decree_ref, turn=int(state.turn))
-    verdict = staged[0].verdict if staged and staged[0].declaration is not None else None
-    if not (isinstance(verdict, dict) and verdict.get("decision")):
-        verdict = _persisted_staged_verdict(db, decree_ref, int(state.turn))
-    if not (isinstance(verdict, dict) and verdict.get("decision")):
-        return
-    with atomic(db):
-        apply_dossier_promulgation(
-            db, state, dossier_id, str(verdict["decision"]),
-            blocked_layer=str(verdict.get("blocked_layer") or ""),
-            reason=str(verdict.get("reason") or ""),
-            legal_reason_code=str(verdict.get("legal_reason_code") or ""),
-            primary_opponents=verdict.get("primary_opponents") or [],
-            gatekeeper_id=verdict.get("gatekeeper_id"),
-            criteria_snapshot=verdict.get("criteria_snapshot") or {},
-            content=getattr(session, "content", None),
+    """将请旨续推效果并入该旨最新暂存行，不另插行、不触 verdict／questions／forecast。"""
+    import json as _json
+
+    ref = str(decree_ref or "").strip()
+    staged = db.staged_declarations.staged_for(ref)
+    if not staged:
+        from ming_sim.declaration_dispatch import stage_declaration
+        stage_declaration(
+            db, decree_ref=ref, turn=int(turn),
+            declaration=declaration, visible_refs=visible_refs,
         )
-        apply_dossier_verdict_metadata(db, state, dossier_id, verdict)
+        return
+    latest = staged[-1]
+    base = dict(latest.declaration or {}) if isinstance(latest.declaration, Mapping) else {}
+    incoming = dict(declaration or {})
+    base_effects = (
+        dict(base["effects"]) if isinstance(base.get("effects"), Mapping) else {}
+    )
+    inc_effects = (
+        dict(incoming["effects"]) if isinstance(incoming.get("effects"), Mapping) else {}
+    )
+    merged_effects = dict(base_effects)
+    for key, value in inc_effects.items():
+        prior = merged_effects.get(key)
+        if isinstance(value, list) and isinstance(prior, list):
+            merged_effects[key] = list(prior) + list(value)
+        else:
+            merged_effects[key] = value
+    merged = dict(base)
+    if merged_effects:
+        merged["effects"] = merged_effects
+    for key, value in incoming.items():
+        if key != "effects" and key not in merged:
+            merged[key] = value
+    refs = dict(latest.visible_refs or {})
+    for key, value in dict(visible_refs or {}).items():
+        if isinstance(value, list):
+            refs[key] = list(dict.fromkeys([*(refs.get(key) or []), *value]))
+        else:
+            refs[key] = value
+    db.conn.execute(
+        "UPDATE staged_declarations SET declaration_json=?, visible_refs_json=? "
+        "WHERE id=? AND status='staged'",
+        (_json.dumps(merged, ensure_ascii=False),
+         _json.dumps(refs, ensure_ascii=False),
+         int(latest.id)),
+    )
+
+
+def _declaration_needs_decree_auth(
+    bound: Mapping[str, object], decree_ref: str, dossier_id: int,
+) -> bool:
+    """续推效果是否回指本旨／本案卷，因而必须等颁布关授权。"""
+    from ming_sim.declaration_dispatch import held_dossier_decree_ref
+
+    targets = {
+        str(decree_ref),
+        held_dossier_decree_ref(int(dossier_id)),
+        f"dossier:{int(dossier_id)}",
+        str(int(dossier_id)),
+    }
+    effects = bound.get("effects")
+    if not isinstance(effects, Mapping):
+        return False
+
+    def walk(value: object) -> bool:
+        if isinstance(value, Mapping):
+            for key, item in value.items():
+                if key in {"origin_ref", "dossier_id", "target_dossier_id"}:
+                    if str(item) in targets or item == int(dossier_id):
+                        return True
+                if walk(item):
+                    return True
+        elif isinstance(value, list):
+            return any(walk(item) for item in value)
+        return False
+
+    return walk(effects)
 
 
 def _declaration_targets_stalled(bound: Mapping[str, object], dossier_id: int) -> bool:
