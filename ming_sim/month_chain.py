@@ -1022,11 +1022,10 @@ class _StalledApplyMiss(Exception):
 def _apply_stalled_deliberation_from_declaration(
     db: Any, state: Any, *, dossier_id: int, decree_ref: str, declaration: Any,
     visible_refs: Any = None, chain: Optional[Dict[str, Any]] = None,
-) -> bool:
+) -> Optional[Any]:
     """#1917：整份声明经统一分派试消费；本案 stalled 落成则同事务 settled。
 
-    走 ``_dispatch_declaration_sections``（与 settle_staged 同体）；失败回滚 DB 并
-    ``reload_state_from_db`` 清脏内存；成功承接 defer_disclosure 入月链。
+    成功返回 dispatch result（供终局/披露承接）；失败回滚并 reload，返回 None。
     """
     from ming_sim.applier import (
         Provenance, RejectionCollector, mirror_rejections_after_commit,
@@ -1039,20 +1038,20 @@ def _apply_stalled_deliberation_from_declaration(
     from ming_sim.error_pack import rejections_jsonl_path
 
     if not isinstance(declaration, Mapping):
-        return False
+        return None
     ref = str(decree_ref or "").strip()
     if not ref or db.staged_declarations.is_settled(ref):
-        return False
+        return None
     current = db.dossiers.get(int(dossier_id))
     if current is None or str(current.get("status") or "") != "proposed":
-        return False
+        return None
     if str((current.get("payload") or {}).get("deliberation_state") or "") == "backed":
-        return False
+        return None
     bound, refs = bind_decree_effect_sources(
         db, ref, declaration, visible_refs if isinstance(visible_refs, Mapping) else {},
     )
     if not _declaration_targets_stalled(bound, int(dossier_id)):
-        return False
+        return None
 
     collector = RejectionCollector()
     dispatch_result = None
@@ -1075,16 +1074,21 @@ def _apply_stalled_deliberation_from_declaration(
             )
             if chain is not None:
                 _collect_disclosures_from_result(chain, dispatch_result)
+                ending = _ending_from_dispatch_result(dispatch_result)
+                if ending is not None:
+                    chain["declaration_outcome"] = ending
                 _save_chain(
                     db, int(state.turn), chain, source=Provenance.system_simulation,
                 )
     except _StalledApplyMiss:
         # DB 已随 atomic 回滚；刷掉分派期间写入的内存脏余额。
         reload_state_from_db(db, state, content=getattr(db, "content", None))
-        return False
+        return None
     mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
     row = db.dossiers.get(int(dossier_id))
-    return bool(row is not None and _is_stalled_deliberation(row))
+    if row is None or not _is_stalled_deliberation(row):
+        return None
+    return dispatch_result
 
 
 def _settle_edicts(
@@ -1190,13 +1194,21 @@ def _settle_edicts(
                 )
             # 预存或本次补跑声明：颁布前消费 stalled。
             staged = db.staged_declarations.staged_for(ref, turn=int(state.turn))
-            if staged and _apply_stalled_deliberation_from_declaration(
-                db, state, dossier_id=int(dossier["id"]), decree_ref=ref,
-                declaration=staged[0].declaration,
-                visible_refs=staged[0].visible_refs,
-                chain=chain,
-            ):
-                continue
+            if staged:
+                stalled_result = _apply_stalled_deliberation_from_declaration(
+                    db, state, dossier_id=int(dossier["id"]), decree_ref=ref,
+                    declaration=staged[0].declaration,
+                    visible_refs=staged[0].visible_refs,
+                    chain=chain,
+                )
+                if stalled_result is not None:
+                    # 与 settle_staged 的 persist_result 同形：终局入 outcome / on_outcome。
+                    candidate = _ending_from_dispatch_result(stalled_result)
+                    if candidate is not None:
+                        outcome = candidate
+                        if on_outcome is not None:
+                            on_outcome(candidate)
+                    continue
             if isinstance(verdict, dict) and verdict.get("decision"):
                 current = db.dossiers.get(int(dossier["id"])) or dossier
                 if str(current.get("status") or "") == "proposed":
