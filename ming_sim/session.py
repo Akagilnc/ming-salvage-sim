@@ -10,6 +10,7 @@ from ming_sim.entities.character.store import CharacterStore
 from ming_sim.exceptions import DeclarationDataError
 
 import contextlib
+import json
 import logging
 import threading
 import time
@@ -813,6 +814,47 @@ class GameSession:
             return self.content.characters[clean_name]
         raise DeclarationDataError(f"人物未建档：{clean_name}")
 
+    def _resolve_xuan_targets(self, fragment: str) -> List[Character]:
+        """#1913：宣召人名片段 → 目标列表。
+
+        身份解析只走 summon_character（内含 match_minister_from_text）；
+        整段先匹配以保住合法别名，失败才按标点拆多人。
+        每人先全名，未中再试剥可选语气尾——不整串预剥，单人多人同一路径。
+        """
+        from ming_sim.audience_night import (
+            split_xuan_name_fragments,
+            strip_xuan_person_tail,
+        )
+
+        def _one(text: str) -> Optional[Character]:
+            cleaned = str(text or "").strip()
+            if not cleaned:
+                return None
+            try:
+                return self.summon_character(cleaned)
+            except DeclarationDataError:
+                pass
+            stripped = strip_xuan_person_tail(cleaned)
+            if not stripped or stripped == cleaned:
+                return None
+            try:
+                return self.summon_character(stripped)
+            except DeclarationDataError:
+                return None
+
+        whole = _one(fragment)
+        if whole is not None:
+            return [whole]
+        targets: List[Character] = []
+        seen: set[str] = set()
+        for part in split_xuan_name_fragments(fragment):
+            target = _one(part)
+            if target is None or target.name in seen:
+                continue
+            seen.add(target.name)
+            targets.append(target)
+        return targets
+
     def can_summon(self, character: Character) -> Tuple[bool, str]:
         # 宗藩（就藩宗室）非朝堂命官，不可召见——与各 roster 同口径（PR#121 隐藏宗藩）。
         # can_summon 是 summon_minister 工具链（session + web 流式两路）的共用闸，
@@ -883,15 +925,20 @@ class GameSession:
         state: Optional[GameState] = None,
         origin_chat_turn_id: int = 0,
         travel_tone: str = "常行",
+        method: str = "",
     ) -> AudienceAdmissionDecision:
         """Consume the shared audience gate before any turn/entrance/reply is created.
 
         Offsite people get a durable story-ledger summons instead of entering the
         audience.  Ledger failures propagate, so callers cannot accidentally proceed.
         在京放行时结清该人未结传召（候见→宣入）。开夜与传召账同事务全成全败。
+
+        method：#1913 明确越次点名时透传到传召账（ADR 0037「怎么召的」）；
+        普通宣场外仍默认 METHOD_CHUANZHAO，不把宣入误写成传召以外的召法。
         """
         from ming_sim.applier import atomic
         from ming_sim.audience_night import (
+            METHOD_YUECI,
             get_open_night, open_night, record_summon_fresh,
             record_summon_in_transit, settle_unsettled_summons_for_person,
         )
@@ -917,6 +964,15 @@ class GameSession:
             else record_summon_in_transit
         )
         opened_new_night = False
+        record_kwargs: Dict[str, Any] = {
+            "origin_id": str(origin_id).strip(),
+            "origin_chat_turn_id": int(origin_chat_turn_id or 0),
+        }
+        if recorder is record_summon_fresh:
+            record_kwargs["travel_tone"] = travel_tone
+        # 越次点名跨入殿/传召分流保留；距离分流 tags 仍由 recorder 自写。
+        if str(method or "").strip() == METHOD_YUECI:
+            record_kwargs["method"] = METHOD_YUECI
         with atomic(self.db):
             night = get_open_night(self.db)
             if night is None:
@@ -924,9 +980,7 @@ class GameSession:
                 opened_new_night = True
             recorder(
                 self.db, int(night["id"]), character.name,
-                origin_id=str(origin_id).strip(),
-                origin_chat_turn_id=int(origin_chat_turn_id or 0),
-                **({"travel_tone": travel_tone} if recorder is record_summon_fresh else {}),
+                **record_kwargs,
             )
         if opened_new_night:
             from ming_sim.decree_forecast import schedule_held_decree_forecasts
@@ -1702,6 +1756,7 @@ class GameSession:
         - stream_emit 非空：同核走 transport 流式（SSE delta / 重试 / 失败路径）
         """
         from ming_sim.audience_night import (
+            METHOD_YUECI,
             SCENE_CHAT_SPEAKER,
             ensure_summon_enter,
             get_open_night,
@@ -1740,28 +1795,35 @@ class GameSession:
             return result
 
 
-        # 「宣 X」→ 确定性落入殿账，再起场景调用（X 开不开口由 LLM 演）。
-        xuan_fragment = recognize_xuan_command(message_text)
-        if xuan_fragment:
-            fragment = str(xuan_fragment).strip()
-            chars = getattr(getattr(self, "content", None), "characters", None) or {}
-            target = chars.get(fragment) or match_minister_from_text(fragment)
-            if target is None:
-                try:
-                    target = self.summon_character(fragment)
-                except ValueError:
-                    target = None
-            if target is not None:
+        # 「宣 X」／「宣甲、乙」／「越次宣 X」→ 逐人按现行宣召规则落账，再起场景调用。
+        # #1913：多人口令拆开各走 admission；拒召 reason 进本场材料；越次点名写 METHOD_YUECI。
+        xuan = recognize_xuan_command(message_text)
+        blocked_summon_facts: list[str] = []
+        if xuan is not None:
+            protagonist_changed = False
+            for target in self._resolve_xuan_targets(xuan.fragment):
                 with gate:
+                    xuan_ctid = int(chat_turn_id or 0)
+                    origin_id = f"scene:xuan:{xuan_ctid}:{target.name}"
                     decision = self.consume_audience_admission(
                         target,
-                        origin_id=f"scene:xuan:{int(chat_turn_id or 0)}:{target.name}",
-                        origin_chat_turn_id=int(chat_turn_id or 0),
+                        origin_id=origin_id,
+                        origin_chat_turn_id=xuan_ctid,
+                        method=xuan.method,
                     )
                     if decision.allowed:
+                        # 普通宣：不传 origin_ref，已在场走去重，不重复入殿。
+                        # 明确越次：正数源轮带同源 origin_ref——method 留账，且同轮
+                        # 恢复重试复用既有账（ADR 0036），不叠第二条越次入殿。
                         ensure_summon_enter(
                             self.db, night_id, target.name,
-                            origin_chat_turn_id=int(chat_turn_id or 0),
+                            method=xuan.method,
+                            origin_chat_turn_id=xuan_ctid,
+                            origin_ref=(
+                                origin_id
+                                if xuan_ctid > 0 and xuan.method == METHOD_YUECI
+                                else ""
+                            ),
                         )
                         # #1838 / ADR 0158：宣 X 当场先切御前主角（不等转译）。
                         # 夜当前值是投影；ctid>0 时同步写 chat_turns.protagonist_name
@@ -1772,7 +1834,6 @@ class GameSession:
                         set_night_protagonist(
                             self.db, night_id, target.name,
                         )
-                        xuan_ctid = int(chat_turn_id or 0)
                         if xuan_ctid > 0:
                             self.db.reign.set_chat_turn_protagonist(
                                 xuan_ctid, target.name
@@ -1782,13 +1843,24 @@ class GameSession:
                                 and int(getattr(self.db.conn, "_atomic_depth", 0) or 0) == 0
                             ):
                                 self.db.conn.commit()
-                if decision.allowed and on_protagonist_changed is not None:
-                    on_protagonist_changed()
+                        protagonist_changed = True
+                    elif decision.result is None and str(decision.reason or "").strip():
+                        # #1913：资格拦下——事实进本场材料，不记入殿；怎么演归场景 LLM。
+                        blocked_summon_facts.append(json.dumps({
+                            "kind": "summon_blocked",
+                            "person_name": target.name,
+                            "reason": str(decision.reason),
+                        }, ensure_ascii=False, sort_keys=True))
+            if protagonist_changed and on_protagonist_changed is not None:
+                on_protagonist_changed()
             # 被拒的宣召仍是一轮殿上戏文；只在合法入殿时先写入殿账。
             # #1838 reopen：不再等入殿旁白。
 
         # 材料目录：在场诸人各一份；开场最小集 + 只读工具。
-        prepared = prepare_scene_materials(self.db, self.state)
+        prepared = prepare_scene_materials(
+            self.db, self.state,
+            extra_pending_facts=blocked_summon_facts,
+        )
         llm_config = getattr(self, "llm_config", None)
         if llm_config is None:
             raise RuntimeError("scene_chat 需要 llm_config。")
