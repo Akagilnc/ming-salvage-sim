@@ -198,11 +198,10 @@ def build_translation_target_grounding(db: Any, state: Any = None) -> str:
             f"{str(row['title'] or '')}"
         )
     # #1915：新设衙门 id↔名称，月末 textual_facts(subject_kind=yamen) 回指用。
-    if hasattr(db, "yamens"):
-        for yamen in db.yamens.list_active():
-            lines.append(
-                f"yamen\t{int(yamen.id)}\t{yamen.name}\t主官:{yamen.chief_name}"
-            )
+    for yamen in db.yamens.list_active():
+        lines.append(
+            f"yamen\t{int(yamen.id)}\t{yamen.name}\t主官:{yamen.chief_name}"
+        )
     # 在途拨帑与自带押解标记（普通押解随拨银旨）；专用护送目录/实况行已退役。
     for row in db.conn.execute(
         'SELECT id, action_type, target_kind, target_id FROM decree_dossiers WHERE '

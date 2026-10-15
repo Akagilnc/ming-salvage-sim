@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS yamens (
     fee_account TEXT NOT NULL DEFAULT '国库',
     fiscal_key TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'active'
-        CHECK(status IN ('active', 'dissolved')),
+        CHECK(status = 'active'),
     origin_ref TEXT NOT NULL DEFAULT '',
     created_turn INTEGER NOT NULL,
     created_year INTEGER NOT NULL,
@@ -116,7 +116,12 @@ class YamenStore(RowStore):
         account = str(fee_account or "").strip() or "国库"
         if account not in ECONOMY_ACCOUNTS:
             raise DeclarationDataError(f"衙门月费账户非法：{account!r}")
-        fee = int(monthly_fee)
+        from ming_sim.strict_types import strict_int
+
+        try:
+            fee = strict_int(monthly_fee)
+        except (TypeError, ValueError) as exc:
+            raise DeclarationDataError("衙门月费须为整数") from exc
         if fee < 0:
             raise DeclarationDataError(f"衙门月费不得为负：{fee}")
         existing = self._conn.execute(

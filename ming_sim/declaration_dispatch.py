@@ -2757,16 +2757,18 @@ def _dispatch_promises(
 
 def _assert_textual_fact_subject_exists(db: Any, subject_kind: str, subject_id: str) -> None:
     """格式及缺失引用为类型化数据错误；持久读取异常不转译。"""
+    from ming_sim.strict_types import strict_sqlite_id
+
     if subject_kind == "affair":
         try:
-            affair_id = int(subject_id)
+            affair_id = strict_sqlite_id(subject_id)
         except (TypeError, ValueError) as exc:
             raise DeclarationDataError("事务引用须为整数") from exc
         db.affairs.get(affair_id)
         return
     if subject_kind == "yamen":
         try:
-            yamen_id = int(subject_id)
+            yamen_id = strict_sqlite_id(subject_id)
         except (TypeError, ValueError) as exc:
             raise DeclarationDataError("衙门引用须为整数") from exc
         if db.yamens.get(yamen_id) is None:
@@ -2827,8 +2829,12 @@ def _peek_affair_id(db: Any, item: Mapping[str, object]) -> Tuple[int | None, st
 
 
 def _resolve_affair_origin_ref(db: Any, item: Mapping[str, object]) -> Tuple[str, str | None, str | None]:
-    """同 :func:`_peek_affair_id`，但给需要 origin_ref 字符串（而非事务 id）的
-    落库口用（textual_facts / public_sayings / presence / scene_facts）。"""
+    """同 :func:`_peek_affair_id`，但返回 ``affair:<id>`` 字符串。
+
+    用于 public_sayings 的 affair_ref、presence / scene_facts 等只挂事务回指、
+    没有独立 origin_ref+affair_id 双槽的落库口。textual_facts 已改走原生
+    origin_ref 与 affair_id 两槽，不再经此函数。
+    """
     affair_id, error_category, reason = _peek_affair_id(db, item)
     if error_category is not None:
         return "", error_category, reason
@@ -2878,9 +2884,9 @@ def _dispatch_yamen_creates(
             )
             continue
         try:
-            if isinstance(fee_raw, bool) or fee_raw is None:
-                raise TypeError("monthly_fee 须为非负整数")
-            fee = int(fee_raw)
+            from ming_sim.strict_types import strict_int
+
+            fee = strict_int(fee_raw)
             if fee < 0:
                 raise ValueError("monthly_fee 不得为负")
         except (TypeError, ValueError) as exc:
@@ -2965,15 +2971,18 @@ def _dispatch_textual_facts(
         except DeclarationDataError as exc:
             _reject(rejected, item, str(exc), "invalid_shape", source)
             continue
-        origin_ref, error_category, reason = _resolve_affair_origin_ref(db, item)
+        # origin_ref＝本条真实来源；affair_declaration＝所属事务。两槽独立（ADR 0154）。
+        affair_id, error_category, reason = _peek_affair_id(db, item)
         if error_category is not None:
             _reject(rejected, item, reason, error_category, source)
             continue
+        origin_ref = str(item.get("origin_ref") or "").strip()
         try:
             fact = db.textual_facts.append(
                 subject_kind=subject_kind, subject_id=subject_id,
                 body=item.get("body"), year=state.year, period=state.period,
                 turn=state.turn, origin_ref=origin_ref,
+                affair_id=int(affair_id or 0),
             )
         except DeclarationDataError as exc:
             _reject(rejected, item, str(exc), "invalid_shape", source)

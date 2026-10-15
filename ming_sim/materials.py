@@ -741,11 +741,12 @@ def _write_region_detail_files(tmp: Path, db: Any, knowledge: dict) -> list[str]
     return index
 
 
-def _yamen_material_text(db: Any, yamen: Any) -> str:
+def _yamen_material_text(db: Any, yamen: Any, *, include_fact: Any = None) -> str:
     """主官/推演可读的衙门账：名称、主官、月费与历月下落。
 
     月度下落复用既有 ``_textual_facts_text``（保留 body 原样，P6），不另写投影循环。
     月费单位＝账本万两（与 fiscal_config / MONEY_UNIT 同契约）。
+    ``include_fact`` 与人物/军队/地区按月实况同一来源可见性接缝；世界推演默认不筛。
     """
     from ming_sim.assets import format_money
 
@@ -760,32 +761,48 @@ def _yamen_material_text(db: Any, yamen: Any) -> str:
             db.textual_facts,
             subject_kind="yamen",
             subject_id=str(int(yamen.id)),
+            include_fact=include_fact,
         ),
     ]
     return "\n".join(lines)
 
 
-def _write_chief_yamen_files(tmp: Path, db: Any, character: Any) -> list[str]:
-    """主官才读本衙门整本；其他经手人不得因参与一事取得整本（#1915）。"""
+def _write_chief_yamen_files(
+    tmp: Path, db: Any, character: Any, *, prefix: str = "",
+) -> list[str]:
+    """主官才读本衙门整本；其他经手人不得因参与一事取得整本（#1915）。
+
+    月度下落按主官视角走既有 ``origin_visible_to``，与人物按月实况同一边界。
+    ``prefix`` 供场景私有子树挂在 ``人物/<名>/`` 下，避免与共享路径分叉两套装配。
+    """
+    from ming_sim.knowledge import origin_visible_to
+
     name = str(getattr(character, "name", "") or "").strip()
-    if not name or not hasattr(db, "yamens"):
+    if not name:
         return []
     index: list[str] = []
+    include_fact = lambda fact, reader=name: origin_visible_to(db, fact.origin_ref, reader)
+    base = f"{prefix}{_YAMEN_DIR}" if not prefix else f"{prefix.rstrip('/')}/{_YAMEN_DIR}"
     for yamen in db.yamens.list_for_chief(name):
-        rel = f"{_YAMEN_DIR}/{_safe_segment(yamen.name)}/详情.txt"
-        _write_text(tmp / rel, _yamen_material_text(db, yamen))
+        rel = f"{base}/{_safe_segment(yamen.name)}/详情.txt"
+        _write_text(tmp / rel, _yamen_material_text(db, yamen, include_fact=include_fact))
         index.append(rel)
     return index
 
 
-def _write_world_yamen_files(tmp: Path, db: Any) -> list[str]:
-    """过月推演材料：全部在职衙门及其月度下落。"""
-    if not hasattr(db, "yamens"):
-        return []
+def _write_world_yamen_files(tmp: Path, db: Any, *, include_fact: Any = None) -> list[str]:
+    """过月推演/邸报材料：在职衙门及其月度下落。
+
+    世界推演 ``include_fact=None`` 保留完整事实；邸报 ``public_feed`` 传入既有
+    来源可见性过滤，与人物/军队/地区按月实况同一接缝。
+    """
     index: list[str] = []
     for yamen in db.yamens.list_active():
         rel = f"{_YAMEN_DIR}/{_safe_segment(yamen.name)}/详情.txt"
-        _write_text(tmp / rel, _yamen_material_text(db, yamen))
+        _write_text(
+            tmp / rel,
+            _yamen_material_text(db, yamen, include_fact=include_fact),
+        )
         index.append(rel)
     return index
 
@@ -1597,7 +1614,7 @@ def _write_world_tree(
     _write_text(tmp / _COURT_ROSTER_REL, roster_text)
     index.append(_COURT_ROSTER_REL)
 
-    index.extend(_write_world_yamen_files(tmp, db))
+    index.extend(_write_world_yamen_files(tmp, db, include_fact=include_fact))
 
     for name in _world_roster_names(db):
         knowledge = build_character_knowledge(db, state, name)
@@ -2146,12 +2163,8 @@ def _write_one_present_person(
     )
     index.append(office_rel)
 
-    # #1915：主官私有子树下的本衙门整本；路径挂在人物名下，避免与他人共享。
-    if hasattr(db, "yamens"):
-        for yamen in db.yamens.list_for_chief(name):
-            yamen_rel = f"{base}/{_YAMEN_DIR}/{_safe_segment(yamen.name)}/详情.txt"
-            _write_text(tmp / yamen_rel, _yamen_material_text(db, yamen))
-            index.append(yamen_rel)
+    # #1915：主官私有子树下的本衙门整本；与 _write_tree 共用同一装配。
+    index.extend(_write_chief_yamen_files(tmp, db, character, prefix=f"{base}/"))
 
     secret_rel = _write_secret_order_file(
         tmp, db, state, character, rel=f"{base}/{_SECRET_DIR}/进行中.txt",

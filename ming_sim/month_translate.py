@@ -35,11 +35,10 @@ def _visible_effect_refs(
         "secret_dossiers": sorted(secret_order_dossier_ids(db)),
     }
     # #1915：在职衙门 id+名称，供月末 textual_facts 回指；名称映射亦在权威目标目录。
-    if hasattr(db, "yamens"):
-        refs["yamens"] = [
-            {"id": int(row.id), "name": row.name}
-            for row in db.yamens.list_active()
-        ]
+    refs["yamens"] = [
+        {"id": int(row.id), "name": row.name}
+        for row in db.yamens.list_active()
+    ]
     return refs
 
 
