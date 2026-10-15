@@ -1056,19 +1056,16 @@ def _apply_stalled_deliberation_from_declaration(
 ) -> bool:
     """#1917：该旨全部暂存声明统一试消费；本案 stalled 落成则同事务 settled。
 
-    ``alongside(ref, result)`` 与 settle_staged 同形，在消费事务内执行结果承接。
-    成功返回 True；失败回滚并 reload，返回 False。
+    复用 :func:`settle_staged_declarations_in_decree_order` 完整消费生命周期；
+    仅在其 alongside 内保留颁布前 stalled 成功判定与结果承接。
+    成功返回 True；未 stalled 则事务回滚并返回 False。
     """
-    from ming_sim.applier import (
-        Provenance, RejectionCollector, mirror_rejections_after_commit,
-    )
+    from ming_sim.applier import Provenance
     from ming_sim.declaration_dispatch import (
         bind_decree_effect_sources,
-        empty_dispatch_result,
-        _dispatch_declaration_sections,
+        settle_staged_declarations_in_decree_order,
     )
-    from ming_sim.decree import _is_stalled_deliberation, reload_state_from_db
-    from ming_sim.error_pack import rejections_jsonl_path
+    from ming_sim.decree import _is_stalled_deliberation
 
     ref = str(decree_ref or "").strip()
     if not ref or db.staged_declarations.is_settled(ref):
@@ -1084,47 +1081,34 @@ def _apply_stalled_deliberation_from_declaration(
     ):
         return False
     targets = False
-    bound_rows: list[tuple[Mapping[str, object], Mapping[str, object]]] = []
     for item in staged:
         if item.declaration is None:
             continue
-        bound, refs = bind_decree_effect_sources(
+        bound, _refs = bind_decree_effect_sources(
             db, ref, item.declaration, item.visible_refs or {},
         )
-        bound_rows.append((bound, refs))
         if _declaration_targets_stalled(bound, int(dossier_id)):
             targets = True
-    if not targets or not bound_rows:
+            break
+    if not targets:
         return False
 
-    collector = RejectionCollector()
+    def accept_stalled(settled_ref: str, result: Any) -> None:
+        row = db.dossiers.get(int(dossier_id))
+        if row is None or not _is_stalled_deliberation(row):
+            raise _StalledApplyMiss()
+        if alongside is not None:
+            alongside(settled_ref, result)
+
     try:
-        with atomic(db):
-            dispatch_result = empty_dispatch_result()
-            for bound, refs in bound_rows:
-                dispatch_result = dispatch_result.merge(_dispatch_declaration_sections(
-                    db, state, bound,
-                    minister_name="", night_id=0, source=Provenance.system_simulation,
-                    collector=collector, chat_turn_id=0,
-                    visible_refs=refs, defer_disclosure=True,
-                ))
-            row = db.dossiers.get(int(dossier_id))
-            if row is None or not _is_stalled_deliberation(row):
-                raise _StalledApplyMiss()
-            collector.flush_to_db(db)
-            db.conn.execute(
-                "UPDATE staged_declarations SET status='settled' "
-                "WHERE decree_ref=? AND status='staged'",
-                (ref,),
-            )
-            if alongside is not None:
-                alongside(ref, dispatch_result)
+        results = settle_staged_declarations_in_decree_order(
+            db, state, [ref], source=Provenance.system_simulation,
+            alongside=accept_stalled,
+        )
     except _StalledApplyMiss:
-        # DB 已随 atomic 回滚；刷掉分派期间写入的内存脏余额。
-        reload_state_from_db(db, state, content=getattr(db, "content", None))
+        # settle_staged 的 atomic_and_reload 已回滚并 reload。
         return False
-    mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
-    return True
+    return ref in results
 
 
 def _settle_edicts(
