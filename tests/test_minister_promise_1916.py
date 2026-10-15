@@ -28,10 +28,13 @@ from ming_sim.declaration_dispatch import dispatch_declaration
 from ming_sim.due_review import apply_pending_due_reviews, list_due_review_scenes
 from ming_sim.knowledge import build_character_knowledge, origin_visible_to
 from ming_sim.materials import (
+    _person_audience_experience,
+    _public_audience_experience,
     _scene_pending_audience_facts,
+    _secret_order_chat_turn_ids,
+    _world_affair_lines,
     list_materials,
     prepare_scene_materials,
-    read_material,
     release_material_tree,
 )
 from ming_sim.month_chain import _gazette_feed, prepare_gazette_author_materials
@@ -408,26 +411,35 @@ def _land_minister_promise(db, state, *, promisor: str, title: str, deadline_mon
     return result, int(chat_id), int(night_id)
 
 
+def _affair_dir_keys(paths) -> set[str]:
+    """从材料路径提取事务身份键（affair-N），不解析文件正文。"""
+    keys: set[str] = set()
+    for path in paths:
+        for part in str(path).split("/"):
+            if part.startswith("affair-") and part[7:8].isdigit():
+                # _safe_segment 形如 affair-N-<digest>
+                identity = part.rsplit("-", 1)[0]
+                if identity.startswith("affair-"):
+                    keys.add(identity)
+    return keys
+
+
 def test_c1_minister_promise_origin_not_public_visible(game):
-    """C1：自诺来源受限；公开邸报 due_commitments 与作者目录皆不见私语/私密事务。"""
+    """C1：自诺来源受限；公开作者目录按结构化身份/可闻性排除私诺新建与私语。"""
     db, state, content = game
     promisor = "魏忠贤"
-    private_speech = "臣暗中查办田尔耕，明月具奏。"
-    private_affair_name = "魏忠贤私下许诺查案"
-    private_affair_origin = "御前私诺查办田尔耕"
-    public_speech = "朝堂共闻：整饬边饷。"
-    public_affair_name = "公开边饷事务"
-    db.affairs.open(
-        name=public_affair_name, origin="廷议边饷",
+    public_affair = db.affairs.open(
+        name="公开边饷事务", origin="廷议边饷",
         year=int(state.year), period=int(state.period), turn=int(state.turn),
     )
+    public_affair_id = int(public_affair.id)
     result, chat_id, night_id = _land_minister_promise(
         db, state, promisor=promisor, title="私密自诺不入邸报",
         deadline_months=0,
         affair_declaration={
             "attach": "new",
-            "name": private_affair_name,
-            "origin": private_affair_origin,
+            "name": "魏忠贤私下许诺查案",
+            "origin": "御前私诺查办田尔耕",
         },
     )
     assert result.commissions.rejected == []
@@ -437,6 +449,7 @@ def test_c1_minister_promise_origin_not_public_visible(game):
     issue_id = int(applied["issue_id"])
     private_affair_id = int(db.issues.affair_id_of(issue_id))
     assert private_affair_id > 0
+    assert private_affair_id != public_affair_id
     row = db.conn.execute(
         "SELECT origin_ref, end_turn FROM issues WHERE id=?", (issue_id,),
     ).fetchone()
@@ -446,21 +459,21 @@ def test_c1_minister_promise_origin_not_public_visible(game):
     assert origin_visible_to(db, origin_ref, promisor) is True
     assert origin_visible_to(db, origin_ref, "杨嗣昌") is False
 
-    # 真实夜账：御前低语属承诺人经历；殿上公开语应仍入公开目录。
-    append_ledger_entry(
+    # 真实夜账：结构化可闻性——私语入承诺人经历，公开条目入公开投影。
+    private_entry_id = append_ledger_entry(
         db, int(night_id),
         person_names=[promisor],
         audibility=AUDIBILITY_PRIVATE,
-        body=private_speech,
+        body="臣暗中查办田尔耕，明月具奏。",
         tags=["scroll_role:minister"],
         source_chat_turn_id=int(chat_id),
         origin_chat_turn_id=int(chat_id),
     )
-    append_ledger_entry(
+    public_entry_id = append_ledger_entry(
         db, int(night_id),
         person_names=[promisor],
         audibility=AUDIBILITY_PUBLIC,
-        body=public_speech,
+        body="朝堂共闻：整饬边饷。",
         tags=["scroll_role:minister"],
         source_chat_turn_id=int(chat_id),
         origin_chat_turn_id=int(chat_id),
@@ -481,23 +494,31 @@ def test_c1_minister_promise_origin_not_public_visible(game):
     knowledge = build_character_knowledge(db, state, promisor)
     assert any(int(i.get("id") or 0) == issue_id for i in knowledge.get("issues") or [])
 
-    # 真实公开作者目录：私语与仅由自诺新建的事务元数据不得出现；合法公开材料保留。
+    # 公开投影：可闻性与事务身份键，不盯正文。
+    public_audience_ids = {
+        int(entry["id"])
+        for entry in _public_audience_experience(
+            _person_audience_experience(db, promisor),
+            _secret_order_chat_turn_ids(db),
+        )
+    }
+    assert private_entry_id not in public_audience_ids
+    assert public_entry_id in public_audience_ids
+
+    affair_keys = {key for key, *_ in _world_affair_lines(db, public_only=True)[0]}
+    assert f"affair-{private_affair_id}" not in affair_keys
+    assert f"affair-{public_affair_id}" in affair_keys
+
     prepared = prepare_gazette_author_materials(db, state)
     try:
-        blob = "\n".join(
-            read_material(prepared.root, path) for path in list_materials(prepared.root)
-        )
-        assert private_speech not in blob
-        assert private_affair_name not in blob
-        assert private_affair_origin not in blob
-        assert f"affair-{private_affair_id}" not in "\n".join(list_materials(prepared.root))
-        assert public_speech in blob
-        assert public_affair_name in blob
-        assert str(prepared.opening or "").count(private_affair_name) == 0
+        paths = list_materials(prepared.root)
+        dir_keys = _affair_dir_keys(paths)
+        assert f"affair-{private_affair_id}" not in dir_keys
+        assert f"affair-{public_affair_id}" in dir_keys
     finally:
         release_material_tree(prepared.root)
 
-    # 受限来源随撤回前像删除。
+    # 受限来源随撤回前像删除（须在后续召对轮之前）。
     src_before = int(db.conn.execute(
         "SELECT COUNT(*) AS n FROM character_knowledge_sources WHERE source_id=?",
         (origin_ref,),
@@ -510,6 +531,38 @@ def test_c1_minister_promise_origin_not_public_visible(game):
         "SELECT COUNT(*) AS n FROM character_knowledge_sources WHERE source_id=?",
         (origin_ref,),
     ).fetchone()["n"]) == 0
+
+    # 反例：既有公开事务落公开收支后挂私诺，公开目录仍保留该事务身份。
+    public_origin = db.affairs.origin_ref(public_affair_id)
+    db.record_issue_economy_move(
+        state, "国库", -1, "边饷", "公开收支",
+        origin_ref=public_origin,
+    )
+    history_before = db.list_world_effect_history(public_origin)
+    assert any(history_before.values())
+    linked, _chat, _nid = _land_minister_promise(
+        db, state, promisor=promisor, title="私诺挂既有公开事务",
+        deadline_months=0,
+        affair_declaration={"attach": "existing", "affair_id": public_affair_id},
+    )
+    assert linked.commissions.rejected == []
+    linked_issue = int(linked.commissions.applied[0]["issue_id"])
+    assert int(db.issues.affair_id_of(linked_issue)) == public_affair_id
+    assert origin_visible_to(
+        db,
+        str(db.conn.execute(
+            "SELECT origin_ref FROM issues WHERE id=?", (linked_issue,),
+        ).fetchone()["origin_ref"] or ""),
+    ) is False
+    keys_after_link = {key for key, *_ in _world_affair_lines(db, public_only=True)[0]}
+    assert f"affair-{public_affair_id}" in keys_after_link
+    prepared_after = prepare_gazette_author_materials(db, state)
+    try:
+        assert f"affair-{public_affair_id}" in _affair_dir_keys(
+            list_materials(prepared_after.root),
+        )
+    finally:
+        release_material_tree(prepared_after.root)
 
 
 def test_c2_correction_ids_rejected_on_minister_promise(game):

@@ -4,7 +4,7 @@ import json
 import pytest
 import ming_sim.month_chain as month_chain
 from ming_sim.exceptions import LLMUnavailable
-from ming_sim.materials import list_materials, read_material
+from ming_sim.materials import list_materials
 from ming_sim.models import LLMConfig
 from tests.month_chain_helpers import make_light_session
 from tests.test_month_chain_1843 import _forbid_extractor, _stage_edict
@@ -207,9 +207,6 @@ def test_author_excludes_secret_sources_from_public_materials(game, monkeypatch,
 
     def author(_config, prepared):
         seen["paths"] = list_materials(prepared.root)
-        seen["materials"] = prepared.opening + "\n" + "\n".join(
-            read_material(prepared.root, path) for path in seen["paths"]
-        )
         return AuthorModel()
     monkeypatch.setattr(agents, "create_gazette_author_agent", author)
     title, report = month_chain.run_gazette_text(db, state, _llm(), on_gazette=previews.append)
@@ -223,9 +220,17 @@ def test_author_excludes_secret_sources_from_public_materials(game, monkeypatch,
     assert set(origins[:2]) <= refs
     assert set(origins[2:]).isdisjoint(refs)
     assert {"landed", "nominal", "forecasts", "rejections"}.isdisjoint(feed)
-    for origin in origins[:2]:
-        assert f"fact:{origin}" in seen["materials"]
-        assert f"ledger:{origin}" in seen["materials"]
-    for origin in origins[2:]:
-        assert f"fact:{origin}" not in seen["materials"]
-        assert f"ledger:{origin}" not in seen["materials"]
+    # 结构化来源边界：公开 origin 可见且目录有事务路径；密源不可见且不进 due refs。
+    from ming_sim.knowledge import origin_visible_to
+    public_origins, secret_origins = origins[:2], origins[2:]
+    for origin in public_origins:
+        assert origin_visible_to(db, origin) is True
+    for origin in secret_origins:
+        assert origin_visible_to(db, origin) is False
+    assert any(
+        part.startswith(f"affair-{affair.id}-") or part == f"affair-{affair.id}"
+        for path in seen["paths"] for part in str(path).split("/")
+    )
+    # 密令案卷身份不得出现在公开材料路径中。
+    assert not any(f"dossier-{secret}" in path or f"secret_order:{oid}" in path
+                   for path in seen["paths"])

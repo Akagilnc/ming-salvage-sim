@@ -1204,22 +1204,29 @@ def _world_affair_lines(
             fact for fact in textual_facts.readable_materials(subject_kind="affair", subject_id=str(int(affair.id)))
             if _keep_fact(fact, include_fact)
         )
-        # Metadata follows durable structured links, never the free-prose origin.
-        # A public fact, ordinary dossier, or public-origin issue keeps a mixed
-        # affair available; private-only links (e.g. minister self-promise) do not.
+        # Metadata follows durable structured signals, never free-prose origin.
+        # Private-only newborns (restricted carriers, no public trace) stay out.
+        # Attaching a private promise to an already-public affair must not hide
+        # that affair's public facts, dossiers, origins, or effect history.
         if public_only and not facts:
             dossiers = db.dossiers.rows_for_affair(affair.id)
             issues = db.issues.rows_for_affair(affair.id)
-            has_link = bool(dossiers) or bool(issues)
-            public_link = any(
+            has_restricted_carrier = bool(dossiers) or bool(issues)
+            public_carrier = any(
                 origin_visible_to(db, "", linked_dossier_id=dossier["id"])
                 for dossier in dossiers
             ) or any(
                 origin_visible_to(db, str(issue["origin_ref"] or ""))
                 for issue in issues
             )
-            if has_link and not public_link:
-                continue
+            if has_restricted_carrier and not public_carrier:
+                history = db.list_world_effect_history(store.origin_ref(affair.id))
+                if not any(
+                    _world_history_row_visible(db, row, set(), True)
+                    for rows in history.values()
+                    for row in rows
+                ):
+                    continue
         fact_lines = [f"{fact.occurred_month}：{fact.body}" for fact in facts]
         directory_text = "\n".join([
             f"起因：{affair.origin}", f"状态：{affair.status}", *fact_lines,
