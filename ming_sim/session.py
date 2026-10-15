@@ -38,6 +38,7 @@ from ming_sim.db import (
     normalize_office,
     resolve_office_type_preserving_title,
 )
+from ming_sim.office_rank import appointment_seat_continues, office_title_continues
 from ming_sim.applier import (
     Provenance,
     atomic,
@@ -390,27 +391,56 @@ def _canonical_minister_key(content: Any, name: str, db: "GameDB") -> str:
 
 def _appointment_intent_is_current_office_noop(
     db: Any, name: str, office: str, content: Any = None,
+    *,
+    tenure: Optional[str] = None,
+    region_id: Optional[str] = None,
+    office_type: Optional[str] = None,
 ) -> bool:
     """任命目标已在该职时是背景复述，不生成待确认任免动作。
 
     姓名按 canonical 口径归一（与真正落任命 apply_office_appointment 同口径）：LLM 抽到的可能是
     别名（『韩阁老』而非『韩爌』），精确名查不到行会漏判成假任免（cmr #354 correctness）。先
-    归一到在册原始名，再查当前 office。"""
+    归一到在册原始名，再查当前 office。
+
+    #1912 / ADR 0064：声明了任别且与现职任别不同（如署理→真除）不是背景复述，须再下一道任免旨。
+    ``tenure is None`` 表示声明未带任别字段，仅按官职判定。
+    任所是否计入身份＝**目标职**规范口径（与落账 resolve_office_type_preserving_title
+    同缝），不拿现职 office_type 掩盖地方目标上的显式任所。
+    """
     conn = getattr(db, "conn", None)
     clean_name = str(name or "").strip()
     desired = normalize_office(str(office or ""))
     if conn is None or not clean_name or not desired:
         return False
     canonical = _canonical_minister_key(content, clean_name, db)
-    row = CharacterStore(conn).row(canonical, fields="status, office")
+    store = CharacterStore(conn)
+    row = store.row(canonical, fields="status, office, office_type")
     if row is None or str(row["status"] or "") != "active":
         return False
     current = normalize_office(str(row["office"] or ""))
-    if not current:
+    if not office_title_continues(current, desired):
         return False
-    desired_parts = {p for p in desired.split(",") if p}
-    current_parts = {p for p in current.split(",") if p}
-    return bool(desired_parts) and desired_parts.issubset(current_parts)
+    # Target identity — same resolver as apply_office_appointment / _canonical_appointment_fields
+    # (table before LLM). Must not short-circuit on current office_type via use_llm=False,
+    # or mixed 中央+巡抚 holding would treat target 巡抚 as non-local and swallow seats.
+    desired_type = resolve_office_type_preserving_title(
+        desired,
+        str(office_type or "").strip(),
+        str(row["office_type"] or ""),
+        getattr(db, "llm_config", None),
+    )
+    if not appointment_seat_continues(
+        current_seat=store.office_region(canonical),
+        desired_seat=region_id,
+        office_type=desired_type,
+        local_office_types=GameDB._LOCAL_ARCHIVE_OFFICE_TYPES,
+    ):
+        return False
+    if tenure is None:
+        return True
+    from ming_sim.supervision import character_tenure
+
+    return character_tenure(db, canonical) == str(tenure).strip()
 
 
 def canonical_new_appointment_person_fields(

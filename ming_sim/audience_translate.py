@@ -179,6 +179,16 @@ def build_translation_target_grounding(db: Any, state: Any = None) -> str:
         lines.append(
             f"character\t{row['name']}\t{str(row['office'] or row['name'])}"
         )
+    # #1912 J1：在持授权稳定身份供料，供 revoke_authority.authority_id 精确收回。
+    turn = getattr(state, "turn", None) if state is not None else None
+    if turn is None:
+        turn = db.load_state().turn
+    for row in db.characters.list_active_authorities(int(turn)):
+        lines.append(
+            "authority\t"
+            f"{int(row['id'])}\t{str(row.get('holder_id') or '')}\t"
+            f"{str(row.get('privilege') or '')}\t{str(row.get('scope') or '')}"
+        )
     from ming_sim.staged_commitment import load_commitment_stages
 
     for row in db.conn.execute(
@@ -239,7 +249,9 @@ def build_translation_target_grounding(db: Any, state: Any = None) -> str:
         body = "\n".join(lines)
         parts.append(
             "【权威目标目录】\n"
-            "grant.target_id / appointment.region_id / rushes.target_id / 禁摊派案卷 id 必须取对应目录中的精确 id，禁止编造。\n"
+            "grant.target_id / appointment.region_id / rushes.target_id / 禁摊派案卷 id / "
+            "revoke_authority.authority_id 必须取对应目录中的精确 id，禁止编造。"
+            "authority 行格式：id、持有人、权项、事域。\n"
             f"{body}"
         )
     if candidate_block:
@@ -259,11 +271,15 @@ def build_c0_declaration_shape() -> str:
     from ming_sim.covert_progress import describe_covert_task_contract
     covert_contract_shape = describe_covert_task_contract()
     # 案卷关联的合法类型闭集同样只投影 constants 真源，禁手抄分叉。
+    from ming_sim.appointment_tenure import APPOINTMENT_TENURES
+    from ming_sim.authority_privileges import AUTHORITY_PRIVILEGES
     from ming_sim.constants import DOSSIER_LINK_TYPES, ECONOMY_ACCOUNTS
     from ming_sim.entities.character.transit import TRAVEL_SPEED_BY_TONE
     dossier_link_types = "|".join(sorted(DOSSIER_LINK_TYPES))
     account_hint = "|".join(ECONOMY_ACCOUNTS)
     travel_tone_hint = "|".join(TRAVEL_SPEED_BY_TONE)
+    tenure_hint = "|".join(sorted(APPOINTMENT_TENURES))
+    privilege_hint = "|".join(AUTHORITY_PRIVILEGES)
     effect_shape = "\n".join(
         f"    {line}" for line in json.dumps(
             {"event_id": "仅属某事件战果时填事件 id；未填即独立", **DECLARATION_EFFECT_FIELDS},
@@ -279,7 +295,19 @@ def build_c0_declaration_shape() -> str:
         '      "target_dossier_id": "御笔强推已有案卷 id（不与 grant/appointment 同填）",\n'
         '      "appointment": {\n'
         '        "name": "人名", "office": "官职", "appoint_action": "任命|罢免",\n'
-        '        "region_id": "任所 region id（地方/督抚/边镇任命必填；中央可空）"\n'
+        '        "region_id": "任所 region id（地方/督抚/边镇任命必填；中央可空）",\n'
+        f'        "任别": "{tenure_hint}"\n'
+        "      },\n"
+        '      "authorization": {\n'
+        '        "name": "授予对象人名",\n'
+        f'        "privilege": "{privilege_hint}",\n'
+        f'        "target_kind": "{target_kind_hint}",\n'
+        '        "target_id": "事域 id（与 target_kind 同填，组成典范事域；亦可直接填 scope）"\n'
+        "      },\n"
+        '      "revoke_authority": {\n'
+        '        "name": "持有人",\n'
+        f'        "privilege": "{privilege_hint}",\n'
+        '        "authority_id": "权威目标目录 authority 行 id（精确收回必填；无则持有人+权项唯一时解析）"\n'
         "      },\n"
         '      "grant": {\n'
         '        "grant_action": "赈灾|协饷|赏赉|发内帑|项目经费|…",\n'
