@@ -156,7 +156,8 @@ def apply_deliberation_outcomes(run):
             )
         origin = f"dossier:{dossier_id}"
         existing = run.db.conn.execute(
-            "SELECT id FROM issues WHERE origin_ref=? LIMIT 1", (origin,),
+            "SELECT id, status FROM issues WHERE origin_ref=? ORDER BY id DESC LIMIT 1",
+            (origin,),
         ).fetchone()
         if existing is None:
             title = str(dossier.get("decree_text") or "").strip() or note.strip() or "无人站台原案"
@@ -168,6 +169,13 @@ def apply_deliberation_outcomes(run):
                 origin_ref=origin,
                 stage_text=note,
                 commit=False,
+            )
+        elif str(existing["status"] or "") != "active":
+            # 再次待裁：重开局势，保留历史 resolved 记录语义由 status 翻转承接。
+            run.db.conn.execute(
+                "UPDATE issues SET status='active', stage_text=COALESCE(?, stage_text) "
+                "WHERE id=?",
+                (note.strip() or None, int(existing["id"])),
             )
         applied.append({
             "dossier_id": dossier_id, "outcome": "stalled", "source_item": item,

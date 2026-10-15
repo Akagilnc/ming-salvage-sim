@@ -551,6 +551,7 @@ def continue_decree_after_answers(
     payload = dossier["payload"]
 
     def consume(result: Any = None) -> None:
+        # 终局与披露唯一承接口（J3）：只在此处理 result。
         candidate = _ending_from_dispatch_result(result)
         if candidate is not None:
             chain["declaration_outcome"] = candidate
@@ -564,24 +565,8 @@ def continue_decree_after_answers(
         db.staged_declarations.replace_questions(decree_ref, remaining + pinned, forecast_text=str(text or ""))
         products.pop(event_id)
         _save_chain(db, int(state.turn), chain, source=source)
-
-    if not prefix.strip():
-        with atomic(db):
-            consume()
-        return
-
-    # #1917 runner 裁定（二）／#1847：判决授权下活口逐问落账；stalled 转待裁且已落不动。
-    # 已 settled 的 ref 只活口、不再 stage（C7 剩余请旨）。
-    dossier_id = int(dossier["id"])
-
-    def _alongside_dispatch(result: Any = None) -> None:
-        candidate = _ending_from_dispatch_result(result)
-        if candidate is not None:
-            chain["declaration_outcome"] = candidate
-        _collect_disclosures_from_result(chain, result)
-        consume(result)
-        # 续推 stalled 落成后，终结未结算暂存，避免问清后 settle 重放已落效果。
-        row = db.dossiers.get(dossier_id)
+        # 续推 stalled 落成后终结未结算暂存，避免 settle 重放已落效果。
+        row = db.dossiers.get(int(dossier["id"]))
         if (
             row is not None
             and str((row.get("payload") or {}).get("deliberation_state") or "") == "stalled"
@@ -589,13 +574,19 @@ def continue_decree_after_answers(
         ):
             db.staged_declarations.mark_terminal(decree_ref, status="settled")
 
+    if not prefix.strip():
+        with atomic(db):
+            consume()
+        return
+
+    # #1917 runner 裁定（二）／#1847：判决授权下活口逐问落账；stalled 转待裁且已落不动。
     dispatch_month_segment(
         db, state, segment=prefix,
         decree_payload=payload,
         decree_ref=decree_ref,
         llm_config=session.llm_config,
         source=source,
-        alongside=_alongside_dispatch,
+        alongside=consume,
         prepared=prepared,
     )
 
@@ -970,6 +961,18 @@ def _guard_month_call(
     raise AssertionError("month call abort must raise")
 
 
+def _deliberation_dossier_id(event_id: object) -> Optional[int]:
+    """Parse dossier id from deliberation:<id> or deliberation:<id>:rN."""
+    text = str(event_id or "")
+    if not text.startswith("deliberation:"):
+        return None
+    rest = text.split(":", 1)[1]
+    head = rest.split(":", 1)[0]
+    if not head.isdigit():
+        return None
+    return int(head)
+
+
 def _declaration_targets_stalled(bound: Mapping[str, object], dossier_id: int) -> bool:
     """Peek: bound declaration names stalled for this dossier (any shape)."""
     from ming_sim.strict_types import _parse_sqlite_id
@@ -1195,15 +1198,20 @@ def _settle_edicts(
             and bool(db.staged_declarations.staged_for(ref))
         )
         payload_state = str((dossier.get("payload") or {}).get("deliberation_state") or "")
-        # 强推后 backed 仍 proposed：即便暂存已消费，也须接回颁布（#1917 条款 2）。
+        # 强推后 backed 仍 proposed：即便曾有旧 promulgation_decision / 暂存已结，
+        # 也须接回颁布（#1917 条款 2 / C1）。
         backed_awaiting_promulgation = (
-            pending_judgment and payload_state == "backed"
+            status == "proposed" and payload_state == "backed"
         )
         if not pending_judgment and not pending_settle and not backed_awaiting_promulgation:
             continue
         if (
             status == "proposed"
-            and (not dossier.get("promulgation_decision") or held)
+            and (
+                not dossier.get("promulgation_decision")
+                or held
+                or backed_awaiting_promulgation
+            )
             and (
                 not db.staged_declarations.is_settled(ref)
                 or backed_awaiting_promulgation
@@ -1956,16 +1964,35 @@ def _materialize_rescript_desk(
                 ),
             })
         decisions.extend(_rescript_decisions(verdicts, open_items["triad"]))
+    pending_event_ids = {
+        str(r.get("event_id") or "")
+        for r in db.issues.list_pending_decisions(turn)
+        if str(r.get("status") or "") == "pending"
+    }
     for dossier in db.dossiers.list_dossiers(status="proposed"):
         if (dossier["payload"] or {}).get("deliberation_state") != "stalled":
             continue
+        did = int(dossier["id"])
+        base_event = f"deliberation:{did}"
+        # 已有 pending 入口则不重复；曾 decided 的同 id 换新 event_id 保留历史御批（C7）。
+        if any(eid == base_event or eid.startswith(f"{base_event}:") for eid in pending_event_ids):
+            continue
+        decided = {
+            str(r.get("event_id") or "")
+            for r in db.issues.list_pending_decisions(turn)
+        }
+        event_id = base_event
+        if event_id in decided:
+            n = sum(1 for e in decided if e == base_event or e.startswith(f"{base_event}:"))
+            event_id = f"{base_event}:r{n}"
         decisions.append({
-            "event_id": f"deliberation:{dossier['id']}", "title": "无人站台原案",
+            "event_id": event_id, "title": "无人站台原案",
             "context": dossier["decree_text"], "options": [
                 {"label": "御笔强推", "hint": "皇帝独担，复用原案颁布", "action": "imperial_push"},
                 {"label": "留中", "hint": "原案留存", "action": "hold"},
             ],
         })
+        pending_event_ids.add(event_id)
     for ref, questions in open_items["decree_questions"]:
         offsets = chain.setdefault("decree_question_offsets", {})
         pinned, offsets[ref] = _pin_rescript_questions(
@@ -2093,12 +2120,12 @@ def _eligible_rescript_answers(
                 eligible.append(row)
         elif event.startswith("deliberation:"):
             # Decided imperial push still stalled blocks month-tail (#1847 K2/K6).
-            raw_id = event.partition(":")[2]
-            if not raw_id.isdigit():
+            did = _deliberation_dossier_id(event)
+            if did is None:
                 continue
             if choice_decision(row.get("choice")) != "imperial_push":
                 continue
-            original = db.dossiers.get(int(raw_id))
+            original = db.dossiers.get(did)
             if original is not None and (original.get("payload") or {}).get("deliberation_state") == "stalled":
                 eligible.append(row)
     return eligible
@@ -2138,7 +2165,9 @@ def _consume_rescript_answers(
             event_id = str(row.get("event_id") or "")
             if event_id.startswith("deliberation:"):
                 from ming_sim.rescript_actions import apply_imperial_deliberation_push
-                original_id = int(event_id.partition(":")[2])
+                original_id = _deliberation_dossier_id(event_id)
+                if original_id is None:
+                    continue
                 with atomic(db):
                     apply_imperial_deliberation_push(
                         db, state, target_dossier_id=original_id,

@@ -480,13 +480,18 @@ def test_two_questions_first_lands_then_second_stalled_keeps_ledger(game, monkey
             },
         ], write_gate=session._write_gate)
 
+    def ledger_deltas():
+        return [
+            int(r[0]) for r in db.conn.execute(
+                "SELECT delta FROM economy_ledger WHERE category='两问交叉支' ORDER BY id",
+            )
+        ]
+
     seed_and_answer(desk[0], {"effects": {"economy_moves": [{
         "origin_ref": ref, "account": "国库", "delta": -5,
         "category": "两问交叉支", "reason": "第一问",
     }]}})
-    assert db.conn.execute(
-        "SELECT delta FROM economy_ledger WHERE category='两问交叉支' ORDER BY id",
-    ).fetchone()[0] == -5
+    assert ledger_deltas() == [-5]
     remain = [
         r for r in session.pending_decisions()
         if str(r.get("event_id") or "").startswith(_DECREE_QUESTION_PREFIX)
@@ -498,18 +503,26 @@ def test_two_questions_first_lands_then_second_stalled_keeps_ledger(game, monkey
     row = db.dossiers.get(did)
     assert row["status"] == "proposed"
     assert row["payload"].get("deliberation_state") == "stalled"
-    assert db.conn.execute(
-        "SELECT delta FROM economy_ledger WHERE category='两问交叉支' ORDER BY id",
-    ).fetchone()[0] == -5
-    assert any(
-        r["event_id"] == f"deliberation:{did}" for r in session.pending_decisions()
-    )
-    # C7：stalled 后剩余请旨已收口或仍可办完，不得 DecreeAlreadySettled 崩月。
-    assert not any(
-        str(r.get("event_id") or "").startswith(_DECREE_QUESTION_PREFIX)
-        and not r.get("choice")
-        for r in session.pending_decisions()
-    ) or True  # 第二问已答
+    assert ledger_deltas() == [-5]
+    desk_open = [
+        r for r in session.pending_decisions()
+        if str(r.get("status") or "") == "pending"
+        and str(r.get("event_id") or "").startswith(f"deliberation:{did}")
+    ]
+    assert desk_open
+    # 强推接回颁布，已落支出不重落。
+    session.submit_hitl_choices([
+        {
+            "decision_key": desk_open[0]["decision_key"],
+            "action": "imperial_push",
+            "note": "朕独担",
+        },
+    ], write_gate=session._write_gate)
+    pushed = db.dossiers.get(did)
+    assert pushed["payload"].get("deliberation_state") == "backed"
+    assert pushed.get("promulgation_decision") == "promulgated"
+    assert pushed["status"] != "proposed"
+    assert ledger_deltas() == [-5]
 
 
 def test_continuation_origin_alias_lands(game, monkeypatch):
