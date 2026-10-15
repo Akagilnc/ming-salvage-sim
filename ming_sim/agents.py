@@ -706,7 +706,6 @@ def create_secret_order_supply_agent(llm_config: LLMConfig, prepared: Any = None
         "所指的那一条罪证，不牵连其他；是否毁、毁到何种程度由你按人物决定。",
         "   - suppression: 对象，仅在被查者已经知情、且你决定压案（行贿说项之类）时"
         "给出：{form: 他怎么压的}。压不压得住不由你填表决定，写下他做了什么即可。",
-        "   - note: 字符串，密奏正文。奏报写得好听与否与上面声明的实际投入无关。",
         "active_secret_orders 里每位人物的 investigator_identity_materials / "
         "investigation_target_identity_materials 的 materials_path 指向本人可及材料索引；"
         "正文按人物经历、公事档案、事务与公开材料分列在该索引所在子目录，"

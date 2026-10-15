@@ -14,4 +14,4 @@
 - 披露 → `_apply_deferred_disclosures` 消费 `chain.pending_disclosures`（非供料产物上的披露字段）
 - `covert_exec_selections` → 直接 `apply_monthly_covert_actual_progress`，随后 `settle_due_secret_orders`
 
-声明 effects 里的密奏/执行态另走专属写入口（可 `defer_monthly_secret_supply` 延后到独立供料）；`secret_dossier_participants` 由声明段 `entities.dossier.delta_section` 消费，4a 不读该键。旧五模块 `personnel_secret` extractor 包装已退役；字段名仍可标私密 provenance（#883）。披露事件才可使密令内容成为公开知识。
+执行态只从上述整月供料入口落账，不再接受世界段声明 effects 的执行态；`secret_dossier_participants` 由声明段 `entities.dossier.delta_section` 消费，4a 不读该键。旧五模块 `personnel_secret` extractor 包装已退役；字段名仍可标私密 provenance（#883）。披露事件才可使密令内容成为公开知识。

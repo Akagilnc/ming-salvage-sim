@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from ming_sim.applier import RejectedItem, Provenance, reject_item
 
-import copy
 import json
 import math
 from typing import Any, Dict, List, Mapping, Optional, Sequence
@@ -256,8 +255,6 @@ def build_covert_task_contract(
     if not resolved_kind.strip():
         raise CovertContractError("密令确认缺少差务类型")
     axis_list = normalize_axes(axes)
-    if not axis_list:
-        raise CovertContractError("密令确认缺少价值轴")
     direction_i = normalize_direction(direction, default=1)
     inv_target = str(investigation_target or "")
     if inv_target.strip():
@@ -430,8 +427,8 @@ def describe_covert_task_contract() -> str:
     )
     return (
         f"{samples}\n"
-        f"    必填：kind（差务类型）、axes（六轴之一：{axes}）、direction（1 顺轴 / -1 逆轴）、"
-        f"delivery.target_units（正数）、delivery.effect_sign（+1 / -1）。\n"
+        f"    必填：kind（差务类型）、direction（1 顺轴 / -1 逆轴）、"
+        f"delivery.target_units（正数）、delivery.effect_sign（+1 / -1）。axes 可选（六轴：{axes}）。\n"
         f"    不查人的差务还须 delivery.unit（{units}），并给足交付身份：人犯 → person_action（{actions}）；"
         f"万亩 → region / field（{fields}）/ target。\n"
         f"    万两的 effect_sign 定向钱：+1 是收入（臣上交），只要 {income_keys}"
@@ -446,7 +443,7 @@ def describe_covert_task_contract() -> str:
 
 
 def coerce_covert_task_contract(raw: object) -> Optional[Dict[str, object]]:
-    """Validate a frozen contract without rebuilding or supplying read-time defaults.
+    """Validate persisted contracts against the same builder used at confirmation.
 
     None = 真正缺席 → None。present 坏结构/坏类型响亮 ValueError（#1897 E1），
     不得把坏合同洗成可选缺席。
@@ -454,53 +451,14 @@ def coerce_covert_task_contract(raw: object) -> Optional[Dict[str, object]]:
     if raw is None:
         return None
 
-    def _reject(message: str) -> None:
-        # CovertContractError ⊂ ValueError：持久 present 坏合同响亮，不洗成缺席（#1897 E1）。
-        raise CovertContractError(f"持久 covert_task_contract：{message}")
-
     if not isinstance(raw, Mapping):
-        _reject(f"须为对象，得 {type(raw).__name__}")
-    delivery = raw.get("delivery")
-    if not isinstance(delivery, Mapping):
-        _reject("缺少 delivery 对象")
-    if not str(raw.get("kind") or "").strip() or not normalize_axes(raw.get("axes")):
-        _reject("kind/axes 无效")
-    if raw.get("direction") not in (-1, 1):
-        _reject("direction 非法")
-    inv_target = _investigation_target_of(raw)
-    if inv_target.strip():
-        try:
-            qty = float(delivery.get("target_units"))
-        except (TypeError, ValueError) as exc:
-            raise CovertContractError(
-                str(exc),
-            ) from exc
-        if qty <= 0.0:
-            _reject("target_units 须为正")
-        if delivery.get("effect_sign") not in (-1, 1):
-            _reject("effect_sign 非法")
-        if list(delivery.get("canonical_fields") or []):
-            _reject("investigation 不得带 canonical_fields")
-        return copy.deepcopy(dict(raw))
-    unit, target = canonicalize_delivery_unit(
-        delivery.get("unit"), delivery.get("target_units"),
+        raise CovertContractError("持久 covert_task_contract 须为对象")
+    contract = build_covert_task_contract(
+        covert_task=raw, action_type=raw.get("action_type"),
     )
-    if delivery.get("effect_sign") not in (-1, 1):
-        _reject("effect_sign 非法")
-    if list(delivery.get("canonical_fields") or []) != canonical_fields_for_delivery(unit=unit):
-        _reject("canonical_fields 与 unit 不符")
-    if float(delivery.get("target_units")) != target:
-        _reject("target_units 与规范化不符")
-    if any(
-        not delivery.get(key)
-        for key in _identity_keys_for_unit(
-            str(unit),
-            effect_sign=int(delivery.get("effect_sign") or 0),
-            purpose=delivery.get("purpose"),
-        )
-    ):
-        _reject("delivery 缺 identity 键")
-    return copy.deepcopy(dict(raw))
+    if contract != raw:
+        raise CovertContractError("持久 covert_task_contract 与冻结规范不符")
+    return contract
 
 
 def read_covert_task_contract(dossier: Mapping[str, object] | None) -> Optional[Dict[str, object]]:
@@ -1004,10 +962,7 @@ def record_investigation_source_clue(
     后汇案才拿到对应 clue）。两种来源走同一条接线。
 
     ⚠️ **只在合同真带 investigation_fact 时才写**：无指针的开案**不造线索**。
-    ADR 0098:11 的「各源加成」与兜底路由都只作用于**真实存在的来源**（检举、
-    证词、苦主这类确实带着案情而来的消息），不是给「开案」这个动作本身记一笔。
-    凭空造一条空指针线索再让它走兜底路由，等于每道查案密令首月白送一次实投
-    （台院 F1）——那既不是真实来源，也让「敷衍＝零投入」不成立。
+    各源加成只作用于带事实指针的真实来源，不给「开案」动作本身记一笔。
     """
     key = str(fact_key or "").strip()
     if not key:
@@ -1068,24 +1023,6 @@ def investigation_clue_records(db: Any, dossier_id: int) -> List[Dict[str, objec
     return _mapping_members(_dossier_payload_map(db, dossier_id).get(INVESTIGATION_CLUES_KEY), INVESTIGATION_CLUES_KEY)
 
 
-def _route_pointerless_clue(lanes: List[Dict[str, object]], target: str) -> str:
-    """无指针的通用线索该助哪条既有实证（ADR 0098:11 确定性兜底路由）。
-
-    先归 seed_guilt lane；无 seed_guilt lane 而案内有其他活跃 lane（运行期把柄
-    边）时按 fact_key 稳定序（边事件 id 升序）取首条；全案无 lane 返回空串。
-    只在**既有 lane 内**移动，无从造真相，选序确定可复现（restore 同结果）。
-    """
-    if not lanes:
-        return ""
-    for lane in lanes:
-        if _is_seed_guilt_fact_key(target, str(lane["fact_key"])):
-            return str(lane["fact_key"])
-    def _stable(lane: Dict[str, object]) -> tuple[int, int, str]:
-        key = str(lane["fact_key"])
-        return (0, int(key), "") if key.isdigit() else (1, 0, key)
-    return str(min(lanes, key=_stable)["fact_key"])
-
-
 def _consume_monthly_clues(
     db: Any,
     dossier_id: int,
@@ -1103,16 +1040,6 @@ def _consume_monthly_clues(
     - 同一线索只消费一次（``credited``），重开重试不双计；
     - 线索把该条累计实投推过其难度时，同样按"达到难度即记已掌握"记查获。
 
-    **无指针的真实来源线索走 ADR 0098:11 的确定性兜底路由**（该条路由是既有已准
-    规则，不因本次人物行动裁决而废止；⚠️ 只作用于真实存在的来源，「开案」这个动作
-    本身不是来源——无指针的开案不造线索，见 ``record_investigation_source_clue``）：
-    先归 seed_guilt lane；目标无 seed_guilt lane 而案内有其他活跃 lane 时按
-    fact_key 稳定序（边事件 id 升序）取首条；**全案无 lane 才丢弃**并留痕。
-    路由只在既有 lane 内移动、从不造真相。
-
-    ⚠️ 这与「人物本月下手」是两件事：本月 ``fact_key`` 省略是**人物没下手处**
-    → 零投入、代码不代选（J4，大理寺已结清）；此处路由的是**来源线索该助哪条
-    既有实证**，不替人物挑活干。
     """
     # 未到差与零带宽：线索也不加成。不标 credited，人到场后仍可一次性消费。
     if float(capacity) <= 0.0:
@@ -1126,13 +1053,6 @@ def _consume_monthly_clues(
             continue
         key = str(clue.get("fact_key") or "").strip()
         clue["credited"] = True
-        if not key:
-            key = _route_pointerless_clue(lanes, target)
-            if key:
-                clue["routed_fact_key"] = key  # ADR 0098:11 确定性兜底路由
-            else:
-                clue["dropped_no_lane"] = True  # 全案无 lane → 确定性丢弃
-                continue
         lane = by_key.get(key)
         if lane is None or key not in live or key in blocked:
             clue["dropped_fact_key"] = key
@@ -1298,7 +1218,7 @@ def _investigation_target_of(contract: Mapping[str, object]) -> str:
 
 
 def _investigation_fact_of(contract: Mapping[str, object]) -> str:
-    """密令合同自陈的线索所指事实（空＝不带指针，按 ADR 0098 兜底路由）。"""
+    """密令合同自陈的线索所指事实；空值不生成来源线索。"""
     return str(contract.get("investigation_fact") or "")
 
 
@@ -1331,7 +1251,7 @@ def merge_investigation_confirmation(
     """同目标汇案：并案卷。只有带事实指针的来源才留下待消费线索。
 
     重复的无指针下令不是来源。pending_action_id 与聊天记录只是确认闸，
-    不制造线索。已落库的空指针旧线索仍由月核算按 ADR 0098:11 消费。
+    不制造线索。
     """
     dossier = db.dossiers.get_for_secret_order(int(order_id))
     if dossier is None:
@@ -1519,13 +1439,11 @@ def apply_monthly_covert_actual_progress(
     state: Any,
     *,
     selections: object = None,
-    only_supplied: bool = False,
     source: Provenance = Provenance.system_simulation,
 ) -> List[RejectedItem]:
     """当月实况轨落笔：推演者声明的真实投入/效果 → dossier_actual_progress。
 
     不发明人物/钱粮/地区固定套餐；奏报永不入 apply。
-    ``only_supplied``：过月分段只落本段交代的执行态，不把其余未提及的在办密令误判为缺执行态。
 
     #1896：查案密令改走逐证核算——4a 声明的 effort 记到指定事实，累计到该证难度
     才记已掌握；不再由执行态折固定增量、满统一阈自动坐实。执行态枚举对查案
@@ -1543,8 +1461,6 @@ def apply_monthly_covert_actual_progress(
         oid = int(order["id"])
         if _is_issuance_turn(order, turn):
             continue
-        if only_supplied and oid not in by_sel:
-            continue
         minister = str(order.get("minister_name") or "")
         if not minister_eligible_for_monthly_covert(db, minister):
             continue
@@ -1557,6 +1473,16 @@ def apply_monthly_covert_actual_progress(
         did = int(dossier["id"])
         contract = require_covert_task_contract(dossier)
         sel = by_sel.get(oid) or {}
+        inv_target = _investigation_target_of(contract)
+        if inv_target:
+            item_rejections = _apply_investigation_selection(
+                db, order=order, dossier=dossier, sel=sel,
+                target=inv_target, investigator=minister, turn=turn,
+                source=source,
+            )
+            # #1835 S1：查案拒收（整项或反应项）只走 canonical RejectedItem。
+            rejections.extend(item_rejections)
+            continue
         raw_note = sel.get("note")
         note: Optional[str] = None
         if raw_note is not None:
@@ -1569,16 +1495,6 @@ def apply_monthly_covert_actual_progress(
                     category="invalid_shape",
                     source=source,
                 ))
-        inv_target = _investigation_target_of(contract)
-        if inv_target:
-            item_rejections = _apply_investigation_selection(
-                db, order=order, dossier=dossier, sel=sel,
-                target=inv_target, investigator=minister, turn=turn,
-                note=note, source=source,
-            )
-            # #1835 S1：查案拒收（整项或反应项）只走 canonical RejectedItem。
-            rejections.extend(item_rejections)
-            continue
         selected = sel.get("fidelity", sel.get("执行态", sel.get("state")))
         fidelity = normalize_fidelity_state(selected)
         if fidelity is None:
@@ -1606,7 +1522,6 @@ def _apply_investigation_selection(
     target: str,
     investigator: str,
     turn: int,
-    note: Optional[str],
     source: Provenance = Provenance.system_simulation,
 ) -> List[RejectedItem]:
     """查案密令的逐证落账（#1896）。幂等键＝(dossier, turn)，重开只续未成核算。
@@ -1720,15 +1635,10 @@ def _apply_investigation_selection(
                 origin_ref=f"dossier:{did}",
             )
     units = investigation_lane_actual_units(db, did)
-    # 查案 note = 密奏正文（可谎）：入奏报轨，不入实况轨（DELTA_SCHEMA / #1897 R1）。
-    # 复用 update_secret_order_progress 既有奏报写口（自带进展档），不另造 band 前置。
     db.dossiers.record_actual_progress(
         did, turn, units=units, fidelity_state="",
         note=None, commit=False,
     )
-    if note is not None:
-        # 既有写口自带进展档；空/空白正文按其合同不落条，仍须标在办。
-        db.update_secret_order_progress(oid, note, commit=False)
     db.dossiers.mark_secret_order_in_progress(oid, commit=False)
     return reaction_rejections
 

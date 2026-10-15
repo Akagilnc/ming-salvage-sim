@@ -201,12 +201,18 @@ def _rejection_rows(db, turn, section="commissions"):
     ).fetchall()
 
 
-def test_declared_new_secret_order_lands_through_live_dispatch_and_becomes_a_case(game, monkeypatch):
+@pytest.mark.parametrize("with_axes", [True, False])
+def test_declared_new_secret_order_lands_through_live_dispatch_and_becomes_a_case(game, monkeypatch, with_axes):
     """票面「怎么验」正路：声明新建密令不 ImportError，落暂存、应允成案、可读回。"""
     db, state, content = game
     minister = _minister(db)
     from ming_sim.covert_progress import _CONTRACT_EXAMPLES, read_covert_task_contract
-    task = _CONTRACT_EXAMPLES[0]
+    task = {**_CONTRACT_EXAMPLES[0], "investigation_fact": "魏忠贤"}
+    if not with_axes:
+        task.pop("axes")
+    from tests.test_secret_order_payoff_1504 import _co_locate, _relation_informer
+    _co_locate(db, minister, "魏忠贤")
+    informer = _relation_informer(db, minister, "魏忠贤")
 
     result = _emit(
         db, state, content, monkeypatch,
@@ -245,6 +251,65 @@ def test_declared_new_secret_order_lands_through_live_dispatch_and_becomes_a_cas
     assert contract["delivery"]["canonical_fields"] == []
     # 反向：名册里的具名承办人照常成案（身份闸不得把真承办人也拒掉）。
     assert order["minister_name"] == minister
+    assert contract["axes"] == (["实务事功"] if with_axes else [])
+
+    # Reopen the persisted case, then run the real player month with model input only.
+    from tests.test_audience_translate_1837_reopen import _close_offline
+    from tests.month_chain_helpers import canned_full_settlement, make_light_session
+    from tests.conftest import _drain_registered_sessions_before_close, wait_for_background_jobs
+    from ming_sim.covert_progress import FACT_LANES_KEY, investigation_clue_records
+    from ming_sim.models import LLMConfig
+    from ming_sim.supervision import origin_has_mark, ORIGIN_MARK_PRIVATE_GOODS
+
+    dossier_id = int(db.dossiers.get_for_secret_order(order_id)["id"])
+    _close_offline(db, state, content, int(an.open_night(db, state)["id"]))
+    state.turn += 1
+    db.reign.save_game_state(state)
+    reported_turn = int(state.turn)
+    product = {
+        "dossier_progress_reports": [{
+            "dossier_id": dossier_id, "progress_band": "受阻",
+            "memorial_text": "\n  臣仍在暗访，请容续查。  \n", "origin": "private_goods",
+        }],
+        "covert_exec_selections": [{
+            "order_id": order_id, "effort": 0.2, "fact_key": "魏忠贤",
+            "note": "本月办案备注，并非奏报。",
+            "tip_off": {"source": informer},
+            "spoliation": {"fact_key": "魏忠贤", "effect": "harder"},
+        }],
+    }
+    canned_full_settlement(monkeypatch)
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", lambda *a, **k: json.dumps(
+        {"title": "邸报", "report": "本月纪事。"} if k.get("tag") == "gazette" else
+        {"recent_segment": "往来实况。", "stance_segment": "派系实况。"},
+    ))
+    monkeypatch.setattr("ming_sim.month_chain.run_secret_orders_supply", lambda *a: product)
+    reopened = GameDB(db.path, content)
+    try:
+        restored = read_covert_task_contract(reopened.dossiers.get_for_secret_order(order_id))
+        assert restored == contract
+        session = make_light_session(reopened, reopened.load_state(), content)
+        session.llm_config = LLMConfig(api_key="", base_url="http://unused", model="unused")
+        assert session.resolve_turn(allow_empty_decree=True).stage == "advanced"
+        wait_for_background_jobs(reopened)
+        reports = [r for r in reopened.dossiers.list_dossier_progress(dossier_id)
+                   if int(r["turn"]) == reported_turn and not r["is_terminal"]]
+        assert len(reports) == 1
+        assert reports[0]["memorial_text"] == product["dossier_progress_reports"][0]["memorial_text"]
+        assert reports[0]["progress_band"] == "受阻"
+        assert origin_has_mark(reports[0]["origin"], ORIGIN_MARK_PRIVATE_GOODS)
+        assert investigation_clue_records(reopened, dossier_id)[0]["credited"] is True
+        lanes = reopened.dossiers.get_for_secret_order(order_id)["payload"][FACT_LANES_KEY]
+        assert next(r for r in lanes if r["fact_key"] == "魏忠贤")["effort"] > 0.3
+        spoiled = reopened.character_knowledge.list_investigation_spoiled_facts("魏忠贤")
+        assert [(r["fact_key"], r["effect"]) for r in spoiled] == [("魏忠贤", "harder")]
+        assert reopened.conn.execute(
+            "SELECT COUNT(*) FROM dossier_actual_progress WHERE dossier_id=? AND turn=?",
+            (dossier_id, reported_turn),
+        ).fetchone()[0] == 1
+    finally:
+        _drain_registered_sessions_before_close(reopened)
+        reopened.conn.close()
 
 
 def test_blank_secret_order_title_is_rejected_not_staged(game, monkeypatch):
