@@ -927,13 +927,8 @@ def _commission_appointment_fields(
     return payload, None
 
 
-_AUTHORITY_EXCLUSIVE_KEYS = (
-    "grant", "appointment", "punishment", "pacification", "assignment",
-    "secret_order", "secret_order_progress", "secret_order_update",
-    "secret_order_review", "strategy_selection", "revoke",
-)
-
 # 交办互斥对象槽（不含 grant/appointment：二者可合成一件事）。
+# 禁摊派由 dossier_action_type 识别，见 _declared_commission_kinds。
 _COMMISSION_EXCLUSIVE_OBJECT_KEYS = (
     "punishment", "pacification", "assignment", "revoke",
     "secret_order", "secret_order_progress", "secret_order_update",
@@ -957,7 +952,10 @@ def _declared_object_slot(value: object) -> object | None:
 
 
 def _declared_commission_kinds(item: Mapping[str, object]) -> frozenset[str]:
-    """Non-empty commission object kinds on one item (empty mapping = unused)."""
+    """Non-empty commission kinds on one item (empty mapping = unused).
+
+    唯一互斥真源的种类收集：对象槽 + grant/appointment + 禁摊派动作类型。
+    """
     kinds: set[str] = set()
     for key in _COMMISSION_EXCLUSIVE_OBJECT_KEYS:
         if _declared_object_slot(item.get(key)) is not None:
@@ -974,6 +972,8 @@ def _declared_commission_kinds(item: Mapping[str, object]) -> frozenset[str]:
             kinds.add("appointment")
     elif appointment not in (None, ""):
         kinds.add("appointment")
+    if _is_prohibit_covert_levy_item(item):
+        kinds.add("prohibit_covert_levy")
     return frozenset(kinds)
 
 
@@ -1000,9 +1000,8 @@ def _stage_authorization_commission(
     rejected: List[RejectedItem],
 ) -> Optional[Dict[str, Any]]:
     """#1912：召对授出权项 → authorization 旨意暂存。"""
-    if not isinstance(authorization, Mapping) or any(
-        item.get(key) for key in _AUTHORITY_EXCLUSIVE_KEYS
-    ) or _declared_object_slot(item.get("revoke_authority")) is not None:
+    # 与兄弟交办的互斥由 _dispatch_commission_items 入口统一闸判定。
+    if not isinstance(authorization, Mapping):
         _reject(rejected, item, "授权交办载荷须为独立对象", "invalid_shape", source)
         return None
     body = _declared_prose(item.get("text"))
@@ -1091,9 +1090,8 @@ def _stage_revoke_authority_commission(
     rejected: List[RejectedItem],
 ) -> Optional[Dict[str, Any]]:
     """#1912：召对收回权项 → revoke_authority 旨意暂存。"""
-    if not isinstance(revoke_authority, Mapping) or any(
-        item.get(key) for key in _AUTHORITY_EXCLUSIVE_KEYS
-    ) or _declared_object_slot(item.get("authorization")) is not None:
+    # 与兄弟交办的互斥由 _dispatch_commission_items 入口统一闸判定。
+    if not isinstance(revoke_authority, Mapping):
         _reject(rejected, item, "收权交办载荷须为独立对象", "invalid_shape", source)
         return None
     body = _declared_prose(item.get("text"))
@@ -1571,6 +1569,11 @@ def _dispatch_commission_items(
     items, rejected = _section_items(raw, label="交办声明", source=source)
     applied: List[Any] = []
     for item in items:
+        # 互斥唯一真源：任何前序分支（含禁摊派）均不得静默择一（#1912）。
+        if _exclusive_commission_conflict(_declared_commission_kinds(item)):
+            _reject(rejected, item, "交办载荷须为独立对象", "invalid_shape", source)
+            continue
+
         # #1837 reopen：禁摊派交办——按场面事实绑定暴露案卷，不解析自由文本。
         if _is_prohibit_covert_levy_item(item):
             try:
@@ -1592,19 +1595,11 @@ def _dispatch_commission_items(
             # 未分类写入故障不在此冒充拒收（#1897 E1）。
             continue
 
-        # 互斥一次收拢：前序分支不得静默择一丢掉非空授收权等同槽（#1912）。
-        if _exclusive_commission_conflict(_declared_commission_kinds(item)):
-            _reject(rejected, item, "交办载荷须为独立对象", "invalid_shape", source)
-            continue
-
         strategy = item.get("strategy_selection")
         if strategy is not None:
             from ming_sim.strict_types import strict_sqlite_id
             body = _declared_prose(item.get("text"))
-            if not isinstance(strategy, Mapping) or any(
-                item.get(key) for key in
-                ("grant", "appointment", "punishment", "pacification", "assignment", "secret_order")
-            ):
+            if not isinstance(strategy, Mapping):
                 _reject(rejected, item, "点策交办须为独立结构化载荷", "invalid_shape", source)
                 continue
             try:
@@ -1654,11 +1649,7 @@ def _dispatch_commission_items(
         progress = item.get("secret_order_progress")
         if progress is not None:
             from ming_sim.strict_types import strict_sqlite_id
-            if not isinstance(progress, Mapping) or any(
-                item.get(key) for key in
-                ("grant", "appointment", "punishment", "pacification", "assignment",
-                 "secret_order", "secret_order_update", "secret_order_review")
-            ):
+            if not isinstance(progress, Mapping):
                 _reject(rejected, item, "密令进展载荷须为独立对象", "invalid_shape", source)
                 continue
             try:
@@ -1688,11 +1679,7 @@ def _dispatch_commission_items(
         update = item.get("secret_order_update")
         if update is not None:
             from ming_sim.strict_types import strict_sqlite_id
-            if not isinstance(update, Mapping) or any(
-                item.get(key) for key in
-                ("grant", "appointment", "punishment", "pacification", "assignment",
-                 "secret_order", "secret_order_progress", "secret_order_review")
-            ):
+            if not isinstance(update, Mapping):
                 _reject(rejected, item, "密令修改载荷须为独立对象", "invalid_shape", source)
                 continue
             try:
@@ -1753,11 +1740,7 @@ def _dispatch_commission_items(
         review = item.get("secret_order_review")
         if review is not None:
             from ming_sim.strict_types import strict_sqlite_id
-            if not isinstance(review, Mapping) or any(
-                item.get(key) for key in
-                ("grant", "appointment", "punishment", "pacification", "assignment",
-                 "secret_order", "secret_order_progress", "secret_order_update")
-            ):
+            if not isinstance(review, Mapping):
                 _reject(rejected, item, "密令核议载荷须为独立对象", "invalid_shape", source)
                 continue
             try:
@@ -1789,10 +1772,7 @@ def _dispatch_commission_items(
 
         secret = item.get("secret_order")
         if secret is not None:
-            if not isinstance(secret, Mapping) or any(
-                item.get(key) for key in
-                ("grant", "appointment", "punishment", "pacification", "assignment")
-            ):
+            if not isinstance(secret, Mapping):
                 _reject(rejected, item, "密令新建载荷须为独立对象", "invalid_shape", source)
                 continue
             source_turn = db.reign.active_chat_turn_actor_and_user_message(
@@ -1899,9 +1879,7 @@ def _dispatch_commission_items(
 
         assignment = item.get("assignment")
         if assignment is not None:
-            if not isinstance(assignment, Mapping) or any(
-                item.get(key) for key in ("grant", "appointment", "punishment", "pacification")
-            ):
+            if not isinstance(assignment, Mapping):
                 _reject(rejected, item, "责成交办载荷须为独立对象", "invalid_shape", source)
                 continue
             body = _declared_prose(item.get("text"))
@@ -1959,12 +1937,7 @@ def _dispatch_commission_items(
 
         revoke = item.get("revoke")
         if revoke is not None:
-            if not isinstance(revoke, Mapping) or any(
-                item.get(key) for key in
-                ("grant", "appointment", "punishment", "pacification", "assignment",
-                 "secret_order", "secret_order_progress", "secret_order_update",
-                 "strategy_selection")
-            ):
+            if not isinstance(revoke, Mapping):
                 _reject(rejected, item, "撤令交办载荷须为独立对象", "invalid_shape", source)
                 continue
             body = _declared_prose(item.get("text"))
@@ -2012,7 +1985,7 @@ def _dispatch_commission_items(
 
         punishment = item.get("punishment")
         if punishment is not None:
-            if not isinstance(punishment, Mapping) or item.get("grant") or item.get("appointment"):
+            if not isinstance(punishment, Mapping):
                 _reject(rejected, item, "惩处交办载荷须为独立对象", "invalid_shape", source)
                 continue
             body = _declared_prose(item.get("text"))
@@ -2051,7 +2024,7 @@ def _dispatch_commission_items(
 
         pacification = item.get("pacification")
         if pacification is not None:
-            if not isinstance(pacification, Mapping) or item.get("grant") or item.get("appointment"):
+            if not isinstance(pacification, Mapping):
                 _reject(rejected, item, "招抚交办载荷须为独立对象", "invalid_shape", source)
                 continue
             body = _declared_prose(item.get("text"))
