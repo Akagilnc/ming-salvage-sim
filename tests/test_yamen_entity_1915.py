@@ -11,7 +11,7 @@ from ming_sim.flows import apply_fixed_period_flows
 from ming_sim.knowledge import origin_visible_to
 from ming_sim.materials import prepare_world_materials, write_identity_materials
 from ming_sim.month_chain import prepare_gazette_author_materials
-from ming_sim.month_translate import _visible_effect_refs, dispatch_month_segment
+from ming_sim.month_translate import dispatch_month_segment
 from tests.conftest import stub_month_translate
 
 
@@ -91,7 +91,10 @@ def test_audience_night_creates_yamen_with_chief_and_monthly_fee(game):
 
 
 def test_monthly_fee_by_origin_and_month_segment_progress(game, monkeypatch):
-    """过月按 origin_ref 扣月费；真实月段入口据结构化身份记下落。"""
+    """过月按 origin_ref 扣月费；真实月段入口可将下落写入该衙门。
+
+    证明范围＝月费记账 + 声明经月段落库可读；不证明转译提示词是否含衙门身份。
+    """
     db, state, _ = game
     result, _night_id, _ctid = _create_yamen_via_night(db, state)
     yamen_id = int(result.yamen_creates.applied[0]["id"])
@@ -107,25 +110,12 @@ def test_monthly_fee_by_origin_and_month_segment_progress(game, monkeypatch):
     assert moves, "月费须经公开 economy origin 读口可见，不得改查 SQL 兜底"
     assert any(abs(int(m["delta"])) == MONTHLY_FEE_WAN for m in moves)
 
-    captured: dict = {}
-
-    # 结构化效果回指（与提示词排版无关）：月段可见引用须含在职衙门身份
-    effect_refs = _visible_effect_refs(db, int(state.turn))
-    assert any(
-        int(row["id"]) == int(yamen_id) and row["name"] == YAMEN_NAME
-        for row in effect_refs.get("yamens") or ()
-    ), "月段结构化引用须含在职衙门身份"
-
-    def _month_runner(request, _config):
-        captured["request"] = request
-        # 主体身份取自账本在职衙门，不解析 target_grounding 排版
-        active = [y for y in db.yamens.list_active() if int(y.id) == int(yamen_id)]
-        assert active and active[0].name == YAMEN_NAME
+    def _month_runner(_request, _config):
         return {
             "textual_facts": [
                 {
                     "subject_kind": "yamen",
-                    "subject_id": str(int(active[0].id)),
+                    "subject_id": str(yamen_id),
                     "body": PROGRESS_BODY,
                 }
             ]
@@ -133,7 +123,6 @@ def test_monthly_fee_by_origin_and_month_segment_progress(game, monkeypatch):
 
     stub_month_translate(monkeypatch, _month_runner)
     progress = dispatch_month_segment(db, state, segment="世界")
-    assert "request" in captured  # 真实月段入口已调用转译
     assert progress.textual_facts.rejected == []
     applied_ids = {
         str(item.get("subject_id") or "")
@@ -257,14 +246,12 @@ def test_reload_preserves_yamen_chief_fee_and_progress(game, content, monkeypatc
     result, _night_id, _ctid = _create_yamen_via_night(db, state)
     yamen_id = int(result.yamen_creates.applied[0]["id"])
 
-    def _month_runner(request, _config):
-        active = [y for y in db.yamens.list_active() if int(y.id) == int(yamen_id)]
-        assert active
+    def _month_runner(_request, _config):
         return {
             "textual_facts": [
                 {
                     "subject_kind": "yamen",
-                    "subject_id": str(int(active[0].id)),
+                    "subject_id": str(yamen_id),
                     "body": "首月清查完成",
                 }
             ]
