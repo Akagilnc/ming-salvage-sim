@@ -1212,6 +1212,7 @@ def _world_board_text(
 
 
 def _world_roster_text(db: Any, state: Any) -> str:
+    """在朝名册：资格唯一真源 characters.current_court_rows（#1914 F3）。"""
     rows = db.characters.current_court_rows(int(state.year), int(state.period))
     if not rows:
         return "在朝名册：暂无。"
@@ -1219,6 +1220,48 @@ def _world_roster_text(db: Any, state: Any) -> str:
         f"{row['name']}：{row['office'] or '无现任官职'}，{row['office_type']}，{row['status']}"
         for row in rows
     )
+
+
+def _person_whereabouts_text(location: object, transit_to: object) -> str:
+    """人物行止结构化投影（机器字段；#1914 所在地／在途，不限在朝资格）。"""
+    lines: list[str] = []
+    loc = str(location or "").strip()
+    if loc:
+        lines.append(f"location_id：{loc}")
+    dest = str(transit_to or "").strip()
+    if dest:
+        lines.append(f"transit_to_id：{dest}")
+    return "\n".join(lines) if lines else "（无行止记录）"
+
+
+def _character_whereabouts_map(db: Any) -> dict[str, tuple[str, str]]:
+    """name → (location, transit_to)；一次读全表，供世界人物子树写入。"""
+    return {
+        str(row["name"]): (
+            str(row["location"] or ""),
+            str(row["transit_to"] or ""),
+        )
+        for row in db.conn.execute(
+            "SELECT name, location, transit_to FROM characters", (),
+        ).fetchall()
+        if str(row["name"] or "").strip()
+    }
+
+
+def _write_faction_stance_material(tmp: Path, db: Any) -> str:
+    """派系态势摘要写入盘面（faction_stance_summaries；#1914 / ADR 0084）。"""
+    rows = db.factions.get_faction_stance_summaries()
+    lines: list[str] = []
+    for row in rows:
+        segment = str(row.get("stance_segment") or "")
+        if not segment.strip():
+            continue
+        faction = str(row["faction"])
+        lines.append(f"{faction}：{segment}")
+    text = "\n".join(lines) if lines else "（暂无派系态势摘要）"
+    rel = f"{_BOARD_DIR}/派系态势.txt"
+    _write_text(tmp / rel, text)
+    return rel
 
 
 def _keep_fact(fact: Any, include_fact: Any) -> bool:
@@ -1602,6 +1645,10 @@ def _write_world_tree(
     _write_text(tmp / board_rel, board_text)
     index.append(board_rel)
 
+    # #1914：派系态势授权给大臣与过月推演，不进公开邸报作者目录（public_only）。
+    if not public_only:
+        index.append(_write_faction_stance_material(tmp, db))
+
     denunciation_rel = f"{_BOARD_DIR}/派系检举事实.txt"
     _write_text(tmp / denunciation_rel, _material_facts_text(world_facts["denunciation"]))
     index.append(denunciation_rel)
@@ -1623,6 +1670,9 @@ def _write_world_tree(
         tmp, db, include_fact=include_fact, public_only=public_only,
     ))
 
+    whereabouts = (
+        _character_whereabouts_map(db) if not public_only else {}
+    )
     for name in _world_roster_names(db):
         knowledge = build_character_knowledge(db, state, name)
         person_dir = f"{_PERSON_DIR}/{_safe_segment(name)}"
@@ -1641,6 +1691,13 @@ def _write_world_tree(
             include_fact=include_fact,
         ))
         index.append(facts_rel)
+        # #1914：所在地／在途按人物全量供推演（不限在朝名册资格）；
+        # 公开邸报作者不读行止（票面授权消费方＝过月推演）。
+        if not public_only:
+            loc, transit = whereabouts.get(name, ("", ""))
+            where_rel = f"{person_dir}/行止.txt"
+            _write_text(tmp / where_rel, _person_whereabouts_text(loc, transit))
+            index.append(where_rel)
 
     for army_id in _world_subject_ids(db, "armies", "army"):
         # 路径片段走 _safe_segment；subject_id 仍用原对象身份供文字事实投影。
@@ -2218,6 +2275,9 @@ def _write_scene_tree(
         if rel and rel not in seen_rel:
             seen_rel.add(rel)
             index.append(rel)
+
+    # #1914：派系态势进大臣可读材料（场景根盘面，在场诸人共用取阅）。
+    _add(_write_faction_stance_material(tmp, db))
 
     for character, knowledge, matter_lines in person_payloads:
         for rel in _write_one_present_person(
