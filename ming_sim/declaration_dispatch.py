@@ -995,6 +995,8 @@ def _stage_authorization_commission(
     mode = resolve_directive_mode(
         extracted=authorization.get("mode", item.get("mode")),
     )
+    from ming_sim.execution_pressure import write_locality_scope_for_target_kind
+
     payload: Dict[str, Any] = {
         "text": body,
         "dossier_action_type": "authorization",
@@ -1002,6 +1004,7 @@ def _stage_authorization_commission(
         "scope": scope,
         "target_kind": kind.strip(),
         "target_id": scoped.strip(),
+        "locality_scope": write_locality_scope_for_target_kind(kind.strip()),
         "name": holder,
         "holder_id": holder,
         "assignee_id": holder,
@@ -2198,9 +2201,15 @@ def _dispatch_commission_items(
                 return {"id": oid, "kind": "office"}
             if appointment_fields["appoint_action"] == "任命":
                 from ming_sim.session import _appointment_intent_is_current_office_noop
+                declared_tenure = (
+                    appointment_fields["任别"]
+                    if "任别" in appointment_fields
+                    else None
+                )
                 if _appointment_intent_is_current_office_noop(
                     db, appointment_fields["name"], appointment_fields["office"],
                     content=db.content,
+                    tenure=declared_tenure,
                 ):
                     return None
             # office 成案链只吃任免字段；禁把 grant 的 execution_surface 等带进

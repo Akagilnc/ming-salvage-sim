@@ -389,12 +389,18 @@ def _canonical_minister_key(content: Any, name: str, db: "GameDB") -> str:
 
 def _appointment_intent_is_current_office_noop(
     db: Any, name: str, office: str, content: Any = None,
+    *,
+    tenure: Optional[str] = None,
 ) -> bool:
     """任命目标已在该职时是背景复述，不生成待确认任免动作。
 
     姓名按 canonical 口径归一（与真正落任命 apply_office_appointment 同口径）：LLM 抽到的可能是
     别名（『韩阁老』而非『韩爌』），精确名查不到行会漏判成假任免（cmr #354 correctness）。先
-    归一到在册原始名，再查当前 office。"""
+    归一到在册原始名，再查当前 office。
+
+    #1912 / ADR 0064：声明了任别且与现职任别不同（如署理→真除）不是背景复述，须再下一道任免旨。
+    ``tenure is None`` 表示声明未带任别字段，仅按官职判定。
+    """
     conn = getattr(db, "conn", None)
     clean_name = str(name or "").strip()
     desired = normalize_office(str(office or ""))
@@ -409,7 +415,13 @@ def _appointment_intent_is_current_office_noop(
         return False
     desired_parts = {p for p in desired.split(",") if p}
     current_parts = {p for p in current.split(",") if p}
-    return bool(desired_parts) and desired_parts.issubset(current_parts)
+    if not desired_parts or not desired_parts.issubset(current_parts):
+        return False
+    if tenure is None:
+        return True
+    from ming_sim.supervision import character_tenure
+
+    return character_tenure(db, canonical) == str(tenure).strip()
 
 
 def canonical_new_appointment_person_fields(
