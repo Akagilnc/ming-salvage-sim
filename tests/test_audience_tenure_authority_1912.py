@@ -8,12 +8,19 @@ from __future__ import annotations
 
 import json
 
+import ming_sim.month_chain as month_chain
 from ming_sim.db import GameDB
+from ming_sim.decree_forecast import decree_ref_for_dossier, stage_declaration
 from ming_sim.models import Character
-from ming_sim.settlement.dossier import apply_dossier_promulgation, apply_dossier_verdicts
 from ming_sim.supervision import character_tenure
+from tests.conftest import wait_for_background_jobs
+from tests.month_chain_helpers import empty_rescript_response, make_light_session
 from tests.readback_helpers import active_character_name as _minister
-from tests.test_audience_translate_1837_reopen import _close_offline, _scene_declaration
+from tests.test_audience_translate_1837_reopen import (
+    _close_offline,
+    _player_month,
+    _scene_declaration,
+)
 
 
 def _add_white_body(db, state, content, name: str) -> None:
@@ -98,6 +105,47 @@ def _active_privileges(db, state, holder: str) -> list[str]:
     ]
 
 
+def _rejected_verdict(db, *, minister: str) -> dict:
+    faction = db.conn.execute("SELECT name FROM factions LIMIT 1").fetchone()["name"]
+    return {
+        "decision": "rejected",
+        "blocked_layer": "six_offices",
+        "primary_opponents": [{"kind": "faction", "key": faction}],
+        "gatekeeper_id": minister,
+        "reason": "名器不可轻授",
+        "criteria_snapshot": {
+            "imperial_authority_band": "中等",
+            "appointment_tenure": "",
+            "authorization_ids": [],
+            "endorsement_entry_ids": [],
+        },
+        "affected_parties": [{
+            "kind": "faction", "key": faction,
+            "direction": "negative", "intensity": "weak",
+        }],
+    }
+
+
+def _player_month_rejected(db, state, content, monkeypatch, dossier_id: int, *, minister: str):
+    """真实过月入口：外部模型只给打回判决，月链应停在批红且零落账。"""
+    monkeypatch.setattr("ming_sim.rescript_draft.run_rescript_text", empty_rescript_response)
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
+    monkeypatch.setattr(
+        "ming_sim.month_translate._default_month_translate_runner",
+        lambda *a, **k: {"effects": {}},
+    )
+    dossier = db.dossiers.get(int(dossier_id))
+    stage_declaration(
+        db, decree_ref=decree_ref_for_dossier(db, dossier),
+        declaration={"effects": {}}, turn=int(state.turn),
+        verdict=_rejected_verdict(db, minister=minister), forecast_text="",
+    )
+    session = make_light_session(db, state, content)
+    result = session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
+    return result
+
+
 def test_acting_appointment_real_entry_lands_tenure_and_restore(game, monkeypatch):
     db, state, content = game
     minister = _minister(db)
@@ -132,9 +180,7 @@ def test_acting_appointment_real_entry_lands_tenure_and_restore(game, monkeypatc
     dossier = _dossier_for_pending(db, pending_id)
     assert json.loads(str(dossier["payload_json"] or "{}")).get("任别") == "署理"
 
-    apply_dossier_promulgation(
-        db, state, int(dossier["id"]), "promulgated", content=content,
-    )
+    _player_month(db, state, content, monkeypatch, int(dossier["id"]))
     assert _office_tenure(db, appointee) == "署理"
     assert character_tenure(db, appointee) == "署理"
 
@@ -161,9 +207,7 @@ def test_acting_appointment_real_entry_lands_tenure_and_restore(game, monkeypatc
     _approve_pending(db, state, content, monkeypatch, convert_id, minister=minister)
     _close_current_night(db, state, content)
     convert_dossier = _dossier_for_pending(db, convert_id)
-    apply_dossier_promulgation(
-        db, state, int(convert_dossier["id"]), "promulgated", content=content,
-    )
+    _player_month(db, state, content, monkeypatch, int(convert_dossier["id"]))
     assert _office_tenure(db, appointee) == "真除"
     assert character_tenure(db, appointee) == "真除"
 
@@ -208,9 +252,7 @@ def test_grant_revoke_authority_real_entry_and_region_scope(game, monkeypatch):
     _close_current_night(db, state, content)
     grant_dossier = _dossier_for_pending(db, grant_id)
     assert grant_dossier["action_type"] == "authorization"
-    apply_dossier_promulgation(
-        db, state, int(grant_dossier["id"]), "promulgated", content=content,
-    )
+    _player_month(db, state, content, monkeypatch, int(grant_dossier["id"]))
     held = db.characters.list_active_authorities(int(state.turn), holder_id=holder)
     assert len(held) == 1
     assert held[0]["privilege"] == "尚方剑密授"
@@ -243,9 +285,7 @@ def test_grant_revoke_authority_real_entry_and_region_scope(game, monkeypatch):
     _close_current_night(db, state, content)
     region_dossier = _dossier_for_pending(db, region_id)
     assert region_dossier["action_type"] == "authorization"
-    apply_dossier_promulgation(
-        db, state, int(region_dossier["id"]), "promulgated", content=content,
-    )
+    _player_month(db, state, content, monkeypatch, int(region_dossier["id"]))
     assert set(_active_privileges(db, state, holder)) == {"尚方剑密授", "专差督办"}
 
     _scene_commission(
@@ -268,9 +308,9 @@ def test_grant_revoke_authority_real_entry_and_region_scope(game, monkeypatch):
     assert int(revoke_payload.get("authority_id") or 0) == int(held[0]["id"])
     _approve_pending(db, state, content, monkeypatch, revoke_id, minister=minister)
     _close_current_night(db, state, content)
-    apply_dossier_promulgation(
-        db, state, int(_dossier_for_pending(db, revoke_id)["id"]),
-        "promulgated", content=content,
+    _player_month(
+        db, state, content, monkeypatch,
+        int(_dossier_for_pending(db, revoke_id)["id"]),
     )
     assert _active_privileges(db, state, holder) == ["专差督办"]
 
@@ -312,30 +352,12 @@ def test_rejected_authorization_does_not_land_held_privilege(game, monkeypatch):
     _approve_pending(db, state, content, monkeypatch, pending_id, minister=minister)
     _close_current_night(db, state, content)
     dossier = _dossier_for_pending(db, pending_id)
-    apply_dossier_verdicts(
-        db,
-        state,
-        [{
-            "dossier_id": int(dossier["id"]),
-            "decision": "rejected",
-            "blocked_layer": "six_offices",
-            "primary_opponents": [{"kind": "faction", "key": "东林"}],
-            "gatekeeper_id": minister,
-            "reason": "名器不可轻授",
-            "criteria_snapshot": {
-                "imperial_authority_band": "中等",
-                "appointment_tenure": "",
-                "authorization_ids": [],
-                "endorsement_entry_ids": [],
-            },
-            "affected_parties": [{
-                "kind": "faction", "key": "东林",
-                "direction": "negative", "intensity": "weak",
-            }],
-        }],
-        content=content,
+    result = _player_month_rejected(
+        db, state, content, monkeypatch, int(dossier["id"]), minister=minister,
     )
-    apply_dossier_promulgation(
-        db, state, int(dossier["id"]), "withdrawn", content=content,
-    )
+    assert result.awaiting is True
+    assert result.stage == "rescript"
+    rejected = db.dossiers.get(int(dossier["id"]))
+    assert rejected["promulgation_decision"] == "rejected"
+    assert rejected["rescript_pending"] is True
     assert _active_privileges(db, state, holder) == []
