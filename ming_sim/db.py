@@ -3724,10 +3724,8 @@ class GameDB:
             return "地区尚未建档。"
         rows = matched if limit is None else matched[: int(limit)]
         total_tax_value = sum(int(row["tax_per_turn"] or 0) for row in matched)
-        if kind_filter is None:
-            scope_label = "两京十三省"
-        else:
-            scope_label = "、".join(sorted({str(kind) for kind in kind_filter}))
+        # Label tracks the summed set, not a fixed provincial slogan (#1914 B/C1).
+        scope_label = "、".join(sorted({str(row["kind"]) for row in matched}))
         parts = []
         for row in rows:
             held = ""
