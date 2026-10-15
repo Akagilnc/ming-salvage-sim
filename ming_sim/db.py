@@ -3711,12 +3711,19 @@ class GameDB:
             )
         return payload
 
-    def region_report(self, limit: int = 5) -> str:
-        rows = self.regions.rows(limit=limit, danger_order=True)
+    def region_report(
+        self, limit: int = 5, *, kinds: Optional[Iterable[str]] = None,
+    ) -> str:
+        rows = self.regions.rows(limit=limit, danger_order=True, kinds=kinds)
         if not rows:
             return "地区尚未建档。"
-        total_tax = self.conn.execute('SELECT SUM(tax_per_turn) AS total FROM regions', ()).fetchone()
-        total_tax_value = int(total_tax["total"] or 0)
+        if kinds is None:
+            total_tax = self.conn.execute(
+                'SELECT SUM(tax_per_turn) AS total FROM regions', (),
+            ).fetchone()
+            total_tax_value = int(total_tax["total"] or 0)
+        else:
+            total_tax_value = sum(int(row["tax_per_turn"] or 0) for row in rows)
         parts = []
         for row in rows:
             held = ""

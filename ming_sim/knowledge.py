@@ -225,7 +225,8 @@ def _office_vacancy_register(db: Any) -> str:
         return "官缺：暂无。"
     lines: list[str] = []
     for row in rows:
-        title = str(row["office_title"] or "").strip() or "（未名职缺）"
+        # office_slots.office_title 是 PRIMARY KEY，视图侧不会空。
+        title = str(row["office_title"])
         jur = str(row["jurisdiction"] or "").strip()
         holder = str(row["holder_name"] or "").strip()
         place = f"（{jur}）" if jur else ""
@@ -237,12 +238,12 @@ def _office_vacancy_register(db: Any) -> str:
 
 
 def _province_overview(db: Any) -> str:
-    """各省概况：全量地区定性警讯（复用 region_report，不另造投影）。"""
-    body = _prose(db.region_report(limit=None))
-    text = str(body or "").strip()
-    if not text:
-        return "各省概况：暂无。"
-    return f"各省概况：\n{text}"
+    """各省概况：两京／布政司定性警讯（输入侧收窄既有 PROVINCE_KINDS）。"""
+    from ming_sim.execution_pressure import PROVINCE_KINDS
+
+    # region_report 无行时固定返回「地区尚未建档。」，不另写空串兜底。
+    body = _prose(db.region_report(limit=None, kinds=PROVINCE_KINDS))
+    return f"各省概况：\n{body}"
 
 
 def _world(
@@ -259,13 +260,6 @@ def _world(
     elif office_type == "吏部":
         result["personnel"] = _appointment_register(db, state)
 
-    # #1914 / ADR 0034 局部例外：御前近侍可读官缺与各省概况（非全体人物全知）。
-    from ming_sim.audience_night import is_inner_court_attendant
-
-    if is_inner_court_attendant({"office": office_name}):
-        result["personnel"] = _office_vacancy_register(db)
-        result["regional"] = _province_overview(db)
-
     # Authoritative office→辖域 projection (shared with dossier archive keys).
     # Region from the holder's appointment (character_offices.region_id) — never location.
     projected = db.project_office_identity(
@@ -277,13 +271,19 @@ def _world(
     if region_ids:
         scope["region_ids"] = region_ids
         # Materials/region detail use the primary jurisdiction when several.
-        # 近侍已持各省概况时不覆盖（#1914 例外内容优先于本官辖域切片）。
         primary = region_ids[0]
-        if "regional" not in result:
-            result["regional"] = _prose(db.region_detail(primary, qualitative=True))
+        result["regional"] = _prose(db.region_detail(primary, qualitative=True))
         result["construction"] = _prose(
             db.buildings_report(region_id=primary, qualitative=True)
         )
+
+    # #1914 / ADR 0034 局部例外：御前近侍可读官缺与各省概况（非全体人物全知）。
+    # 放在辖域投影之后直接覆盖 regional，省掉「键是否已有」条件。
+    from ming_sim.audience_night import is_inner_court_attendant
+
+    if is_inner_court_attendant({"office": office_name}):
+        result["personnel"] = _office_vacancy_register(db)
+        result["regional"] = _province_overview(db)
 
     armies = db.conn.execute(
         'SELECT id,name FROM armies WHERE commander=? OR controller=? ORDER BY name',

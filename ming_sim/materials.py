@@ -1175,22 +1175,22 @@ def _character_whereabouts_map(db: Any) -> dict[str, tuple[str, str]]:
     }
 
 
-def faction_stance_material_text(db: Any) -> str:
-    """派系态势摘要人读投影（faction_stance_summaries；#1914 / ADR 0084）。"""
+def _write_faction_stance_material(tmp: Path, db: Any) -> str:
+    """派系态势摘要写入盘面（faction_stance_summaries；#1914 / ADR 0084）。"""
     rows = db.factions.get_faction_stance_summaries()
     lines: list[str] = []
     for row in rows:
         segment = str(row.get("stance_segment") or "")
         if not segment.strip():
             continue
-        faction = str(row.get("faction") or "").strip() or "（未名派系）"
+        # faction_stance_summaries 按 faction 键控，空键不出现。
+        faction = str(row.get("faction") or "").strip()
+        if not faction:
+            continue
         lines.append(f"{faction}：{segment}")
-    return "\n".join(lines) if lines else "（暂无派系态势摘要）"
-
-
-def _write_faction_stance_material(tmp: Path, db: Any) -> str:
+    text = "\n".join(lines) if lines else "（暂无派系态势摘要）"
     rel = f"{_BOARD_DIR}/派系态势.txt"
-    _write_text(tmp / rel, faction_stance_material_text(db))
+    _write_text(tmp / rel, text)
     return rel
 
 
@@ -1575,7 +1575,9 @@ def _write_world_tree(
     _write_text(tmp / board_rel, board_text)
     index.append(board_rel)
 
-    index.append(_write_faction_stance_material(tmp, db))
+    # #1914：派系态势授权给大臣与过月推演，不进公开邸报作者目录（public_only）。
+    if not public_only:
+        index.append(_write_faction_stance_material(tmp, db))
 
     denunciation_rel = f"{_BOARD_DIR}/派系检举事实.txt"
     _write_text(tmp / denunciation_rel, _material_facts_text(world_facts["denunciation"]))
@@ -1594,7 +1596,9 @@ def _write_world_tree(
     _write_text(tmp / _COURT_ROSTER_REL, roster_text)
     index.append(_COURT_ROSTER_REL)
 
-    whereabouts = _character_whereabouts_map(db)
+    whereabouts = (
+        _character_whereabouts_map(db) if not public_only else {}
+    )
     for name in _world_roster_names(db):
         knowledge = build_character_knowledge(db, state, name)
         person_dir = f"{_PERSON_DIR}/{_safe_segment(name)}"
@@ -1613,11 +1617,13 @@ def _write_world_tree(
             include_fact=include_fact,
         ))
         index.append(facts_rel)
-        # #1914：所在地／在途按人物全量供推演（不限在朝名册资格）。
-        loc, transit = whereabouts.get(name, ("", ""))
-        where_rel = f"{person_dir}/行止.txt"
-        _write_text(tmp / where_rel, _person_whereabouts_text(loc, transit))
-        index.append(where_rel)
+        # #1914：所在地／在途按人物全量供推演（不限在朝名册资格）；
+        # 公开邸报作者不读行止（票面授权消费方＝过月推演）。
+        if not public_only:
+            loc, transit = whereabouts.get(name, ("", ""))
+            where_rel = f"{person_dir}/行止.txt"
+            _write_text(tmp / where_rel, _person_whereabouts_text(loc, transit))
+            index.append(where_rel)
 
     for army_id in _world_subject_ids(db, "armies", "army"):
         # 路径片段走 _safe_segment；subject_id 仍用原对象身份供文字事实投影。

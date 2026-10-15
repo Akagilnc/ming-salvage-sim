@@ -130,7 +130,10 @@ CORE_SCHEMA_SQL = """
     -- Local appointment jurisdiction lives only on character_offices.region_id
     -- (一次任职). No parallel seat catalog.
 
-    CREATE VIEW IF NOT EXISTS office_vacancies AS
+    -- 兼任按逗号分项匹配（与 normalize_office 落库口径一致）；
+    -- DROP 再 CREATE：视图定义变更须替换，IF NOT EXISTS 留旧定义。
+    DROP VIEW IF EXISTS office_vacancies;
+    CREATE VIEW office_vacancies AS
     SELECT
         s.office_title,
         s.office_type,
@@ -144,7 +147,8 @@ CORE_SCHEMA_SQL = """
     LEFT JOIN characters AS c
       ON c.status = 'active'
      AND (
-         replace(replace(c.office, '（署理）', ''), '署理', '') = s.office_title
+         ',' || replace(replace(c.office, '（署理）', ''), '署理', '') || ','
+         LIKE '%,' || s.office_title || ',%'
      );
 
     -- person_logs 的建表与索引归 ming_sim/entities/person_log
