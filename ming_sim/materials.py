@@ -432,8 +432,17 @@ def _own_affair_lines(
         else:
             opening_text = "见目录。"
         is_handling = affair_id in dossier_participant_ids or affair_id in handling_ids
+        # Birth source visibility is orthogonal to later carriers (ADR 0154):
+        # non-informed later handlers keep the affair path and readable facts,
+        # but private birth metadata (name) stays out of their projection.
+        affair_ref = store.origin_ref(affair_id)
+        title = (
+            str(affair.name or "")
+            if origin_visible_to(db, affair_ref, character_name)
+            else ""
+        )
         lines.append((
-            f"affair-{affair_id}", str(affair.name or ""), directory_text, opening_text,
+            f"affair-{affair_id}", title, directory_text, opening_text,
             is_handling,
         ))
     return lines
@@ -523,7 +532,9 @@ def _character_affair_lines(
     for dir_key, title, directory_text, opening_text, is_handling in _own_affair_lines(
         db, state, character_name, knowledge,
     ):
-        if dir_key in seen or not title:
+        # Empty title is valid display-only state (private birth metadata hidden
+        # for non-informed readers); dir_key still carries the affair identity.
+        if dir_key in seen:
             continue
         seen.add(dir_key)
         lines.append((dir_key, title, directory_text, opening_text, is_handling))

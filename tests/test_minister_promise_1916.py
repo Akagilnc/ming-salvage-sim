@@ -230,42 +230,13 @@ def test_timed_minister_promise_due_appears_in_promisor_opening_materials(
         period=int(state.period),
         turn=int(state.turn),
     )
-    # 源轮：dispatch 入口自记前像；收夜前须非在飞（有回话 id + active）。
-    night_id, chat_id = open_hall_turn(db, state, promisor)
-    uid = db.conn.execute(
-        "INSERT INTO chat_messages (minister_name, turn, role, content) "
-        "VALUES (?, ?, 'emperor', ?)",
-        (promisor, int(state.turn), "尔有何话说"),
-    ).lastrowid
-    mid = db.conn.execute(
-        "INSERT INTO chat_messages (minister_name, turn, role, content) "
-        "VALUES (?, ?, 'minister', ?)",
-        (promisor, int(state.turn), "臣明日就办田尔耕。"),
-    ).lastrowid
-    db.conn.commit()
-    db.reign.update_chat_turn_messages(
-        int(chat_id), user_message_id=int(uid), minister_message_id=int(mid),
-    )
-
-    result = dispatch_declaration(
-        db, state,
-        {
-            "commissions": [{
-                "text": "臣明日就办田尔耕。",
-                "minister_promise": {
-                    "title": "办田尔耕",
-                    "content": "明日就办田尔耕",
-                    "promisor": promisor,
-                    "deadline_months": 1,
-                },
-                "affair_declaration": {
-                    "attach": "existing", "affair_id": int(affair.id),
-                },
-            }],
+    # 复用共用批派入口：开厅、钉源轮、dispatch。
+    result, _chat_id, _night_id = _land_minister_promise(
+        db, state, promisor=promisor, title="办田尔耕",
+        deadline_months=1,
+        affair_declaration={
+            "attach": "existing", "affair_id": int(affair.id),
         },
-        minister_name=promisor,
-        night_id=int(night_id),
-        chat_turn_id=int(chat_id),
     )
     assert result.commissions.rejected == []
     assert len(result.commissions.applied) == 1
@@ -797,6 +768,64 @@ def test_c1_minister_promise_origin_not_public_visible(game, monkeypatch):
         )
     finally:
         release_material_tree(prepared_mix.root)
+
+    # 非知情人后来承办公开关联案卷：个人投影保留事务路径，不泄私密出生原名。
+    later = "杨嗣昌"
+    later_dossier_id = db.create_decree_dossier(
+        state, action_type="special_decree", decree_text="后挂公开交办",
+        target_kind="character", target_id=later,
+        executor_kind="character", executor_id=later,
+        participants=[{"character_id": later, "tier": "主办"}],
+        payload={"affair_declaration": {
+            "attach": "existing", "affair_id": priv2_id,
+        }},
+    )
+    db.conn.execute(
+        "UPDATE decree_dossiers SET status='executing', "
+        "promulgation_decision='promulgated' WHERE id=?",
+        (int(later_dossier_id),),
+    )
+    db.conn.commit()
+    assert int(db.dossiers.affair_id_of(int(later_dossier_id))) == priv2_id
+    birth_ref = db.affairs.origin_ref(priv2_id)
+    assert origin_visible_to(db, birth_ref, later) is False
+    assert origin_visible_to(db, birth_ref, promisor) is True
+    # 个人投影结构化字段：路径在、title 空；知情人仍可读原名。
+    from ming_sim.materials import _character_affair_lines, _opening_affair_lines
+
+    later_knowledge = build_character_knowledge(db, state, later)
+    later_lines = _character_affair_lines(db, state, later, later_knowledge)
+    later_by_key = {key: title for key, title, *_ in later_lines}
+    key = f"affair-{priv2_id}"
+    assert key in later_by_key
+    assert later_by_key[key] == ""
+    assert later_by_key[key] != priv2_name
+    later_opening = _opening_affair_lines(db, later, later_lines)
+    assert all(title != priv2_name for title, _situation in later_opening)
+    # 路径进入真实场景材料树（不锁 opening 自由正文）。
+    close_night(db, state, content=content)
+    night_later = open_night(db, state, location="乾清宫", time_of_day="昼")
+    ensure_summon_enter(db, int(night_later["id"]), later)
+    prepared_later = prepare_scene_materials(db, state)
+    try:
+        assert any(
+            part.startswith(f"affair-{priv2_id}-") or part == f"affair-{priv2_id}"
+            for path in list_materials(prepared_later.root)
+            for part in str(path).split("/")
+        )
+        scene_lines = _character_affair_lines(
+            db, state, later, build_character_knowledge(db, state, later),
+        )
+        scene_titles = {k: t for k, t, *_ in scene_lines}
+        assert scene_titles.get(key) == ""
+        assert priv2_name not in scene_titles.values()
+    finally:
+        release_material_tree(prepared_later.root)
+    promisor_lines = _character_affair_lines(
+        db, state, promisor, build_character_knowledge(db, state, promisor),
+    )
+    promisor_titles = {k: t for k, t, *_ in promisor_lines}
+    assert promisor_titles.get(key) == priv2_name
 
 
 def test_c2_correction_ids_rejected_on_minister_promise(game):
