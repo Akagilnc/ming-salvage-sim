@@ -205,6 +205,31 @@ def test_author_excludes_secret_sources_from_public_materials(game, monkeypatch,
                 yield RunOutput(content=raw)
             return events()
 
+    # 观测真实 prepare→写手过滤结果，不 helper 自证、不盯正文。
+    import ming_sim.materials as materials_mod
+    kept_fact_origins: list[str] = []
+    kept_history_origins: list[str] = []
+    real_keep = materials_mod._keep_fact
+    real_hist = materials_mod._world_history_row_visible
+
+    def spy_keep(fact, include_fact):
+        ok = real_keep(fact, include_fact)
+        if ok:
+            kept_fact_origins.append(str(getattr(fact, "origin_ref", "") or ""))
+        return ok
+
+    def spy_hist(db_, row, secret_turn_ids, public_only):
+        ok = real_hist(db_, row, secret_turn_ids, public_only)
+        if ok and public_only:
+            for key in ("origin_ref", "origin", "source_id"):
+                value = str(row.get(key) or "")
+                if value:
+                    kept_history_origins.append(value)
+        return ok
+
+    monkeypatch.setattr(materials_mod, "_keep_fact", spy_keep)
+    monkeypatch.setattr(materials_mod, "_world_history_row_visible", spy_hist)
+
     def author(_config, prepared):
         seen["paths"] = list_materials(prepared.root)
         return AuthorModel()
@@ -220,17 +245,13 @@ def test_author_excludes_secret_sources_from_public_materials(game, monkeypatch,
     assert set(origins[:2]) <= refs
     assert set(origins[2:]).isdisjoint(refs)
     assert {"landed", "nominal", "forecasts", "rejections"}.isdisjoint(feed)
-    # 结构化来源边界：公开 origin 可见且目录有事务路径；密源不可见且不进 due refs。
-    from ming_sim.knowledge import origin_visible_to
-    public_origins, secret_origins = origins[:2], origins[2:]
-    for origin in public_origins:
-        assert origin_visible_to(db, origin) is True
-    for origin in secret_origins:
-        assert origin_visible_to(db, origin) is False
+    public_origins, secret_origins = set(origins[:2]), set(origins[2:])
+    assert public_origins <= set(kept_fact_origins)
+    assert secret_origins.isdisjoint(kept_fact_origins)
+    assert public_origins & set(kept_history_origins)
+    assert secret_origins.isdisjoint(kept_history_origins)
     assert any(
-        part.startswith(f"affair-{affair.id}-") or part == f"affair-{affair.id}"
+        part.startswith(f"affair-{affair.id}-")
         for path in seen["paths"] for part in str(path).split("/")
     )
-    # 密令案卷身份不得出现在公开材料路径中。
-    assert not any(f"dossier-{secret}" in path or f"secret_order:{oid}" in path
-                   for path in seen["paths"])
+    assert not any(p.startswith("密令/") for p in seen["paths"])

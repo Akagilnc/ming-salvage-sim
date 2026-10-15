@@ -1184,6 +1184,7 @@ def _world_affair_lines(
     include_fact: Any = None,
     *,
     public_only: bool = False,
+    secret_turn_ids: set[int] | None = None,
 ) -> tuple[
     list[tuple[str, str, str, str]], list[tuple[str, str, str, str]],
 ]:
@@ -1197,6 +1198,7 @@ def _world_affair_lines(
     store = db.affairs
     textual_facts = db.textual_facts
     from ming_sim.knowledge import origin_visible_to
+    secret_ids = set(secret_turn_ids or ())
     lines: list[tuple[str, str, str, str]] = []
     opening_lines: list[tuple[str, str, str, str]] = []
     for affair in store.list_all():
@@ -1208,6 +1210,7 @@ def _world_affair_lines(
         # Private-only newborns (restricted carriers, no public trace) stay out.
         # Attaching a private promise to an already-public affair must not hide
         # that affair's public facts, dossiers, origins, or effect history.
+        # History uses the same secret-turn boundary as the world tree writer.
         if public_only and not facts:
             dossiers = db.dossiers.rows_for_affair(affair.id)
             issues = db.issues.rows_for_affair(affair.id)
@@ -1222,7 +1225,7 @@ def _world_affair_lines(
             if has_restricted_carrier and not public_carrier:
                 history = db.list_world_effect_history(store.origin_ref(affair.id))
                 if not any(
-                    _world_history_row_visible(db, row, set(), True)
+                    _world_history_row_visible(db, row, secret_ids, True)
                     for rows in history.values()
                     for row in rows
                 ):
@@ -2283,8 +2286,14 @@ def prepare_world_materials(
     # #1834 大理寺 bounce 3：与人物经历同一纪律——本次 prepare 只算一次盘面全量
     # 投影，目录写入与 opening 共用同一份冻结结果，不重复查两遍账本。
     secret_dossiers = secret_order_dossier_ids(db) if exclude_secret_order_dossiers else set()
+    # One secret-turn freeze for metadata gate and world-tree history/audience.
+    secret_turn_ids = (
+        _secret_order_chat_turn_ids(db)
+        if (exclude_secret_order_audience or public_feed) else None
+    )
     affair_lines, opening_affair_lines = _world_affair_lines(
         db, include_fact, public_only=public_feed,
+        secret_turn_ids=secret_turn_ids or set(),
     )
     dossier_facts = continuing_dossier_facts(db, int(state.turn))
     if secret_dossiers:
@@ -2313,7 +2322,7 @@ def prepare_world_materials(
         lambda tmp: _write_world_tree(
             tmp, db, state, public_events, affair_lines, board_text,
             roster_text, world_facts, include_fact, include_event,
-            _secret_order_chat_turn_ids(db) if exclude_secret_order_audience else None,
+            secret_turn_ids,
             secret_dossiers, public_feed,
         ),
     )

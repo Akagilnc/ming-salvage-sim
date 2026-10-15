@@ -28,16 +28,13 @@ from ming_sim.declaration_dispatch import dispatch_declaration
 from ming_sim.due_review import apply_pending_due_reviews, list_due_review_scenes
 from ming_sim.knowledge import build_character_knowledge, origin_visible_to
 from ming_sim.materials import (
-    _person_audience_experience,
-    _public_audience_experience,
     _scene_pending_audience_facts,
-    _secret_order_chat_turn_ids,
-    _world_affair_lines,
     list_materials,
     prepare_scene_materials,
     release_material_tree,
 )
 from ming_sim.month_chain import _gazette_feed, prepare_gazette_author_materials
+from ming_sim.relations import summon_edge_origin
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement_payload import list_due_commitments
 from ming_sim.staged_commitment import ENTRY_KIND_STAGED, TODO_STATUS_PENDING
@@ -411,21 +408,63 @@ def _land_minister_promise(db, state, *, promisor: str, title: str, deadline_mon
     return result, int(chat_id), int(night_id)
 
 
-def _affair_dir_keys(paths) -> set[str]:
-    """从材料路径提取事务身份键（affair-N），不解析文件正文。"""
-    keys: set[str] = set()
-    for path in paths:
-        for part in str(path).split("/"):
-            if part.startswith("affair-") and part[7:8].isdigit():
-                # _safe_segment 形如 affair-N-<digest>
-                identity = part.rsplit("-", 1)[0]
-                if identity.startswith("affair-"):
-                    keys.add(identity)
-    return keys
+def _capture_gazette_write(monkeypatch):
+    """观测真实 prepare→写手消费的结构化输入（非 helper 自证、非正文哨兵）。"""
+    import ming_sim.materials as materials_mod
+
+    captured = {
+        "affair_keys": set(),
+        "audience_ids": [],
+        "kept_fact_origins": [],
+        "history_visible_origins": [],
+    }
+    real_write = materials_mod._write_world_tree
+    real_exp = materials_mod._experience_text
+    real_keep = materials_mod._keep_fact
+    real_hist = materials_mod._world_history_row_visible
+
+    def spy_exp(knowledge, audible_entries=()):
+        captured["audience_ids"].extend(
+            int(entry.get("id") or 0) for entry in audible_entries
+        )
+        return real_exp(knowledge, audible_entries)
+
+    def spy_keep(fact, include_fact):
+        ok = real_keep(fact, include_fact)
+        if ok:
+            captured["kept_fact_origins"].append(str(getattr(fact, "origin_ref", "") or ""))
+        return ok
+
+    def spy_hist(db, row, secret_turn_ids, public_only):
+        ok = real_hist(db, row, secret_turn_ids, public_only)
+        if ok and public_only:
+            for key in ("origin_ref", "origin", "source_id"):
+                value = str(row.get(key) or "")
+                if value:
+                    captured["history_visible_origins"].append(value)
+        return ok
+
+    def spy_write(
+        tmp, db, state, public_events, affair_lines, board_text, roster_text,
+        world_facts, include_fact=None, include_event=None,
+        secret_turn_ids=None, exclude_dossier_ids=None, public_only=False,
+    ):
+        captured["affair_keys"] = {line[0] for line in affair_lines}
+        return real_write(
+            tmp, db, state, public_events, affair_lines, board_text, roster_text,
+            world_facts, include_fact, include_event,
+            secret_turn_ids, exclude_dossier_ids, public_only,
+        )
+
+    monkeypatch.setattr(materials_mod, "_experience_text", spy_exp)
+    monkeypatch.setattr(materials_mod, "_keep_fact", spy_keep)
+    monkeypatch.setattr(materials_mod, "_world_history_row_visible", spy_hist)
+    monkeypatch.setattr(materials_mod, "_write_world_tree", spy_write)
+    return captured
 
 
-def test_c1_minister_promise_origin_not_public_visible(game):
-    """C1：自诺来源受限；公开作者目录按结构化身份/可闻性排除私诺新建与私语。"""
+def test_c1_minister_promise_origin_not_public_visible(game, monkeypatch):
+    """C1：自诺来源受限；真实公开作者写手不消费私语/私诺新建，保留既有公开事务。"""
     db, state, content = game
     promisor = "魏忠贤"
     public_affair = db.affairs.open(
@@ -459,7 +498,6 @@ def test_c1_minister_promise_origin_not_public_visible(game):
     assert origin_visible_to(db, origin_ref, promisor) is True
     assert origin_visible_to(db, origin_ref, "杨嗣昌") is False
 
-    # 真实夜账：结构化可闻性——私语入承诺人经历，公开条目入公开投影。
     private_entry_id = append_ledger_entry(
         db, int(night_id),
         person_names=[promisor],
@@ -479,7 +517,22 @@ def test_c1_minister_promise_origin_not_public_visible(game):
         origin_chat_turn_id=int(chat_id),
     )
 
-    # 到期供料：把 end_turn 置当前，公开 feed 不得收录。
+    # 密源边挂私诺事务：元数据门须用真实密令轮集合，不得因空集合误放行。
+    secret_turn = 99
+    edge_id = db.record_relation_edge_event(
+        source=promisor, target="杨嗣昌", event_kind="协作",
+        context="密源边夹具", origin=summon_edge_origin(secret_turn),
+    )
+    db.conn.execute(
+        "UPDATE relation_edge_events SET affair_id=? WHERE id=?",
+        (private_affair_id, int(edge_id)),
+    )
+    db.conn.commit()
+    import ming_sim.materials as materials_mod
+    monkeypatch.setattr(
+        materials_mod, "_secret_order_chat_turn_ids", lambda _db: {secret_turn},
+    )
+
     db.conn.execute(
         "UPDATE issues SET end_turn=? WHERE id=?",
         (int(state.turn), issue_id),
@@ -494,31 +547,29 @@ def test_c1_minister_promise_origin_not_public_visible(game):
     knowledge = build_character_knowledge(db, state, promisor)
     assert any(int(i.get("id") or 0) == issue_id for i in knowledge.get("issues") or [])
 
-    # 公开投影：可闻性与事务身份键，不盯正文。
-    public_audience_ids = {
-        int(entry["id"])
-        for entry in _public_audience_experience(
-            _person_audience_experience(db, promisor),
-            _secret_order_chat_turn_ids(db),
-        )
-    }
-    assert private_entry_id not in public_audience_ids
-    assert public_entry_id in public_audience_ids
-
-    affair_keys = {key for key, *_ in _world_affair_lines(db, public_only=True)[0]}
-    assert f"affair-{private_affair_id}" not in affair_keys
-    assert f"affair-{public_affair_id}" in affair_keys
-
+    captured = _capture_gazette_write(monkeypatch)
     prepared = prepare_gazette_author_materials(db, state)
     try:
+        assert f"affair-{private_affair_id}" not in captured["affair_keys"]
+        assert f"affair-{public_affair_id}" in captured["affair_keys"]
+        assert private_entry_id not in captured["audience_ids"]
+        assert public_entry_id in captured["audience_ids"]
+        assert not any(
+            str(origin).startswith(summon_edge_origin(secret_turn))
+            for origin in captured["history_visible_origins"]
+        )
         paths = list_materials(prepared.root)
-        dir_keys = _affair_dir_keys(paths)
-        assert f"affair-{private_affair_id}" not in dir_keys
-        assert f"affair-{public_affair_id}" in dir_keys
+        assert not any(
+            part.startswith(f"affair-{private_affair_id}-")
+            for path in paths for part in str(path).split("/")
+        )
+        assert any(
+            part.startswith(f"affair-{public_affair_id}-")
+            for path in paths for part in str(path).split("/")
+        )
     finally:
         release_material_tree(prepared.root)
 
-    # 受限来源随撤回前像删除（须在后续召对轮之前）。
     src_before = int(db.conn.execute(
         "SELECT COUNT(*) AS n FROM character_knowledge_sources WHERE source_id=?",
         (origin_ref,),
@@ -532,14 +583,13 @@ def test_c1_minister_promise_origin_not_public_visible(game):
         (origin_ref,),
     ).fetchone()["n"]) == 0
 
-    # 反例：既有公开事务落公开收支后挂私诺，公开目录仍保留该事务身份。
+    # 反例：既有公开事务落公开收支后挂私诺，真实写手仍收到该事务身份。
     public_origin = db.affairs.origin_ref(public_affair_id)
     db.record_issue_economy_move(
         state, "国库", -1, "边饷", "公开收支",
         origin_ref=public_origin,
     )
-    history_before = db.list_world_effect_history(public_origin)
-    assert any(history_before.values())
+    assert any(db.list_world_effect_history(public_origin).values())
     linked, _chat, _nid = _land_minister_promise(
         db, state, promisor=promisor, title="私诺挂既有公开事务",
         deadline_months=0,
@@ -548,18 +598,14 @@ def test_c1_minister_promise_origin_not_public_visible(game):
     assert linked.commissions.rejected == []
     linked_issue = int(linked.commissions.applied[0]["issue_id"])
     assert int(db.issues.affair_id_of(linked_issue)) == public_affair_id
-    assert origin_visible_to(
-        db,
-        str(db.conn.execute(
-            "SELECT origin_ref FROM issues WHERE id=?", (linked_issue,),
-        ).fetchone()["origin_ref"] or ""),
-    ) is False
-    keys_after_link = {key for key, *_ in _world_affair_lines(db, public_only=True)[0]}
-    assert f"affair-{public_affair_id}" in keys_after_link
+    captured_after = _capture_gazette_write(monkeypatch)
     prepared_after = prepare_gazette_author_materials(db, state)
     try:
-        assert f"affair-{public_affair_id}" in _affair_dir_keys(
-            list_materials(prepared_after.root),
+        assert f"affair-{public_affair_id}" in captured_after["affair_keys"]
+        assert any(
+            part.startswith(f"affair-{public_affair_id}-")
+            for path in list_materials(prepared_after.root)
+            for part in str(path).split("/")
         )
     finally:
         release_material_tree(prepared_after.root)
