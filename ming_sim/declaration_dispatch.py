@@ -1680,9 +1680,15 @@ def _dispatch_commission_items(
             # 可收尾；召对顶出由 write_due 扫 minister_promise 一次性承诺写入
             # next_audience_todos（#1916 / ADR 0013 form③ + 0076 场面）。
             # 不得用段派生 end_turn——那会堵住 acknowledged 收尾闸。
-            origin_ref = (
-                f"chat_turn:{int(source_chat_turn_id)}"
-                if int(source_chat_turn_id or 0) > 0
+            #
+            # 来源身份按承诺粒度唯一（#1916 C1-R1）：同轮多人自诺不得共享
+            # chat_turn:N 作为 character_knowledge_sources.source_id，否则
+            # INSERT OR REPLACE 后写覆盖前写知情人。先落 issue，再用 issue_id
+            # 钉终源，并保留真实源轮前缀。
+            ctid = int(source_chat_turn_id or 0)
+            provisional_origin = (
+                f"chat_turn:{ctid}"
+                if ctid > 0
                 else f"minister_promise:{int(state.turn)}:{promisor}"
             )
             # 事务关联：复用既有声明写口，保存模型明确声明（ADR 0154/0155）。
@@ -1695,7 +1701,7 @@ def _dispatch_commission_items(
                 kind="initiative",
                 title=title,
                 origin_kind="minister_promise",
-                origin_ref=origin_ref,
+                origin_ref=provisional_origin,
                 bar_value=0,
                 inertia=0,
                 stage_text=content,
@@ -1717,6 +1723,15 @@ def _dispatch_commission_items(
                 )
             else:
                 issue_id = db.insert_issue(state, **issue_fields)
+            origin_ref = (
+                f"chat_turn:{ctid}:minister_promise:{int(issue_id)}"
+                if ctid > 0
+                else f"minister_promise:{int(issue_id)}"
+            )
+            db.conn.execute(
+                "UPDATE issues SET origin_ref=? WHERE id=?",
+                (origin_ref, int(issue_id)),
+            )
             # #1916 C1：自诺来源登记为受限见闻，公开邸报/非当事人不得见。
             db.register_character_knowledge_source(
                 state,

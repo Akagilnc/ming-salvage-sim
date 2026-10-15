@@ -15,10 +15,7 @@ import json
 from types import SimpleNamespace
 
 from ming_sim.audience_night import close_night, ensure_summon_enter, open_night
-from ming_sim.audience_translate import (
-    build_c0_declaration_shape,
-    build_translation_target_grounding,
-)
+from ming_sim.audience_translate import build_c0_declaration_shape
 from ming_sim.breach_plea import scan_and_write_breach_pleas
 from ming_sim.declaration_dispatch import dispatch_declaration
 from ming_sim.due_review import apply_pending_due_reviews, list_due_review_scenes
@@ -146,6 +143,30 @@ def test_minister_self_promise_timed_and_open_land_without_emperor_approval(
     assert int(open_row["end_turn"] or 0) == 0
     assert str(timed_row["origin_kind"] or "") != "decree"
     assert str(open_row["origin_kind"] or "") != "decree"
+
+    # C1-R1：同轮多人自诺各有唯一来源，承诺人各自可见己诺，互不覆盖。
+    timed_origin = str(timed_row["origin_ref"] or "")
+    open_origin = str(open_row["origin_ref"] or "")
+    assert timed_origin and open_origin and timed_origin != open_origin
+    assert f":minister_promise:{int(timed_row['id'])}" in timed_origin
+    assert f":minister_promise:{int(open_row['id'])}" in open_origin
+    assert origin_visible_to(db, timed_origin, promisor) is True
+    assert origin_visible_to(db, open_origin, "杨嗣昌") is True
+    assert origin_visible_to(db, timed_origin, "杨嗣昌") is False
+    assert origin_visible_to(db, open_origin, promisor) is False
+    assert origin_visible_to(db, timed_origin) is False
+    assert any(
+        int(i.get("id") or 0) == int(timed_row["id"])
+        for i in build_character_knowledge(db, state, promisor).get("issues") or []
+    )
+    assert any(
+        int(i.get("id") or 0) == int(open_row["id"])
+        for i in build_character_knowledge(db, state, "杨嗣昌").get("issues") or []
+    )
+    assert not any(
+        int(i.get("id") or 0) == int(open_row["id"])
+        for i in build_character_knowledge(db, state, promisor).get("issues") or []
+    )
 
     # 不经应允：无 pending 交办挂此自诺，亦无案卷颁布路径。
     pending = db.conn.execute(
@@ -487,37 +508,63 @@ def test_c2_minister_promise_applied_has_no_pending_id_field(game):
     assert "id" not in applied
 
 
-def test_c3_affair_identity_supplied_in_translation_grounding(game):
-    """C3：权威目标目录供合法事务 id；C0 形状含 affair_declaration 字段。"""
+def test_c3_real_scene_translation_supplies_affair_and_lands_link(game, monkeypatch):
+    """C3/T1：真实召对转译收到事务身份供料，并据此关联落账（禁只测 builder/手工注入）。"""
     db, state, content = game
+    promisor = "魏忠贤"
     affair = db.affairs.open(
         name="田尔耕案", origin="test",
         year=int(state.year), period=int(state.period), turn=int(state.turn),
     )
-    grounding = build_translation_target_grounding(db, state)
-    affair_lines = [
-        line for line in grounding.splitlines()
-        if line.startswith("affair\t")
-    ]
-    assert any(
-        parts[1] == str(int(affair.id)) and parts[2] == "田尔耕案"
-        for line in affair_lines
-        for parts in [line.split("\t")]
-        if len(parts) >= 3
-    ), affair_lines
+    night = open_night(db, state, location="乾清宫", time_of_day="夜")
+    nid = int(night["id"])
+    seen_prompts: list[str] = []
 
-    # 形状是契约投影：字段名须可被转译填出（非自由叙述锁句）。
-    shape = build_c0_declaration_shape()
-    assert "affair_declaration" in shape
-    assert "minister_promise" in shape
+    def translate(prompt, llm_config):
+        text = str(prompt or "")
+        seen_prompts.append(text)
+        # 从真实 prompt 契约输入解析 affair 身份，不手工旁路。
+        affair_id = None
+        for line in text.splitlines():
+            if not line.startswith("affair\t"):
+                continue
+            parts = line.split("\t")
+            if len(parts) >= 3 and parts[2] == "田尔耕案":
+                affair_id = int(parts[1])
+                break
+        assert affair_id == int(affair.id), text
+        base = offline_empty_audience_translate(prompt, llm_config)
+        return {
+            **base,
+            "commissions": [{
+                "text": "臣明日就办田尔耕。",
+                "minister_promise": {
+                    "title": "办田尔耕",
+                    "content": "明日就办田尔耕",
+                    "promisor": promisor,
+                    "deadline_months": 1,
+                },
+                "affair_declaration": {
+                    "attach": "existing",
+                    "affair_id": int(affair_id),
+                },
+            }],
+        }
 
-    # 真实入口：existing 关联可经 grounding 中的 id 落账。
-    result, _c, _n = _land_minister_promise(
-        db, state, promisor="魏忠贤", title="关联已有事务",
-        affair_declaration={"attach": "existing", "affair_id": int(affair.id)},
+    class FakeAgent:
+        def run(self, message):
+            return SimpleNamespace(content="臣明日就办田尔耕。", tools=[])
+
+    stub_scene_agent(monkeypatch, FakeAgent())
+    sess = _sess(db, state, content, monkeypatch, translate_fn=translate)
+    _result, _chat_turn_id = _scene_turn(
+        sess, db, state, "尔有何话说", night_id=nid,
     )
-    assert result.commissions.rejected == []
-    issue_id = int(result.commissions.applied[0]["issue_id"])
+    assert seen_prompts, "真实转译未接到 prompt"
+    assert "affair_declaration" in build_c0_declaration_shape()
+    rows = _active_commitments_for(db, promisor)
+    assert len(rows) == 1
+    issue_id = int(rows[0]["id"])
     assert int(db.issues.affair_id_of(issue_id)) == int(affair.id)
 
 
