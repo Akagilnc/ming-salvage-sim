@@ -94,30 +94,37 @@ def origin_visible_to(
     Empty reader denotes the public feed, not the all-seeing world simulator.
     Affairs are associations, not access boundaries for their individual facts.
     ``yamen:<id>`` chases the office's own origin_ref (#1915 F1), same shape as
-    dossier→secret_order; no separate permission model. Chase uses strict id +
-    seen-set so corrupt/cyclic rows cannot RecursionError / OverflowError the
-    materials path (#1915 F5); write seam rejects yamen→yamen founding origins.
+    dossier→secret_order; no separate permission model.
+
+    Identity tokens reuse materials.secret_order_id_in_origin / dossier_id_in_origin
+    (strict id). Unresolvable claimed secret/dossier/yamen identity fails closed
+    (not public)—no silent public fallback on cycle or overflow (#1915 F5/F6).
     """
+    from ming_sim.materials import (
+        dossier_id_in_origin,
+        inquiry_source_order_id,
+        origin_claims_secret_or_dossier,
+        secret_order_id_in_origin,
+    )
+    from ming_sim.strict_types import strict_sqlite_id
+
     source = str(origin or "")
     seen = _seen or frozenset()
     if source and source in seen:
-        return True
+        return False
     yamen_match = re.match(r"yamen:(\d+)(?:[:/]|$)", source)
     if yamen_match is not None:
-        from ming_sim.strict_types import strict_sqlite_id
-
         try:
             yamen_id = strict_sqlite_id(yamen_match.group(1))
         except (TypeError, ValueError):
-            yamen_id = None
-        if yamen_id is not None:
-            yamen = db.yamens.get(yamen_id)
-            nested = str(getattr(yamen, "origin_ref", "") or "").strip() if yamen is not None else ""
-            if nested and nested != source:
-                return origin_visible_to(
-                    db, nested, character_name, linked_dossier_id=linked_dossier_id,
-                    _seen=seen | {source},
-                )
+            return False
+        yamen = db.yamens.get(yamen_id)
+        nested = str(getattr(yamen, "origin_ref", "") or "").strip() if yamen is not None else ""
+        if nested and nested != source:
+            return origin_visible_to(
+                db, nested, character_name, linked_dossier_id=linked_dossier_id,
+                _seen=seen | {source},
+            )
     registered = db.conn.execute(
         'SELECT kind, participant_roster FROM character_knowledge_sources WHERE source_id=?',
         (source,),
@@ -129,18 +136,23 @@ def origin_visible_to(
     oral = re.match(r"chat_message:(\d+)$", source)
     if oral and int(oral.group(1)) in db._secret_origin_message_ids(character_name):
         return False
-    match = re.match(r"secret_order(?:_brief)?:(\d+)(?:[:/]|$)", source)
-    order_id = int(match.group(1)) if match else 0
-    from ming_sim.materials import dossier_id_in_origin, inquiry_source_order_id
-
-    dossier_id = dossier_id_in_origin(source) or int(linked_dossier_id)
+    order_id = secret_order_id_in_origin(source) or 0
+    if origin_claims_secret_or_dossier(source) and order_id == 0 and dossier_id_in_origin(source) is None:
+        # 自称密令/案卷但 id 不可存储或不可解析：不得当公开。
+        return False
+    dossier_id = dossier_id_in_origin(source) or int(linked_dossier_id or 0)
     if dossier_id:
         row = db.conn.execute(
             'SELECT secret_order_id FROM decree_dossiers WHERE id=?',
             (dossier_id,),
         ).fetchone()
         if row is not None:
-            order_id = int(row["secret_order_id"] or order_id)
+            try:
+                linked = strict_sqlite_id(row["secret_order_id"] or 0)
+            except (TypeError, ValueError):
+                return False
+            if linked:
+                order_id = linked
     if not order_id:
         return True
     if not character_name:

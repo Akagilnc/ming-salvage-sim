@@ -2859,29 +2859,29 @@ def _attach_character_affair_pointer(db: Any, name: str, affair_id: int) -> None
 
 
 def _canonical_yamen_founding_origin(origin_ref: str) -> str:
-    """衙门建制来源：空＝公开；禁止 yamen 回指（身份不是来源，且可成环 #1915 F5）。
+    """衙门建制来源：空＝公开；禁止 yamen 回指（身份不是来源，且可成环）。
 
-    密令/案卷 id 走 strict_sqlite_id，超界在声明边界拒收，不拖到材料读口。
+    密令/案卷身份识别与读口同一形状（materials.secret_order_id_in_origin /
+    dossier_id_in_origin：brief/decree_dossier 别名与后缀），id 不可存储则拒收，
+    不平行维护一套较窄 fullmatch 语法（#1915 F5）。
     """
-    import re
-
-    from ming_sim.strict_types import strict_sqlite_id
+    from ming_sim.materials import (
+        dossier_id_in_origin,
+        origin_claims_secret_or_dossier,
+        secret_order_id_in_origin,
+    )
 
     text = str(origin_ref or "").strip()
     if not text:
         return ""
     if text.startswith("yamen:"):
         raise DeclarationDataError("衙门建制来源不得回指另一衙门")
-    try:
-        secret = re.fullmatch(r"secret_order(?:_brief)?:(\d+)", text)
-        if secret is not None:
-            return f"secret_order:{strict_sqlite_id(secret.group(1))}"
-        dossier = re.fullmatch(r"dossier:(\d+)", text)
-        if dossier is not None:
-            return f"dossier:{strict_sqlite_id(dossier.group(1))}"
-    except (TypeError, ValueError) as exc:
-        raise DeclarationDataError("衙门建制来源 id 非法") from exc
-    # 其它非空来源原样保留（与既有 provenance 字符串共存）；不从正文猜测。
+    if origin_claims_secret_or_dossier(text):
+        secret_id = secret_order_id_in_origin(text)
+        dossier_id = dossier_id_in_origin(text)
+        if secret_id is None and dossier_id is None:
+            raise DeclarationDataError("衙门建制来源 id 超出可存储范围或不可解析")
+    # 通过校验的原串落库（保留合法后缀）；不从正文猜测、不改写成另一套语法。
     return text
 
 

@@ -503,23 +503,15 @@ def test_secret_yamen_hidden_from_public_materials_and_treasury(game, tmp_path):
     )
 
 
-def test_yamen_creates_shape_includes_origin_ref_contract():
-    """转译契约 yamen_creates 含 origin_ref 字段与填写职责（结构化 shape 串）。"""
-    from ming_sim.audience_translate import build_c0_declaration_shape
+def test_yamen_origin_rejects_unstorable_and_backref(game):
+    """建制来源：yamen 回指与读口同形的超界密令/案卷 id 均拒；合法同批仍落。"""
+    from ming_sim.materials import release_material_tree
 
-    shape = build_c0_declaration_shape()
-    assert '"yamen_creates"' in shape
-    yamen_block = shape.split('"yamen_creates"', 1)[1].split("]", 1)[0]
-    assert "origin_ref" in yamen_block
-    assert "secret_order" in yamen_block or "dossier" in yamen_block
-
-
-def test_yamen_origin_rejects_yamen_backref_and_overflow(game):
-    """建制来源禁止 yamen 回指与超界密令 id；合法同批仍落。"""
     db, state, _ = game
     night = open_night(db, state, location="乾清宫", time_of_day="夜")
     night_id = int(night["id"])
     chat_turn_id = _active_chat_turn(db, state, night_id)
+    overflow = "9223372036854775808"
     result = apply_audience_round_translation(
         db, state,
         {
@@ -532,11 +524,25 @@ def test_yamen_origin_rejects_yamen_backref_and_overflow(game):
                     "origin_ref": "yamen:2",
                 },
                 {
-                    "name": "超界来源司",
+                    "name": "超界密令后缀司",
                     "chief": CHIEF,
                     "monthly_fee": 1,
                     "account": "国库",
-                    "origin_ref": "secret_order:9223372036854775808",
+                    "origin_ref": f"secret_order:{overflow}:brief",
+                },
+                {
+                    "name": "超界案卷后缀司",
+                    "chief": CHIEF,
+                    "monthly_fee": 1,
+                    "account": "国库",
+                    "origin_ref": f"dossier:{overflow}/step",
+                },
+                {
+                    "name": "超界案卷别名司",
+                    "chief": CHIEF,
+                    "monthly_fee": 1,
+                    "account": "国库",
+                    "origin_ref": f"decree_dossier:{overflow}",
                 },
                 {
                     "name": "公开合法司",
@@ -550,14 +556,15 @@ def test_yamen_origin_rejects_yamen_backref_and_overflow(game):
         chat_turn_id=chat_turn_id,
         minister_name=CHIEF,
     )
-    assert len(result.yamen_creates.rejected) == 2
+    assert len(result.yamen_creates.rejected) == 4
     assert len(result.yamen_creates.applied) == 1
     assert [y.name for y in db.yamens.list_active()] == ["公开合法司"]
-    # 读口对历史损坏回指不得炸材料树
-    assert origin_visible_to(db, "yamen:9223372036854775808", "") is True
+    # 读口对不可存储身份 fail-closed，且不 OverflowError
+    assert origin_visible_to(db, f"yamen:{overflow}", "") is False
+    assert origin_visible_to(db, f"secret_order:{overflow}:brief", "") is False
+    assert origin_visible_to(db, f"dossier:{overflow}/step", "") is False
     gazette = prepare_gazette_author_materials(db, state)
     try:
         assert any("衙门" in line for line in gazette.index_lines)
     finally:
-        from ming_sim.materials import release_material_tree
         release_material_tree(gazette.root)

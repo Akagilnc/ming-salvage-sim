@@ -2438,8 +2438,44 @@ def inquiry_order_source_suffix(order_id: int) -> str:
     return f":order:{int(order_id)}"
 
 def dossier_id_in_origin(origin: object) -> Optional[int]:
+    """从 origin 取出案卷 id；与读口同一形状（decree_dossier 别名、后缀）。
+
+    id 走 strict_sqlite_id：超界返回 None，由调用方 fail-closed，不抛 OverflowError。
+    """
     match = re.match(r"(?:decree_)?dossier:(\d+)(?:[:/]|$)", str(origin or ""))
-    return int(match.group(1)) if match else None
+    if match is None:
+        return None
+    from ming_sim.strict_types import strict_sqlite_id
+
+    try:
+        return strict_sqlite_id(match.group(1))
+    except (TypeError, ValueError):
+        return None
+
+
+def secret_order_id_in_origin(origin: object) -> Optional[int]:
+    """从 origin 取出密令 id；与 origin_visible_to 同一形状（brief 别名、后缀）。
+
+    id 走 strict_sqlite_id：超界返回 None，不抛 OverflowError。
+    """
+    match = re.match(r"secret_order(?:_brief)?:(\d+)(?:[:/]|$)", str(origin or ""))
+    if match is None:
+        return None
+    from ming_sim.strict_types import strict_sqlite_id
+
+    try:
+        return strict_sqlite_id(match.group(1))
+    except (TypeError, ValueError):
+        return None
+
+
+def origin_claims_secret_or_dossier(origin: object) -> bool:
+    """来源字符串是否自称密令/案卷身份（不论 id 是否可存储）。"""
+    text = str(origin or "")
+    return bool(
+        re.match(r"secret_order(?:_brief)?:", text)
+        or re.match(r"(?:decree_)?dossier:", text)
+    )
 
 
 def _character_gazette_rows(public_events: Sequence[dict]) -> list[dict[str, object]]:
