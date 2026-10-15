@@ -1021,11 +1021,13 @@ class _StalledApplyMiss(Exception):
 
 def _apply_stalled_deliberation_from_declaration(
     db: Any, state: Any, *, dossier_id: int, decree_ref: str, declaration: Any,
-    visible_refs: Any = None, chain: Optional[Dict[str, Any]] = None,
-) -> Optional[Any]:
+    visible_refs: Any = None,
+    alongside: Optional[Any] = None,
+) -> bool:
     """#1917：整份声明经统一分派试消费；本案 stalled 落成则同事务 settled。
 
-    成功返回 dispatch result（供终局/披露承接）；失败回滚并 reload，返回 None。
+    ``alongside(ref, result)`` 与 settle_staged 同形，在消费事务内执行结果承接。
+    成功返回 True；失败回滚并 reload，返回 False。
     """
     from ming_sim.applier import (
         Provenance, RejectionCollector, mirror_rejections_after_commit,
@@ -1038,23 +1040,22 @@ def _apply_stalled_deliberation_from_declaration(
     from ming_sim.error_pack import rejections_jsonl_path
 
     if not isinstance(declaration, Mapping):
-        return None
+        return False
     ref = str(decree_ref or "").strip()
     if not ref or db.staged_declarations.is_settled(ref):
-        return None
+        return False
     current = db.dossiers.get(int(dossier_id))
     if current is None or str(current.get("status") or "") != "proposed":
-        return None
+        return False
     if str((current.get("payload") or {}).get("deliberation_state") or "") == "backed":
-        return None
+        return False
     bound, refs = bind_decree_effect_sources(
         db, ref, declaration, visible_refs if isinstance(visible_refs, Mapping) else {},
     )
     if not _declaration_targets_stalled(bound, int(dossier_id)):
-        return None
+        return False
 
     collector = RejectionCollector()
-    dispatch_result = None
     try:
         with atomic(db):
             dispatch_result = _dispatch_declaration_sections(
@@ -1072,23 +1073,14 @@ def _apply_stalled_deliberation_from_declaration(
                 "WHERE decree_ref=? AND status='staged'",
                 (ref,),
             )
-            if chain is not None:
-                _collect_disclosures_from_result(chain, dispatch_result)
-                ending = _ending_from_dispatch_result(dispatch_result)
-                if ending is not None:
-                    chain["declaration_outcome"] = ending
-                _save_chain(
-                    db, int(state.turn), chain, source=Provenance.system_simulation,
-                )
+            if alongside is not None:
+                alongside(ref, dispatch_result)
     except _StalledApplyMiss:
         # DB 已随 atomic 回滚；刷掉分派期间写入的内存脏余额。
         reload_state_from_db(db, state, content=getattr(db, "content", None))
-        return None
+        return False
     mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
-    row = db.dossiers.get(int(dossier_id))
-    if row is None or not _is_stalled_deliberation(row):
-        return None
-    return dispatch_result
+    return True
 
 
 def _settle_edicts(
@@ -1105,6 +1097,20 @@ def _settle_edicts(
 
     db, state = session.db, session.state
     outcome = None
+
+    def persist_result(_decree_ref: str, result: Any) -> None:
+        """分派结果唯一承接：终局、披露入月链（stalled 试消费与 settle_staged 共用）。"""
+        nonlocal outcome
+        candidate = _ending_from_dispatch_result(result)
+        if candidate is not None:
+            outcome = candidate
+            if on_outcome is not None:
+                on_outcome(candidate)
+        _collect_disclosures_from_result(chain, result)
+        _save_chain(
+            db, int(state.turn), chain, source=Provenance.player_decree,
+        )
+
     # 同月任免的快照均以首案物化前盘面为准。未判案只记录校验结果，
     # 直到判官实际顺颁才消费；中断重开仍认这一批的原始盘面。
     prevalidated = set(_load_durable_json_list(chain.get("recommendation_prevalidated_ids"), surface="month_chain.recommendation_prevalidated_ids"))
@@ -1194,21 +1200,13 @@ def _settle_edicts(
                 )
             # 预存或本次补跑声明：颁布前消费 stalled。
             staged = db.staged_declarations.staged_for(ref, turn=int(state.turn))
-            if staged:
-                stalled_result = _apply_stalled_deliberation_from_declaration(
-                    db, state, dossier_id=int(dossier["id"]), decree_ref=ref,
-                    declaration=staged[0].declaration,
-                    visible_refs=staged[0].visible_refs,
-                    chain=chain,
-                )
-                if stalled_result is not None:
-                    # 与 settle_staged 的 persist_result 同形：终局入 outcome / on_outcome。
-                    candidate = _ending_from_dispatch_result(stalled_result)
-                    if candidate is not None:
-                        outcome = candidate
-                        if on_outcome is not None:
-                            on_outcome(candidate)
-                    continue
+            if staged and _apply_stalled_deliberation_from_declaration(
+                db, state, dossier_id=int(dossier["id"]), decree_ref=ref,
+                declaration=staged[0].declaration,
+                visible_refs=staged[0].visible_refs,
+                alongside=persist_result,
+            ):
+                continue
             if isinstance(verdict, dict) and verdict.get("decision"):
                 current = db.dossiers.get(int(dossier["id"])) or dossier
                 if str(current.get("status") or "") == "proposed":
@@ -1235,20 +1233,6 @@ def _settle_edicts(
                         db.conn._recommendation_snapshots_prevalidated = previous
         current = db.dossiers.get(int(dossier["id"])) or dossier
         if db.dossiers.authorizes_effects(int(current["id"])):
-            def persist_result(_decree_ref: str, result: Any) -> None:
-                # 披露暂缓与旨意落账同事务：alongside 在 settle 的 atomic 内，
-                # 须把 pending_disclosures 一并写入月链。
-                nonlocal outcome
-                candidate = _ending_from_dispatch_result(result)
-                if candidate is not None:
-                    outcome = candidate
-                    if on_outcome is not None:
-                        on_outcome(candidate)
-                _collect_disclosures_from_result(chain, result)
-                _save_chain(
-                    db, int(state.turn), chain, source=Provenance.player_decree,
-                )
-
             settle_staged_declarations_in_decree_order(
                 db, state, [ref], source=Provenance.player_decree,
                 alongside=persist_result,
