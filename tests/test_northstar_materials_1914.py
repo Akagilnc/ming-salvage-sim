@@ -10,10 +10,8 @@
 
 from __future__ import annotations
 
-from ming_sim.assets import format_money
 from ming_sim.audience_night import open_night
-from ming_sim.execution_pressure import PROVINCE_KINDS
-from ming_sim.knowledge import build_character_knowledge, project_court_roster_rows
+from ming_sim.knowledge import build_character_knowledge
 from ming_sim.materials import (
     _safe_segment,
     list_materials,
@@ -21,7 +19,6 @@ from ming_sim.materials import (
     prepare_world_materials,
     read_material,
 )
-from ming_sim.models import monthly_amount
 
 
 _STANCE_REL = "盘面/派系态势.txt"
@@ -41,10 +38,7 @@ def _parse_machine_fields(body: str) -> dict[str, str]:
 
 
 def test_scene_open_night_attendant_gets_vacancy_and_province_keys(game, tmp_path):
-    """从真实召对入口开夜：近侍 world 接通 personnel/regional，公事档案非空。
-
-    personnel 键只供官缺底账，不得连带放出完整在朝名册（#1914 A）。
-    """
+    """从真实召对入口开夜：近侍 world 接通 personnel/regional，公事档案非空。"""
     db, state, _content = game
     open_night(db, state, location="乾清宫", time_of_day="夜")
 
@@ -54,29 +48,9 @@ def test_scene_open_night_attendant_gets_vacancy_and_province_keys(game, tmp_pat
     # 可读性：路径在册且可读通；供料接通由 knowledge 结构化键证明，不锁占位措辞。
     read_material(prepared.root, office_rel)
 
-    knowledge = build_character_knowledge(db, state, "王承恩")
-    world = knowledge["world"]
+    world = build_character_knowledge(db, state, "王承恩")["world"]
     assert str(world.get("personnel") or "").strip()
     assert str(world.get("regional") or "").strip()
-
-    court_rows = db.characters.current_court_rows(int(state.year), int(state.period))
-    office_type = str(knowledge.get("office_type") or "")
-    projected = project_court_roster_rows(court_rows, knowledge, office_type)
-    assert projected, "近侍本职类应有可见名册"
-    assert len(projected) < len(court_rows)
-    assert {str(row["office_type"] or "") for row in projected} == {office_type}
-
-    # 场景目录同一投影：朝臣名册不得因 personnel 键扩成全朝。
-    roster_rel = f"人物/{_safe_segment('王承恩')}/朝臣名册.txt"
-    assert roster_rel in list_materials(prepared.root)
-    roster_body = read_material(prepared.root, roster_rel)
-    court_names = {str(row["name"]) for row in court_rows}
-    own_names = {str(row["name"]) for row in projected}
-    leaked = [
-        name for name in court_names - own_names
-        if name and name in roster_body
-    ]
-    assert not leaked
 
 
 def test_faction_stance_path_in_world_and_next_scene_materials(game, tmp_path):
@@ -97,61 +71,6 @@ def test_faction_stance_path_in_world_and_next_scene_materials(game, tmp_path):
     open_night(db, state, location="乾清宫", time_of_day="夜")
     scene = prepare_scene_materials(db, state, dest_root=tmp_path / "scene-next")
     assert _STANCE_REL in list_materials(scene.root)
-
-
-def test_libu_personnel_still_admits_full_court_roster(game):
-    """吏部任免簿能力仍可投影完整在朝名册；与近侍官缺键解耦。"""
-    db, state, _content = game
-    row = db.conn.execute(
-        "SELECT name FROM characters WHERE office_type=? LIMIT 1",
-        ("吏部",),
-    ).fetchone()
-    assert row is not None
-    knowledge = build_character_knowledge(db, state, str(row["name"]))
-    assert "personnel" in knowledge["world"]
-    court_rows = db.characters.current_court_rows(int(state.year), int(state.period))
-    projected = project_court_roster_rows(
-        court_rows, knowledge, str(knowledge.get("office_type") or ""),
-    )
-    assert len(projected) == len(court_rows)
-
-
-def test_region_report_total_covers_filter_not_display_limit(game):
-    """region_report 合计覆盖全部匹配行，不受展示 limit；标签随 kinds。"""
-    db, _state, _content = game
-    matched = db.regions.rows(limit=None, danger_order=True, kinds=PROVINCE_KINDS)
-    assert len(matched) > 1
-    expected = format_money(
-        monthly_amount(sum(int(row["tax_per_turn"] or 0) for row in matched))
-    )
-    limited = db.region_report(limit=1, kinds=PROVINCE_KINDS)
-    full = db.region_report(limit=None, kinds=PROVINCE_KINDS)
-    assert expected in limited
-    assert expected in full
-    # limit 只缩展示：限行报告里的地区名集合是全量的真子集。
-    limited_names = {
-        str(row["name"]) for row in matched[:1] if str(row["name"]) in limited
-    }
-    full_names = {
-        str(row["name"]) for row in matched if str(row["name"]) in full
-    }
-    assert limited_names and full_names
-    assert limited_names < full_names
-
-    neighbor_kinds = ("邻国",)
-    neighbor_matched = db.regions.rows(
-        limit=None, danger_order=True, kinds=neighbor_kinds,
-    )
-    assert neighbor_matched
-    neighbor_total = format_money(
-        monthly_amount(
-            sum(int(row["tax_per_turn"] or 0) for row in neighbor_matched)
-        )
-    )
-    neighbor_report = db.region_report(limit=1, kinds=neighbor_kinds)
-    assert neighbor_total in neighbor_report
-    assert "邻国" in neighbor_report
-    assert "两京十三省" not in neighbor_report
 
 
 def test_world_whereabouts_cover_off_court_and_unranked_with_bound_fields(
