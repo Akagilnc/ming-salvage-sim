@@ -657,7 +657,7 @@ def bind_decree_effect_sources(
 ) -> Tuple[Mapping[str, object], Mapping[str, object]]:
     """Bind only this draft's structured effect identity; retain all prose and gates."""
     from ming_sim.decree_forecast import dossier_for_decree_ref
-    from ming_sim.simulation import ITEM_FIELD_ALIASES
+    from ming_sim.simulation import _canonical_item_fields
 
     if not decree_ref.startswith("pending-action:"):
         return declaration, visible_refs
@@ -667,16 +667,17 @@ def bind_decree_effect_sources(
     dossier_id = int(dossier["id"])
 
     def bind(value: object) -> object:
+        # 与写口／窥探同一权威键规范化（strip + ITEM_FIELD_ALIASES），禁止平行解释。
         if isinstance(value, Mapping):
+            canonical = _canonical_item_fields(dict(value))
             result = {}
-            for key, item in value.items():
-                field = ITEM_FIELD_ALIASES.get(key, key)
+            for field, item in canonical.items():
                 if field == "origin_ref" and item == decree_ref:
-                    result[key] = held_dossier_decree_ref(dossier_id)
+                    result[field] = held_dossier_decree_ref(dossier_id)
                 elif field in {"dossier_id", "target_dossier_id"} and item == decree_ref:
-                    result[key] = dossier_id
+                    result[field] = dossier_id
                 else:
-                    result[key] = bind(item)
+                    result[field] = bind(item)
             return result
         if isinstance(value, list):
             return [bind(item) for item in value]

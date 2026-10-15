@@ -1209,12 +1209,18 @@ def _settle_edicts(
         ):
             staged = db.staged_declarations.staged_for(ref, turn=int(state.turn))
             verdict = staged[0].verdict if staged and staged[0].declaration is not None else None
-            # 强推：跨月复用已持久判决（#1846），不重判。
+            # 强推：当月已持久判决可复用（#1846）；已颁恢复不依赖判决（见下）。
             if backed_awaiting_promulgation and not (
                 isinstance(verdict, dict) and verdict.get("decision")
             ):
                 verdict = _persisted_staged_verdict(db, ref, int(state.turn))
+            # 已颁事实优先：跨月 stalled→强推只恢复办理，不重开判官、不重放物化。
+            resume_promulgated = (
+                backed_awaiting_promulgation
+                and db.dossiers.authorizes_effects(int(dossier["id"]))
+            )
             # 过月补跑：先 produce（可新产 stalled 声明），再消费 stalled，最后颁布（F7）。
+            # 未颁原案首次过判仍可走 produce／判官；已颁恢复跳过。
             if (
                 not backed_awaiting_promulgation
                 and verdict is None
@@ -1230,8 +1236,10 @@ def _settle_edicts(
                     step="edict_forecast", operation=_produce, decree_ref=ref,
                 )
                 verdict = product["verdict"]
-            elif backed_awaiting_promulgation and not (
-                isinstance(verdict, dict) and verdict.get("decision")
+            elif (
+                backed_awaiting_promulgation
+                and not resume_promulgated
+                and not (isinstance(verdict, dict) and verdict.get("decision"))
             ):
                 from ming_sim.decree_forecast import judge_dossier_verdict
 
@@ -1255,53 +1263,51 @@ def _settle_edicts(
                 alongside=persist_result,
             ):
                 continue
-            if isinstance(verdict, dict) and verdict.get("decision"):
-                current = db.dossiers.get(int(dossier["id"])) or dossier
-                if str(current.get("status") or "") == "proposed":
-                    # 失效快照只在实际顺颁时拒，不因未判/打回阻断整月。
-                    if int(dossier["id"]) in invalid and verdict["decision"] in {"promulgated", "force_promulgated"}:
-                        raise ValueError("任免案卷载荷物化失败")
-                    pre_stall = str(
-                        (current.get("payload") or {}).get("_pre_stall_status") or ""
+            current = db.dossiers.get(int(dossier["id"])) or dossier
+            if str(current.get("status") or "") == "proposed" and resume_promulgated:
+                # 批红强颁史亦经 authorizes_effects；原判字段仍可能是 rejected。
+                pre_stall = str(
+                    (current.get("payload") or {}).get("_pre_stall_status") or ""
+                )
+                restore = pre_stall if pre_stall in {"promulgated", "executing"} else "promulgated"
+                with atomic(db):
+                    payload = dict(current.get("payload") or {})
+                    payload.pop("_pre_stall_status", None)
+                    db.dossiers.update_payload(
+                        int(dossier["id"]), payload, commit=False,
                     )
-                    # 已颁后 stalled→强推：依实际颁布事实恢复办理，不重放物化。
-                    # 批红强颁只落历史 rescript_action，原判字段仍可能是 rejected（R2）。
-                    resume_only = (
-                        backed_awaiting_promulgation
-                        and db.dossiers.authorizes_effects(int(current["id"]))
+                    db.conn.execute(
+                        "UPDATE decree_dossiers SET status=?, "
+                        "updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                        (restore, int(dossier["id"])),
                     )
-                    previous = getattr(db.conn, "_recommendation_snapshots_prevalidated", False)
-                    db.conn._recommendation_snapshots_prevalidated = previous or int(dossier["id"]) in prevalidated
-                    try:
-                        with atomic(db):
-                            if resume_only:
-                                restore = pre_stall if pre_stall in {"promulgated", "executing"} else "promulgated"
-                                payload = dict(current.get("payload") or {})
-                                payload.pop("_pre_stall_status", None)
-                                db.dossiers.update_payload(
-                                    int(dossier["id"]), payload, commit=False,
-                                )
-                                db.conn.execute(
-                                    "UPDATE decree_dossiers SET status=?, "
-                                    "updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                                    (restore, int(dossier["id"])),
-                                )
-                            else:
-                                apply_dossier_promulgation(db,
-                                    state, int(dossier["id"]), str(verdict["decision"]),
-                                    blocked_layer=str(verdict.get("blocked_layer") or ""),
-                                    reason=str(verdict.get("reason") or ""),
-                                    legal_reason_code=str(verdict.get("legal_reason_code") or ""),
-                                    primary_opponents=verdict.get("primary_opponents") or [],
-                                    gatekeeper_id=verdict.get("gatekeeper_id"),
-                                    criteria_snapshot=verdict.get("criteria_snapshot") or {},
-                                    content=session.content,
-                                )
-                                apply_dossier_verdict_metadata(
-                                    db, state, int(dossier["id"]), verdict,
-                                )
-                    finally:
-                        db.conn._recommendation_snapshots_prevalidated = previous
+            elif (
+                str(current.get("status") or "") == "proposed"
+                and isinstance(verdict, dict)
+                and verdict.get("decision")
+            ):
+                # 失效快照只在实际顺颁时拒，不因未判/打回阻断整月。
+                if int(dossier["id"]) in invalid and verdict["decision"] in {"promulgated", "force_promulgated"}:
+                    raise ValueError("任免案卷载荷物化失败")
+                previous = getattr(db.conn, "_recommendation_snapshots_prevalidated", False)
+                db.conn._recommendation_snapshots_prevalidated = previous or int(dossier["id"]) in prevalidated
+                try:
+                    with atomic(db):
+                        apply_dossier_promulgation(db,
+                            state, int(dossier["id"]), str(verdict["decision"]),
+                            blocked_layer=str(verdict.get("blocked_layer") or ""),
+                            reason=str(verdict.get("reason") or ""),
+                            legal_reason_code=str(verdict.get("legal_reason_code") or ""),
+                            primary_opponents=verdict.get("primary_opponents") or [],
+                            gatekeeper_id=verdict.get("gatekeeper_id"),
+                            criteria_snapshot=verdict.get("criteria_snapshot") or {},
+                            content=session.content,
+                        )
+                        apply_dossier_verdict_metadata(
+                            db, state, int(dossier["id"]), verdict,
+                        )
+                finally:
+                    db.conn._recommendation_snapshots_prevalidated = previous
         current = db.dossiers.get(int(dossier["id"])) or dossier
         if db.dossiers.authorizes_effects(int(current["id"])):
             settle_staged_declarations_in_decree_order(
