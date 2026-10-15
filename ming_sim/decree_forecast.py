@@ -358,6 +358,37 @@ def dossier_for_decree_ref(db: Any, decree_ref: str) -> Optional[Dict[str, Any]]
     return None
 
 
+def judge_dossier_verdict(
+    session: Any, dossier: Dict[str, Any], *, prepared_context: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Single-dossier promulgation verdict; shared by forecast and imperial-push resume."""
+    import ming_sim.decree as decree
+    from ming_sim.exceptions import LLMUnavailable
+    from ming_sim.llm_transport import audience_transport_policy
+
+    payload = _payload_dict(dossier)
+    context = prepared_context
+    if context is None:
+        context = decree.build_promulgation_judge_context(
+            session.db, session.state, [dossier],
+        )
+    if decree.dossier_action_policy(dossier.get("action_type"), payload)["external_review"]:
+        if getattr(session, "llm_config", None) is None:
+            raise LLMUnavailable("颁布判官缺少模型配置", stage="edict_forecast")
+        raw = decree.llm_promulgation_verdicts(
+            [dossier], session.state, db=session.db,
+            agno_db=getattr(session, "agno_db", None),
+            llm_config=session.llm_config,
+            prepared_context=context,
+            transport_policy=audience_transport_policy(),
+        )
+    else:
+        raw = decree.stub_promulgation_verdicts([dossier])
+    return dict(decree.validate_promulgation_verdicts(
+        raw, [dossier], session.db, prepared_context=context,
+    )[0])
+
+
 def produce_forecast_product(
     session: Any, snapshot: Dict[str, Any], *, write_lock: Optional[threading.Lock] = None,
 ) -> Dict[str, Any]:
@@ -404,22 +435,9 @@ def produce_forecast_product(
         candidate = snapshot["candidate"]
         payload = _payload_dict(candidate)
         if product["verdict"] is None:
-            if decree.dossier_action_policy(
-                candidate.get("action_type"), payload,
-            )["external_review"]:
-                raw = decree.llm_promulgation_verdicts(
-                    [candidate], session.state, db=session.db,
-                    agno_db=getattr(session, "agno_db", None),
-                    llm_config=session.llm_config,
-                    prepared_context=snapshot["context"],
-                    transport_policy=audience_transport_policy(),
-                )
-            else:
-                raw = decree.stub_promulgation_verdicts([candidate])
-            verdicts = decree.validate_promulgation_verdicts(
-                raw, [candidate], session.db, prepared_context=snapshot["context"],
+            product["verdict"] = judge_dossier_verdict(
+                session, candidate, prepared_context=snapshot.get("context"),
             )
-            product["verdict"] = dict(verdicts[0])
             if not persist():
                 return product
         if product["declaration"] is not None:

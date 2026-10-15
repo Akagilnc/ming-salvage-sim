@@ -1021,12 +1021,12 @@ class _StalledApplyMiss(Exception):
 
 def _apply_stalled_deliberation_from_declaration(
     db: Any, state: Any, *, dossier_id: int, decree_ref: str, declaration: Any,
-    visible_refs: Any = None,
+    visible_refs: Any = None, chain: Optional[Dict[str, Any]] = None,
 ) -> bool:
     """#1917：整份声明经统一分派试消费；本案 stalled 落成则同事务 settled。
 
-    走 ``_dispatch_declaration_sections``（与 settle_staged 同体），保留信封
-    event_id 准入与全部条目；失败整体回滚，交颁布后统一 settle（ADR 0008）。
+    走 ``_dispatch_declaration_sections``（与 settle_staged 同体）；失败回滚 DB 并
+    ``reload_state_from_db`` 清脏内存；成功承接 defer_disclosure 入月链。
     """
     from ming_sim.applier import (
         Provenance, RejectionCollector, mirror_rejections_after_commit,
@@ -1035,7 +1035,7 @@ def _apply_stalled_deliberation_from_declaration(
         bind_decree_effect_sources,
         _dispatch_declaration_sections,
     )
-    from ming_sim.decree import _is_stalled_deliberation
+    from ming_sim.decree import _is_stalled_deliberation, reload_state_from_db
     from ming_sim.error_pack import rejections_jsonl_path
 
     if not isinstance(declaration, Mapping):
@@ -1055,9 +1055,10 @@ def _apply_stalled_deliberation_from_declaration(
         return False
 
     collector = RejectionCollector()
+    dispatch_result = None
     try:
         with atomic(db):
-            _dispatch_declaration_sections(
+            dispatch_result = _dispatch_declaration_sections(
                 db, state, bound,
                 minister_name="", night_id=0, source=Provenance.system_simulation,
                 collector=collector, chat_turn_id=0,
@@ -1072,7 +1073,14 @@ def _apply_stalled_deliberation_from_declaration(
                 "WHERE decree_ref=? AND status='staged'",
                 (ref,),
             )
+            if chain is not None:
+                _collect_disclosures_from_result(chain, dispatch_result)
+                _save_chain(
+                    db, int(state.turn), chain, source=Provenance.system_simulation,
+                )
     except _StalledApplyMiss:
+        # DB 已随 atomic 回滚；刷掉分派期间写入的内存脏余额。
+        reload_state_from_db(db, state, content=getattr(db, "content", None))
         return False
     mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
     row = db.dossiers.get(int(dossier_id))
@@ -1109,7 +1117,11 @@ def _settle_edicts(
             chain["recommendation_prevalidated_ids"] = sorted(prevalidated)
             chain["recommendation_invalid_ids"] = sorted(invalid)
             _save_chain(db, int(state.turn), chain, source=Provenance.player_decree)
-    for dossier in db.dossiers.list_dossiers():
+    for dossier_row in db.dossiers.list_dossiers():
+        # 每轮重读：同批试消费可能已把其它案标 stalled，不得用批次起点快照颁布。
+        dossier = db.dossiers.get(int(dossier_row["id"]))
+        if dossier is None:
+            continue
         if _is_stalled_deliberation(dossier):
             continue
         status = str(dossier.get("status") or "")
@@ -1162,40 +1174,12 @@ def _settle_edicts(
             elif backed_awaiting_promulgation and not (
                 isinstance(verdict, dict) and verdict.get("decision")
             ):
-                import ming_sim.decree as decree_mod
-                from ming_sim.exceptions import LLMUnavailable
-                from ming_sim.llm_transport import audience_transport_policy
+                from ming_sim.decree_forecast import judge_dossier_verdict
 
                 current_row = db.dossiers.get(int(dossier["id"])) or dossier
 
                 def _judge_and_persist() -> Dict[str, Any]:
-                    payload = current_row.get("payload") or {}
-                    if not isinstance(payload, Mapping):
-                        payload = {}
-                    needs_review = decree_mod.dossier_action_policy(
-                        current_row.get("action_type"), payload,
-                    )["external_review"]
-                    if needs_review:
-                        if session.llm_config is None:
-                            raise LLMUnavailable(
-                                "御笔强推接回颁布缺少模型配置", stage="edict_forecast",
-                            )
-                        ctx = decree_mod.build_promulgation_judge_context(
-                            db, state, [current_row],
-                        )
-                        raw = decree_mod.llm_promulgation_verdicts(
-                            [current_row], state, db=db,
-                            agno_db=session.agno_db,
-                            llm_config=session.llm_config,
-                            prepared_context=ctx,
-                            transport_policy=audience_transport_policy(),
-                        )
-                    else:
-                        raw = decree_mod.stub_promulgation_verdicts([current_row])
-                        ctx = None
-                    decided = dict(decree_mod.validate_promulgation_verdicts(
-                        raw, [current_row], db, prepared_context=ctx,
-                    )[0])
+                    decided = judge_dossier_verdict(session, dict(current_row))
                     with atomic(db):
                         _persist_staged_verdict(db, ref, int(state.turn), decided)
                     return decided
@@ -1210,6 +1194,7 @@ def _settle_edicts(
                 db, state, dossier_id=int(dossier["id"]), decree_ref=ref,
                 declaration=staged[0].declaration,
                 visible_refs=staged[0].visible_refs,
+                chain=chain,
             ):
                 continue
             if isinstance(verdict, dict) and verdict.get("decision"):
