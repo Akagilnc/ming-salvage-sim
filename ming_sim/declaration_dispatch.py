@@ -1479,7 +1479,8 @@ def _dispatch_commissions(
             _reject(rejected, item, "拒收修正须来自召对轮", "missing_ref", source)
             continue
         # #1916 C2：自诺直接入承诺账，不是 pending_actions；修正 id 不得挂其上。
-        if ids and item.get("minister_promise") is not None:
+        # 对象槽语义与互斥/分派共用 _declared_object_slot：{} 空桩=未使用。
+        if ids and _declared_object_slot(item.get("minister_promise")) is not None:
             _reject(
                 rejected, item,
                 "大臣自诺不经旨意修正链路", "invalid_shape", source,
