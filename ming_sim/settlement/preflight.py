@@ -871,6 +871,7 @@ def sanitize_delta_shape(
     """
     from ming_sim.simulation import (  # 懒 import 避 issues↔simulation 循环
         DECLARATION_EFFECT_FIELDS,
+        lift_identity_field_aliases,
     )
 
     cleaned = {**extracted}
@@ -912,6 +913,9 @@ def sanitize_delta_shape(
                             {"entity_id": str(ent), "raw_value": sub},
                             f"delta 字段 {key}.{ent} 必须是 object(dict)，实得 {type(sub).__name__}",
                         )
+                    else:
+                        # 身份槽别名在 sanitize 一次升到 canonical；写口不再各自补洞（#1917 R2）。
+                        section_clean[ent] = lift_identity_field_aliases(sub)
                 cleaned[key] = section_clean
         elif isinstance(expected, list):
             if not isinstance(value, list):
@@ -927,7 +931,8 @@ def sanitize_delta_shape(
                         f"delta 字段 {key}[{i}] 必须是 object(dict)，实得 {type(item).__name__}",
                     )
                 else:
-                    section_clean.append(item)
+                    # 列表段项级身份槽（案卷编号／来源引用等）统一升格；领域键原样。
+                    section_clean.append(lift_identity_field_aliases(item))
             cleaned[key] = section_clean
     return cleaned, rejections
 

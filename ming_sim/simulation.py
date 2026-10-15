@@ -252,14 +252,23 @@ def lift_identity_field_aliases(item: Mapping) -> Dict[str, object]:
     适用于已有领域核自行吃 ARMY/REGION 别名、只需贯通 origin_ref 的写口。
     需要业务字段别名的段请用 :func:`normalize_item_keys`。
     同槽多键后写覆盖，与 :func:`normalize_item_keys` / :func:`read_item_origin_ref` 一致。
+
+    无身份别名改写时返回原 dict，保持对象身份——sanitize 可能对同一批
+    条目跑两次（effects 逐笔 envelope + settle 合并载荷），#1844 盖章依赖
+    effect_sequence 与合并列表共享同一对象。
     """
     result: Dict[str, object] = {}
+    rewritten = False
     for key, val in item.items():
         field = ITEM_FIELD_ALIASES.get(str(key).strip(), str(key).strip())
         if field in IDENTITY_ITEM_FIELDS:
+            if key != field:
+                rewritten = True
             result[field] = val
         else:
             result[key] = val
+    if not rewritten and isinstance(item, dict):
+        return item
     return result
 
 

@@ -45,10 +45,8 @@ def _apply_population_transfers(
         if not isinstance(item, dict):
             rejected.append(RejectedItem(item={"raw_value": item}, reason="population_transfers 项必须是 object(dict)", category="invalid_shape", source=source))
             continue
+        # _canonical_item_fields(dict) 必回 dict；后置同形校验不可达（#1917 R3）。
         item = _canonical_item_fields(item)
-        if not isinstance(item, dict):
-            rejected.append(RejectedItem(item={"raw_value": item}, reason="population_transfers 项必须是 object(dict)", category="invalid_shape", source=source))
-            continue
 
         def _reject(category: str, reason: str) -> None:
             rejected.append(RejectedItem(item=item, reason=reason, category=category, source=source))

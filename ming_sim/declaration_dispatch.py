@@ -843,8 +843,8 @@ def _section_items(
     rejected: List[RejectedItem] = []
     for entry in raw:
         if isinstance(entry, Mapping):
-            canonical = _canonical_item_fields(dict(entry))
-            items.append(canonical if isinstance(canonical, Mapping) else entry)
+            # dict 入 → dict 出；不保留非 Mapping 回退原项的不可达分支（#1917 R3）。
+            items.append(_canonical_item_fields(dict(entry)))
         else:
             rejected.append(RejectedItem(
                 item={"raw_value": entry}, reason=f"{label}须为对象",

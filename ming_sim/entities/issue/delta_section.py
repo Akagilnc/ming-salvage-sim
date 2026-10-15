@@ -222,7 +222,6 @@ def _resolve_strategic_events(run, issue_summary) -> Dict[str, SectionResult]:
             )
             bucket["person_issue"].extend(results)
             reject_bucket["person_issue"].extend(refused)
-        from ming_sim.simulation import lift_identity_field_aliases
 
         for power_id, raw_changes in run.ordered_strategic_items("power_updates", event_id):
             if not isinstance(raw_changes, dict):
