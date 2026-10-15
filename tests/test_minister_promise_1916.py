@@ -514,22 +514,14 @@ def test_c1_minister_promise_origin_not_public_visible(game, monkeypatch):
         return real_exp(knowledge, audible_entries)
 
     def spy_mft(value, indent=""):
-        # 序列化边界：递归观察具 id/action_type/affair_id 的案卷记录字段，
-        # 不依赖人读标题或嵌套展示层级。
-        def _walk(node):
-            if isinstance(node, Mapping):
-                keys = set(node)
-                if {"id", "action_type"}.issubset(keys) and "affair_id" in keys:
-                    did = int(node["id"])
-                    captured["written_dossier_ids"].add(did)
-                    if int(node.get("secret_order_id") or 0) > 0:
-                        captured["written_secret_dossier_ids"].add(did)
-                for child in node.values():
-                    _walk(child)
-            elif isinstance(node, (list, tuple)):
-                for child in node:
-                    _walk(child)
-        _walk(value)
+        # 只检本次 value；子树由 _material_facts_text 既有递归再次进入 spy。
+        if isinstance(value, Mapping):
+            keys = set(value)
+            if {"id", "action_type", "affair_id"}.issubset(keys):
+                did = int(value["id"])
+                captured["written_dossier_ids"].add(did)
+                if int(value.get("secret_order_id") or 0) > 0:
+                    captured["written_secret_dossier_ids"].add(did)
         return real_mft(value, indent)
 
     def spy_write(
