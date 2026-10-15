@@ -155,13 +155,21 @@ def test_undo_chat_turn_reverses_yamen_fee_and_durable_effects(game):
     origin = f"yamen:{yamen_id}"
     assert _fee_base_from_origin(db, yamen_id)
 
+    created_keys = {
+        str(item.get("key") or "")
+        for item in db.list_durable_effects_for_origin(origin)
+        if str(item.get("effect_kind") or "") == "create" and item.get("key")
+    }
+    assert created_keys, "撤回前应有本轮创建的财政科目 key"
+
     db.undo_chat_turn(chat_turn_id)
 
     assert db.yamens.get(yamen_id) is None
     assert db.yamens.list_active() == ()
     assert db.list_durable_effects_for_origin(origin) == []
     live = db.fiscal_config.values()
-    assert not any(str(yamen_id) in key for key in live)
+    # 精确身份：只查本轮创建的 key，不扫子串误伤无关科目
+    assert created_keys.isdisjoint(live)
 
     with atomic(db):
         apply_fixed_period_flows(db, state)
