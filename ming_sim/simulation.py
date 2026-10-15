@@ -225,9 +225,11 @@ def normalize_item_keys(
 ) -> Dict[str, object]:
     """按段契约规范化条目键（非递归）。
 
-    - 身份槽始终走 ITEM_FIELD_ALIASES（来源引用／诏书引用 → origin_ref 等）。
-    - 其余键：有 domain_aliases 则领域表优先（建军「势力」→ owner_power），
-      否则走 ITEM_FIELD_ALIASES（投贼／财政等业务别名）。
+    - 身份槽始终走 ITEM_FIELD_ALIASES（来源引用／诏书引用 → origin_ref 等）；
+      同槽多键时后写覆盖（与 lift／read 同一解释）。
+    - 其余键：领域表命中优先（建军「势力」→ owner_power）；未命中再走
+      ITEM_FIELD_ALIASES（编号→id 等非冲突通用别名），禁止领域分支整段
+      屏蔽通用表。
     - 嵌套 dict 值原样保留，不整树抢译。
     """
     result: Dict[str, object] = {}
@@ -237,8 +239,8 @@ def normalize_item_keys(
         if via_item in IDENTITY_ITEM_FIELDS:
             result[via_item] = val
             continue
-        if domain_aliases is not None:
-            result[domain_aliases.get(raw, raw)] = val
+        if domain_aliases is not None and raw in domain_aliases:
+            result[domain_aliases[raw]] = val
         else:
             result[via_item] = val
     return result
@@ -249,6 +251,7 @@ def lift_identity_field_aliases(item: Mapping) -> Dict[str, object]:
 
     适用于已有领域核自行吃 ARMY/REGION 别名、只需贯通 origin_ref 的写口。
     需要业务字段别名的段请用 :func:`normalize_item_keys`。
+    同槽多键后写覆盖，与 :func:`normalize_item_keys` / :func:`read_item_origin_ref` 一致。
     """
     result: Dict[str, object] = {}
     for key, val in item.items():
@@ -261,11 +264,7 @@ def lift_identity_field_aliases(item: Mapping) -> Dict[str, object]:
 
 
 def read_item_origin_ref(item: Mapping | None) -> str:
-    """从条目读取 origin_ref（含 ITEM 身份别名）；无则空串。"""
+    """从条目读取 origin_ref；权威＝lift 后的身份槽（与写口同一解释）。"""
     if not item:
         return ""
-    for key, val in item.items():
-        field = ITEM_FIELD_ALIASES.get(str(key).strip(), str(key).strip())
-        if field == "origin_ref":
-            return str(val or "").strip()
-    return ""
+    return str(lift_identity_field_aliases(item).get("origin_ref") or "").strip()

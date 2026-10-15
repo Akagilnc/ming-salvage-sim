@@ -632,9 +632,15 @@ def _strategic_event_result_preflight_error(
         if field_armies:
             db.conn.execute("SAVEPOINT strategic_new_army_result_preflight")
             try:
+                from ming_sim.simulation import normalize_item_keys
+
                 for raw in field_armies:
+                    item = (
+                        normalize_item_keys(raw, domain_aliases=ARMY_FIELD_ALIASES)
+                        if isinstance(raw, dict) else raw
+                    )
                     landed, refused = db.create_armies_from_extraction(
-                        state, [raw], actor="档房", commit=False, require_origin=False,
+                        state, [item], actor="档房", commit=False, require_origin=False,
                     source=Provenance.system_simulation)
                     for result in refused:
                         if isinstance(result, RejectedItem):
