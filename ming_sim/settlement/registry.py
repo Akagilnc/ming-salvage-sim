@@ -57,6 +57,8 @@ _SECTIONS: Tuple[SectionSpec, ...] = (
                 ("secret_dossier_participants",)),
     SectionSpec("dossier_executions", "ming_sim.entities.dossier.delta_section",
                 "apply_executions", ("dossier_executions",)),
+    SectionSpec("deliberation_outcomes", "ming_sim.entities.dossier.delta_section",
+                "apply_deliberation_outcomes", ("deliberation_outcomes",)),
     SectionSpec("authority", "ming_sim.entities.authority.delta_section",
                 "apply", ("authority_changes",)),
     SectionSpec("metric", "ming_sim.entities.metric.delta_section",

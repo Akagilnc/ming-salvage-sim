@@ -949,6 +949,56 @@ def _guard_month_call(
     raise AssertionError("month call abort must raise")
 
 
+def _apply_stalled_deliberation_from_declaration(
+    db: Any, state: Any, *, dossier_id: int, declaration: Any,
+) -> bool:
+    """#1917：预推声明含本原案 stalled 时落标记并返回 True（跳过颁布）。"""
+    from ming_sim.applier import Provenance
+    from ming_sim.settlement.run import SettlementContext, settle_delta
+
+    if not isinstance(declaration, Mapping):
+        return False
+    effects = declaration.get("effects")
+    items: list = []
+    if isinstance(effects, Mapping):
+        raw = effects.get("deliberation_outcomes") or []
+        if isinstance(raw, list):
+            items = raw
+    elif isinstance(effects, list):
+        for envelope in effects:
+            if not isinstance(envelope, Mapping):
+                continue
+            raw = envelope.get("deliberation_outcomes") or []
+            if isinstance(raw, list):
+                items.extend(raw)
+    matched = []
+    for item in items:
+        if not isinstance(item, Mapping):
+            continue
+        try:
+            if int(item.get("dossier_id")) != int(dossier_id):
+                continue
+        except (TypeError, ValueError):
+            continue
+        if str(item.get("outcome") or "").strip() != "stalled":
+            continue
+        matched.append(dict(item))
+    if not matched:
+        return False
+    settle_delta(
+        state, db, {"deliberation_outcomes": matched},
+        SettlementContext(
+            source=Provenance.system_simulation,
+            content=getattr(db, "content", None),
+        ),
+    )
+    row = db.dossiers.get(int(dossier_id))
+    return bool(
+        row is not None
+        and str((row.get("payload") or {}).get("deliberation_state") or "") == "stalled"
+    )
+
+
 def _settle_edicts(
     session: Any, *, chain: Dict[str, Any], on_outcome: Any = None,
 ) -> Optional[Dict[str, object]]:
@@ -1011,6 +1061,13 @@ def _settle_edicts(
                     step="edict_forecast", operation=_produce, decree_ref=ref,
                 )
                 verdict = product["verdict"]
+            # #1917：预推转译已声明无人站台时，标 stalled 并跳过当月颁布。
+            staged_now = db.staged_declarations.staged_for(ref, turn=int(state.turn))
+            if _apply_stalled_deliberation_from_declaration(
+                db, state, dossier_id=int(dossier["id"]),
+                declaration=(staged_now[0].declaration if staged_now else None),
+            ):
+                continue
             if isinstance(verdict, dict) and verdict.get("decision"):
                 current = db.dossiers.get(int(dossier["id"])) or dossier
                 if str(current.get("status") or "") == "proposed":

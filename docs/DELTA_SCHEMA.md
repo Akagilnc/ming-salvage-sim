@@ -48,6 +48,7 @@ C0 形状真源为 `audience_translate.build_c0_declaration_shape`。未了结�
   "cancels":          [],  // 撤销 issue
   "close_issues":     [],  // 结案 issue
   "dossier_executions": [], // 执行中案卷的明确结局（S1）
+  "deliberation_outcomes": [], // #1917 廷议结果（无人站台 stalled）
   "dossier_participants": [], // 月末新出场的案卷参与人（S2，append-only）
   "secret_dossier_participants": [], // #1252 密令案卷参与人追加（密令私字段，与公共参与人分立）
   "authority_changes": [], // 授予/收回持有型特权（ADR 0071 / #611）
@@ -367,6 +368,12 @@ canonical 段形＝list，每项落一道加派旨：逐省累积账当回合落
 - `dossier_id` 必须指向当前处于 `executing` 的案卷；`outcome` 只收 `fulfilled` / `degraded` / `failed` / `transformed`；`note` 不得为空。
 - `affected_parties` 可选；若给出则须通过 `validate_affected_parties` 全键（kind/key/direction/intensity），且 intensity 贴合终值固定映射（failed/transformed→strong，degraded→weak，次责可降一档）；拒收不落库。该清单**不**驱动连坐额度——机械写账仍由 roster+终值映射生成。
 - 每项独立校验并拒收；通过后写入执行记录并关闭该案卷。此字段只描述 S1 当前的案卷执行回注，不是其它效果族的通用回指机制。
+
+### `deliberation_outcomes` — 廷议结果（#1917）
+- 每项必须带 `dossier_id`、`outcome`、`note`。
+- `dossier_id` 必须指向当前 `proposed` 原案；`outcome` 只收 `stalled`（无人站台）；`note` 不得为空。
+- 人物肯不肯站台由推演 LLM 演出；转译只声明结构事实。包据此把原案标为 `deliberation_state=stalled`，并确保 `origin_ref=dossier:<id>` 的局势记录存在，原案不进当月颁布，进入其后批红页「御笔强推 / 留中」。
+- 已 stalled 的同案再声明幂等；非 proposed 或未知案卷拒收不落库。
 
 ### `faction_denunciations` — 政敌检举条目（#627 / ADR 0077 ID-12）
 别名 `政敌检举` / `检举条目`。settle 内经 `accept_faction_denunciations` 承接落库。

@@ -567,6 +567,11 @@ def _run_effect_sequence(run) -> None:
             _capture(run, "secret_dossier_participants", dossier_section.apply_secret_dossier_participants(run))
         if "dossier_executions" in step_extracted:
             _capture(run, "dossier_executions", dossier_section.apply_executions(run))
+        if "deliberation_outcomes" in step_extracted:
+            _capture(
+                run, "deliberation_outcomes",
+                dossier_section.apply_deliberation_outcomes(run),
+            )
         # W4: first accepted petition outcome takes effect before later envelopes.
         from ming_sim.entities.issue.event_terminal import apply_petition_event_outcome
         from ming_sim.issues import _is_fiscal_levy_event, _event_outcome_label
@@ -657,6 +662,7 @@ def _build_outcome(run) -> SettlementOutcome:
         issue=run.outcomes.get("issue", IssueSectionResult()),
         dossier_participants=placed("dossier_participants"),
         dossier_executions=placed("dossier_executions"),
+        deliberation_outcomes=placed("deliberation_outcomes"),
         secret_dossier_participants=placed("secret_dossier_participants"),
         authority=placed("authority"),
         secret_order=placed("secret_order"),
@@ -740,6 +746,7 @@ def _run_registry_after_interleave(run, *, skip=frozenset()) -> None:
     already_run = {
         "metric", "economy", "new_armies", "region_changes", "army_changes",
         "dossier_participants", "secret_dossier_participants", "dossier_executions",
+        "deliberation_outcomes",
     }
     run.current_extracted = run.extracted
     run.current_ordered = run.ordered_deltas

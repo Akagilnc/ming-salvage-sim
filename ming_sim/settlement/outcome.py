@@ -100,6 +100,7 @@ class SettlementOutcome:
         default_factory=lambda: SectionResult([], [])
     )
     dossier_executions: SectionResult = field(default_factory=lambda: SectionResult([], []))
+    deliberation_outcomes: SectionResult = field(default_factory=lambda: SectionResult([], []))
     secret_dossier_participants: SectionResult = field(
         default_factory=lambda: SectionResult([], [])
     )
@@ -129,6 +130,7 @@ class SettlementOutcome:
             "bandit_absorptions": self.bandit,
             "applied_person_changes": self.person,
             "dossier_executions": self.dossier_executions,
+            "deliberation_outcomes": self.deliberation_outcomes,
             "dossier_participants": self.dossier_participants,
             "secret_dossier_participants": self.secret_dossier_participants,
             "authority_changes": self.authority,

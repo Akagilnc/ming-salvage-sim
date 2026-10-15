@@ -94,3 +94,67 @@ def apply_executions(run):
             "source_item": item,
         })
     return SectionResult(applied=applied, rejected=rejected)
+
+
+def apply_deliberation_outcomes(run):
+    """#1917：过月转译声明廷议结果——无人站台标 stalled，原案待裁。
+
+    人物肯不肯站台归推演 LLM；本段只记录声明、不代判。
+    """
+    from ming_sim.strict_types import _parse_sqlite_id
+
+    applied: List[object] = []
+    rejected: List[RejectedItem] = []
+    source = run.ctx.source
+
+    for item in run.current_extracted.get("deliberation_outcomes") or []:
+        if not isinstance(item, dict):
+            reject_item(rejected, item, "廷议声明须为对象", "invalid_shape", source)
+            continue
+        try:
+            dossier_id = _parse_sqlite_id(item.get("dossier_id"))
+            outcome = str(item.get("outcome") or "").strip()
+            if outcome != "stalled":
+                raise ValueError("廷议结果只收 stalled")
+            note = item.get("note")
+            note = note if isinstance(note, str) else str(note or "")
+            if not note.strip():
+                raise ValueError("廷议说明不能为空")
+        except (TypeError, ValueError) as exc:
+            reject_item(rejected, item, str(exc), "invalid_transition", source)
+            continue
+        dossier = run.db.dossiers.get(dossier_id)
+        if dossier is None or dossier["status"] != "proposed":
+            reject_item(
+                rejected, item, "无人站台只接 proposed 原案", "invalid_transition", source,
+            )
+            continue
+        payload = dict(dossier.get("payload") or {})
+        if str(payload.get("deliberation_state") or "") == "stalled":
+            applied.append({
+                "dossier_id": dossier_id, "outcome": "stalled", "source_item": item,
+            })
+            continue
+        payload["deliberation_state"] = "stalled"
+        if note.strip() and not str(payload.get("deliberation_note") or "").strip():
+            payload["deliberation_note"] = note
+        run.db.dossiers.update_payload(dossier_id, payload, commit=False)
+        origin = f"dossier:{dossier_id}"
+        existing = run.db.conn.execute(
+            "SELECT id FROM issues WHERE origin_ref=? LIMIT 1", (origin,),
+        ).fetchone()
+        if existing is None:
+            title = str(dossier.get("decree_text") or "").strip() or note.strip() or "无人站台原案"
+            run.db.insert_issue(
+                run.state,
+                kind="situation",
+                title=title[:80],
+                origin_kind="deliberation",
+                origin_ref=origin,
+                stage_text=note,
+                commit=False,
+            )
+        applied.append({
+            "dossier_id": dossier_id, "outcome": "stalled", "source_item": item,
+        })
+    return SectionResult(applied=applied, rejected=rejected)
