@@ -151,15 +151,16 @@ def project_court_roster_rows(
 ) -> list[Any]:
     """Project complete structured roster rows through one character's view.
 
-    The complete roster remains an internal query result.  A personnel-domain
-    capability may expose it; otherwise only the reader's current role roster
-    crosses the output boundary. Free-prose name hits in event bodies are not
-    an admission grant (ADR 0142 / #1834 F46).
+    The complete roster remains an internal query result.  Full-court admission
+    is the 吏部 appointment-register capability (office_type), not the mere
+    presence of a personnel archive key — 近侍 also carries that key for 官缺
+    without full-roster grant (#1914 / ADR 0034). Otherwise only the reader's
+    current role roster crosses the output boundary. Free-prose name hits in
+    event bodies are not an admission grant (ADR 0142 / #1834 F46).
     """
-    world = knowledge.get("world") or {}
-    if "personnel" in world:
-        return list(rows)
     current_office_type = str(knowledge.get("office_type") or office_type or "")
+    if current_office_type == "吏部":
+        return list(rows)
     return [
         row for row in rows
         if str(row["office_type"] or "") == current_office_type
