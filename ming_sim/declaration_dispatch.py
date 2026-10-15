@@ -1615,6 +1615,96 @@ def _dispatch_commission_items(
             applied.append({"id": row_id, "kind": "secret_order"})
             continue
 
+        minister_promise = item.get("minister_promise")
+        if minister_promise is not None:
+            # #1916：大臣当场自诺 → 直接入承诺账，不经应允/成案/颁布。
+            if not isinstance(minister_promise, Mapping) or any(
+                item.get(key) for key in (
+                    "grant", "appointment", "punishment", "pacification",
+                    "assignment", "secret_order", "secret_order_progress",
+                    "secret_order_update", "secret_order_review", "revoke",
+                    "strategy_selection",
+                )
+            ):
+                _reject(rejected, item, "大臣自诺载荷须为独立对象", "invalid_shape", source)
+                continue
+            body = _declared_prose(item.get("text"))
+            title = _declared_prose(minister_promise.get("title")) or body
+            content = (
+                _declared_prose(minister_promise.get("content"))
+                or body
+                or title
+            )
+            promisor = (
+                _declared_prose(minister_promise.get("promisor"))
+                or str(minister_name or "").strip()
+            )
+            if not content or not title or not promisor:
+                _reject(
+                    rejected, item,
+                    "大臣自诺须有正文/题名与承诺人",
+                    "invalid_shape", source,
+                )
+                continue
+            try:
+                _assert_characters_exist(db, [promisor])
+            except DeclarationReferenceError as exc:
+                _reject(rejected, item, str(exc), "hallucinated_id", source)
+                continue
+            try:
+                end_turn = _assignment_absolute_end_turn(
+                    int(state.turn),
+                    end_turn=minister_promise.get("end_turn", 0),
+                    deadline_months=minister_promise.get("deadline_months", 0),
+                )
+            except DecreeMaterializationValidationError as exc:
+                _reject(
+                    rejected, item, str(exc),
+                    getattr(exc, "category", None) or "invalid_shape", source,
+                )
+                continue
+            stages: list | None = None
+            if end_turn > 0:
+                # 有期：单段到期走 ADR 0074/0076 next_audience_todos 通道。
+                stages = [{
+                    "stage_idx": 0,
+                    "due_turn": int(end_turn),
+                    "criterion_text": content,
+                    "origin_context": content,
+                }]
+            origin_ref = (
+                f"chat_turn:{int(source_chat_turn_id)}"
+                if int(source_chat_turn_id or 0) > 0
+                else f"minister_promise:{int(state.turn)}:{promisor}"
+            )
+            issue_id = db.insert_issue(
+                state,
+                kind="initiative",
+                title=title,
+                origin_kind="minister_promise",
+                origin_ref=origin_ref,
+                bar_value=0,
+                inertia=0,
+                stage_text=content,
+                participants=[{
+                    "character_id": promisor,
+                    "tier": "主办",
+                }],
+                end_turn=int(end_turn),
+                commitment_kind="until_stop",
+                stages_json=stages,
+                cancellable="never",
+                commit=False,
+            )
+            applied.append({
+                "id": int(issue_id),
+                "issue_id": int(issue_id),
+                "kind": "minister_promise",
+                "promisor": promisor,
+                "end_turn": int(end_turn),
+            })
+            continue
+
         assignment = item.get("assignment")
         if assignment is not None:
             if not isinstance(assignment, Mapping) or any(
