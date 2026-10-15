@@ -943,10 +943,7 @@ def test_case_opening_source_clue_assists_its_fact(game):
 def test_case_opening_without_pointer_creates_no_clue(game):
     """#1896 F1：合同没带 investigation_fact 的开案**不造线索**。
 
-    ADR 0098:11 的「各源加成」与兜底路由只作用于真实存在的来源（检举、证词、
-    苦主这类确实带着案情而来的消息），「开案」这个动作本身不是来源。若无指针
-    也照样记一条空线索，再让它走兜底路由，每道查案密令首月就会白得一次实投——
-    「敷衍＝零投入」因此不成立。
+    各源加成须有带事实指针的真实线索；开案本身不产生线索。
     """
     db, state, _ = game
     name = _minister(db)
@@ -1152,7 +1149,6 @@ def test_4a_rejects_unknown_reactions_and_bad_prose_without_losing_effort(
     selections = [{
         "order_id": oid,
         "effort": 0.2,
-        "note": {"bad": "not text"},
         "fact_key": key,
         "spoliation": spoil,
     }, {"order_id": sibling, "fidelity": "忠实"}]
@@ -1191,20 +1187,15 @@ def test_4a_rejects_unknown_reactions_and_bad_prose_without_losing_effort(
     ).fetchall()
     reaction = next(row for row in rejected if json.loads(row["item_json"]).get("reaction") == "spoliation")
     assert reaction["category"] == expected_category
-    bad_note = next(row for row in rejected if "note" in json.loads(row["item_json"]))
-    assert bad_note["category"] == "invalid_shape"
-    assert json.loads(bad_note["item_json"]) == {
-        "order_id": oid, "note": selections[0]["note"],
-    }
     if bad_spoliation == {"effect": "gone", "fact_key": "target"}:
-        assert len(rejected) == 3
+        assert len(rejected) == 2
         supp = next(row for row in rejected if json.loads(row["item_json"]).get("reaction") == "suppression")
         assert supp["category"] == "missing_ref"
         assert json.loads(supp["item_json"]) == {
             "order_id": oid, "reaction": "suppression", "form": "行贿说项",
         }
     else:
-        assert len(rejected) == 2
+        assert len(rejected) == 1
     for order_id in (oid, sibling):
         dossier_id = int(db.dossiers.get_for_secret_order(order_id)["id"])
         rows = db.conn.execute(
@@ -1732,7 +1723,7 @@ def test_deep_dig_lands_through_month_chain_entry(game):
 
 
 def test_repeated_pointerless_orders_do_not_mint_clues(game):
-    """连续无指针下令不是来源。已落库的空指针旧线索仍按 ADR 0098:11 路由。"""
+    """连续无指针下令不是来源，不造线索、不白送实投。"""
     db, state, _ = game
     name = _minister(db)
     target = db.conn.execute(
@@ -1770,20 +1761,6 @@ def test_repeated_pointerless_orders_do_not_mint_clues(game):
     _next_month(db, state)
     _run_supply_4a(db, state, [{"order_id": oid, "fact_key": target, "effort": 0.0}])
     assert float(_lanes(db, oid)[target]["effort"]) == 0.0
-    assert float(_lanes(db, oid)[str(edge_id)]["effort"]) == 0.0
-
-    # 旧档里已经写下的空指针线索，仍一次性归 seed_guilt lane，不落到边事件。
-    payload = json.loads(db.dossiers.get_for_secret_order(oid)["payload_json"])
-    payload["investigation_clues"] = [{
-        "fact_key": "", "credited": False, "turn": int(state.turn),
-    }]
-    db.dossiers.update_payload(did, payload, commit=True)
-    _next_month(db, state)
-    _run_supply_4a(db, state, [{"order_id": oid, "fact_key": target, "effort": 0.0}])
-    clue = investigation_clue_records(db, did)[-1]
-    assert clue["routed_fact_key"] == target
-    assert clue["credited"] is True
-    assert float(_lanes(db, oid)[target]["effort"]) > 0.0
     assert float(_lanes(db, oid)[str(edge_id)]["effort"]) == 0.0
 
     clean = next(

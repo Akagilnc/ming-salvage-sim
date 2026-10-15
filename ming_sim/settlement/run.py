@@ -533,16 +533,6 @@ def _persist_step_specialized(run, step_extracted: Mapping[str, object]) -> None
             run.state, denunciations, commit=False, source=run.ctx.source,
         )
         run.shape_rejections.extend(("faction_denunciations", item) for item in den_res.rejected)
-    if not run.ctx.defer_disclosure:
-        selections = step_extracted.get("covert_exec_selections")
-        if selections is not None:
-            from ming_sim.covert_progress import apply_monthly_covert_actual_progress
-
-            rows_rejections = apply_monthly_covert_actual_progress(
-                run.db, run.state, selections=selections, only_supplied=True,
-                source=run.ctx.source,
-            )
-            run.shape_rejections.extend(("covert_exec_selections", item) for item in rows_rejections)
 
 
 def _run_registry(run) -> None:

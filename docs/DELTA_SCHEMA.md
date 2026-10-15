@@ -56,7 +56,6 @@ C0 形状真源为 `audience_translate.build_c0_declaration_shape`。未了结�
   // ── 密令私密声明字段（旧五模块 personnel_secret extractor 已退役；字段名仍标 provenance）──
   "人物变更":                    [],  // ADR 0009 单一人物入口：每项必带「动作」
   "secret_order_updates":       [],  // 密令副作用
-  "covert_exec_selections":     [],  // #1504 密令带内选态
   "dossier_progress_reports":   [],  // 长差密令逐月密奏（#566 / ADR 0058）
   "emperor_fate":               null, // null 不终局；abdicate/suicide 保留原状态号；其它非空声明（被废、暴毙等）同样终局
 
@@ -458,6 +457,9 @@ ADR 0054／0058 已署修订与 #1812 删简验收一并退役。既有 `decree_
 > **旧四 key（appointments / character_status_changes / character_power_changes / office_changes）已退役（#1835 F1）**：C0 声明契约只写 `人物变更` 一条人物流。ADR 0009 决定 11 的旧 key 兼容翻译层曾只为「历史 delta / ready=1 重试真源」服务；#1846 起不再持久化 ready=1 extractor delta、恢复真源是暂存声明与落账相位，那层失去存在理由并已删除（`DECLARATION_EFFECT_FIELDS` 不再列旧四键；`ming_sim/entities/character/normalize.py` 只做 `action`→`动作` 归一）。声明若仍带旧 key，由 `sanitize_delta_shape` 按 ADR 0015 逐段拒收留痕——不是静默无效。
 
 ### `secret_order_updates` / `covert_exec_selections`
+
+`covert_exec_selections` 只由核账期整月密报供料产出，不是声明 effects 字段。每月密奏正文只取 `dossier_progress_reports[].memorial_text`；查案声明不另交正文，也不覆盖密奏。
+
 - updates：`order_id` int + `sim_note`（本月推进实况）+ 可选 `impact` + 可选布尔 `disclosed`（中文键 `泄漏结论`；可省略）。`disclosed`/`泄漏结论`：密令情节已**实际公开**才为 true（被目击、闹至公堂、承办人被拿获、目标公开反击、明发上谕、科道公开参劾等）；为 true 时触发 `secret_order_disclosure:` 公开知识事件（简报升公共面的唯一闸）。风声/警觉/暴露风险仍为不填或 false。
 - 结案真源是 `settle_due_secret_orders`，不接受声明段结案字段。
 
@@ -475,14 +477,12 @@ ADR 0054／0058 已署修订与 #1812 删简验收一并退役。既有 `decree_
 | `tip_off` | `{source}`（中文键 `通风报信`） | 真实通风报信声明：确有人经关系网把话递到被查者手里。被查者知情的**唯一**来源；关系边存在 ≠ 话递到了。开案本身不算知情。 |
 | `spoliation` | `{effect, fact_key, knowledge_source?}` | 被查者知情后的毁证选择；`fact_key` 和 `effect` 必填，`effect` ∈ `harder`/`gone`。缺字段、非法程度、事实不存在或未知情，逐条 canonical 拒收；同月合法投入及其他密令照常落账，月链继续。`knowledge_source` 可省：知情按**案卷已落的真实传话记录**跨月承接（见下），无须每月重复声明。 |
 | `suppression` | `{form}`（中文键 `压案`） | 被查者知情后的压案声明（行贿说项之类），落账为事实。**未知情不落账**（引擎不替一个不知情的人记下他"压了案"），并以 canonical `RejectedItem` 走拒收通道留痕（与合法实入可并存）。 |
-| `note` | str | 密奏正文（可谎）。奏报不入实况轨：谎奏不造罪、不抹证。 |
 
 - **知情的跨月承接**：知情是持续事实——真递到过一次的话，此后各月照样成立。核的是**同一人**：此人既出现在本案 `investigation_tips` 里，又与目标有关系边。别人递过话，不能把未递话的关系人算成来源。毁证与压案**共用**这一判定（`_resolve_investigation_knowledge`）。
 - **到差（硬闸，非折扣）**：承办人须**身在目标所在地**才投得进力（已准设计原句「办案人得身在当地」）。在途（`transit_to` 非空，ADR 0097）或身在别处 → 本月 `capacity = 0`、人物实投为零，来源线索也不消费、不标 `credited`（到场后仍可一次性消费）。所在地缺失时该轴退化不参与。行程距离**不**作难度乘子。零能力走同一能力公式，不另立禁零闸。
 - **逐证难度的因子**：事实分档（seed_guilt 罪谱 vs 已落库 evidence 把柄边）、罪情轻重、结构化 `evidence` 边（把柄，按对手去重）、**目标遮掩＝`characters.intrigue`（ADR 0108 阴谋能力）**、办案人能力。**不**按 `event_kind` 九类自由类目计庇护（ADR 0098:15 自由类目不驱动机械分支），**不**拿 `characters.identity`（党籍认同）当遮掩。目标不在 `characters` 行里（题名式查案对象）时遮掩轴退化不参与。
 - 查案密令的合同另可带 `investigation_fact`（中文键 `调查事实`，由密令抽取提示词正向产出）：该来源线索所指的罪证键。**带指针的开案来源与汇案来源同一条接线**——首次开案即把该来源记入 `investigation_clues`（一次性助一次实投，权重 `_CLUE_ASSIST_EFFORT` 为引擎侧首版常数，同逐证难度常数随 playtest 调）；合同未带该键则不记。
-- **无指针的真实来源线索走 ADR 0098:11 的确定性兜底路由**（该路由是既有已准规则，不因「人物行动不代选」而废止；⚠️ 只作用于真实存在的来源——检举／证词／苦主等确实带着案情而来的消息，**「开案」与重复的无指针汇案都不是来源，没有 `investigation_fact` 就不造线索**，否则等于凭空白送实投）：先归 `seed_guilt` lane；目标无该 lane 而案内有其他活跃 lane 时按 `fact_key` 稳定序（边事件 id 升序）取首条（记 `routed_fact_key`）；**全案无 lane 才确定性丢弃**（记 `dropped_no_lane`），不造罪。指向不存在／已被别案查获的罪确定性丢弃（记 `dropped_fact_key`）。
-- ⚠️ 上一条与「人物本月下手」是**两件事**：本月 `fact_key` 省略＝人物没下手处 → 零投入、代码不代选（J4）；`routed_fact_key` 路由的是**来源线索该助哪条既有实证**，只在既有 lane 内移动、从无造真相。断言「投入为零」时须扣掉已落的来源加成——两者是分别记账的两笔钱。
+- 指向不存在／已被别案查获的罪证，线索确定性丢弃并记 `dropped_fact_key`。
 - 上述声明统一落在同一案卷 `payload_json`：`fact_lanes`（投入/难度/已掌握，无 `used`/`reason_code`——掌握证据≠依法清算）、`investigation_tips`、`investigation_clues`、`investigation_acts`。唯一写口是 `update_decree_dossier_payload`，无第二轨。行动／传话／线索记录**不截尾**（ADR 0155:8 撤除硬历史上限，完整历史实况供料）。
 - **身份材料按目录读取**：4a 供料里每条在办密令的执行大臣都带本人身份材料（`materials_path` 与身份职位，**不带正文**；指向 `人物/<人>/可及材料/INDEX.txt`）；有被查者时，被查者另带一份。正文由 `write_identity_materials` 写进 4a 自己备的材料树供自主取阅（ADR 0155:8 读取形态／#1814 身份隔离）。实情：4a 用的是 `prepare_world_materials` 的默认根（与世界段同一路径），**不外泄靠生命周期不靠路径**——4a 调完即整树释放，邸报作者用前重新 prepare。⚠️ 本函数不得在别的调用仍持有一棵未释放的树时被调进去：身份投影含本人私务（含其在办密报正文），并进别人正在读的树等于把密报抬进其读取范围。同场不等于人物全知。
 - 到期结案读 `investigation_lane_actual_units`（真实掌握条数），不看奏报自称成功。

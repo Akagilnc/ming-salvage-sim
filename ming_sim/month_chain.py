@@ -1558,7 +1558,7 @@ def _step_4a_secret_order_supply(
         try:
             with atomic(db):
                 rows_rejections = apply_monthly_covert_actual_progress(
-                    db, state, selections=selections, only_supplied=False,
+                    db, state, selections=selections,
                     source=source)
                 # #1835 S1：只消费 canonical RejectedItem；保留 invalid_enum 停续语义。
                 rejections = list(rows_rejections)

@@ -527,18 +527,12 @@ def test_k9_accept_faction_denunciations_bad_items_and_containers_refused(game):
     db.conn.execute("UPDATE secret_orders SET turn_issued=? WHERE id=?", (state.turn - 1, order_id))
     db.conn.commit()
 
-    dispatch_declaration(
-        db, state,
-        {"effects": [{
-            "covert_exec_selections": [
-                {"order_id": "not_an_id", "fidelity": "忠实"},
-                {"order_id": 999999, "fidelity": "忠实"},
-                {"order_id": order_id, "fidelity": "忠实"},
-            ],
-        }]},
-        source=Provenance.system_simulation,
-        defer_disclosure=False,
-    )
+    from tests.test_secret_order_payoff_1504 import _run_supply_4a
+    _run_supply_4a(db, state, [
+        {"order_id": "not_an_id", "fidelity": "忠实"},
+        {"order_id": 999999, "fidelity": "忠实"},
+        {"order_id": order_id, "fidelity": "忠实"},
+    ])
     secret_rejections = db.conn.execute(
         "SELECT category FROM rejection_reports WHERE section='covert_exec_selections' ORDER BY id"
     ).fetchall()
