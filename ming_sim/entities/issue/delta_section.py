@@ -177,12 +177,12 @@ def _resolve_strategic_events(run, issue_summary) -> Dict[str, SectionResult]:
                 run, event_id, str(new_issue.get("title") or ""),
             ))
             continue
-        from ming_sim.simulation import _canonical_item_fields
+        from ming_sim.simulation import lift_identity_field_aliases
 
         for raw in run.event_new_armies(event_id):
-            item = _canonical_item_fields(raw) if isinstance(raw, dict) else raw
-            if not isinstance(item, dict):
+            if not isinstance(raw, dict):
                 continue
+            item = lift_identity_field_aliases(raw)
             origin_ref = str(item.get("origin_ref") or "").strip()
             landed, refused = run.db.create_armies_from_extraction(
                 run.state, [item], actor="档房", commit=False,
@@ -191,9 +191,9 @@ def _resolve_strategic_events(run, issue_summary) -> Dict[str, SectionResult]:
             bucket["new_armies"].extend(landed)
             reject_bucket["new_armies"].extend(refused)
         for region_id, raw_changes in run.ordered_strategic_items("region_delta", event_id):
-            changes = _canonical_item_fields(raw_changes) if isinstance(raw_changes, dict) else raw_changes
-            if not isinstance(changes, dict):
+            if not isinstance(raw_changes, dict):
                 continue
+            changes = lift_identity_field_aliases(raw_changes)
             origin_ref = str(changes.get("origin_ref") or "").strip()
             payload = {k: v for k, v in changes.items() if k != "origin_ref"}
             landed, refused = run.db.apply_region_deltas(

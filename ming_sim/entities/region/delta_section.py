@@ -21,8 +21,11 @@ def apply(run):
             run.current_event_ids,
         ):
             continue
-        origin_ref = str(raw_changes.get("origin_ref") or "").strip()
-        payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
+        from ming_sim.simulation import lift_identity_field_aliases
+
+        changes = lift_identity_field_aliases(raw_changes) if isinstance(raw_changes, dict) else {}
+        origin_ref = str(changes.get("origin_ref") or "").strip()
+        payload = {k: v for k, v in changes.items() if k != "origin_ref"}
         landed, refused = run.db.apply_region_deltas(
             run.state, run.pseudo_event, None, "档房", {region_id: payload},
             commit=False, origin_ref=origin_ref, require_origin=True, source=run.ctx.source,

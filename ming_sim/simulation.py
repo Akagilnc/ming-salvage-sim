@@ -211,3 +211,20 @@ def _canonical_item_fields(value: object) -> object:
         ITEM_FIELD_ALIASES.get(str(key).strip(), str(key).strip()): _canonical_item_fields(val)
         for key, val in value.items()
     }
+
+
+# 身份槽闭集：与领域别名表（ARMY_FIELD_ALIASES 等）分责。整树 ITEM_FIELD_ALIASES
+# 会把「势力」抢成 leverage，而建军「势力」权威是 owner_power（#1917）。
+IDENTITY_ITEM_FIELDS = frozenset({"origin_ref", "dossier_id", "target_dossier_id"})
+
+
+def lift_identity_field_aliases(item: Mapping) -> Dict[str, object]:
+    """只把身份槽别名升到 canonical 键；其它键（含领域字段）原样保留。"""
+    result: Dict[str, object] = {}
+    for key, val in item.items():
+        field = ITEM_FIELD_ALIASES.get(str(key).strip(), str(key).strip())
+        if field in IDENTITY_ITEM_FIELDS:
+            result[field] = val
+        else:
+            result[key] = val
+    return result

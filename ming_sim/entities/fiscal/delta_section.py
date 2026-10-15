@@ -66,7 +66,12 @@ def apply_removes(run) -> SectionResult:
 
     applied: List[Dict[str, object]] = []
     rejections: List[RejectedItem] = []
-    for remove in run.current_extracted.get("fiscal_removes") or []:
+    from ming_sim.simulation import lift_identity_field_aliases
+
+    for raw in run.current_extracted.get("fiscal_removes") or []:
+        remove = lift_identity_field_aliases(raw) if isinstance(raw, dict) else raw
+        if not isinstance(remove, dict):
+            continue
         key = str(remove.get("key") or "").strip()
         if not key:
             rejections.append(RejectedItem(item=remove, reason="fiscal_removes 缺 key,无法定位裁撤目标。", category="invalid_enum", source=run.ctx.source))
@@ -123,7 +128,12 @@ def apply_creates(run) -> SectionResult:
 
     applied: List[Dict[str, object]] = []
     rejections: List[RejectedItem] = []
-    for create in run.current_extracted.get("fiscal_creates") or []:
+    from ming_sim.simulation import lift_identity_field_aliases
+
+    for raw in run.current_extracted.get("fiscal_creates") or []:
+        create = lift_identity_field_aliases(raw) if isinstance(raw, dict) else raw
+        if not isinstance(create, dict):
+            continue
         # direction 同义词在唯一守门人处归一：表与清洗层共用同一张表（懒 import
         # 避循环）。先归一再去重——ADR 0027 的承诺载体都是月度【支出】(delta<0)，
         # 同名的【收入】新科目（如新税）与承诺无关，绝不可被误去重或误报残留。
@@ -204,7 +214,12 @@ def apply_changes(run) -> SectionResult:
     loss_pair_running: Dict[str, int] = {}
     loss_pair_final_by_pair: Dict[Tuple[str, str], Dict[str, int]] = {}
 
-    for change in run.current_extracted.get("fiscal_changes") or []:
+    from ming_sim.simulation import lift_identity_field_aliases
+
+    for raw in run.current_extracted.get("fiscal_changes") or []:
+        change = lift_identity_field_aliases(raw) if isinstance(raw, dict) else raw
+        if not isinstance(change, dict):
+            continue
         key = str(change.get("key") or "").strip()
         if not key:
             # 空 key＝脏项，先于一切无操作短路记拒——否则 delta 0/null 的空 key

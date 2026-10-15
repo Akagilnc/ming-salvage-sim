@@ -27,17 +27,15 @@ def apply_new_armies(run, items: List[object] | None = None):
         items = list(run.current_extracted.get("new_armies") or [])
     rows = []
     rejections = []
-    from ming_sim.simulation import _canonical_item_fields
+    from ming_sim.simulation import lift_identity_field_aliases
 
     for raw in items:
         if not isinstance(raw, dict):
             continue
-        # id(raw) 是战略事件归属真源；规范化后换对象不得丢归属。
+        # id(raw) 是战略事件归属真源；只升身份槽，领域键交 ARMY_FIELD_ALIASES。
         if run.declared_new_army_event_by_item.get(id(raw), "") in run.strategic_event_referenced_ids:
             continue
-        item = _canonical_item_fields(raw)
-        if not isinstance(item, dict):
-            continue
+        item = lift_identity_field_aliases(raw)
         origin_ref = str(item.get("origin_ref") or "").strip()
         landed, refused = run.db.create_armies_from_extraction(
             run.state, [item], actor="档房", commit=False,
@@ -79,9 +77,12 @@ def apply_army_delta_with_cannon_transfer(
     """Apply one extracted army item, including an explicit paired cannon transfer."""
     army_changes: List[Dict[str, object]] = []
     rejections: List[RejectedItem] = []
+    from ming_sim.simulation import lift_identity_field_aliases
+
+    changes = lift_identity_field_aliases(raw_changes) if isinstance(raw_changes, dict) else {}
     if origin_ref is None:
-        origin_ref = str(raw_changes.get("origin_ref") or "").strip()
-    payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
+        origin_ref = str(changes.get("origin_ref") or "").strip()
+    payload = {k: v for k, v in changes.items() if k != "origin_ref"}
     if "cannon_transfer_to" in payload:
         target_id = payload.pop("cannon_transfer_to")
         cannon_keys = [k for k in payload if ARMY_FIELD_ALIASES.get(k, k) == "cannon_equipment"]

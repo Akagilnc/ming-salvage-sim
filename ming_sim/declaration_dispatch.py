@@ -671,7 +671,7 @@ def bind_decree_effect_sources(
     pass through untouched — no whole-tree field rename.
     """
     from ming_sim.decree_forecast import dossier_for_decree_ref
-    from ming_sim.simulation import ITEM_FIELD_ALIASES
+    from ming_sim.simulation import IDENTITY_ITEM_FIELDS, ITEM_FIELD_ALIASES
 
     if not decree_ref.startswith("pending-action:"):
         return declaration, visible_refs
@@ -679,14 +679,13 @@ def bind_decree_effect_sources(
     if dossier is None:
         return declaration, visible_refs
     dossier_id = int(dossier["id"])
-    identity_fields = frozenset({"origin_ref", "dossier_id", "target_dossier_id"})
 
     def bind(value: object) -> object:
         if isinstance(value, Mapping):
             result = {}
             for key, item in value.items():
                 field = ITEM_FIELD_ALIASES.get(str(key).strip(), str(key).strip())
-                if field in identity_fields:
+                if field in IDENTITY_ITEM_FIELDS:
                     if field == "origin_ref" and item == decree_ref:
                         result[field] = held_dossier_decree_ref(dossier_id)
                     elif field in {"dossier_id", "target_dossier_id"} and item == decree_ref:
