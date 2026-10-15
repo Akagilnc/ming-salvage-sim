@@ -85,15 +85,91 @@ def _reader_in_issue_audience(db: Any, issue: Any, character_name: str) -> bool:
     return bool(audiences) and character_name in audiences
 
 
+def assert_origin_identity_exists(db: Any, origin: object) -> str:
+    """Empty origin is public. Claimed durable identities must exist on the ledger.
+
+    Covers ``secret_order:`` / ``dossier:`` / ``yamen:`` identity tokens only;
+    free-form origins pass through. Claimed-but-unparseable ids →
+    ``DeclarationDataError``; missing entities → ``DeclarationReferenceError``
+    (ADR 0015). Recognition reuses materials claim/id helpers—never treat a
+    failed digit match as free-form public.
+    """
+    from ming_sim.exceptions import DeclarationDataError, DeclarationReferenceError
+    from ming_sim.materials import (
+        dossier_id_in_origin,
+        origin_claims_secret_or_dossier,
+        origin_claims_yamen,
+        secret_order_id_in_origin,
+        yamen_id_in_origin,
+    )
+
+    text = str(origin or "").strip()
+    if not text:
+        return ""
+    if origin_claims_yamen(text):
+        yamen_id = yamen_id_in_origin(text)
+        if yamen_id is None:
+            raise DeclarationDataError("来源 yamen id 超出可存储范围或不可解析")
+        if db.yamens.get(yamen_id) is None:
+            raise DeclarationReferenceError(f"yamen 不存在：{yamen_id}")
+        return text
+    if origin_claims_secret_or_dossier(text):
+        secret_id = secret_order_id_in_origin(text)
+        dossier_id = dossier_id_in_origin(text)
+        if secret_id is None and dossier_id is None:
+            raise DeclarationDataError("来源 id 超出可存储范围或不可解析")
+        if secret_id is not None and db.character_knowledge.get_secret_order(secret_id) is None:
+            raise DeclarationReferenceError(f"密令不存在：{secret_id}")
+        if dossier_id is not None and db.dossiers.get(dossier_id) is None:
+            raise DeclarationReferenceError(f"案卷不存在：{dossier_id}")
+        return text
+    return text
+
+
 def origin_visible_to(
     db: Any, origin: object, character_name: str = "", *, linked_dossier_id: int = 0,
+    _seen: frozenset[str] | None = None,
 ) -> bool:
     """Secret provenance grants only handlers; office/publicity never grants truth.
 
     Empty reader denotes the public feed, not the all-seeing world simulator.
     Affairs are associations, not access boundaries for their individual facts.
+    ``yamen:<id>`` chases the office's own origin_ref (#1915 F1), same shape as
+    dossier→secret_order; no separate permission model.
+
+    Identity tokens reuse materials.secret_order_id_in_origin / dossier_id_in_origin
+    (strict id). Claimed zero stays a claimed id (not undeclared). Unresolvable or
+    missing secret/dossier/yamen identity fails closed—never public (#1915).
     """
+    from ming_sim.materials import (
+        dossier_id_in_origin,
+        inquiry_source_order_id,
+        origin_claims_secret_or_dossier,
+        origin_claims_yamen,
+        secret_order_id_in_origin,
+        yamen_id_in_origin,
+    )
+    from ming_sim.strict_types import strict_sqlite_id
+
     source = str(origin or "")
+    seen = _seen or frozenset()
+    if source and source in seen:
+        return False
+    if origin_claims_yamen(source):
+        yamen_id = yamen_id_in_origin(source)
+        if yamen_id is None:
+            # 自称 yamen 但 id 不可解析：不得当公开。
+            return False
+        yamen = db.yamens.get(yamen_id)
+        if yamen is None:
+            # Claimed yamen identity with no ledger row is not a public source.
+            return False
+        nested = str(getattr(yamen, "origin_ref", "") or "").strip()
+        if nested and nested != source:
+            return origin_visible_to(
+                db, nested, character_name, linked_dossier_id=linked_dossier_id,
+                _seen=seen | {source},
+            )
     registered = db.conn.execute(
         'SELECT kind, participant_roster FROM character_knowledge_sources WHERE source_id=?',
         (source,),
@@ -105,19 +181,39 @@ def origin_visible_to(
     oral = re.match(r"chat_message:(\d+)$", source)
     if oral and int(oral.group(1)) in db._secret_origin_message_ids(character_name):
         return False
-    match = re.match(r"secret_order(?:_brief)?:(\d+)(?:[:/]|$)", source)
-    order_id = int(match.group(1)) if match else 0
-    from ming_sim.materials import dossier_id_in_origin, inquiry_source_order_id
-
-    dossier_id = dossier_id_in_origin(source) or int(linked_dossier_id)
-    if dossier_id:
+    # Keep claimed zero distinct from undeclared/unparseable (None). Never use
+    # truthiness on identity values—dossier:0 / secret_order:0 are claimed ids.
+    claimed_order_id = secret_order_id_in_origin(source)
+    claimed_dossier_id = dossier_id_in_origin(source)
+    if (
+        origin_claims_secret_or_dossier(source)
+        and claimed_order_id is None
+        and claimed_dossier_id is None
+    ):
+        # 自称密令/案卷但 id 不可存储或不可解析：不得当公开。
+        return False
+    # Origin claim wins; linked_dossier_id param keeps 0 as "not provided".
+    if claimed_dossier_id is not None:
+        dossier_id: int | None = claimed_dossier_id
+    else:
+        linked_param = int(linked_dossier_id or 0)
+        dossier_id = linked_param if linked_param != 0 else None
+    order_id: int | None = claimed_order_id
+    if dossier_id is not None:
         row = db.conn.execute(
             'SELECT secret_order_id FROM decree_dossiers WHERE id=?',
             (dossier_id,),
         ).fetchone()
-        if row is not None:
-            order_id = int(row["secret_order_id"] or order_id)
-    if not order_id:
+        if row is None:
+            # Claimed or linked dossier missing from ledger: not public.
+            return False
+        raw_secret = row["secret_order_id"]
+        if raw_secret is not None:
+            try:
+                order_id = strict_sqlite_id(raw_secret)
+            except (TypeError, ValueError):
+                return False
+    if order_id is None:
         return True
     if not character_name:
         return False
@@ -151,15 +247,16 @@ def project_court_roster_rows(
 ) -> list[Any]:
     """Project complete structured roster rows through one character's view.
 
-    The complete roster remains an internal query result.  A personnel-domain
-    capability may expose it; otherwise only the reader's current role roster
-    crosses the output boundary. Free-prose name hits in event bodies are not
-    an admission grant (ADR 0142 / #1834 F46).
+    The complete roster remains an internal query result.  Full-court admission
+    is the 吏部 appointment-register capability (office_type), not the mere
+    presence of a personnel archive key — 近侍 also carries that key for 官缺
+    without full-roster grant (#1914 / ADR 0034). Otherwise only the reader's
+    current role roster crosses the output boundary. Free-prose name hits in
+    event bodies are not an admission grant (ADR 0142 / #1834 F46).
     """
-    world = knowledge.get("world") or {}
-    if "personnel" in world:
-        return list(rows)
     current_office_type = str(knowledge.get("office_type") or office_type or "")
+    if current_office_type == "吏部":
+        return list(rows)
     return [
         row for row in rows
         if str(row["office_type"] or "") == current_office_type
@@ -211,6 +308,41 @@ def _army_register(db: Any) -> str:
     )
 
 
+def _office_vacancy_register(db: Any) -> str:
+    """官缺底账：office_vacancies 视图（静态职缺 + 现任）。"""
+    rows = db.conn.execute(
+        """
+        SELECT office_title, jurisdiction, holder_name
+        FROM office_vacancies
+        ORDER BY sort_order, office_title
+        """,
+        (),
+    ).fetchall()
+    if not rows:
+        return "官缺：暂无。"
+    lines: list[str] = []
+    for row in rows:
+        # office_slots.office_title 是 PRIMARY KEY，视图侧不会空。
+        title = str(row["office_title"])
+        jur = str(row["jurisdiction"] or "").strip()
+        holder = str(row["holder_name"] or "").strip()
+        place = f"（{jur}）" if jur else ""
+        if holder:
+            lines.append(f"{title}{place}：现任{holder}")
+        else:
+            lines.append(f"{title}{place}：空缺")
+    return "官缺：\n" + "\n".join(lines)
+
+
+def _province_overview(db: Any) -> str:
+    """各省概况：两京／布政司定性警讯（输入侧收窄既有 PROVINCE_KINDS）。"""
+    from ming_sim.execution_pressure import PROVINCE_KINDS
+
+    # region_report 无行时固定返回「地区尚未建档。」，不另写空串兜底。
+    body = _prose(db.region_report(limit=None, kinds=PROVINCE_KINDS))
+    return f"各省概况：\n{body}"
+
+
 def _world(
     db: Any, state: Any, character_name: str, office_name: str, office_type: str,
 ) -> tuple[Dict[str, str], Dict[str, tuple[str, ...]]]:
@@ -241,6 +373,14 @@ def _world(
         result["construction"] = _prose(
             db.buildings_report(region_id=primary, qualitative=True)
         )
+
+    # #1914 / ADR 0034 局部例外：御前近侍可读官缺与各省概况（非全体人物全知）。
+    # 放在辖域投影之后直接覆盖 regional，省掉「键是否已有」条件。
+    from ming_sim.audience_night import is_inner_court_attendant
+
+    if is_inner_court_attendant({"office": office_name}):
+        result["personnel"] = _office_vacancy_register(db)
+        result["regional"] = _province_overview(db)
 
     armies = db.conn.execute(
         'SELECT id,name FROM armies WHERE commander=? OR controller=? ORDER BY name',

@@ -71,7 +71,11 @@ def test_stub_declaration_lands_on_existing_staging_and_new_records_without_miss
     assert commission_payload["text"] == commission_text  # 原样运输，含空白
 
     facts = db.textual_facts.readable_materials(subject_kind="character", subject_id=minister)
-    assert [f.origin_ref for f in facts] == [db.affairs.origin_ref(affair.id)]
+    assert len(facts) == 1
+    assert facts[0].body == "抱恙数日，仍可视事"
+    # 双槽：未声明原生来源则 origin_ref 为空；affair_id 单独承接所属事务（ADR 0154 / #1915 J1）。
+    assert facts[0].origin_ref == ""
+    assert int(facts[0].affair_id) == int(affair.id)
 
     sayings = list_public_sayings(db, involved_character=minister)
     assert sayings[0]["body"] == "坊间传户部已备赈灾银"
