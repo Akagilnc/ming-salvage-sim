@@ -408,63 +408,10 @@ def _land_minister_promise(db, state, *, promisor: str, title: str, deadline_mon
     return result, int(chat_id), int(night_id)
 
 
-def _capture_gazette_write(monkeypatch):
-    """观测真实 prepare→写手消费的结构化输入（非 helper 自证、非正文哨兵）。"""
-    import ming_sim.materials as materials_mod
-
-    captured = {
-        "affair_keys": set(),
-        "audience_ids": [],
-        "kept_fact_origins": [],
-        "history_visible_origins": [],
-    }
-    real_write = materials_mod._write_world_tree
-    real_exp = materials_mod._experience_text
-    real_keep = materials_mod._keep_fact
-    real_hist = materials_mod._world_history_row_visible
-
-    def spy_exp(knowledge, audible_entries=()):
-        captured["audience_ids"].extend(
-            int(entry.get("id") or 0) for entry in audible_entries
-        )
-        return real_exp(knowledge, audible_entries)
-
-    def spy_keep(fact, include_fact):
-        ok = real_keep(fact, include_fact)
-        if ok:
-            captured["kept_fact_origins"].append(str(getattr(fact, "origin_ref", "") or ""))
-        return ok
-
-    def spy_hist(db, row, secret_turn_ids, public_only):
-        ok = real_hist(db, row, secret_turn_ids, public_only)
-        if ok and public_only:
-            for key in ("origin_ref", "origin", "source_id"):
-                value = str(row.get(key) or "")
-                if value:
-                    captured["history_visible_origins"].append(value)
-        return ok
-
-    def spy_write(
-        tmp, db, state, public_events, affair_lines, board_text, roster_text,
-        world_facts, include_fact=None, include_event=None,
-        secret_turn_ids=None, exclude_dossier_ids=None, public_only=False,
-    ):
-        captured["affair_keys"] = {line[0] for line in affair_lines}
-        return real_write(
-            tmp, db, state, public_events, affair_lines, board_text, roster_text,
-            world_facts, include_fact, include_event,
-            secret_turn_ids, exclude_dossier_ids, public_only,
-        )
-
-    monkeypatch.setattr(materials_mod, "_experience_text", spy_exp)
-    monkeypatch.setattr(materials_mod, "_keep_fact", spy_keep)
-    monkeypatch.setattr(materials_mod, "_world_history_row_visible", spy_hist)
-    monkeypatch.setattr(materials_mod, "_write_world_tree", spy_write)
-    return captured
-
-
 def test_c1_minister_promise_origin_not_public_visible(game, monkeypatch):
     """C1：自诺来源受限；真实公开作者写手不消费私语/私诺新建，保留既有公开事务。"""
+    import ming_sim.materials as materials_mod
+
     db, state, content = game
     promisor = "魏忠贤"
     public_affair = db.affairs.open(
@@ -528,7 +475,6 @@ def test_c1_minister_promise_origin_not_public_visible(game, monkeypatch):
         (private_affair_id, int(edge_id)),
     )
     db.conn.commit()
-    import ming_sim.materials as materials_mod
     monkeypatch.setattr(
         materials_mod, "_secret_order_chat_turn_ids", lambda _db: {secret_turn},
     )
@@ -547,7 +493,47 @@ def test_c1_minister_promise_origin_not_public_visible(game, monkeypatch):
     knowledge = build_character_knowledge(db, state, promisor)
     assert any(int(i.get("id") or 0) == issue_id for i in knowledge.get("issues") or [])
 
-    captured = _capture_gazette_write(monkeypatch)
+    # 一次安装写手观测：仅断言实际消费的键/可闻 id/密源 history origin。
+    captured = {
+        "affair_keys": set(),
+        "audience_ids": [],
+        "history_visible_origins": [],
+    }
+    real_write = materials_mod._write_world_tree
+    real_exp = materials_mod._experience_text
+    real_hist = materials_mod._world_history_row_visible
+
+    def spy_exp(knowledge, audible_entries=()):
+        captured["audience_ids"].extend(
+            int(entry.get("id") or 0) for entry in audible_entries
+        )
+        return real_exp(knowledge, audible_entries)
+
+    def spy_hist(db_, row, secret_turn_ids, public_only):
+        ok = real_hist(db_, row, secret_turn_ids, public_only)
+        if ok and public_only:
+            for key in ("origin_ref", "origin", "source_id"):
+                value = str(row.get(key) or "")
+                if value:
+                    captured["history_visible_origins"].append(value)
+        return ok
+
+    def spy_write(
+        tmp, db_, state_, public_events, affair_lines, board_text, roster_text,
+        world_facts, include_fact=None, include_event=None,
+        secret_turn_ids=None, exclude_dossier_ids=None, public_only=False,
+    ):
+        captured["affair_keys"] = {line[0] for line in affair_lines}
+        return real_write(
+            tmp, db_, state_, public_events, affair_lines, board_text, roster_text,
+            world_facts, include_fact, include_event,
+            secret_turn_ids, exclude_dossier_ids, public_only,
+        )
+
+    monkeypatch.setattr(materials_mod, "_experience_text", spy_exp)
+    monkeypatch.setattr(materials_mod, "_world_history_row_visible", spy_hist)
+    monkeypatch.setattr(materials_mod, "_write_world_tree", spy_write)
+
     prepared = prepare_gazette_author_materials(db, state)
     try:
         assert f"affair-{private_affair_id}" not in captured["affair_keys"]
@@ -583,7 +569,7 @@ def test_c1_minister_promise_origin_not_public_visible(game, monkeypatch):
         (origin_ref,),
     ).fetchone()["n"]) == 0
 
-    # 反例：既有公开事务落公开收支后挂私诺，真实写手仍收到该事务身份。
+    # 反例：既有公开事务落公开收支后挂私诺，同一写手观测仍收到该事务身份。
     public_origin = db.affairs.origin_ref(public_affair_id)
     db.record_issue_economy_move(
         state, "国库", -1, "边饷", "公开收支",
@@ -598,10 +584,10 @@ def test_c1_minister_promise_origin_not_public_visible(game, monkeypatch):
     assert linked.commissions.rejected == []
     linked_issue = int(linked.commissions.applied[0]["issue_id"])
     assert int(db.issues.affair_id_of(linked_issue)) == public_affair_id
-    captured_after = _capture_gazette_write(monkeypatch)
+    captured["affair_keys"] = set()
     prepared_after = prepare_gazette_author_materials(db, state)
     try:
-        assert f"affair-{public_affair_id}" in captured_after["affair_keys"]
+        assert f"affair-{public_affair_id}" in captured["affair_keys"]
         assert any(
             part.startswith(f"affair-{public_affair_id}-")
             for path in list_materials(prepared_after.root)

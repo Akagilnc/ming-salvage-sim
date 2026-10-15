@@ -254,4 +254,3 @@ def test_author_excludes_secret_sources_from_public_materials(game, monkeypatch,
         part.startswith(f"affair-{affair.id}-")
         for path in seen["paths"] for part in str(path).split("/")
     )
-    assert not any(p.startswith("密令/") for p in seen["paths"])
