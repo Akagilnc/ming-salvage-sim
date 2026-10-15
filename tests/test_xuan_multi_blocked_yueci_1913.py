@@ -24,6 +24,8 @@ from ming_sim.session_write_queue import SessionWriteQueue
 
 """#1913：一口宣多人、拒召供料、越次召见记账。
 
+普通「宣」低品记宣入不记越次：并入 tests/test_scene_llm_1836.py 既有单人宣入案，不另立平行测试。
+
 Seams:
 - GameSession.scene_chat（真实召对入口「宣…」）
 - 入殿／传召账（list_ledger / list_unsettled_summons / present_names_at）
@@ -199,19 +201,3 @@ def test_yueci_explicit_lands_method_and_survives_reopen(game, monkeypatch, tmp_
         assert METHOD_YUECI in _unsettled_entry_tags(restored, remote)
     finally:
         restored.conn.close()
-
-
-@pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_ordinary_xuan_low_rank_is_xuanru_not_yueci(game, monkeypatch):
-    """普通「宣某人」品级低但未以越次点名：记宣入，不记越次。"""
-    db, state, content = game
-    open_night(db, state, location="乾清宫", time_of_day="夜")
-    night_id = int(get_open_night(db)["id"])
-    person = "杨嗣昌"
-
-    sess = _sess(db, state, content, monkeypatch)
-    sess.scene_chat(f"宣{person}", write_gate=sess._write_gate)
-
-    methods = _enter_methods(db, night_id, person)
-    assert METHOD_XUANRU in methods
-    assert METHOD_YUECI not in methods

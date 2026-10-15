@@ -2,6 +2,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 import pytest
 from ming_sim.audience_night import (
+    METHOD_XUANRU,
+    METHOD_YUECI,
     TAG_ENTER,
     get_night,
     get_open_night,
@@ -74,12 +76,15 @@ def test_scene_chat_one_call_returns_multi_person_script(game, monkeypatch):
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_xuan_lands_enter_then_present_on_next_prepare(game, monkeypatch, tmp_path):
-    """AC2：「宣 X」后入殿账落下，下一次场景材料准备他在场。"""
+    """AC2：「宣 X」后入殿账落下，下一次场景材料准备他在场。
+
+    #1913：普通召法（低品级未以越次点名）记宣入、不记越次——并入本单人案，不另立平行测试。
+    """
     db, state, content = game
     open_night(db, state, location="乾清宫", time_of_day="夜")
-    target = "王绍徽"
+    # 杨嗣昌开局低品、非常在员额：验普通「宣」不因品级自动越次。
+    target = "杨嗣昌"
     night_id = int(get_open_night(db)["id"])
-    # 王绍徽非常在员额，开夜后不应在场。
     assert target not in present_names_at(db, night_id)
 
     class FakeAgent:
@@ -100,6 +105,9 @@ def test_xuan_lands_enter_then_present_on_next_prepare(game, monkeypatch, tmp_pa
         and "常在员额" not in (e.get("tags") or [])
     ]
     assert enters, f"宣{target} must land a non-roster TAG_ENTER ledger entry"
+    enter_tags = enters[0].get("tags") or []
+    assert METHOD_XUANRU in enter_tags
+    assert METHOD_YUECI not in enter_tags
     assert target in present_names_at(db, night_id)
 
     prepared = prepare_scene_materials(db, state, dest_root=tmp_path / "after-xuan")
