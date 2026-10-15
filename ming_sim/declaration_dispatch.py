@@ -1663,15 +1663,10 @@ def _dispatch_commission_items(
                     getattr(exc, "category", None) or "invalid_shape", source,
                 )
                 continue
-            stages: list | None = None
-            if end_turn > 0:
-                # 有期：单段到期走 ADR 0074/0076 next_audience_todos 通道。
-                stages = [{
-                    "stage_idx": 0,
-                    "due_turn": int(end_turn),
-                    "criterion_text": content,
-                    "origin_context": content,
-                }]
+            # 有期走 form③（end_turn、无 stages）：到期后 close_issues acknowledged
+            # 可收尾；召对顶出由 write_due 扫 minister_promise 一次性承诺写入
+            # next_audience_todos（#1916 / ADR 0013 form③ + 0076 场面）。
+            # 不得用段派生 end_turn——那会堵住 acknowledged 收尾闸。
             origin_ref = (
                 f"chat_turn:{int(source_chat_turn_id)}"
                 if int(source_chat_turn_id or 0) > 0
@@ -1692,7 +1687,6 @@ def _dispatch_commission_items(
                 }],
                 end_turn=int(end_turn),
                 commitment_kind="until_stop",
-                stages_json=stages,
                 cancellable="never",
                 commit=False,
             )

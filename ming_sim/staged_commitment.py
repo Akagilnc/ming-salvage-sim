@@ -342,16 +342,65 @@ def list_due_grant_report_dossiers_for_scan(
     return due
 
 
+def list_due_minister_promise_oneshots_for_scan(
+    db: Any, turn: int,
+) -> List[Dict[str, object]]:
+    """#1916：大臣自诺 form③（有 end_turn、无 stages、无 ongoing）到期 → 召对待办。
+
+    与 list_due_commitments 共享 form③ 谓词面，但写入 next_audience_todos 供
+    开场材料顶出；收尾仍走 close_issues acknowledged（非段派生 end_turn）。
+    """
+    from ming_sim.models import effect_dict_has_work
+
+    rows = db.conn.execute(
+        """
+        SELECT id, title, stage_text, end_turn, origin_ref, stages_json, ongoing_effects
+        FROM issues
+        WHERE status='active'
+          AND commitment_kind != ''
+          AND origin_kind = 'minister_promise'
+          AND end_turn > 0
+          AND end_turn <= ?
+        ORDER BY id
+        """,
+        (int(turn),),
+    ).fetchall()
+    due: List[Dict[str, object]] = []
+    for row in rows:
+        if effect_dict_has_work(row["ongoing_effects"]):
+            continue
+        stages = load_commitment_stages(row["stages_json"])
+        if stages:
+            continue
+        criterion = str(row["stage_text"] or row["title"] or "")
+        due.append({
+            "commitment_ref": int(row["id"]),
+            "stage_idx": 0,
+            "due_turn": int(row["end_turn"] or 0),
+            "criterion_text": criterion,
+            "origin_context": criterion,
+            "title": str(row["title"] or ""),
+            "origin_ref": str(row["origin_ref"] or ""),
+            "payload_json": {
+                "origin_ref": str(row["origin_ref"] or ""),
+                "minister_promise_oneshot": True,
+            },
+        })
+    return due
+
+
 def write_due_staged_commitment_todos(db: Any, state: Any) -> int:
     """结算内确定性写入次回合召对待办。返回新写入条数。
 
     待裁载体改道 next_audience_todos；不置 TurnPhase.AWAITING_DECISION，
     不写 <<DECISION>>，不停轮（0074/0076）。
     #1783：并入拨帑案卷 due_turn 直挂（commitment_ref=0），不另立承诺事项。
+    #1916：并入大臣自诺 form③ 一次性到期。
     """
     turn = int(getattr(state, "turn", 0) or 0)
     due_stages = list_due_stages_for_scan(db, turn)
     due_stages.extend(list_due_grant_report_dossiers_for_scan(db, turn))
+    due_stages.extend(list_due_minister_promise_oneshots_for_scan(db, turn))
     if not due_stages:
         return 0
     written = 0

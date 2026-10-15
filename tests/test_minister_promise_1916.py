@@ -21,6 +21,7 @@ from ming_sim.materials import (
     prepare_scene_materials,
     release_material_tree,
 )
+from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.staged_commitment import TODO_STATUS_PENDING
 from tests.conftest import (
     offline_empty_audience_translate,
@@ -106,6 +107,9 @@ def test_minister_self_promise_timed_and_open_land_without_emperor_approval(
     assert str(open_row["commitment_kind"] or "").strip()
     assert int(timed_row["end_turn"] or 0) == int(state.turn) + 1
     assert int(open_row["end_turn"] or 0) == 0
+    # form③：有期不写 stages，避免段派生 end_turn 堵住 acknowledged 收尾。
+    stages_raw = timed_row["stages_json"]
+    assert stages_raw in (None, "", "[]") or stages_raw == b"[]"
     assert str(timed_row["origin_kind"] or "") != "decree"
     assert str(open_row["origin_kind"] or "") != "decree"
 
@@ -198,3 +202,31 @@ def test_timed_minister_promise_due_appears_in_promisor_opening_materials(
         assert prepared.opening  # 开场由 pending_facts 组成；上已核结构化身份
     finally:
         release_material_tree(prepared.root)
+
+    # 条款2：兑现或落空沿既有 form③ acknowledged 收尾（无案卷、不伪造皇命）。
+    close_out = settle_delta(
+        state, db,
+        {
+            "close_issues": [{
+                "issue_id": issue_id,
+                "reason": "acknowledged",
+                "narrative": "田尔耕事已复命，此诺了结。",
+            }],
+        },
+        SettlementContext(content=content),
+    )
+    assert close_out.issue is not None
+    assert close_out.issue.rejected == []
+    assert any(
+        int(c.get("issue_id") or 0) == issue_id for c in close_out.issue.closes
+    )
+    row = db.conn.execute(
+        "SELECT status, closed_turn FROM issues WHERE id=?", (issue_id,),
+    ).fetchone()
+    assert str(row["status"]) == "dropped"
+    assert int(row["closed_turn"] or 0) == int(state.turn)
+    # knowledge 不再把已收尾自诺当 active 承诺。
+    knowledge_after = build_character_knowledge(db, state, promisor)
+    assert not any(
+        int(i.get("id") or 0) == issue_id for i in knowledge_after.get("issues") or []
+    )
