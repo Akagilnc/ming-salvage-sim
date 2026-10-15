@@ -85,6 +85,46 @@ def _reader_in_issue_audience(db: Any, issue: Any, character_name: str) -> bool:
     return bool(audiences) and character_name in audiences
 
 
+def assert_origin_identity_exists(db: Any, origin: object) -> str:
+    """Empty origin is public. Claimed durable identities must exist on the ledger.
+
+    Covers ``secret_order:`` / ``dossier:`` / ``yamen:`` identity tokens only;
+    free-form origins pass through. Unstorable ids → ``DeclarationDataError``;
+    missing entities → ``DeclarationReferenceError`` (ADR 0015).
+    """
+    from ming_sim.exceptions import DeclarationDataError, DeclarationReferenceError
+    from ming_sim.materials import (
+        dossier_id_in_origin,
+        origin_claims_secret_or_dossier,
+        secret_order_id_in_origin,
+    )
+    from ming_sim.strict_types import strict_sqlite_id
+
+    text = str(origin or "").strip()
+    if not text:
+        return ""
+    yamen_match = re.match(r"yamen:(\d+)(?:[:/]|$)", text)
+    if yamen_match is not None:
+        try:
+            yamen_id = strict_sqlite_id(yamen_match.group(1))
+        except (TypeError, ValueError) as exc:
+            raise DeclarationDataError("来源 yamen id 超出可存储范围或不可解析") from exc
+        if db.yamens.get(yamen_id) is None:
+            raise DeclarationReferenceError(f"yamen 不存在：{yamen_id}")
+        return text
+    if origin_claims_secret_or_dossier(text):
+        secret_id = secret_order_id_in_origin(text)
+        dossier_id = dossier_id_in_origin(text)
+        if secret_id is None and dossier_id is None:
+            raise DeclarationDataError("来源 id 超出可存储范围或不可解析")
+        if secret_id is not None and db.character_knowledge.get_secret_order(secret_id) is None:
+            raise DeclarationReferenceError(f"密令不存在：{secret_id}")
+        if dossier_id is not None and db.dossiers.get(dossier_id) is None:
+            raise DeclarationReferenceError(f"案卷不存在：{dossier_id}")
+        return text
+    return text
+
+
 def origin_visible_to(
     db: Any, origin: object, character_name: str = "", *, linked_dossier_id: int = 0,
     _seen: frozenset[str] | None = None,
@@ -98,7 +138,7 @@ def origin_visible_to(
 
     Identity tokens reuse materials.secret_order_id_in_origin / dossier_id_in_origin
     (strict id). Unresolvable claimed secret/dossier/yamen identity fails closed
-    (not public)—no silent public fallback on cycle or overflow (#1915 F5/F6).
+    (not public)—missing entity, cycle, or overflow never become public (#1915).
     """
     from ming_sim.materials import (
         dossier_id_in_origin,
@@ -119,7 +159,10 @@ def origin_visible_to(
         except (TypeError, ValueError):
             return False
         yamen = db.yamens.get(yamen_id)
-        nested = str(getattr(yamen, "origin_ref", "") or "").strip() if yamen is not None else ""
+        if yamen is None:
+            # Claimed yamen identity with no ledger row is not a public source.
+            return False
+        nested = str(getattr(yamen, "origin_ref", "") or "").strip()
         if nested and nested != source:
             return origin_visible_to(
                 db, nested, character_name, linked_dossier_id=linked_dossier_id,
@@ -137,22 +180,25 @@ def origin_visible_to(
     if oral and int(oral.group(1)) in db._secret_origin_message_ids(character_name):
         return False
     order_id = secret_order_id_in_origin(source) or 0
-    if origin_claims_secret_or_dossier(source) and order_id == 0 and dossier_id_in_origin(source) is None:
+    claimed_dossier_id = dossier_id_in_origin(source)
+    if origin_claims_secret_or_dossier(source) and order_id == 0 and claimed_dossier_id is None:
         # 自称密令/案卷但 id 不可存储或不可解析：不得当公开。
         return False
-    dossier_id = dossier_id_in_origin(source) or int(linked_dossier_id or 0)
+    dossier_id = claimed_dossier_id or int(linked_dossier_id or 0)
     if dossier_id:
         row = db.conn.execute(
             'SELECT secret_order_id FROM decree_dossiers WHERE id=?',
             (dossier_id,),
         ).fetchone()
-        if row is not None:
-            try:
-                linked = strict_sqlite_id(row["secret_order_id"] or 0)
-            except (TypeError, ValueError):
-                return False
-            if linked:
-                order_id = linked
+        if row is None:
+            # Claimed or linked dossier missing from ledger: not public.
+            return False
+        try:
+            linked = strict_sqlite_id(row["secret_order_id"] or 0)
+        except (TypeError, ValueError):
+            return False
+        if linked:
+            order_id = linked
     if not order_id:
         return True
     if not character_name:

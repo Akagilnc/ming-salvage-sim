@@ -351,7 +351,7 @@ def build_c0_declaration_shape() -> str:
         '    {"subject_kind": "character|army|region|yamen", "subject_id": "id", "body": "文字事实", "origin_ref": "本条事实真实来源引用（如 dossier:id / secret_order:id），与 affair_declaration 分开"}\n'
         "  ],\n"
         '  "yamen_creates": [\n'
-        '    {"name": "衙门名", "chief": "主官人名", "monthly_fee": "正整数万两", "account": "国库|内库", "origin_ref": "真实来源（密令/案卷下设填 secret_order:id 或 dossier:id；公开设立可空）"}\n'
+        '    {"name": "衙门名", "chief": "主官人名", "monthly_fee": "非负整数万两", "account": "国库|内库（必填）", "origin_ref": "真实来源（密令/案卷下设填 secret_order:id 或 dossier:id，且须账上存在；公开设立可空）"}\n'
         "  ],\n"
         '  "public_sayings": [\n'
         "    {\n"
@@ -435,8 +435,8 @@ def build_audience_translate_prompt(
         "presence / public_sayings / edge_events，不要写成交办。\n"
         "- 皇帝新设衙门（钱粮稽查司/火器局等）并指定主官、拨月费 → yamen_creates；"
         "须填 origin_ref：密令或案卷下设写 secret_order:id / dossier:id（目标目录已列 id）；"
-        "公开设立可空。来源与 name/chief/月费同为声明字段，不从正文猜测。\n"
-        "名称/主官/月费齐全才成条，主官须是名册人物。\n"
+        "公开设立可空。来源与 name/chief/月费/account 同为声明字段，不从正文猜测。\n"
+        "名称/主官/月费/账户齐全才成条；主官须是在事名册人物；月费为非负整数万两。\n"
         "- effects 是过月才核算的旨意办理效果；召对夜本轮留空，不得将尚未发生的效果写成当场实况。\n"
         "- 无对应事实的 section 输出空数组（protagonist 无则省略或 null），不要编造。\n"
         "- 承接不了的交办仍写入 commissions（由代码拒收），不要改写皇帝原话去猜。\n"

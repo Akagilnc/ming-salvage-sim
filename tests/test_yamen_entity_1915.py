@@ -13,6 +13,7 @@ from ming_sim.materials import prepare_world_materials, write_identity_materials
 from ming_sim.month_chain import prepare_gazette_author_materials
 from ming_sim.month_translate import dispatch_month_segment
 from tests.conftest import stub_month_translate
+from tests.dossier_test_helpers import create_test_secret_order
 
 
 CHIEF = "毕自严"
@@ -36,27 +37,30 @@ def _active_chat_turn(db, state, night_id: int) -> int:
     )
 
 
-def _create_yamen_via_night(db, state, *, name=YAMEN_NAME, chief=CHIEF, fee=MONTHLY_FEE_WAN):
+def _create_yamen_via_night(
+    db, state, *, name=YAMEN_NAME, chief=CHIEF, fee=MONTHLY_FEE_WAN,
+    account="国库", origin_ref="", extra_creates=(),
+):
     """真实召对夜入口：apply_audience_round_translation + 源轮前像。"""
     night = open_night(db, state, location="乾清宫", time_of_day="夜")
     night_id = int(night["id"])
     chat_turn_id = _active_chat_turn(db, state, night_id)
+    item = {
+        "name": name,
+        "chief": chief,
+        "monthly_fee": fee,
+        "account": account,
+    }
+    if origin_ref:
+        item["origin_ref"] = origin_ref
+    creates = [item, *extra_creates]
     result = apply_audience_round_translation(
         db,
         state,
-        {
-            "yamen_creates": [
-                {
-                    "name": name,
-                    "chief": chief,
-                    "monthly_fee": fee,
-                    "account": "国库",
-                }
-            ]
-        },
+        {"yamen_creates": creates},
         night_id=night_id,
         chat_turn_id=chat_turn_id,
-        minister_name=chief,
+        minister_name=chief if chief else CHIEF,
     )
     return result, night_id, chat_turn_id
 
@@ -291,9 +295,11 @@ def test_textual_fact_keeps_origin_and_affair_separate(game):
     db, state, _ = game
     result, _night_id, _ctid = _create_yamen_via_night(db, state)
     yamen_id = int(result.yamen_creates.applied[0]["id"])
+    order_id = create_test_secret_order(db, state, CHIEF, "密查钱粮", "清出隐漏", [])
+    origin = f"secret_order:{order_id}"
     affair = db.affairs.open(
         name="密查钱粮",
-        origin="secret_order:1",
+        origin=origin,
         year=state.year,
         period=state.period,
         turn=state.turn,
@@ -306,23 +312,32 @@ def test_textual_fact_keeps_origin_and_affair_separate(game):
                     "subject_kind": "yamen",
                     "subject_id": str(yamen_id),
                     "body": "密旨下清出隐漏",
-                    "origin_ref": "secret_order:1",
+                    "origin_ref": origin,
                     "affair_declaration": {
                         "attach": "existing",
                         "affair_id": int(affair.id),
                     },
-                }
+                },
+                {
+                    "subject_kind": "yamen",
+                    "subject_id": str(yamen_id),
+                    "body": "幻觉来源不得入账",
+                    "origin_ref": "yamen:999999",
+                },
             ]
         },
         source=Provenance.system_simulation,
     )
-    assert out.textual_facts.rejected == []
+    assert len(out.textual_facts.rejected) == 1
+    assert len(out.textual_facts.applied) == 1
     facts = db.textual_facts.readable_materials(
         subject_kind="yamen", subject_id=str(yamen_id),
     )
     assert len(facts) == 1
-    assert facts[0].origin_ref == "secret_order:1"
+    assert facts[0].origin_ref == origin
     assert int(facts[0].affair_id) == int(affair.id)
+    # 读口：不存在的 yamen 来源不得当公开
+    assert origin_visible_to(db, "yamen:999999", "") is False
 
 
 def test_yamen_fee_rejects_non_storable_amounts(game):
@@ -429,26 +444,10 @@ def test_secret_yamen_hidden_from_public_materials_and_treasury(game, tmp_path):
     from ming_sim.materials import release_material_tree
 
     db, state, _ = game
-    origin = "secret_order:1"
-    night = open_night(db, state, location="乾清宫", time_of_day="夜")
-    night_id = int(night["id"])
-    chat_turn_id = _active_chat_turn(db, state, night_id)
-    created = apply_audience_round_translation(
-        db, state,
-        {
-            "yamen_creates": [
-                {
-                    "name": "密设查弊司",
-                    "chief": CHIEF,
-                    "monthly_fee": 9,
-                    "account": "内库",
-                    "origin_ref": origin,
-                }
-            ]
-        },
-        night_id=night_id,
-        chat_turn_id=chat_turn_id,
-        minister_name=CHIEF,
+    order_id = create_test_secret_order(db, state, CHIEF, "密设查弊", "暗中查弊", [])
+    origin = f"secret_order:{order_id}"
+    created, _night_id, _ctid = _create_yamen_via_night(
+        db, state, name="密设查弊司", fee=9, account="内库", origin_ref=origin,
     )
     assert created.yamen_creates.rejected == []
     yamen_id = int(created.yamen_creates.applied[0]["id"])
@@ -456,6 +455,9 @@ def test_secret_yamen_hidden_from_public_materials_and_treasury(game, tmp_path):
     assert db.yamens.get(yamen_id).origin_ref == origin
     assert origin_visible_to(db, origin, "") is False
     assert origin_visible_to(db, yamen_origin, "") is False
+    # 主官可见；无关人物不可见（真实密令对照）
+    assert origin_visible_to(db, yamen_origin, CHIEF) is True
+    assert origin_visible_to(db, yamen_origin, HANDLER) is False
 
     world = prepare_world_materials(db, state, dest_root=tmp_path / "world")
     assert any("衙门" in line for line in world.index_lines)
@@ -480,7 +482,7 @@ def test_secret_yamen_hidden_from_public_materials_and_treasury(game, tmp_path):
 
 
 def test_yamen_origin_rejects_unstorable_and_backref(game):
-    """建制来源：yamen 回指与读口同形的超界密令/案卷 id 均拒；合法同批仍落。"""
+    """建制来源：回指/超界/不存在密令案卷均拒；合法同批仍落。"""
     from ming_sim.materials import release_material_tree
 
     db, state, _ = game
@@ -521,6 +523,20 @@ def test_yamen_origin_rejects_unstorable_and_backref(game):
                     "origin_ref": f"decree_dossier:{overflow}",
                 },
                 {
+                    "name": "幻觉密令司",
+                    "chief": CHIEF,
+                    "monthly_fee": 1,
+                    "account": "国库",
+                    "origin_ref": "secret_order:999999",
+                },
+                {
+                    "name": "幻觉案卷司",
+                    "chief": CHIEF,
+                    "monthly_fee": 1,
+                    "account": "国库",
+                    "origin_ref": "dossier:999999",
+                },
+                {
                     "name": "公开合法司",
                     "chief": CHIEF,
                     "monthly_fee": 1,
@@ -532,15 +548,66 @@ def test_yamen_origin_rejects_unstorable_and_backref(game):
         chat_turn_id=chat_turn_id,
         minister_name=CHIEF,
     )
-    assert len(result.yamen_creates.rejected) == 4
+    assert len(result.yamen_creates.rejected) == 6
     assert len(result.yamen_creates.applied) == 1
     assert [y.name for y in db.yamens.list_active()] == ["公开合法司"]
-    # 读口对不可存储身份 fail-closed，且不 OverflowError
+    # 读口对不可存储/不存在身份 fail-closed，且不 OverflowError
     assert origin_visible_to(db, f"yamen:{overflow}", "") is False
     assert origin_visible_to(db, f"secret_order:{overflow}:brief", "") is False
     assert origin_visible_to(db, f"dossier:{overflow}/step", "") is False
+    assert origin_visible_to(db, "dossier:999999", "") is False
+    assert origin_visible_to(db, "secret_order:999999", "") is False
     gazette = prepare_gazette_author_materials(db, state)
     try:
         assert any("衙门" in line for line in gazette.index_lines)
     finally:
         release_material_tree(gazette.root)
+
+
+def test_yamen_chief_status_account_and_zero_fee(game):
+    """主官须在事；账户须显式；零月费可建且不造财政科目。"""
+    db, state, _ = game
+    dead = "袁崇焕"
+    dismissed = "孙承宗"
+    # 用现役人事写口改状态，不另造测试钩子
+    db.set_character_status(state, dead, "dead", reason="测试", commit=True)
+    db.set_character_status(state, dismissed, "dismissed", reason="测试", commit=True)
+    offstage_row = db.conn.execute(
+        "SELECT name FROM characters WHERE status='offstage' AND name!=? LIMIT 1",
+        (CHIEF,),
+    ).fetchone()
+    offstage = str(offstage_row["name"]) if offstage_row is not None else None
+
+    night = open_night(db, state, location="乾清宫", time_of_day="夜")
+    night_id = int(night["id"])
+    chat_turn_id = _active_chat_turn(db, state, night_id)
+    creates = [
+        {"name": "死人主官司", "chief": dead, "monthly_fee": 1, "account": "国库"},
+        {"name": "革职主官司", "chief": dismissed, "monthly_fee": 1, "account": "国库"},
+        {"name": "缺账户司", "chief": CHIEF, "monthly_fee": 1},
+        {"name": "空白账户司", "chief": CHIEF, "monthly_fee": 1, "account": ""},
+        {"name": "零费合法司", "chief": CHIEF, "monthly_fee": 0, "account": "内库"},
+        {"name": "在事合法司", "chief": CHIEF, "monthly_fee": 3, "account": "国库"},
+    ]
+    if offstage is not None:
+        creates.insert(2, {
+            "name": "未登场主官司", "chief": offstage,
+            "monthly_fee": 1, "account": "国库",
+        })
+    result = apply_audience_round_translation(
+        db, state, {"yamen_creates": creates},
+        night_id=night_id, chat_turn_id=chat_turn_id, minister_name=CHIEF,
+    )
+    expected_rejected = 4 + (1 if offstage is not None else 0)
+    assert len(result.yamen_creates.rejected) == expected_rejected
+    assert len(result.yamen_creates.applied) == 2
+    names = {y.name for y in db.yamens.list_active()}
+    assert names == {"零费合法司", "在事合法司"}
+    zero = next(y for y in db.yamens.list_active() if y.name == "零费合法司")
+    assert int(zero.monthly_fee) == 0
+    assert zero.fee_account == "内库"
+    assert not zero.fiscal_key
+    assert _fee_base_from_origin(db, zero.id) == []
+    # 状态保持原值，衙门层不得偷偷起复
+    assert db.characters.get_character_status(dead)[0] == "dead"
+    assert db.characters.get_character_status(dismissed)[0] == "dismissed"

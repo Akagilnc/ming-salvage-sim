@@ -112,7 +112,9 @@ class YamenStore(RowStore):
         chief = str(chief_name or "").strip()
         if not chief:
             raise DeclarationDataError("衙门主官不能为空")
-        account = str(fee_account or "").strip() or "国库"
+        account = str(fee_account or "").strip()
+        if not account:
+            raise DeclarationDataError("衙门月费账户不能为空")
         if account not in ECONOMY_ACCOUNTS:
             raise DeclarationDataError(f"衙门月费账户非法：{account!r}")
         from ming_sim.strict_types import SQLITE_INT_MAX, SQLITE_INT_MIN, strict_int
@@ -184,11 +186,17 @@ def _row_to_yamen(row: Any) -> Yamen:
 
 
 def assert_chief_exists(db: Any, chief_name: str) -> str:
-    """主官须为名册人物；返回规范化人名。"""
+    """主官须为在事名册人物（ADR 0009：任职须在事）；返回规范化人名。
+
+    只读落账时 status，不在衙门层起复或改状态；起复/昭雪走既有人事管线。
+    """
     name = str(chief_name or "").strip()
     if not name:
         raise DeclarationDataError("衙门主官不能为空")
-    row = db.characters.row(name, fields="name")
+    row = db.characters.row(name, fields="name, status")
     if row is None:
         raise DeclarationReferenceError(f"主官不存在：{name}")
+    status = str(row["status"] or "").strip() or "active"
+    if status != "active":
+        raise DeclarationDataError(f"主官不在事：{row['name']}（{status}）")
     return str(row["name"])

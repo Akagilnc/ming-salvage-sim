@@ -2862,31 +2862,21 @@ def _attach_character_affair_pointer(db: Any, name: str, affair_id: int) -> None
     db.affairs.attach_pointer("characters", name, affair_id)
 
 
-def _canonical_yamen_founding_origin(origin_ref: str) -> str:
+def _canonical_yamen_founding_origin(db: Any, origin_ref: str) -> str:
     """衙门建制来源：空＝公开；禁止 yamen 回指（身份不是来源，且可成环）。
 
-    密令/案卷身份识别与读口同一形状（materials.secret_order_id_in_origin /
-    dossier_id_in_origin：brief/decree_dossier 别名与后缀），id 不可存储则拒收，
-    不平行维护一套较窄 fullmatch 语法（#1915 F5）。
+    密令/案卷身份与读口同形，且须账上真实存在（ADR 0015）；不可存储 id 与
+    幻觉引用一律拒收，不平行维护另一套语法（#1915）。
     """
-    from ming_sim.materials import (
-        dossier_id_in_origin,
-        origin_claims_secret_or_dossier,
-        secret_order_id_in_origin,
-    )
+    from ming_sim.knowledge import assert_origin_identity_exists
 
     text = str(origin_ref or "").strip()
     if not text:
         return ""
     if text.startswith("yamen:"):
         raise DeclarationDataError("衙门建制来源不得回指另一衙门")
-    if origin_claims_secret_or_dossier(text):
-        secret_id = secret_order_id_in_origin(text)
-        dossier_id = dossier_id_in_origin(text)
-        if secret_id is None and dossier_id is None:
-            raise DeclarationDataError("衙门建制来源 id 超出可存储范围或不可解析")
     # 通过校验的原串落库（保留合法后缀）；不从正文猜测、不改写成另一套语法。
-    return text
+    return assert_origin_identity_exists(db, text)
 
 
 def _dispatch_yamen_creates(
@@ -2909,13 +2899,19 @@ def _dispatch_yamen_creates(
             continue
         name = str(item.get("name") or "").strip()
         chief_raw = str(item.get("chief") or item.get("chief_name") or "").strip()
-        account = str(item.get("account") or "国库").strip() or "国库"
+        account = str(item.get("account") or item.get("账户") or "").strip()
         fee_raw = item.get("monthly_fee")
         if fee_raw is None:
             fee_raw = item.get("月费")
         if not name or not chief_raw:
             _reject(
                 rejected, item, "新设衙门须含 name/chief",
+                "invalid_shape", source,
+            )
+            continue
+        if not account:
+            _reject(
+                rejected, item, "新设衙门须显式声明 account",
                 "invalid_shape", source,
             )
             continue
@@ -2929,9 +2925,12 @@ def _dispatch_yamen_creates(
             continue
         origin_ref = str(item.get("origin_ref") or "").strip()
         try:
-            origin_ref = _canonical_yamen_founding_origin(origin_ref)
+            origin_ref = _canonical_yamen_founding_origin(db, origin_ref)
         except DeclarationDataError as exc:
             _reject(rejected, item, str(exc), "invalid_shape", source)
+            continue
+        except DeclarationReferenceError as exc:
+            _reject(rejected, item, str(exc), "hallucinated_id", source)
             continue
         try:
             with item_savepoint_scope(db, f"yamen_create_{int(state.turn)}_{id(item)}"):
@@ -3012,6 +3011,15 @@ def _dispatch_textual_facts(
             _reject(rejected, item, reason, error_category, source)
             continue
         origin_ref = str(item.get("origin_ref") or "").strip()
+        try:
+            from ming_sim.knowledge import assert_origin_identity_exists
+            origin_ref = assert_origin_identity_exists(db, origin_ref)
+        except DeclarationDataError as exc:
+            _reject(rejected, item, str(exc), "invalid_shape", source)
+            continue
+        except DeclarationReferenceError as exc:
+            _reject(rejected, item, str(exc), "hallucinated_id", source)
+            continue
         try:
             fact = db.textual_facts.append(
                 subject_kind=subject_kind, subject_id=subject_id,
