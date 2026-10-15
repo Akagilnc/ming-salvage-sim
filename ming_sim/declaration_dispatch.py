@@ -147,6 +147,7 @@ class DeclarationDispatchResult:
     rushes: SectionResult
     travel_tones: SectionResult
     rejection_withdrawals: SectionResult
+    yamen_creates: SectionResult
 
     def merge(self, other: "DeclarationDispatchResult") -> "DeclarationDispatchResult":
         """按 section 逐个 merge，供 :func:`settle_staged_declarations_in_decree_order`
@@ -168,6 +169,7 @@ class DeclarationDispatchResult:
             rushes=self.rushes.merge(other.rushes),
             travel_tones=self.travel_tones.merge(other.travel_tones),
             rejection_withdrawals=self.rejection_withdrawals.merge(other.rejection_withdrawals),
+            yamen_creates=self.yamen_creates.merge(other.yamen_creates),
         )
 
 
@@ -176,6 +178,7 @@ _SECTION_FIELDS: Tuple[str, ...] = (
     "on_scene_facts", "presence", "scene_facts", "edge_events",
     "protagonist", "registrations", "effects",
     "inquiries", "rushes", "travel_tones", "rejection_withdrawals",
+    "yamen_creates",
 )
 _KNOWN_SECTIONS = frozenset(_SECTION_FIELDS)
 
@@ -189,7 +192,7 @@ def empty_dispatch_result() -> DeclarationDispatchResult:
         on_scene_facts=empty, presence=empty, scene_facts=empty, edge_events=empty,
         protagonist=ProtagonistResult(validated=None, rejected=[]), registrations=empty,
         effects=empty, inquiries=empty, rushes=empty, travel_tones=empty,
-        rejection_withdrawals=empty,
+        rejection_withdrawals=empty, yamen_creates=empty,
     )
 
 
@@ -340,6 +343,10 @@ def _dispatch_declaration_sections(
         rejection_withdrawals=_dispatch_rejection_withdrawals(
             db, state, declaration.get("rejection_withdrawals"), source=source,
             source_turn_error=source_turn_err or ("拒收撤回须来自召对轮" if night_id <= 0 else None),
+        ),
+        yamen_creates=_dispatch_yamen_creates(
+            db, state, declaration.get("yamen_creates"), source=source,
+            source_turn_error=source_turn_err,
         ),
     )
     _record_unknown_sections(collector, declaration, turn, source)
@@ -655,7 +662,13 @@ def discard_staged_declaration(db: Any, decree_ref: str) -> int:
 def bind_decree_effect_sources(
     db: Any, decree_ref: str, declaration: Mapping[str, object], visible_refs: Mapping[str, object],
 ) -> Tuple[Mapping[str, object], Mapping[str, object]]:
-    """Bind only this draft's structured effect identity; retain all prose and gates."""
+    """Bind this draft's structured identity slots to the formal dossier.
+
+    Walks the whole declaration: origin_ref / dossier_id / target_dossier_id
+    (and aliases) equal to the pending-action ref become dossier:<id>. Other
+    keys and prose pass through untouched. Covers effects, textual_facts,
+    yamen_creates, and any future section that carries the same slots.
+    """
     from ming_sim.decree_forecast import dossier_for_decree_ref
     from ming_sim.simulation import ITEM_FIELD_ALIASES
 
@@ -682,9 +695,7 @@ def bind_decree_effect_sources(
             return [bind(item) for item in value]
         return value
 
-    bound = dict(declaration)
-    if "effects" in bound:
-        bound["effects"] = bind(bound["effects"])
+    bound = bind(dict(declaration))
     refs = dict(visible_refs)
     refs["dossiers"] = list(dict.fromkeys([*refs.get("dossiers", ()), dossier_id]))
     return bound, refs
@@ -3043,23 +3054,38 @@ def _dispatch_promises(
     return SectionResult(applied=applied, rejected=rejected)
 
 
-def _assert_textual_fact_subject_exists(db: Any, subject_kind: str, subject_id: str) -> None:
-    """格式及缺失引用为类型化数据错误；持久读取异常不转译。"""
+def _assert_textual_fact_subject_exists(db: Any, subject_kind: str, subject_id: str) -> str:
+    """格式及缺失引用为类型化数据错误；持久读取异常不转译。
+
+    数值主体（affair/yamen）在同一接缝规范化为十进制身份字符串，贯穿验证与落库
+    （#1915 F3：'02' 不得与 '2' 分裂成不可达事实）。文字型主体原样返回。
+    """
+    from ming_sim.strict_types import strict_sqlite_id
+
     if subject_kind == "affair":
         try:
-            affair_id = int(subject_id)
+            affair_id = strict_sqlite_id(subject_id)
         except (TypeError, ValueError) as exc:
             raise DeclarationDataError("事务引用须为整数") from exc
         db.affairs.get(affair_id)
-        return
+        return str(affair_id)
+    if subject_kind == "yamen":
+        try:
+            yamen_id = strict_sqlite_id(subject_id)
+        except (TypeError, ValueError) as exc:
+            raise DeclarationDataError("衙门引用须为整数") from exc
+        if db.yamens.get(yamen_id) is None:
+            raise DeclarationReferenceError(f"yamen 不存在：{subject_id}")
+        return str(yamen_id)
     store = {"character": db.characters, "army": db.armies, "region": db.regions}.get(
         subject_kind
     )
     if store is None:
-        return
+        return str(subject_id or "").strip()
     row = store.row(subject_id)
     if row is None:
         raise DeclarationReferenceError(f"{subject_kind} 不存在：{subject_id}")
+    return str(subject_id or "").strip()
 
 
 def _xiexang_reject_category(exc: DecreeMaterializationValidationError) -> str:
@@ -3107,8 +3133,12 @@ def _peek_affair_id(db: Any, item: Mapping[str, object]) -> Tuple[int | None, st
 
 
 def _resolve_affair_origin_ref(db: Any, item: Mapping[str, object]) -> Tuple[str, str | None, str | None]:
-    """同 :func:`_peek_affair_id`，但给需要 origin_ref 字符串（而非事务 id）的
-    落库口用（textual_facts / public_sayings / presence / scene_facts）。"""
+    """同 :func:`_peek_affair_id`，但返回 ``affair:<id>`` 字符串。
+
+    用于 public_sayings 的 affair_ref、presence / scene_facts 等只挂事务回指、
+    没有独立 origin_ref+affair_id 双槽的落库口。textual_facts 已改走原生
+    origin_ref 与 affair_id 两槽，不再经此函数。
+    """
     affair_id, error_category, reason = _peek_affair_id(db, item)
     if error_category is not None:
         return "", error_category, reason
@@ -3127,6 +3157,128 @@ def _attach_character_affair_pointer(db: Any, name: str, affair_id: int) -> None
     db.affairs.attach_pointer("characters", name, affair_id)
 
 
+def _canonical_yamen_founding_origin(db: Any, origin_ref: str) -> str:
+    """衙门建制来源：空＝公开；禁止 yamen 回指（身份不是来源，且可成环）。
+
+    密令/案卷身份与读口同形，且须账上真实存在（ADR 0015）；不可存储 id 与
+    幻觉引用一律拒收，不平行维护另一套语法（#1915）。
+    """
+    from ming_sim.knowledge import assert_origin_identity_exists
+
+    text = str(origin_ref or "").strip()
+    if not text:
+        return ""
+    if text.startswith("yamen:"):
+        raise DeclarationDataError("衙门建制来源不得回指另一衙门")
+    # 通过校验的原串落库（保留合法后缀）；不从正文猜测、不改写成另一套语法。
+    return assert_origin_identity_exists(db, text)
+
+
+def _dispatch_yamen_creates(
+    db: Any, state: Any, raw: object, *, source: Provenance,
+    source_turn_error: Optional[str] = None,
+) -> SectionResult:
+    """新设衙门：建账上实体 + 月费科目（#1915）。
+
+    召对转译声明名称/主官/月费；本口立即落库，不另造停续协议。
+    月度下落走 textual_facts(subject_kind=yamen)。
+    """
+    from ming_sim.entities.yamen import assert_chief_exists
+    from ming_sim.applier import item_savepoint_scope
+
+    items, rejected = _section_items(raw, label="新设衙门声明", source=source)
+    applied: List[Any] = []
+    for item in items:
+        if source_turn_error is not None:
+            _reject(rejected, item, source_turn_error, "missing_ref", source)
+            continue
+        name = str(item.get("name") or "").strip()
+        chief_raw = str(item.get("chief") or item.get("chief_name") or "").strip()
+        account = str(item.get("account") or item.get("账户") or "").strip()
+        fee_raw = item.get("monthly_fee")
+        if fee_raw is None:
+            fee_raw = item.get("月费")
+        if not name or not chief_raw:
+            _reject(
+                rejected, item, "新设衙门须含 name/chief",
+                "invalid_shape", source,
+            )
+            continue
+        if not account:
+            _reject(
+                rejected, item, "新设衙门须显式声明 account",
+                "invalid_shape", source,
+            )
+            continue
+        try:
+            chief = assert_chief_exists(db, chief_raw)
+        except DeclarationReferenceError as exc:
+            _reject(rejected, item, str(exc), "hallucinated_id", source)
+            continue
+        except DeclarationDataError as exc:
+            _reject(rejected, item, str(exc), "invalid_shape", source)
+            continue
+        origin_ref = str(item.get("origin_ref") or "").strip()
+        try:
+            origin_ref = _canonical_yamen_founding_origin(db, origin_ref)
+        except DeclarationDataError as exc:
+            _reject(rejected, item, str(exc), "invalid_shape", source)
+            continue
+        except DeclarationReferenceError as exc:
+            _reject(rejected, item, str(exc), "hallucinated_id", source)
+            continue
+        try:
+            with item_savepoint_scope(db, f"yamen_create_{int(state.turn)}_{id(item)}"):
+                # 月费严格整数/非负/存储范围：唯一权威＝YamenStore.create
+                yamen = db.yamens.create(
+                    name=name,
+                    chief_name=chief,
+                    monthly_fee=fee_raw,
+                    fee_account=account,
+                    year=int(state.year),
+                    period=int(state.period),
+                    turn=int(state.turn),
+                    origin_ref=origin_ref,
+                )
+                fiscal_key = ""
+                fee = int(yamen.monthly_fee)
+                if fee > 0:
+                    created_key = db.create_fiscal_item(
+                        f"衙门月费{int(yamen.id)}",
+                        account,
+                        "expense",
+                        f"{name}月费",
+                        fee,
+                        note=str(item.get("reason") or f"新设{name}月费"),
+                        origin_ref=f"yamen:{int(yamen.id)}",
+                        turn=int(state.turn),
+                        beyond_intent=0,
+                        commit=False,
+                    )
+                    if not created_key:
+                        raise DeclarationDataError(
+                            f"衙门「{name}」月费科目未能建项"
+                        )
+                    fiscal_key = str(created_key)
+                    db.yamens.set_fiscal_key(int(yamen.id), fiscal_key)
+                    yamen = db.yamens.get(int(yamen.id)) or yamen
+                applied.append({
+                    "id": int(yamen.id),
+                    "name": yamen.name,
+                    "chief": yamen.chief_name,
+                    "monthly_fee": int(yamen.monthly_fee),
+                    "fiscal_key": yamen.fiscal_key or fiscal_key,
+                    "account": yamen.fee_account,
+                })
+        except DeclarationDataError as exc:
+            _reject(rejected, item, str(exc), "invalid_shape", source)
+            continue
+        except DeclarationReferenceError as exc:
+            _reject(rejected, item, str(exc), "hallucinated_id", source)
+            continue
+    return SectionResult(applied=applied, rejected=rejected)
+
+
 def _dispatch_textual_facts(
     db: Any, state: Any, raw: object, *, source: Provenance,
     source_turn_error: Optional[str] = None,
@@ -3138,24 +3290,37 @@ def _dispatch_textual_facts(
             _reject(rejected, item, source_turn_error, "missing_ref", source)
             continue
         subject_kind = str(item.get("subject_kind") or "").strip()
-        subject_id = str(item.get("subject_id") or "").strip()
         try:
-            _assert_textual_fact_subject_exists(db, subject_kind, subject_id)
+            subject_id = _assert_textual_fact_subject_exists(
+                db, subject_kind, str(item.get("subject_id") or "").strip(),
+            )
         except DeclarationReferenceError as exc:
             _reject(rejected, item, str(exc), "hallucinated_id", source)
             continue
         except DeclarationDataError as exc:
             _reject(rejected, item, str(exc), "invalid_shape", source)
             continue
-        origin_ref, error_category, reason = _resolve_affair_origin_ref(db, item)
+        # origin_ref＝本条真实来源；affair_declaration＝所属事务。两槽独立（ADR 0154）。
+        affair_id, error_category, reason = _peek_affair_id(db, item)
         if error_category is not None:
             _reject(rejected, item, reason, error_category, source)
+            continue
+        origin_ref = str(item.get("origin_ref") or "").strip()
+        try:
+            from ming_sim.knowledge import assert_origin_identity_exists
+            origin_ref = assert_origin_identity_exists(db, origin_ref)
+        except DeclarationDataError as exc:
+            _reject(rejected, item, str(exc), "invalid_shape", source)
+            continue
+        except DeclarationReferenceError as exc:
+            _reject(rejected, item, str(exc), "hallucinated_id", source)
             continue
         try:
             fact = db.textual_facts.append(
                 subject_kind=subject_kind, subject_id=subject_id,
                 body=item.get("body"), year=state.year, period=state.period,
                 turn=state.turn, origin_ref=origin_ref,
+                affair_id=int(affair_id or 0),
             )
         except DeclarationDataError as exc:
             _reject(rejected, item, str(exc), "invalid_shape", source)
