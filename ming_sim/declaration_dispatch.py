@@ -1322,8 +1322,19 @@ def _dispatch_commission_items(
         sole_present = [key for key in _COMMISSION_SOLE_KEYS if item.get(key) is not None]
         is_prohibit = _is_prohibit_covert_levy_item(item)
         ordinary_hit = any(item.get(key) for key in _COMMISSION_ORDINARY_KEYS)
-        # 统一准入按实际动作条件：专有嵌套键 ∪ 禁摊派动作，互斥且与 ordinary 互斥。
-        sole_action_count = len(sole_present) + (1 if is_prohibit else 0)
+        # 御笔强推：复用既有解析器（#658），不另写一份键名平行规则。
+        from ming_sim.db import imperial_push_target_dossier_id
+        try:
+            has_imperial_push = imperial_push_target_dossier_id(item) is not None
+        except ValueError:
+            # 坏 shape 仍占动作位，避免与其它 sole 并存后被前序吃掉。
+            has_imperial_push = (
+                "target_dossier_id" in item or "目标案卷ID" in item
+            )
+        # 统一准入：专有嵌套键 ∪ 禁摊派 ∪ 御笔强推，互斥且与 ordinary 互斥。
+        sole_action_count = (
+            len(sole_present) + (1 if is_prohibit else 0) + (1 if has_imperial_push else 0)
+        )
         if sole_action_count > 1 or (sole_action_count == 1 and ordinary_hit):
             _reject(
                 rejected, item, "交办专有载荷须为独立对象", "invalid_shape", source,
@@ -1744,8 +1755,9 @@ def _dispatch_commission_items(
             # 不改既有事务来源（关联载体 ≠ 事务来源）。
             linked_affair_id = int(db.issues.affair_id_of(issue_id) or 0)
             if linked_affair_id > 0 and preexisting_affair_id is None:
+                # 纯出生可见性标记（空正文）；自诺内容只在 origin_ref 那条来源。
                 db.register_character_knowledge_source(
-                    state, roster, "minister_promise", title, content,
+                    state, roster, "private_affair_birth", "", "",
                     source_id=db.affairs.origin_ref(linked_affair_id),
                     commit=False,
                 )

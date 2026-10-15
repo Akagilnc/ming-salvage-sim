@@ -11123,6 +11123,9 @@ class GameDB:
                     continue
             elif str(character_name) not in names:
                 continue
+            # 出生可见性纯标记不进见闻正文（#883 / #1916）：只服务 origin_visible_to。
+            if str(row["kind"] or "") == "private_affair_birth":
+                continue
             item = {"turn": int(row["turn"]), "year": int(row["year"]), "period": int(row["period"]),
                     "kind": row["kind"], "title": row["title"], "body": row["body"], "source_id": row["source_id"]}
             result.append(item)
@@ -11499,13 +11502,14 @@ class GameDB:
                 self.dossiers.affair_id_of(int(dossier_id)) or 0
             )
             if linked_affair_id > 0 and preexisting_affair_id is None:
-                # kind 不得用 secret_order（#883 禁共享知识源）；source_id=affair:id。
+                # 纯出生可见性标记：空 title/body，不进共享正文（#883）。
+                # kind=private_affair_birth 仅供 origin_visible_to，知识投影跳过。
                 self.register_character_knowledge_source(
                     state,
                     [{"character_id": minister_name, "tier": "主办"}],
                     "private_affair_birth",
-                    title,
-                    content,
+                    "",
+                    "",
                     source_id=self.affairs.origin_ref(linked_affair_id),
                     commit=False,
                 )
