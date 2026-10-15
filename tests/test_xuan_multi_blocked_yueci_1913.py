@@ -22,7 +22,7 @@ from ming_sim.materials import _safe_segment, list_materials
 from ming_sim.session import GameSession
 from ming_sim.session_write_queue import SessionWriteQueue
 
-"""#1913：一口宣多人、拒召供料、越次召见记账。
+"""#1913：一口宣多人、拒召供料、越次宣召记账。
 
 普通「宣」低品记宣入不记越次：并入 tests/test_scene_llm_1836.py 既有单人宣入案，不另立平行测试。
 
@@ -176,7 +176,7 @@ def test_xuan_blocked_offstage_feeds_materials_not_enter(game, monkeypatch):
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_yueci_explicit_lands_method_and_survives_reopen(game, monkeypatch, tmp_path):
-    """越次召见：完整前缀不截身份；在京记入殿越次；京外记传召账越次；已在场仍留越次；同轮恢复不叠账；关库重开仍可读。"""
+    """越次宣召：完整复合前缀不截身份；在京记入殿越次；京外记传召账越次；已在场仍留越次；同轮恢复不叠账；关库重开仍可读。"""
     db, state, content = game
     open_night(db, state, location="乾清宫", time_of_day="夜")
     night_id = int(get_open_night(db)["id"])
@@ -208,7 +208,8 @@ def test_yueci_explicit_lands_method_and_survives_reopen(game, monkeypatch, tmp_
         return len(_enter_ids(person))
 
     sess = _sess(db, state, content, monkeypatch)
-    _scene(f"越次召见{capital}、{remote}")
+    # 复合「宣召」须整词匹配；短前缀「宣」会把身份截成「召…」。
+    _scene(f"越次宣召{capital}、{remote}")
 
     methods = _enter_methods(db, night_id, capital)
     assert METHOD_YUECI in methods

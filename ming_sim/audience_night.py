@@ -1595,14 +1595,17 @@ def recognize_audience_command(message: str) -> str:
 
 # #1836 / #1913：一夜一场入口的宣召口令——封闭前缀 + 人名片段（可多人分隔）；
 # 引擎落入殿账（ADR 0037），不另立 summon 动作类型。
-# 越次点名 / 越次宣|召见 X 记 METHOD_YUECI；普通宣/召仍记 METHOD_XUANRU。
-# 完整动词列在短前缀之前（召见 before 召），避免「越次召见X」截成「见X」。
+# 越次点名 / 越次＋封闭动词 X 记 METHOD_YUECI；普通宣/召仍记 METHOD_XUANRU。
+# 复合与单字同表，编译按长度降序：短前缀不得截坏「宣召／召见／传召」完整身份。
 # 语气尾不在整串预剥——「施凤来」等以尾字入名的身份须先全名匹配；
 # 逐人未中再试剥尾（strip_xuan_person_tail），多人同形。
+_XUAN_VERBS = ("传召", "召见", "宣召", "传", "召", "宣", "叫", "带")
 _XUAN_PREFIX_RE = re.compile(
     r"^(?:"
     r"越次点名|"
-    r"(?:越次(?:地)?)?(?:传召|召见|传|召|宣|叫|带)"
+    r"(?:越次(?:地)?)?(?:"
+    + "|".join(sorted(_XUAN_VERBS, key=len, reverse=True))
+    + r")"
     r")"
 )
 # 语气尾长词在前；只作逐人全名失败后的一次回退，不是第二套解析器。
