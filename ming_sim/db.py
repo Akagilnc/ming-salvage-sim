@@ -44,7 +44,7 @@ from ming_sim.constants import (
     DEFAULT_OPENING_PERIOD, DEFAULT_OPENING_YEAR,
 )
 from ming_sim.content import GameContent
-from ming_sim.office_rank import normalize_office
+from ming_sim.office_rank import normalize_office, office_title_continues
 from ming_sim.decree_vocabulary import (
     DOSSIER_ACTION_TYPES, DIRECTIVE_ACTION_TYPES, dossier_action_policy,
 )
@@ -6097,20 +6097,19 @@ class GameDB:
             if priv not in AUTHORITY_PRIVILEGE_SET:
                 raise DecreeMaterializationValidationError("委任授权 privilege 非法")
             normalized["privilege"] = priv
-            scope = str(normalized.get("scope") or "").strip()
-            if not scope or ":" not in scope:
-                t_kind = str(normalized.get("target_kind") or "").strip()
-                t_id = str(normalized.get("target_id") or "").strip()
-                if t_id and ":" in t_id and not t_kind:
-                    scope = t_id
-                elif t_kind and t_id:
-                    scope = f"{t_kind}:{t_id}"
-            kind, separator, target = scope.partition(":")
-            if not separator or not kind.strip() or not target.strip():
-                raise DecreeMaterializationValidationError("委任授权缺少典范 scope")
-            normalized["scope"] = f"{kind.strip()}:{target.strip()}"
-            normalized["target_kind"] = kind.strip()
-            normalized["target_id"] = target.strip()
+            from ming_sim.entities.authority.scope import canonical_authority_scope
+
+            try:
+                scope, kind, target = canonical_authority_scope(
+                    scope=normalized.get("scope"),
+                    target_kind=normalized.get("target_kind"),
+                    target_id=normalized.get("target_id"),
+                )
+            except ValueError as exc:
+                raise DecreeMaterializationValidationError(str(exc)) from exc
+            normalized["scope"] = scope
+            normalized["target_kind"] = kind
+            normalized["target_id"] = target
             holder = str(
                 normalized.get("holder_id")
                 or normalized.get("assignee_id")
@@ -6119,6 +6118,9 @@ class GameDB:
             ).strip()
             if not holder:
                 raise DecreeMaterializationValidationError("委任授权缺少 holder_id")
+            if content is not None:
+                from ming_sim.session import _canonical_minister_key
+                holder = _canonical_minister_key(content, holder, self)
             normalized["holder_id"] = holder
             normalized["name"] = holder
             normalized["assignee_id"] = holder
@@ -6129,7 +6131,8 @@ class GameDB:
             if raw_aid in (None, ""):
                 raise DecreeMaterializationValidationError("收权旨意缺少 authority_id")
             try:
-                aid = strict_int(raw_aid, accept_numeric_strings=True)
+                # 身份边界复用 strict_sqlite_id（#1912 J3 / #1897 C1）
+                aid = strict_sqlite_id(raw_aid, accept_numeric_strings=True)
             except (TypeError, ValueError) as exc:
                 raise DecreeMaterializationValidationError(str(exc)) from exc
             if aid <= 0:
@@ -6352,6 +6355,11 @@ class GameDB:
         if final_kind not in TARGET_KINDS:
             raise DecreeMaterializationValidationError(f"target_kind 非法：{final_kind!r}")
         normalized["target_kind"] = final_kind
+        # 授权事域与典范 target 同身份：别名归一后回写 scope，恢复查重语义（#1912）。
+        if action == "authorization":
+            final_tid = str(normalized.get("target_id") or "").strip()
+            if final_kind and final_tid:
+                normalized["scope"] = f"{final_kind}:{final_tid}"
         normalized["locality_scope"] = normalize_locality_scope(
             normalized.get("locality_scope"),
         )
@@ -8042,6 +8050,7 @@ class GameDB:
         # No typed region this call — only continue an existing same-office seat.
         # character_offices is required schema (init_schema); missing table
         # surfaces as SQL error (ADR 0005 / #1853).
+        # Title continuation authority: office_title_continues（兼衔子集同任所复用）。
         person = str(name or "").strip()
         title = normalize_office(str(office or ""))
         if person and title:
@@ -8049,7 +8058,9 @@ class GameDB:
                 'SELECT office_title, region_id FROM character_offices WHERE character_name=?',
                 (person,),
             ).fetchone()
-            if row is not None and normalize_office(str(row["office_title"] or "")) == title:
+            if row is not None and office_title_continues(
+                row["office_title"], title,
+            ):
                 return str(row["region_id"] or "").strip()
         raise OfficeAppointmentRejection(
             f"地方任命缺 region_id 任所：{name} → {office}（{kind}）",

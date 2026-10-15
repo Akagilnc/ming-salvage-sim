@@ -841,8 +841,10 @@ def _annotate_office_pending_path(
     if mode_mark in {"midzhi", "ordinary"} and payload.get("mode") != mode_mark:
         payload["mode"] = mode_mark
         changed = True
-    if tenure_mark == "署理" and payload.get("任别") != "署理":
-        payload["任别"] = "署理"
+    from ming_sim.appointment_tenure import APPOINTMENT_TENURES
+
+    if tenure_mark in APPOINTMENT_TENURES and payload.get("任别") != tenure_mark:
+        payload["任别"] = tenure_mark
         payload.pop("appointment_tenure", None)
         changed = True
     existing_seat = str(
@@ -853,7 +855,7 @@ def _annotate_office_pending_path(
         changed = True
     semantic_hit = (
         (mode_mark in {"midzhi", "ordinary"} and payload.get("mode") == mode_mark)
-        or (tenure_mark == "署理" and payload.get("任别") == "署理")
+        or (tenure_mark in APPOINTMENT_TENURES and payload.get("任别") == tenure_mark)
         or (seat and existing_seat == seat)
     )
     if not changed and not semantic_hit:
