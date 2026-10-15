@@ -43,6 +43,7 @@ def test_stub_declaration_lands_on_existing_staging_and_new_records_without_miss
         "textual_facts": [{
             "subject_kind": "character", "subject_id": minister,
             "body": "抱恙数日，仍可视事",
+            "origin_ref": "dossier:99",
             "affair_declaration": {"attach": "existing", "affair_id": affair.id},
         }],
         "public_sayings": [{
@@ -70,14 +71,16 @@ def test_stub_declaration_lands_on_existing_staging_and_new_records_without_miss
     )
     assert commission_payload["text"] == commission_text  # 原样运输，含空白
 
+    fact_id = int(result.textual_facts.applied[0]["id"])
     facts = db.textual_facts.readable_materials(subject_kind="character", subject_id=minister)
-    assert [f.origin_ref for f in facts] == [db.affairs.origin_ref(affair.id)]
-    assert [int(f.affair_id) for f in facts] == [int(affair.id)]
-    # 事务材料读口须接住人物事实上的结构化关联（origin_ref 与 affair_id）。
+    assert [int(f.id) for f in facts] == [fact_id]
+    # 真实来源与事务指针正交：origin_ref 保留声明值，关联只落 affair_id。
+    assert facts[0].origin_ref == "dossier:99"
+    assert int(facts[0].affair_id) == int(affair.id)
     linked = db.textual_facts.readable_materials(
         subject_kind="affair", subject_id=str(int(affair.id)),
     )
-    assert [f.body for f in linked] == ["抱恙数日，仍可视事"]
+    assert [int(f.id) for f in linked] == [fact_id]
 
     sayings = list_public_sayings(db, involved_character=minister)
     assert sayings[0]["body"] == "坊间传户部已备赈灾银"
