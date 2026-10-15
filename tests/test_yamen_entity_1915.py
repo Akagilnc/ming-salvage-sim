@@ -558,6 +558,34 @@ def test_yamen_origin_rejects_unstorable_and_backref(game):
                     "origin_ref": "dossier:999999",
                 },
                 {
+                    "name": "零号案卷司",
+                    "chief": CHIEF,
+                    "monthly_fee": 1,
+                    "account": "国库",
+                    "origin_ref": "dossier:0",
+                },
+                {
+                    "name": "零号案卷前导零司",
+                    "chief": CHIEF,
+                    "monthly_fee": 1,
+                    "account": "国库",
+                    "origin_ref": "dossier:000",
+                },
+                {
+                    "name": "零号案卷别名后缀司",
+                    "chief": CHIEF,
+                    "monthly_fee": 1,
+                    "account": "国库",
+                    "origin_ref": "decree_dossier:0/step",
+                },
+                {
+                    "name": "零号密令司",
+                    "chief": CHIEF,
+                    "monthly_fee": 1,
+                    "account": "国库",
+                    "origin_ref": "secret_order:0",
+                },
+                {
                     "name": "公开合法司",
                     "chief": CHIEF,
                     "monthly_fee": 1,
@@ -569,15 +597,22 @@ def test_yamen_origin_rejects_unstorable_and_backref(game):
         chat_turn_id=chat_turn_id,
         minister_name=CHIEF,
     )
-    assert len(result.yamen_creates.rejected) == 6
+    assert len(result.yamen_creates.rejected) == 10
     assert len(result.yamen_creates.applied) == 1
     assert [y.name for y in db.yamens.list_active()] == ["公开合法司"]
-    # 读口对不可存储/不存在身份 fail-closed，且不 OverflowError
+    # 读口对不可存储/不存在/零号身份 fail-closed，且不 OverflowError
     assert origin_visible_to(db, f"yamen:{overflow}", "") is False
     assert origin_visible_to(db, f"secret_order:{overflow}:brief", "") is False
     assert origin_visible_to(db, f"dossier:{overflow}/step", "") is False
     assert origin_visible_to(db, "dossier:999999", "") is False
     assert origin_visible_to(db, "secret_order:999999", "") is False
+    assert origin_visible_to(db, "dossier:0", "") is False
+    assert origin_visible_to(db, "dossier:000", "") is False
+    assert origin_visible_to(db, "decree_dossier:0/step", "") is False
+    assert origin_visible_to(db, "secret_order:0", "") is False
+    # 空来源与自由形仍公开；合法别名/后缀形状已由上列零号别名覆盖拒收
+    assert origin_visible_to(db, "", "") is True
+    assert origin_visible_to(db, "廷议传闻", "") is True
     gazette = prepare_gazette_author_materials(db, state)
     try:
         assert any("衙门" in line for line in gazette.index_lines)

@@ -138,8 +138,8 @@ def origin_visible_to(
     dossier→secret_order; no separate permission model.
 
     Identity tokens reuse materials.secret_order_id_in_origin / dossier_id_in_origin
-    (strict id). Unresolvable claimed secret/dossier/yamen identity fails closed
-    (not public)—missing entity, cycle, or overflow never become public (#1915).
+    (strict id). Claimed zero stays a claimed id (not undeclared). Unresolvable or
+    missing secret/dossier/yamen identity fails closed—never public (#1915).
     """
     from ming_sim.materials import (
         dossier_id_in_origin,
@@ -181,13 +181,25 @@ def origin_visible_to(
     oral = re.match(r"chat_message:(\d+)$", source)
     if oral and int(oral.group(1)) in db._secret_origin_message_ids(character_name):
         return False
-    order_id = secret_order_id_in_origin(source) or 0
+    # Keep claimed zero distinct from undeclared/unparseable (None). Never use
+    # truthiness on identity values—dossier:0 / secret_order:0 are claimed ids.
+    claimed_order_id = secret_order_id_in_origin(source)
     claimed_dossier_id = dossier_id_in_origin(source)
-    if origin_claims_secret_or_dossier(source) and order_id == 0 and claimed_dossier_id is None:
+    if (
+        origin_claims_secret_or_dossier(source)
+        and claimed_order_id is None
+        and claimed_dossier_id is None
+    ):
         # 自称密令/案卷但 id 不可存储或不可解析：不得当公开。
         return False
-    dossier_id = claimed_dossier_id or int(linked_dossier_id or 0)
-    if dossier_id:
+    # Origin claim wins; linked_dossier_id param keeps 0 as "not provided".
+    if claimed_dossier_id is not None:
+        dossier_id: int | None = claimed_dossier_id
+    else:
+        linked_param = int(linked_dossier_id or 0)
+        dossier_id = linked_param if linked_param != 0 else None
+    order_id: int | None = claimed_order_id
+    if dossier_id is not None:
         row = db.conn.execute(
             'SELECT secret_order_id FROM decree_dossiers WHERE id=?',
             (dossier_id,),
@@ -195,13 +207,13 @@ def origin_visible_to(
         if row is None:
             # Claimed or linked dossier missing from ledger: not public.
             return False
-        try:
-            linked = strict_sqlite_id(row["secret_order_id"] or 0)
-        except (TypeError, ValueError):
-            return False
-        if linked:
-            order_id = linked
-    if not order_id:
+        raw_secret = row["secret_order_id"]
+        if raw_secret is not None:
+            try:
+                order_id = strict_sqlite_id(raw_secret)
+            except (TypeError, ValueError):
+                return False
+    if order_id is None:
         return True
     if not character_name:
         return False
