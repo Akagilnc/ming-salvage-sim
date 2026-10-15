@@ -192,6 +192,82 @@ def test_month_entry_stalled_then_hold_keeps_original(game, monkeypatch):
     assert result.awaiting is False or not result.decisions
 
 
+def test_hold_then_restall_push_does_not_replay_old_hold(game, monkeypatch):
+    """C7：历史留中不重消费；再次 stalled 后新强推可兑现。"""
+    db, state, content = game
+    did, ref = _plant_proposed(db, state, title="留中再 stalled", target_id="hold-restall")
+    _stage(db, state, ref, {"effects": {}}, questions=[
+        {"title": "问一", "context": "c", "options": [{"label": "甲", "hint": "h"}]},
+        {"title": "问二", "context": "c", "options": [{"label": "丙", "hint": "h"}]},
+    ])
+    canned_full_settlement(monkeypatch)
+    session = make_light_session(db, state, content)
+    session.llm_config = object()
+    assert session.resolve_turn(allow_empty_decree=True).awaiting
+
+    def seed(row, declaration):
+        chain = _load_chain(db, int(state.turn))
+        chain.setdefault("rescript_continuation_texts", {})[row["event_id"]] = "续。"
+        _save_chain(db, int(state.turn), chain, source=Provenance.player_decree)
+        monkeypatch.setattr(
+            "ming_sim.month_translate._default_month_translate_runner",
+            lambda *_a, **_k: declaration,
+        )
+
+    q1 = next(
+        r for r in session.pending_decisions()
+        if str(r.get("event_id") or "").startswith(_DECREE_QUESTION_PREFIX)
+    )
+    seed(q1, {"effects": {"deliberation_outcomes": [{
+        "dossier_id": did, "outcome": "stalled", "note": "先冷场",
+    }]}})
+    session.submit_hitl_choices([
+        {"decision_key": q1["decision_key"], "label": "甲", "note": "答一"},
+    ], write_gate=session._write_gate)
+    desk1 = [
+        r for r in session.pending_decisions()
+        if str(r.get("status") or "") == "pending"
+        and str(r.get("event_id") or "").startswith(f"deliberation:{did}")
+    ]
+    assert desk1
+    session.submit_hitl_choices([
+        {"decision_key": desk1[0]["decision_key"], "action": "hold", "note": "先留中"},
+    ], write_gate=session._write_gate)
+    assert db.dossiers.get(did)["payload"].get("deliberation_state") == "held"
+
+    q2 = next(
+        r for r in session.pending_decisions()
+        if str(r.get("event_id") or "").startswith(_DECREE_QUESTION_PREFIX)
+        and not r.get("choice")
+    )
+    seed(q2, {"effects": {"deliberation_outcomes": [{
+        "dossier_id": did, "outcome": "stalled", "note": "再冷场",
+    }]}})
+    session.submit_hitl_choices([
+        {"decision_key": q2["decision_key"], "label": "丙", "note": "答二"},
+    ], write_gate=session._write_gate)
+    desk2 = [
+        r for r in session.pending_decisions()
+        if str(r.get("status") or "") == "pending"
+        and str(r.get("event_id") or "").startswith(f"deliberation:{did}")
+    ]
+    assert desk2
+    session.submit_hitl_choices([
+        {
+            "decision_key": desk2[0]["decision_key"],
+            "action": "imperial_push",
+            "note": "后道强推",
+        },
+    ], write_gate=session._write_gate)
+    pushed = db.dossiers.get(did)
+    assert pushed["payload"].get("deliberation_state") == "backed"
+    assert pushed["status"] != "proposed"
+    assert any(
+        e.get("decision_key") == desk2[0]["decision_key"]
+        for e in db.dossiers.endorsements(did)
+    )
+
+
 def test_deliberation_outcome_rejects_missing_dossier(game):
     """不存在的案卷不可标无人站台。"""
     from ming_sim.settlement.run import SettlementContext, settle_delta

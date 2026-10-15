@@ -2142,7 +2142,9 @@ def _eligible_rescript_answers(
             if choice_decision(row.get("choice")) in {"force_promulgated", "withdrawn", "hold"}:
                 eligible.append(row)
         elif event.startswith("deliberation:"):
-            # 本次待裁未消费的强推／留中仍挡月尾；已落手敕的历史强推不再入选（C7）。
+            # 本次待裁未消费的强推／留中仍挡月尾；已消费 decision_key 不再入选（C7）。
+            from ming_sim.rescript_actions import deliberation_answer_already_consumed
+
             did = _deliberation_dossier_id(event)
             if did is None:
                 continue
@@ -2152,15 +2154,13 @@ def _eligible_rescript_answers(
             original = db.dossiers.get(did)
             if original is None:
                 continue
-            state = str((original.get("payload") or {}).get("deliberation_state") or "")
-            if action == "hold" and state == "stalled":
-                eligible.append(row)
+            payload = original.get("payload") or {}
+            key = str(row.get("decision_key") or "")
+            if deliberation_answer_already_consumed(payload, key):
                 continue
-            if action == "imperial_push" and state == "stalled":
-                key = str(row.get("decision_key") or "")
-                if any(str(e.get("decision_key") or "") == key for e in db.dossiers.endorsements(did)):
-                    continue
-                eligible.append(row)
+            if str(payload.get("deliberation_state") or "") != "stalled":
+                continue
+            eligible.append(row)
     return eligible
 
 
@@ -2209,6 +2209,7 @@ def _consume_rescript_answers(
                     if action == "hold":
                         apply_imperial_deliberation_hold(
                             db, state, target_dossier_id=original_id,
+                            decision_key=row["decision_key"],
                             note=(row.get("choice") or {}).get("note", ""),
                         )
                     else:
