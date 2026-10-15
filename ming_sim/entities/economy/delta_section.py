@@ -34,8 +34,7 @@ def apply(run, moves: List[object] | None = None) -> SectionResult:
         move = raw_move
         origin_ref = ""
         if isinstance(move, dict):
-            canonical = _canonical_item_fields(move)
-            move = canonical if isinstance(canonical, dict) else move
+            move = _canonical_item_fields(move)
             try:
                 origin_ref = run.origin_ref_from_result_item(move)
             except UnauthorizedAffairOriginRef as exc:

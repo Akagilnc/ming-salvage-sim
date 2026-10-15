@@ -114,9 +114,6 @@ def apply_deliberation_outcomes(run):
             reject_item(rejected, raw_item, "廷议声明须为对象", "invalid_shape", source)
             continue
         item = _canonical_item_fields(raw_item)
-        if not isinstance(item, dict):
-            reject_item(rejected, raw_item, "廷议声明须为对象", "invalid_shape", source)
-            continue
         try:
             dossier_id = _parse_sqlite_id(item.get("dossier_id"))
             outcome = str(item.get("outcome") or "").strip()

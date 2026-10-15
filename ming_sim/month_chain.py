@@ -976,7 +976,7 @@ def _deliberation_dossier_id(event_id: object) -> Optional[int]:
 def _declaration_targets_stalled(bound: Mapping[str, object], dossier_id: int) -> bool:
     """Peek: bound declaration names stalled for this dossier (any shape)."""
     from ming_sim.strict_types import _parse_sqlite_id
-    from ming_sim.simulation import ITEM_FIELD_ALIASES
+    from ming_sim.simulation import _canonical_item_fields
 
     effects = bound.get("effects")
     envelopes: list = []
@@ -991,26 +991,16 @@ def _declaration_targets_stalled(bound: Mapping[str, object], dossier_id: int) -
         for item in raw:
             if not isinstance(item, Mapping):
                 continue
-            raw_id = item.get("dossier_id")
-            if raw_id is None:
-                for key, val in item.items():
-                    if ITEM_FIELD_ALIASES.get(str(key).strip(), str(key).strip()) == "dossier_id":
-                        raw_id = val
-                        break
+            # 与写口同一权威规范化；不得自拟 outcome/结果 别名子集。
+            canonical = _canonical_item_fields(dict(item))
             try:
-                item_id = _parse_sqlite_id(raw_id)
+                item_id = _parse_sqlite_id(canonical.get("dossier_id"))
             except (TypeError, ValueError):
                 # 坏编号留给正式写口逐项拒收；窥探不得 OverflowError 中止整月。
                 continue
             if item_id != int(dossier_id):
                 continue
-            outcome = item.get("outcome")
-            if outcome is None:
-                for key, val in item.items():
-                    if str(key).strip() in {"outcome", "结果"}:
-                        outcome = val
-                        break
-            if str(outcome or "").strip() == "stalled":
+            if str(canonical.get("outcome") or "").strip() == "stalled":
                 return True
     return False
 
@@ -1271,14 +1261,14 @@ def _settle_edicts(
                     # 失效快照只在实际顺颁时拒，不因未判/打回阻断整月。
                     if int(dossier["id"]) in invalid and verdict["decision"] in {"promulgated", "force_promulgated"}:
                         raise ValueError("任免案卷载荷物化失败")
-                    prior_decision = str(current.get("promulgation_decision") or "")
                     pre_stall = str(
                         (current.get("payload") or {}).get("_pre_stall_status") or ""
                     )
-                    # 已颁后 stalled→强推：只恢复办理态，不重放载荷物化（C1）。
+                    # 已颁后 stalled→强推：依实际颁布事实恢复办理，不重放物化。
+                    # 批红强颁只落历史 rescript_action，原判字段仍可能是 rejected（R2）。
                     resume_only = (
                         backed_awaiting_promulgation
-                        and prior_decision in {"promulgated", "force_promulgated"}
+                        and db.dossiers.authorizes_effects(int(current["id"]))
                     )
                     previous = getattr(db.conn, "_recommendation_snapshots_prevalidated", False)
                     db.conn._recommendation_snapshots_prevalidated = previous or int(dossier["id"]) in prevalidated

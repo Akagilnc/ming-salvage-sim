@@ -328,72 +328,34 @@ def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(
     monkeypatch.setattr("ming_sim.month_chain.run_world_segment_text", lambda *_a, **_k: "")
     result = sess.resolve_turn(allow_empty_decree=True)
     assert result.advanced is False
-    # #1917：请旨未决不先颁布／消费；案头答清（空续推）后同月落账。
-    from ming_sim.applier import Provenance
-    from ming_sim.month_chain import (
-        _DECREE_QUESTION_PREFIX, _load_chain, _save_chain,
-    )
-    desk = list(sess.pending_decisions())
-    assert desk
-    chain = _load_chain(db, int(state.turn))
-    products = chain.setdefault("rescript_continuation_texts", {})
-    choices = []
-    for row in desk:
-        event_id = str(row.get("event_id") or "")
-        if not event_id.startswith(_DECREE_QUESTION_PREFIX):
-            continue
-        products[event_id] = ""  # 空前缀：只收口请旨，不另产效果
-        opt = (row.get("options") or [{}])[0]
-        choices.append({
-            "decision_key": row["decision_key"],
-            "label": opt.get("label") or "施行",
-            "note": "照办",
-        })
-    _save_chain(db, int(state.turn), chain, source=Provenance.player_decree)
-    assert choices
-    monkeypatch.setattr(
-        "ming_sim.month_translate._default_month_translate_runner",
-        lambda *_a, **_k: {"effects": {}},
-    )
-    import json as _json
-    monkeypatch.setattr(
-        "ming_sim.agents.run_agent_text",
-        lambda *_a, **_k: _json.dumps({"title": "邸报", "report": "本月无事。"}),
-    )
-    sess.submit_hitl_choices(choices, write_gate=sess._write_gate)
     dossiers = {
         int(row["pending_action_id"]): row for row in db.dossiers.list_dossiers()
         if int(row["pending_action_id"]) in {first, second}
     }
     assert set(dossiers) == {first, second}
-    amount_by_action = {first: -2, second: -3}
-    for action_id, dossier in dossiers.items():
+    for action_id, amount in ((first, -2), (second, -3)):
+        dossier = dossiers[action_id]
         origin = f"dossier:{dossier['id']}"
         moves = list(db.conn.execute(
             "SELECT delta FROM economy_ledger WHERE origin_ref=? ORDER BY id", (origin,),
         ))
-        assert [int(row["delta"]) for row in moves] == [amount_by_action[action_id]]
+        assert [int(row["delta"]) for row in moves] == [amount]
         assert dossier["execution_outcome"] == "fulfilled"
         assert db.staged_declarations.is_settled(pending_action_decree_ref(action_id, 1))
     visible_moves = list(db.conn.execute(
         "SELECT delta FROM economy_ledger WHERE origin_ref=?", (f"affair:{visible_affair.id}",),
     ))
-    # 每道成功成案并消费的暂存各带一条可见事务支出。
-    assert [int(row["delta"]) for row in visible_moves] == [-1] * len(dossiers)
+    assert [int(row["delta"]) for row in visible_moves] == [-1, -1]
     rejections = [
         row for row in db.conn.execute("SELECT category, item_json FROM rejection_reports")
         if json.loads(row["item_json"]).get("origin_ref") == f"affair:{hidden.id}"
     ]
-    # 每道消费至少拒一次隐藏事务；夜预推 429 的旨可能在过月补跑时可见集已变。
-    assert len(rejections) >= 1
+    assert len(rejections) == (1 if exhaust_first else 2)
     assert all(row["category"] == "invalid_enum" for row in rejections)
     hidden_moves = list(db.conn.execute(
         "SELECT delta FROM economy_ledger WHERE origin_ref=?", (f"affair:{hidden.id}",),
     ))
-    # 夜预推可见集不含 hidden；过月补跑若在 hidden 已打开后取可见集，可能落一笔。
-    assert [int(row["delta"]) for row in hidden_moves] == (
-        [-1] if exhaust_first else []
-    )
+    assert [int(row["delta"]) for row in hidden_moves] == ([-1] if exhaust_first else [])
 
 def test_scene_chat_rejection_is_staged_for_later_rescript_not_shown_at_night(
     game, monkeypatch,

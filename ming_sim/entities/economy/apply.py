@@ -77,13 +77,7 @@ def _apply_economy_list(
         reason = "" if reason_raw is None else str(reason_raw)
         # 别名真源 ITEM_FIELD_ALIASES（#1917 C4：来源引用／诏书引用须入写口）。
         from ming_sim.simulation import _canonical_item_fields
-        if isinstance(move, dict):
-            move = _canonical_item_fields(move)
-            if not isinstance(move, dict):
-                rejections.append(RejectedItem(
-                    item=move, reason="经济条目须为对象", category="invalid_shape", source=source,
-                ))
-                continue
+        move = _canonical_item_fields(move)
         move_origin_ref = str(move.get("origin_ref") or "").strip()
         effective_origin_ref = str(origin_ref or move_origin_ref).strip()
         # #622：旨外标记与 origin_ref 同载体同寿命；路由前统一读取，三分支共用（不得在补饷分叉丢键）。
