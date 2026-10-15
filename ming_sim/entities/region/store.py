@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Collection
 
 from ming_sim.entities.column_write import RowStore
 
@@ -22,7 +22,13 @@ class RegionStore(RowStore):
     LOG_SQL = """INSERT INTO region_logs (turn, year, period, region_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor, origin_ref)
         VALUES (:turn, :year, :period, :region_id, :field, :old_value, :new_value, :delta, :reason, :event_id, :edict_id, :actor, :origin_ref)"""
 
-    def rows(self, *, limit: int | None = None, danger_order: bool = False) -> list[Any]:
+    def rows(
+        self,
+        *,
+        limit: int | None = None,
+        danger_order: bool = False,
+        kinds: Collection[str] | None = None,
+    ) -> list[Any]:
         """Region sheet. Danger order is the materials view; name order is the roster."""
         order = (
             "(unrest + military_pressure + gentry_resistance + (100 - public_support)) "
@@ -30,12 +36,22 @@ class RegionStore(RowStore):
             if danger_order
             else "kind DESC, name"
         )
-        sql = f"SELECT * FROM regions ORDER BY {order}"
-        params: tuple[object, ...] = ()
+        clauses: list[str] = []
+        params: list[object] = []
+        if kinds is not None:
+            kind_tuple = tuple(kinds)
+            if not kind_tuple:
+                return []
+            clauses.append(
+                f"kind IN ({','.join('?' for _ in kind_tuple)})"
+            )
+            params.extend(kind_tuple)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        sql = f"SELECT * FROM regions{where} ORDER BY {order}"
         if limit is not None:
             sql += " LIMIT ?"
-            params = (limit,)
-        return self._conn.execute(sql, params).fetchall()
+            params.append(limit)
+        return self._conn.execute(sql, tuple(params)).fetchall()
 
     def ordered_ming_fiscal_rows(self) -> Any:
         return self._conn.execute(

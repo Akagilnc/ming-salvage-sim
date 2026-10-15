@@ -695,13 +695,14 @@ def test_multi_lead_typed_archives_reach_only_each_office_successor(game, tmp_pa
     # 刑部 is a legal central yamen: successor shares archive identity with the lead.
     assert case_id in _referenceable_dossier_ids(db, case_successor.name, turn)
 
-def test_inner_court_materials_do_not_read_faction_report(game, tmp_path, monkeypatch):
+def test_inner_court_knowledge_world_excludes_court_key(game, tmp_path):
+    """#1914：派系态势进材料目录合法；近侍 knowledge.world 仍无 court 键。
+
+    旧案曾禁止 get_faction_stance_summaries（材料入口一并禁死）。现票允许
+    大臣/推演读态势，故只保留 knowledge 隔离面，不再反向禁止合法供料。
+    """
     db, state, content = game
 
-    def forbidden(*_a, **_k):
-        raise AssertionError("unauthorised faction_report")
-
-    monkeypatch.setattr(db.factions, "get_faction_stance_summaries", forbidden)
     previous = content.characters["王承恩"]
     messenger = content.characters["曹化淳"]
     db.set_character_office(previous.name, "内廷随侍", "内廷")
