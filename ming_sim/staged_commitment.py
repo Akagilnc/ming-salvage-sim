@@ -343,48 +343,31 @@ def list_due_grant_report_dossiers_for_scan(
 
 
 def list_due_minister_promise_oneshots_for_scan(
-    db: Any, turn: int,
+    db: Any, state: Any,
 ) -> List[Dict[str, object]]:
-    """#1916：大臣自诺 form③（有 end_turn、无 stages、无 ongoing）到期 → 召对待办。
+    """#1916：大臣自诺 form③ 到期 → 召对待办投影。
 
-    与 list_due_commitments 共享 form③ 谓词面，但写入 next_audience_todos 供
-    开场材料顶出；收尾仍走 close_issues acknowledged（非段派生 end_turn）。
+    到期谓词唯一真源＝``settlement_payload.list_due_commitments``；此处只滤
+    ``origin_kind=minister_promise`` 并投影 next_audience_todos 字段。
+    收尾仍走 close_issues acknowledged。
     """
-    from ming_sim.models import effect_dict_has_work
+    from ming_sim.settlement_payload import list_due_commitments
 
-    rows = db.conn.execute(
-        """
-        SELECT id, title, stage_text, end_turn, origin_ref, stages_json, ongoing_effects
-        FROM issues
-        WHERE status='active'
-          AND commitment_kind != ''
-          AND origin_kind = 'minister_promise'
-          AND end_turn > 0
-          AND end_turn <= ?
-        ORDER BY id
-        """,
-        (int(turn),),
-    ).fetchall()
     due: List[Dict[str, object]] = []
-    for row in rows:
-        if effect_dict_has_work(row["ongoing_effects"]):
+    for item in list_due_commitments(db, state):
+        if str(item.get("origin_kind") or "") != "minister_promise":
             continue
-        stages = load_commitment_stages(row["stages_json"])
-        if stages:
-            continue
-        criterion = str(row["stage_text"] or row["title"] or "")
+        criterion = str(item.get("content") or item.get("title") or "")
+        origin_ref = str(item.get("origin_ref") or "")
         due.append({
-            "commitment_ref": int(row["id"]),
+            "commitment_ref": int(item["issue_id"]),
             "stage_idx": 0,
-            "due_turn": int(row["end_turn"] or 0),
+            "due_turn": int(item.get("due_turn") or 0),
             "criterion_text": criterion,
             "origin_context": criterion,
-            "title": str(row["title"] or ""),
-            "origin_ref": str(row["origin_ref"] or ""),
-            "payload_json": {
-                "origin_ref": str(row["origin_ref"] or ""),
-                "minister_promise_oneshot": True,
-            },
+            "title": str(item.get("title") or ""),
+            "origin_ref": origin_ref,
+            "payload_json": {"origin_ref": origin_ref} if origin_ref else None,
         })
     return due
 
@@ -395,12 +378,12 @@ def write_due_staged_commitment_todos(db: Any, state: Any) -> int:
     待裁载体改道 next_audience_todos；不置 TurnPhase.AWAITING_DECISION，
     不写 <<DECISION>>，不停轮（0074/0076）。
     #1783：并入拨帑案卷 due_turn 直挂（commitment_ref=0），不另立承诺事项。
-    #1916：并入大臣自诺 form③ 一次性到期。
+    #1916：并入大臣自诺 form③ 一次性到期（谓词复用 list_due_commitments）。
     """
     turn = int(getattr(state, "turn", 0) or 0)
     due_stages = list_due_stages_for_scan(db, turn)
     due_stages.extend(list_due_grant_report_dossiers_for_scan(db, turn))
-    due_stages.extend(list_due_minister_promise_oneshots_for_scan(db, turn))
+    due_stages.extend(list_due_minister_promise_oneshots_for_scan(db, state))
     if not due_stages:
         return 0
     written = 0
