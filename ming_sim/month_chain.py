@@ -1105,8 +1105,11 @@ def _apply_stalled_deliberation_from_declaration(
             db, state, [ref], source=Provenance.system_simulation,
             alongside=accept_stalled,
         )
-    except _StalledApplyMiss:
-        # settle_staged 的 atomic_and_reload 已回滚并 reload。
+    except _StalledApplyMiss as miss:
+        # 普通未命中：atomic_and_reload 已回滚并成功 reload → False。
+        # 重载失败经 raise miss from reload_exc 挂在 __cause__，须原样上抛（N1）。
+        if miss.__cause__ is not None:
+            raise
         return False
     return ref in results
 
