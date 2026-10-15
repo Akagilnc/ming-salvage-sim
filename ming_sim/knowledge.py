@@ -126,6 +126,30 @@ def assert_origin_identity_exists(db: Any, origin: object) -> str:
     return text
 
 
+def _secret_order_visible_to(db: Any, order_id: int, character_name: str) -> bool:
+    """Single truth for secret-order access: assignee, dossier roster, inquiry."""
+    from ming_sim.materials import inquiry_source_order_id
+
+    if not character_name:
+        return False
+    order = db.character_knowledge.get_secret_order(int(order_id))
+    if order is None:
+        return False
+    if character_name == str(order["minister_name"]):
+        return True
+    dossier = db.dossiers.get_for_secret_order(int(order_id))
+    if dossier is not None and character_name in participant_roster_names(
+        dossier["participant_roster"],
+    ):
+        return True
+    # Inquiry assignments are actual delegated handling, not a position grant.
+    return any(
+        inquiry_source_order_id(event["source_id"]) == int(order_id)
+        for event in db._character_knowledge_events(character_name)
+        if event["kind"] == "inquiry_assignment"
+    )
+
+
 def origin_visible_to(
     db: Any, origin: object, character_name: str = "", *, linked_dossier_id: int = 0,
     _seen: frozenset[str] | None = None,
@@ -140,10 +164,13 @@ def origin_visible_to(
     Identity tokens reuse materials.secret_order_id_in_origin / dossier_id_in_origin
     (strict id). Claimed zero stays a claimed id (not undeclared). Unresolvable or
     missing secret/dossier/yamen identity fails closed—never public (#1915).
+
+    ``private_affair_birth`` marks restricted birth metadata, not a second ACL:
+    same-case secret-order handlers share the affair name via the secret roster
+    path; non-secret private births still use the birth roster alone (#1916).
     """
     from ming_sim.materials import (
         dossier_id_in_origin,
-        inquiry_source_order_id,
         origin_claims_secret_or_dossier,
         origin_claims_yamen,
         secret_order_id_in_origin,
@@ -174,9 +201,16 @@ def origin_visible_to(
         'SELECT kind, participant_roster FROM character_knowledge_sources WHERE source_id=?',
         (source,),
     ).fetchone()
+    birth_restricted = False
+    birth_roster: set[str] = set()
     if registered is not None and registered["kind"] != "public":
         participants = participant_roster_names(registered["participant_roster"])
-        if participants and character_name not in participants:
+        if str(registered["kind"] or "") == "private_affair_birth":
+            # Birth mark = not public. Do not let its static roster shadow the
+            # dynamic secret-order participant path (single permission truth).
+            birth_restricted = True
+            birth_roster = participants
+        elif participants and character_name not in participants:
             return False
     oral = re.match(r"chat_message:(\d+)$", source)
     if oral and int(oral.group(1)) in db._secret_origin_message_ids(character_name):
@@ -213,24 +247,28 @@ def origin_visible_to(
                 order_id = strict_sqlite_id(raw_secret)
             except (TypeError, ValueError):
                 return False
+    if order_id is None and birth_restricted:
+        # Restricted birth on an affair: resolve via linked secret dossiers so
+        # same-case handlers share metadata through one secret permission path.
+        from ming_sim.entities.affair.store import parse_origin_ref
+
+        kind, target = parse_origin_ref(source)
+        if kind == "affair":
+            for row in db.conn.execute(
+                'SELECT secret_order_id FROM decree_dossiers '
+                'WHERE affair_id=? AND secret_order_id IS NOT NULL ORDER BY id',
+                (int(target),),
+            ).fetchall():
+                try:
+                    linked_order = strict_sqlite_id(row["secret_order_id"])
+                except (TypeError, ValueError):
+                    continue
+                if _secret_order_visible_to(db, linked_order, character_name):
+                    return True
+        return bool(character_name) and character_name in birth_roster
     if order_id is None:
         return True
-    if not character_name:
-        return False
-    order = db.character_knowledge.get_secret_order(order_id)
-    if order is None:
-        return False
-    if character_name == str(order["minister_name"]):
-        return True
-    dossier = db.dossiers.get_for_secret_order(order_id)
-    if dossier is not None and character_name in participant_roster_names(dossier["participant_roster"]):
-        return True
-    # Inquiry assignments are actual delegated handling, not a position grant.
-    return any(
-        inquiry_source_order_id(event["source_id"]) == order_id
-        for event in db._character_knowledge_events(character_name)
-        if event["kind"] == "inquiry_assignment"
-    )
+    return _secret_order_visible_to(db, order_id, character_name)
 
 
 def knowledge_row_visible_to(db: Any, row: Any, character_name: str) -> bool:
