@@ -28,12 +28,16 @@ def _visible_effect_refs(
     """Freeze the same reference rosters supplied to this segment's translation."""
     from ming_sim.materials import secret_order_dossier_ids
 
-    return {
+    refs = {
         "affairs": [int(row.id) for row in db.affairs.list_open()],
         "dossiers": [int(row["id"]) for row in db.dossiers.list_for_simulation(turn)],
         # 唯一判法：案卷.secret_order_id；供 declaration_dispatch → secret_dossier_participants
         "secret_dossiers": sorted(secret_order_dossier_ids(db)),
     }
+    # #1915：在职衙门 id，供月末 textual_facts(subject_kind=yamen) 回指。
+    if hasattr(db, "yamens"):
+        refs["yamens"] = [int(row.id) for row in db.yamens.list_active()]
+    return refs
 
 
 def petition_verdict_grounding(db: Any, state: Any) -> list[dict[str, object]]:
@@ -130,7 +134,8 @@ def describe_month_effect_fields() -> str:
         f"{'、'.join(ARMY_TEXT_FIELDS)} 是文字新值；"
         "调防给 station 细地点和 station_region 在册地区id。来源 origin_ref 按本旨事实"
         f"或已授权回指填；非旨意自然变化填{SETTLEMENT_ORIGIN_SENTINEL}。只把有数值依据的变化记成数值，"
-        "点兵情况、尚未出畿等叙述在 textual_facts 按 subject_kind、subject_id、body 留原文。\n"
+        "点兵情况、尚未出畿等叙述在 textual_facts 按 subject_kind、subject_id、body 留原文；"
+        "新设衙门本月办成什么，subject_kind=yamen、subject_id=衙门 id。\n"
         "- 成对调拨只声明来源一项：缴获随军炮在败军 army_delta 值里写负数"
         "cannon_equipment 和 cannon_transfer_to=胜军id，胜军正数由引擎按共同实转门数记账；"
         "独立造炮或损耗只写自身炮增减。钱库互拨在 economy_moves 写 account=来源库、"

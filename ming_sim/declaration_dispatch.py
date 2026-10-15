@@ -147,6 +147,7 @@ class DeclarationDispatchResult:
     rushes: SectionResult
     travel_tones: SectionResult
     rejection_withdrawals: SectionResult
+    yamen_creates: SectionResult
 
     def merge(self, other: "DeclarationDispatchResult") -> "DeclarationDispatchResult":
         """按 section 逐个 merge，供 :func:`settle_staged_declarations_in_decree_order`
@@ -168,6 +169,7 @@ class DeclarationDispatchResult:
             rushes=self.rushes.merge(other.rushes),
             travel_tones=self.travel_tones.merge(other.travel_tones),
             rejection_withdrawals=self.rejection_withdrawals.merge(other.rejection_withdrawals),
+            yamen_creates=self.yamen_creates.merge(other.yamen_creates),
         )
 
 
@@ -176,6 +178,7 @@ _SECTION_FIELDS: Tuple[str, ...] = (
     "on_scene_facts", "presence", "scene_facts", "edge_events",
     "protagonist", "registrations", "effects",
     "inquiries", "rushes", "travel_tones", "rejection_withdrawals",
+    "yamen_creates",
 )
 _KNOWN_SECTIONS = frozenset(_SECTION_FIELDS)
 
@@ -189,7 +192,7 @@ def empty_dispatch_result() -> DeclarationDispatchResult:
         on_scene_facts=empty, presence=empty, scene_facts=empty, edge_events=empty,
         protagonist=ProtagonistResult(validated=None, rejected=[]), registrations=empty,
         effects=empty, inquiries=empty, rushes=empty, travel_tones=empty,
-        rejection_withdrawals=empty,
+        rejection_withdrawals=empty, yamen_creates=empty,
     )
 
 
@@ -340,6 +343,10 @@ def _dispatch_declaration_sections(
         rejection_withdrawals=_dispatch_rejection_withdrawals(
             db, state, declaration.get("rejection_withdrawals"), source=source,
             source_turn_error=source_turn_err or ("拒收撤回须来自召对轮" if night_id <= 0 else None),
+        ),
+        yamen_creates=_dispatch_yamen_creates(
+            db, state, declaration.get("yamen_creates"), source=source,
+            source_turn_error=source_turn_err,
         ),
     )
     _record_unknown_sections(collector, declaration, turn, source)
@@ -2757,6 +2764,14 @@ def _assert_textual_fact_subject_exists(db: Any, subject_kind: str, subject_id: 
             raise DeclarationDataError("事务引用须为整数") from exc
         db.affairs.get(affair_id)
         return
+    if subject_kind == "yamen":
+        try:
+            yamen_id = int(subject_id)
+        except (TypeError, ValueError) as exc:
+            raise DeclarationDataError("衙门引用须为整数") from exc
+        if db.yamens.get(yamen_id) is None:
+            raise DeclarationReferenceError(f"yamen 不存在：{subject_id}")
+        return
     store = {"character": db.characters, "army": db.armies, "region": db.regions}.get(
         subject_kind
     )
@@ -2830,6 +2845,104 @@ def _attach_character_affair_pointer(db: Any, name: str, affair_id: int) -> None
     调用方的 :func:`item_savepoint_scope` 连同人物变更一起回滚，不留半写；
     调用方把异常信息原样带回结果，不吞。"""
     db.affairs.attach_pointer("characters", name, affair_id)
+
+
+def _dispatch_yamen_creates(
+    db: Any, state: Any, raw: object, *, source: Provenance,
+    source_turn_error: Optional[str] = None,
+) -> SectionResult:
+    """新设衙门：建账上实体 + 月费科目（#1915）。
+
+    召对转译声明名称/主官/月费；本口立即落库，不另造停续协议。
+    月度下落走 textual_facts(subject_kind=yamen)。
+    """
+    from ming_sim.entities.yamen import assert_chief_exists
+    from ming_sim.applier import item_savepoint_scope
+
+    items, rejected = _section_items(raw, label="新设衙门声明", source=source)
+    applied: List[Any] = []
+    for item in items:
+        if source_turn_error is not None:
+            _reject(rejected, item, source_turn_error, "missing_ref", source)
+            continue
+        name = str(item.get("name") or "").strip()
+        chief_raw = str(item.get("chief") or item.get("chief_name") or "").strip()
+        account = str(item.get("account") or "国库").strip() or "国库"
+        fee_raw = item.get("monthly_fee")
+        if fee_raw is None:
+            fee_raw = item.get("月费")
+        if not name or not chief_raw:
+            _reject(
+                rejected, item, "新设衙门须含 name/chief",
+                "invalid_shape", source,
+            )
+            continue
+        try:
+            if isinstance(fee_raw, bool) or fee_raw is None:
+                raise TypeError("monthly_fee 须为非负整数")
+            fee = int(fee_raw)
+            if fee < 0:
+                raise ValueError("monthly_fee 不得为负")
+        except (TypeError, ValueError) as exc:
+            _reject(rejected, item, f"月费非法：{exc}", "invalid_shape", source)
+            continue
+        try:
+            chief = assert_chief_exists(db, chief_raw)
+        except DeclarationReferenceError as exc:
+            _reject(rejected, item, str(exc), "hallucinated_id", source)
+            continue
+        except DeclarationDataError as exc:
+            _reject(rejected, item, str(exc), "invalid_shape", source)
+            continue
+        origin_ref = str(item.get("origin_ref") or "").strip()
+        try:
+            with item_savepoint_scope(db, f"yamen_create_{int(state.turn)}_{id(item)}"):
+                yamen = db.yamens.create(
+                    name=name,
+                    chief_name=chief,
+                    monthly_fee=fee,
+                    fee_account=account,
+                    year=int(state.year),
+                    period=int(state.period),
+                    turn=int(state.turn),
+                    origin_ref=origin_ref,
+                )
+                fiscal_key = ""
+                if fee > 0:
+                    created_key = db.create_fiscal_item(
+                        f"衙门月费{int(yamen.id)}",
+                        account,
+                        "expense",
+                        f"{name}月费",
+                        fee,
+                        note=str(item.get("reason") or f"新设{name}月费"),
+                        origin_ref=f"yamen:{int(yamen.id)}",
+                        turn=int(state.turn),
+                        beyond_intent=0,
+                        commit=False,
+                    )
+                    if not created_key:
+                        raise DeclarationDataError(
+                            f"衙门「{name}」月费科目未能建项"
+                        )
+                    fiscal_key = str(created_key)
+                    db.yamens.set_fiscal_key(int(yamen.id), fiscal_key)
+                    yamen = db.yamens.get(int(yamen.id)) or yamen
+                applied.append({
+                    "id": int(yamen.id),
+                    "name": yamen.name,
+                    "chief": yamen.chief_name,
+                    "monthly_fee": int(yamen.monthly_fee),
+                    "fiscal_key": yamen.fiscal_key or fiscal_key,
+                    "account": yamen.fee_account,
+                })
+        except DeclarationDataError as exc:
+            _reject(rejected, item, str(exc), "invalid_shape", source)
+            continue
+        except DeclarationReferenceError as exc:
+            _reject(rejected, item, str(exc), "hallucinated_id", source)
+            continue
+    return SectionResult(applied=applied, rejected=rejected)
 
 
 def _dispatch_textual_facts(

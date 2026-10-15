@@ -11,7 +11,7 @@ from ming_sim.entities.column_write import RowStore
 from ming_sim.models import reign_period_label
 
 
-TEXTUAL_FACT_SUBJECT_KINDS = frozenset({"character", "army", "region", "affair"})
+TEXTUAL_FACT_SUBJECT_KINDS = frozenset({"character", "army", "region", "affair", "yamen"})
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS textual_facts (

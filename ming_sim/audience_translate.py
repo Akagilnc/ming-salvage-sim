@@ -343,7 +343,10 @@ def build_c0_declaration_shape() -> str:
         "    }\n"
         "  ],\n"
         '  "textual_facts": [\n'
-        '    {"subject_kind": "character|army|region", "subject_id": "id", "body": "文字事实", "origin_ref": "本条事实真实来源引用（如 dossier:id / secret_order:id），与 affair_declaration 分开"}\n'
+        '    {"subject_kind": "character|army|region|yamen", "subject_id": "id", "body": "文字事实", "origin_ref": "本条事实真实来源引用（如 dossier:id / secret_order:id），与 affair_declaration 分开"}\n'
+        "  ],\n"
+        '  "yamen_creates": [\n'
+        '    {"name": "衙门名", "chief": "主官人名", "monthly_fee": "正整数两", "account": "国库|内库"}\n'
         "  ],\n"
         '  "public_sayings": [\n'
         "    {\n"
@@ -425,6 +428,8 @@ def build_audience_translate_prompt(
         "指向暂存清单里那件（action_id）；御笔手敕的 endorser_id 为空。\n"
         "- 当场已发生（斩杀/拿下/伤臂/告退等）走 on_scene_facts / textual_facts / "
         "presence / public_sayings / edge_events，不要写成交办。\n"
+        "- 皇帝新设衙门（钱粮稽查司/火器局等）并指定主官、拨月费 → yamen_creates；"
+        "名称/主官/月费齐全才成条，主官须是名册人物。\n"
         "- effects 是过月才核算的旨意办理效果；召对夜本轮留空，不得将尚未发生的效果写成当场实况。\n"
         "- 无对应事实的 section 输出空数组（protagonist 无则省略或 null），不要编造。\n"
         "- 承接不了的交办仍写入 commissions（由代码拒收），不要改写皇帝原话去猜。\n"

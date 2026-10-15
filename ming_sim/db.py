@@ -853,8 +853,11 @@ class GameDB:
         # 正常 insert_issue 写端登记来源；见闻读口可按持久记录 participant_roster 发现。
         from ming_sim.entities.textual_fact import TextualFactStore
         from ming_sim.entities.affair import AffairStore
+        from ming_sim.entities.yamen import YamenStore
         TextualFactStore.ensure_schema(self.conn)
         self.textual_facts = TextualFactStore(self.conn)
+        YamenStore.ensure_schema(self.conn)
+        self.yamens = YamenStore(self.conn)
         self._rollback_stores = {
             table: store
             for store in (
@@ -864,6 +867,7 @@ class GameDB:
                 self.characters,
                 self.factions,
                 self.textual_facts,
+                self.yamens,
                 self.person_logs,
                 self.reign,
             )

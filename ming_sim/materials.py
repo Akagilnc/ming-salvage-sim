@@ -29,6 +29,7 @@ _PUBLIC_DIR = "公开说法"
 
 _REGION_DIR = "地区"
 _ARMY_DIR = "军队"
+_YAMEN_DIR = "衙门"
 _SECRET_DIR = "密令"
 _RECOMMEND_DIR = "荐人"
 _FACT_DIR = "事实"
@@ -740,6 +741,55 @@ def _write_region_detail_files(tmp: Path, db: Any, knowledge: dict) -> list[str]
     return index
 
 
+def _yamen_material_text(db: Any, yamen: Any) -> str:
+    """主官/推演可读的衙门账：名称、主官、月费与历月下落。"""
+    lines = [
+        f"名称：{yamen.name}",
+        f"主官：{yamen.chief_name or '（未指定）'}",
+        f"月费：{int(yamen.monthly_fee)}两（{yamen.fee_account}）",
+        f"状态：{yamen.status}",
+    ]
+    facts = db.textual_facts.readable_materials(
+        subject_kind="yamen", subject_id=str(int(yamen.id)),
+    )
+    if facts:
+        lines.append("月度下落：")
+        for fact in facts:
+            body = str(fact.body or "").strip()
+            if not body:
+                continue
+            month = getattr(fact, "occurred_month", "") or f"{fact.year}年{fact.period}月"
+            lines.append(f"{month}：{body}")
+    else:
+        lines.append("月度下落：（尚无）")
+    return "\n".join(lines)
+
+
+def _write_chief_yamen_files(tmp: Path, db: Any, character: Any) -> list[str]:
+    """主官才读本衙门整本；其他经手人不得因参与一事取得整本（#1915）。"""
+    name = str(getattr(character, "name", "") or "").strip()
+    if not name or not hasattr(db, "yamens"):
+        return []
+    index: list[str] = []
+    for yamen in db.yamens.list_for_chief(name):
+        rel = f"{_YAMEN_DIR}/{_safe_segment(yamen.name)}/详情.txt"
+        _write_text(tmp / rel, _yamen_material_text(db, yamen))
+        index.append(rel)
+    return index
+
+
+def _write_world_yamen_files(tmp: Path, db: Any) -> list[str]:
+    """过月推演材料：全部在职衙门及其月度下落。"""
+    if not hasattr(db, "yamens"):
+        return []
+    index: list[str] = []
+    for yamen in db.yamens.list_active():
+        rel = f"{_YAMEN_DIR}/{_safe_segment(yamen.name)}/详情.txt"
+        _write_text(tmp / rel, _yamen_material_text(db, yamen))
+        index.append(rel)
+    return index
+
+
 def _write_army_detail_files(tmp: Path, db: Any, knowledge: dict) -> list[str]:
     army_ids = set((knowledge.get("scope") or {}).get("army_ids") or ())
     if not army_ids:
@@ -869,6 +919,7 @@ def _write_tree(
     index.extend(_write_textual_fact_files(tmp, db, character, knowledge, matter_lines))
     index.extend(_write_region_detail_files(tmp, db, knowledge))
     index.extend(_write_army_detail_files(tmp, db, knowledge))
+    index.extend(_write_chief_yamen_files(tmp, db, character))
 
     _write_text(tmp / _INDEX_NAME, "\n".join(index) if index else "")
     return index
@@ -1546,6 +1597,8 @@ def _write_world_tree(
     _write_text(tmp / _COURT_ROSTER_REL, roster_text)
     index.append(_COURT_ROSTER_REL)
 
+    index.extend(_write_world_yamen_files(tmp, db))
+
     for name in _world_roster_names(db):
         knowledge = build_character_knowledge(db, state, name)
         person_dir = f"{_PERSON_DIR}/{_safe_segment(name)}"
@@ -2092,6 +2145,13 @@ def _write_one_present_person(
         character_office_archive_text(db, state, character, knowledge),
     )
     index.append(office_rel)
+
+    # #1915：主官私有子树下的本衙门整本；路径挂在人物名下，避免与他人共享。
+    if hasattr(db, "yamens"):
+        for yamen in db.yamens.list_for_chief(name):
+            yamen_rel = f"{base}/{_YAMEN_DIR}/{_safe_segment(yamen.name)}/详情.txt"
+            _write_text(tmp / yamen_rel, _yamen_material_text(db, yamen))
+            index.append(yamen_rel)
 
     secret_rel = _write_secret_order_file(
         tmp, db, state, character, rel=f"{base}/{_SECRET_DIR}/进行中.txt",
