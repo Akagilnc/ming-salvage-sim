@@ -1606,7 +1606,7 @@ def _dispatch_commission_items(
             # 未分类写入故障不在此冒充拒收（#1897 E1）。
             continue
 
-        strategy = item.get("strategy_selection")
+        strategy = _declared_object_slot(item.get("strategy_selection"))
         if strategy is not None:
             from ming_sim.strict_types import strict_sqlite_id
             body = _declared_prose(item.get("text"))
@@ -1657,7 +1657,7 @@ def _dispatch_commission_items(
             applied.append({"id": row_id, "payload": payload, "kind": "directive"})
             continue
 
-        progress = item.get("secret_order_progress")
+        progress = _declared_object_slot(item.get("secret_order_progress"))
         if progress is not None:
             from ming_sim.strict_types import strict_sqlite_id
             if not isinstance(progress, Mapping):
@@ -1687,7 +1687,7 @@ def _dispatch_commission_items(
             applied.append({"id": row_id, "kind": "secret_order"})
             continue
 
-        update = item.get("secret_order_update")
+        update = _declared_object_slot(item.get("secret_order_update"))
         if update is not None:
             from ming_sim.strict_types import strict_sqlite_id
             if not isinstance(update, Mapping):
@@ -1748,7 +1748,7 @@ def _dispatch_commission_items(
             applied.append({"id": row_id, "kind": "secret_order"})
             continue
 
-        review = item.get("secret_order_review")
+        review = _declared_object_slot(item.get("secret_order_review"))
         if review is not None:
             from ming_sim.strict_types import strict_sqlite_id
             if not isinstance(review, Mapping):
@@ -1781,7 +1781,7 @@ def _dispatch_commission_items(
             applied.append({"id": row_id, "kind": "secret_order"})
             continue
 
-        secret = item.get("secret_order")
+        secret = _declared_object_slot(item.get("secret_order"))
         if secret is not None:
             if not isinstance(secret, Mapping):
                 _reject(rejected, item, "密令新建载荷须为独立对象", "invalid_shape", source)
@@ -1888,7 +1888,7 @@ def _dispatch_commission_items(
             applied.append({"id": row_id, "kind": "secret_order"})
             continue
 
-        assignment = item.get("assignment")
+        assignment = _declared_object_slot(item.get("assignment"))
         if assignment is not None:
             if not isinstance(assignment, Mapping):
                 _reject(rejected, item, "责成交办载荷须为独立对象", "invalid_shape", source)
@@ -1946,7 +1946,7 @@ def _dispatch_commission_items(
                 _reject(rejected, item, "责成交办未通过现有准入", "invalid_state", source)
             continue
 
-        revoke = item.get("revoke")
+        revoke = _declared_object_slot(item.get("revoke"))
         if revoke is not None:
             if not isinstance(revoke, Mapping):
                 _reject(rejected, item, "撤令交办载荷须为独立对象", "invalid_shape", source)
@@ -1994,7 +1994,7 @@ def _dispatch_commission_items(
                 )
             continue
 
-        punishment = item.get("punishment")
+        punishment = _declared_object_slot(item.get("punishment"))
         if punishment is not None:
             if not isinstance(punishment, Mapping):
                 _reject(rejected, item, "惩处交办载荷须为独立对象", "invalid_shape", source)
@@ -2033,7 +2033,7 @@ def _dispatch_commission_items(
                 _reject(rejected, item, "惩处交办未通过现有准入", "invalid_state", source)
             continue
 
-        pacification = item.get("pacification")
+        pacification = _declared_object_slot(item.get("pacification"))
         if pacification is not None:
             if not isinstance(pacification, Mapping):
                 _reject(rejected, item, "招抚交办载荷须为独立对象", "invalid_shape", source)
