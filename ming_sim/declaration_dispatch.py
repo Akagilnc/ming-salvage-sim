@@ -2858,6 +2858,33 @@ def _attach_character_affair_pointer(db: Any, name: str, affair_id: int) -> None
     db.affairs.attach_pointer("characters", name, affair_id)
 
 
+def _canonical_yamen_founding_origin(origin_ref: str) -> str:
+    """衙门建制来源：空＝公开；禁止 yamen 回指（身份不是来源，且可成环 #1915 F5）。
+
+    密令/案卷 id 走 strict_sqlite_id，超界在声明边界拒收，不拖到材料读口。
+    """
+    import re
+
+    from ming_sim.strict_types import strict_sqlite_id
+
+    text = str(origin_ref or "").strip()
+    if not text:
+        return ""
+    if text.startswith("yamen:"):
+        raise DeclarationDataError("衙门建制来源不得回指另一衙门")
+    try:
+        secret = re.fullmatch(r"secret_order(?:_brief)?:(\d+)", text)
+        if secret is not None:
+            return f"secret_order:{strict_sqlite_id(secret.group(1))}"
+        dossier = re.fullmatch(r"dossier:(\d+)", text)
+        if dossier is not None:
+            return f"dossier:{strict_sqlite_id(dossier.group(1))}"
+    except (TypeError, ValueError) as exc:
+        raise DeclarationDataError("衙门建制来源 id 非法") from exc
+    # 其它非空来源原样保留（与既有 provenance 字符串共存）；不从正文猜测。
+    return text
+
+
 def _dispatch_yamen_creates(
     db: Any, state: Any, raw: object, *, source: Provenance,
     source_turn_error: Optional[str] = None,
@@ -2908,6 +2935,11 @@ def _dispatch_yamen_creates(
             _reject(rejected, item, str(exc), "invalid_shape", source)
             continue
         origin_ref = str(item.get("origin_ref") or "").strip()
+        try:
+            origin_ref = _canonical_yamen_founding_origin(origin_ref)
+        except DeclarationDataError as exc:
+            _reject(rejected, item, str(exc), "invalid_shape", source)
+            continue
         try:
             with item_savepoint_scope(db, f"yamen_create_{int(state.turn)}_{id(item)}"):
                 yamen = db.yamens.create(

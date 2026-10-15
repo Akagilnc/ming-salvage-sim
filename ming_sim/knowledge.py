@@ -87,23 +87,37 @@ def _reader_in_issue_audience(db: Any, issue: Any, character_name: str) -> bool:
 
 def origin_visible_to(
     db: Any, origin: object, character_name: str = "", *, linked_dossier_id: int = 0,
+    _seen: frozenset[str] | None = None,
 ) -> bool:
     """Secret provenance grants only handlers; office/publicity never grants truth.
 
     Empty reader denotes the public feed, not the all-seeing world simulator.
     Affairs are associations, not access boundaries for their individual facts.
     ``yamen:<id>`` chases the office's own origin_ref (#1915 F1), same shape as
-    dossier→secret_order; no separate permission model.
+    dossier→secret_order; no separate permission model. Chase uses strict id +
+    seen-set so corrupt/cyclic rows cannot RecursionError / OverflowError the
+    materials path (#1915 F5); write seam rejects yamen→yamen founding origins.
     """
     source = str(origin or "")
+    seen = _seen or frozenset()
+    if source and source in seen:
+        return True
     yamen_match = re.match(r"yamen:(\d+)(?:[:/]|$)", source)
     if yamen_match is not None:
-        yamen = db.yamens.get(int(yamen_match.group(1)))
-        nested = str(getattr(yamen, "origin_ref", "") or "").strip() if yamen is not None else ""
-        if nested and nested != source:
-            return origin_visible_to(
-                db, nested, character_name, linked_dossier_id=linked_dossier_id,
-            )
+        from ming_sim.strict_types import strict_sqlite_id
+
+        try:
+            yamen_id = strict_sqlite_id(yamen_match.group(1))
+        except (TypeError, ValueError):
+            yamen_id = None
+        if yamen_id is not None:
+            yamen = db.yamens.get(yamen_id)
+            nested = str(getattr(yamen, "origin_ref", "") or "").strip() if yamen is not None else ""
+            if nested and nested != source:
+                return origin_visible_to(
+                    db, nested, character_name, linked_dossier_id=linked_dossier_id,
+                    _seen=seen | {source},
+                )
     registered = db.conn.execute(
         'SELECT kind, participant_roster FROM character_knowledge_sources WHERE source_id=?',
         (source,),

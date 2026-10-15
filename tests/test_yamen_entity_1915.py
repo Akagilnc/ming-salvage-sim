@@ -501,3 +501,63 @@ def test_secret_yamen_hidden_from_public_materials_and_treasury(game, tmp_path):
         not origin_visible_to(db, str(item.get("origin_ref") or ""), "")
         for item in fee_moves
     )
+
+
+def test_yamen_creates_shape_includes_origin_ref_contract():
+    """转译契约 yamen_creates 含 origin_ref 字段与填写职责（结构化 shape 串）。"""
+    from ming_sim.audience_translate import build_c0_declaration_shape
+
+    shape = build_c0_declaration_shape()
+    assert '"yamen_creates"' in shape
+    yamen_block = shape.split('"yamen_creates"', 1)[1].split("]", 1)[0]
+    assert "origin_ref" in yamen_block
+    assert "secret_order" in yamen_block or "dossier" in yamen_block
+
+
+def test_yamen_origin_rejects_yamen_backref_and_overflow(game):
+    """建制来源禁止 yamen 回指与超界密令 id；合法同批仍落。"""
+    db, state, _ = game
+    night = open_night(db, state, location="乾清宫", time_of_day="夜")
+    night_id = int(night["id"])
+    chat_turn_id = _active_chat_turn(db, state, night_id)
+    result = apply_audience_round_translation(
+        db, state,
+        {
+            "yamen_creates": [
+                {
+                    "name": "回指司",
+                    "chief": CHIEF,
+                    "monthly_fee": 1,
+                    "account": "国库",
+                    "origin_ref": "yamen:2",
+                },
+                {
+                    "name": "超界来源司",
+                    "chief": CHIEF,
+                    "monthly_fee": 1,
+                    "account": "国库",
+                    "origin_ref": "secret_order:9223372036854775808",
+                },
+                {
+                    "name": "公开合法司",
+                    "chief": CHIEF,
+                    "monthly_fee": 1,
+                    "account": "国库",
+                },
+            ]
+        },
+        night_id=night_id,
+        chat_turn_id=chat_turn_id,
+        minister_name=CHIEF,
+    )
+    assert len(result.yamen_creates.rejected) == 2
+    assert len(result.yamen_creates.applied) == 1
+    assert [y.name for y in db.yamens.list_active()] == ["公开合法司"]
+    # 读口对历史损坏回指不得炸材料树
+    assert origin_visible_to(db, "yamen:9223372036854775808", "") is True
+    gazette = prepare_gazette_author_materials(db, state)
+    try:
+        assert any("衙门" in line for line in gazette.index_lines)
+    finally:
+        from ming_sim.materials import release_material_tree
+        release_material_tree(gazette.root)
