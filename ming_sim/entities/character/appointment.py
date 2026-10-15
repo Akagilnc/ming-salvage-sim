@@ -20,6 +20,7 @@ from ming_sim.db import (
 )
 from ming_sim.exceptions import OfficeAppointmentRejection
 from ming_sim.models import GameState, is_vassal_prince
+from ming_sim.supervision import character_tenure
 
 def _appointment_region_id(payload: Dict[str, object]) -> str:
     """Typed 任所 from appointment payload keys; never inferred from title/location."""
@@ -147,7 +148,7 @@ def _displace_duplicate_offices(
             else infer_office_type_from_office(new_holder_office, old_type, db.llm_config)
         )
         # 排挤后 character_offices / 内存 office_region 与 characters 同事务同步：
-        # 全顶替 → 名分，备档删除、任所清空；部分保留 → 余职 + 原 seat 入 record。
+        # 全顶替 → 名分，不覆盖历史备档；部分保留 → 余职 + 原 seat/任别入 record。
         # 内存 seat 必须以备档真源对齐（record 后可能因非地方 office_type 钳空）。
         retained_seat = "" if fully_displaced else str(
             db.characters.office_region(row["name"]) or ""
@@ -167,9 +168,10 @@ def _displace_duplicate_offices(
             db.characters.update(
                 row["name"], {"office": new_holder_office, "office_type": new_type}
             )
-        db._record_character_office(
-            row["name"], new_holder_office, new_type, "被顶替", region_id=retained_seat,
-        )
+        with _appointment_tenure_scope(db, character_tenure(db, row["name"])):
+            db._record_character_office(
+                row["name"], new_holder_office, new_type, "被顶替", region_id=retained_seat,
+            )
         archived_seat = str(db.characters.office_region(row["name"]) or "").strip()
         if content is not None and row["name"] in content.characters:
             ch = content.characters[row["name"]]
