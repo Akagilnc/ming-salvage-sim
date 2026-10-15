@@ -42,8 +42,9 @@ def normalize_office(office: str) -> str:
 def office_title_continues(current_office: object, desired_office: object) -> bool:
     """Desired titles are a non-empty subset of current — same posting restatement.
 
-    Single authority for noop / seat reuse / concurrent-title preserve. True transfer
-    declares titles outside the current set or a different seat (checked by caller).
+    Single authority for noop / seat reuse / appointment concurrent-title preserve.
+    Callers that apply explicit 调任 must not treat subset alone as keep-old-titles;
+    different seat is also a transfer (checked by caller).
     """
     current = normalize_office(str(current_office or ""))
     desired = normalize_office(str(desired_office or ""))

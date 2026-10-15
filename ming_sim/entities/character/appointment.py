@@ -243,10 +243,14 @@ def apply_office_appointment(
     faction: str = "中立",
     appointment_tenure: str = "真除",
     region_id: str = "",
+    action: str = "",
     llm_config: Any = None,
     source: Provenance = Provenance.system_simulation,
 ) -> Dict[str, object] | RejectedItem:
     """朝臣任命/调任的唯一落地核。
+
+    ``action`` 为声明原动作（归一前）。仅 ``任命`` 在同任所职名续任时保留未声明兼衔；
+    ``调任`` 按 ADR 0009 决定1 旧职解绑+新职绑定，不得凭子集关系覆盖。
 
     写前数据失败返回 RejectedItem。授官、起复、建档与顶替的写口异常原样上抛，
     由外层事务回滚；本核不做快照、不把代码故障记成拒收。
@@ -299,15 +303,15 @@ def apply_office_appointment(
             )
         except OfficeAppointmentRejection as exc:
             return _office_appointment_failure(name, new_office, exc, source=source)
-        # 同任所继续任职（改任别 / 复述现职子集）：声明职名常只带其中一缺，
-        # 未声明撤换的兼衔须保留（#1912 P1）。身份判定唯一权威 office_title_continues
-        # + 已解析 seat；跨任所不得用旧任所覆盖新 seat。
-        if cur_status == "active":
+        # 仅改任别 / 任命复述现职子集：声明常只带一缺，未声明撤换的兼衔保留。
+        # 明确调任（动作=调任）按 ADR 0009 决定1 解绑旧职，不得凭子集盖回全衔。
+        # 职类交给 set_character_office 规范；禁止用旧 office_type 覆盖写口结果。
+        declared_action = str(action or "").strip()
+        if cur_status == "active" and declared_action == "任命":
             old_norm = normalize_office(str(old_office or ""))
             existing_seat = str(db.characters.office_region(name) or "").strip()
             if office_title_continues(old_norm, new_office) and seat == existing_seat:
                 new_office = old_norm
-                new_office_type = current_office_type or new_office_type
         if cur_status != "active":
             db.set_character_status(
                 state,
@@ -332,13 +336,20 @@ def apply_office_appointment(
                 content.characters[name].status_reason = ""
                 content.characters[name].reason_code = ""
         seat = db.characters.office_region(name) or seat
+        # 以写口规范结果为准：读回 DB，同步调用方 content（与 db.content 可能不是同一对象）。
+        # 禁止再用写前 new_office_type 覆盖内存。
+        landed = db.characters.row(name, fields="office,office_type")
+        if landed is not None:
+            if str(landed["office"] or "").strip():
+                new_office = str(landed["office"])
+            if content is not None and name in content.characters:
+                holder = content.characters[name]
+                holder.office = new_office
+                holder.office_type = str(landed["office_type"] or "")
+                holder.office_region = seat
         displaced_parts = _displace_duplicate_offices(
             db, content, name, new_office, region_id=seat,
         )
-        holder = content.characters[name]
-        holder.office = new_office
-        holder.office_type = new_office_type
-        holder.office_region = seat
         return {
             "name": name, "old_status": cur_status, "old_office": old_office, "new_office": new_office,
             "kind": "transfer", "reason": reason,
