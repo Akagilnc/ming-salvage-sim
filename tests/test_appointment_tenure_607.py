@@ -6,6 +6,7 @@ import pytest
 import ming_sim.entities.character.appointment as office_appointment
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import section
+from ming_sim.supervision import character_tenure
 
 VALID_TENURES = ("真除", "署理", "兼署", "加衔")
 
@@ -44,7 +45,7 @@ def test_appointment_dossier_and_office_archive_preserve_each_tenure(game):
 
     for index, (name, tenure) in enumerate(zip(names, VALID_TENURES), 1):
         dossier = _promulgate_appointment(
-            db, state, content, name, f"任别验收官{index}", tenure,
+            db, state, content, name, "兵部尚书,左都御史", tenure,
         )
         assert json.loads(dossier["payload_json"])["任别"] == tenure
         office = db.conn.execute(
@@ -52,6 +53,18 @@ def test_appointment_dossier_and_office_archive_preserve_each_tenure(game):
             (name,),
         ).fetchone()
         assert office["appointment_tenure"] == tenure
+
+        successor = names[index % len(names)]
+        successor_tenure = VALID_TENURES[index % len(VALID_TENURES)]
+        _promulgate_appointment(
+            db, state, content, successor, "兵部尚书", successor_tenure,
+        )
+        retained = db.characters.row(name, table="character_offices")
+        assert (retained["office_title"], retained["appointment_tenure"]) == (
+            "左都御史", tenure,
+        )
+        assert character_tenure(db, name) == tenure
+        assert character_tenure(db, successor) == successor_tenure
 
 def test_legacy_appointment_defaults_to_permanent_without_rejudging(game):
     db, state, content = game
