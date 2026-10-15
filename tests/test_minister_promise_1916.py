@@ -514,21 +514,22 @@ def test_c1_minister_promise_origin_not_public_visible(game, monkeypatch):
         return real_exp(knowledge, audible_entries)
 
     def spy_mft(value, indent=""):
-        # 序列化边界：观察待写案卷记录的 id / secret_order_id，不锁人读标签。
-        if isinstance(value, Mapping):
-            for block in value.values():
-                if not isinstance(block, Mapping):
-                    continue
-                dossier_section = block.get("案卷")
-                if not isinstance(dossier_section, Mapping):
-                    continue
-                record = dossier_section.get("案卷")
-                if not isinstance(record, Mapping) or "id" not in record:
-                    continue
-                did = int(record["id"])
-                captured["written_dossier_ids"].add(did)
-                if int(record.get("secret_order_id") or 0) > 0:
-                    captured["written_secret_dossier_ids"].add(did)
+        # 序列化边界：递归观察具 id/action_type/affair_id 的案卷记录字段，
+        # 不依赖人读标题或嵌套展示层级。
+        def _walk(node):
+            if isinstance(node, Mapping):
+                keys = set(node)
+                if {"id", "action_type"}.issubset(keys) and "affair_id" in keys:
+                    did = int(node["id"])
+                    captured["written_dossier_ids"].add(did)
+                    if int(node.get("secret_order_id") or 0) > 0:
+                        captured["written_secret_dossier_ids"].add(did)
+                for child in node.values():
+                    _walk(child)
+            elif isinstance(node, (list, tuple)):
+                for child in node:
+                    _walk(child)
+        _walk(value)
         return real_mft(value, indent)
 
     def spy_write(
