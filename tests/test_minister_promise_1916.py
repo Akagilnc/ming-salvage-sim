@@ -74,6 +74,9 @@ def test_minister_self_promise_timed_and_open_land_without_emperor_approval(
     issues_before = {
         int(r["id"]) for r in db.conn.execute("SELECT id FROM issues").fetchall()
     }
+    affairs_before = {
+        int(r["id"]) for r in db.conn.execute("SELECT id FROM affairs").fetchall()
+    }
 
     def translate(prompt, llm_config):
         base = offline_empty_audience_translate(prompt, llm_config)
@@ -88,6 +91,12 @@ def test_minister_self_promise_timed_and_open_land_without_emperor_approval(
                         "promisor": promisor,
                         "deadline_months": 1,
                     },
+                    # R1：attach=new 创建事务须随撤回删除。
+                    "affair_declaration": {
+                        "attach": "new",
+                        "name": "自诺事务0",
+                        "origin": "大臣自诺",
+                    },
                 },
                 {
                     "text": "臣愿扩到五万流民。",
@@ -95,6 +104,11 @@ def test_minister_self_promise_timed_and_open_land_without_emperor_approval(
                         "title": "扩到五万流民",
                         "content": "扩到五万流民",
                         "promisor": "杨嗣昌",
+                    },
+                    "affair_declaration": {
+                        "attach": "new",
+                        "name": "自诺事务1",
+                        "origin": "大臣自诺",
                     },
                 },
             ],
@@ -138,7 +152,15 @@ def test_minister_self_promise_timed_and_open_land_without_emperor_approval(
     ).fetchone()["n"])
     assert dossiers_after == dossiers_before
 
-    # J1：夜内直写 issues 接入撤回前像——undo 后自诺行消失。
+    # 落账后应新建了两个事务（attach=new）。
+    affairs_landed = {
+        int(r["id"]) for r in db.conn.execute(
+            "SELECT id FROM affairs WHERE status='open'",
+        ).fetchall()
+    }
+    assert len(affairs_landed - affairs_before) == 2
+
+    # J1/R1：issues + 本轮新建 affairs 均入前像——undo 后回到前像。
     db.reign.set_chat_turn_status("active", int(chat_turn_id))
     db.conn.commit()
     db.undo_chat_turn(int(chat_turn_id))
@@ -146,6 +168,10 @@ def test_minister_self_promise_timed_and_open_land_without_emperor_approval(
         int(r["id"]) for r in db.conn.execute("SELECT id FROM issues").fetchall()
     }
     assert issues_after_undo == issues_before
+    affairs_after_undo = {
+        int(r["id"]) for r in db.conn.execute("SELECT id FROM affairs").fetchall()
+    }
+    assert affairs_after_undo == affairs_before
     assert _active_commitments_for(db, promisor) == []
     assert _active_commitments_for(db, "杨嗣昌") == []
 
@@ -257,9 +283,23 @@ def test_timed_minister_promise_due_appears_in_promisor_opening_materials(
     assert any(int(i.get("id") or 0) == issue_id for i in knowledge.get("issues") or [])
     prepared = prepare_scene_materials(db, state)
     try:
-        # 开场供料与 pending 场面同一身份：断线即红（不得只断言 opening 非空）。
-        marker = f'"commitment_ref": {issue_id}'
-        assert marker in prepared.opening, prepared.opening
+        # R2：对交付 opening 中 JSON 事实反序列化，按字段等值核对身份
+        # （禁子串：commitment_ref=4 不得匹配 40）。
+        opening_facts = []
+        for line in str(prepared.opening or "").splitlines():
+            text = line.strip()
+            if not text.startswith("{"):
+                continue
+            try:
+                obj = json.loads(text)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(obj, dict):
+                opening_facts.append(obj)
+        assert any(
+            int(item.get("commitment_ref") or 0) == int(issue_id)
+            for item in opening_facts
+        ), opening_facts
     finally:
         release_material_tree(prepared.root)
 

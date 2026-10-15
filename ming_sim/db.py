@@ -855,6 +855,12 @@ class GameDB:
         from ming_sim.entities.affair import AffairStore
         TextualFactStore.ensure_schema(self.conn)
         self.textual_facts = TextualFactStore(self.conn)
+        from ming_sim.entities.staged_declaration import StagedDeclarationStore
+        StagedDeclarationStore.ensure_schema(self.conn)
+        self.staged_declarations = StagedDeclarationStore(self.conn)
+        AffairStore.ensure_schema(self.conn)
+        self.affairs = AffairStore(self.conn)
+        # affairs 须入前像：夜内 attach=new 创建事务随撤回删除（ADR 0038 / #1916 R1）。
         self._rollback_stores = {
             table: store
             for store in (
@@ -866,14 +872,10 @@ class GameDB:
                 self.textual_facts,
                 self.person_logs,
                 self.reign,
+                self.affairs,
             )
             for table in store.TABLES
         }
-        from ming_sim.entities.staged_declaration import StagedDeclarationStore
-        StagedDeclarationStore.ensure_schema(self.conn)
-        self.staged_declarations = StagedDeclarationStore(self.conn)
-        AffairStore.ensure_schema(self.conn)
-        self.affairs = AffairStore(self.conn)
         from ming_sim.entities.record_store import (
             ChatMessageStore,
             MonthOpenSnapshotStore,
