@@ -2142,23 +2142,20 @@ def _eligible_rescript_answers(
             if choice_decision(row.get("choice")) in {"force_promulgated", "withdrawn", "hold"}:
                 eligible.append(row)
         elif event.startswith("deliberation:"):
-            # 本次待裁未消费的强推／留中仍挡月尾；已消费 decision_key 不再入选（C7）。
-            from ming_sim.rescript_actions import deliberation_answer_already_consumed
-
+            # 本次待裁未消费的强推／留中仍挡月尾；已入 rescript_consumed 不再入选（C7／#1847）。
             did = _deliberation_dossier_id(event)
             if did is None:
                 continue
             action = choice_decision(row.get("choice"))
             if action not in {"imperial_push", "hold"}:
                 continue
+            key = str(row.get("decision_key") or "")
+            if key in chain.get("rescript_consumed", []):
+                continue
             original = db.dossiers.get(did)
             if original is None:
                 continue
-            payload = original.get("payload") or {}
-            key = str(row.get("decision_key") or "")
-            if deliberation_answer_already_consumed(payload, key):
-                continue
-            if str(payload.get("deliberation_state") or "") != "stalled":
+            if str((original.get("payload") or {}).get("deliberation_state") or "") != "stalled":
                 continue
             eligible.append(row)
     return eligible
@@ -2205,19 +2202,24 @@ def _consume_rescript_answers(
                 if original_id is None:
                     continue
                 action = choice_decision(row.get("choice"))
+                key = str(row["decision_key"])
                 with atomic(db):
                     if action == "hold":
                         apply_imperial_deliberation_hold(
                             db, state, target_dossier_id=original_id,
-                            decision_key=row["decision_key"],
                             note=(row.get("choice") or {}).get("note", ""),
                         )
                     else:
                         apply_imperial_deliberation_push(
                             db, state, target_dossier_id=original_id,
-                            decision_key=row["decision_key"],
+                            decision_key=key,
                             decree_text=(row.get("choice") or {}).get("note", ""),
                         )
+                    # 与急务票拟同缝：效果与 rescript_consumed 同事务持久。
+                    consumed = chain.setdefault("rescript_consumed", [])
+                    if key not in consumed:
+                        consumed.append(key)
+                    _save_chain(db, turn, chain, source=source)
             elif event_id.startswith("dossier:"):
                 dossier_id = int(event_id.split(":", 1)[1])
                 apply_dossier_promulgation(

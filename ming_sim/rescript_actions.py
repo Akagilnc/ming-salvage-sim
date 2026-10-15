@@ -85,33 +85,6 @@ def persist_answers(db: Any, state: Any, choices: list, *, content: Any = None) 
                 db.record_event_decision_choice(state, event_id, choice, commit=False)
 
 
-def _deliberation_consumed_keys(payload: Mapping[str, object]) -> list:
-    raw = payload.get("_deliberation_consumed_keys")
-    if isinstance(raw, list):
-        return [str(x) for x in raw if str(x or "").strip()]
-    return []
-
-
-def _mark_deliberation_answer_consumed(payload: dict, decision_key: str) -> None:
-    key = str(decision_key or "").strip()
-    if not key:
-        return
-    keys = _deliberation_consumed_keys(payload)
-    if key not in keys:
-        keys.append(key)
-    payload["_deliberation_consumed_keys"] = keys
-
-
-def deliberation_answer_already_consumed(payload: Mapping[str, object], decision_key: str) -> bool:
-    """历史御批／留中是否已持久消费（防再次 stalled 后重放）。"""
-    key = str(decision_key or "").strip()
-    if not key:
-        return False
-    if key in _deliberation_consumed_keys(payload):
-        return True
-    return False
-
-
 def apply_imperial_deliberation_push(
     db: Any, state: Any, *, target_dossier_id: int, decision_key: str, decree_text: str = "",
 ) -> int:
@@ -123,13 +96,6 @@ def apply_imperial_deliberation_push(
     payload = dict(row["payload"] or {})
     if payload.get("deliberation_state") != "stalled":
         raise ValueError("御笔强推只接无人站台原案")
-    if deliberation_answer_already_consumed(payload, decision_key):
-        return did
-    for end in db.dossiers.endorsements(did):
-        if str(end.get("decision_key") or "") == str(decision_key):
-            _mark_deliberation_answer_consumed(payload, decision_key)
-            db.dossiers.update_payload(did, payload, commit=False)
-            return did
     origin = f"dossier:{did}"
     issue = db.conn.execute(
         "SELECT id FROM issues WHERE origin_ref=? AND status='active' LIMIT 1",
@@ -139,7 +105,6 @@ def apply_imperial_deliberation_push(
         raise ValueError("无人站台原案缺局势记录")
     payload["deliberation_state"] = "backed"
     payload["imperial_push_note"] = decree_text
-    _mark_deliberation_answer_consumed(payload, decision_key)
     db.dossiers.update_payload(did, payload, commit=False)
     db.dossiers.add_endorsement(
         did, form="御笔手敕", endorser_id="", imperial=True,
@@ -150,7 +115,7 @@ def apply_imperial_deliberation_push(
 
 
 def apply_imperial_deliberation_hold(
-    db: Any, state: Any, *, target_dossier_id: int, decision_key: str = "", note: str = "",
+    db: Any, state: Any, *, target_dossier_id: int, note: str = "",
 ) -> int:
     """#1917：留中结束本次无人站台等待，原案留存，不再开案头。"""
     did = int(target_dossier_id)
@@ -158,17 +123,11 @@ def apply_imperial_deliberation_hold(
     if row is None or row["status"] != "proposed":
         raise ValueError("留中要求原 proposed 案卷")
     payload = dict(row["payload"] or {})
-    if deliberation_answer_already_consumed(payload, decision_key):
-        return did
     if payload.get("deliberation_state") != "stalled":
-        if decision_key:
-            _mark_deliberation_answer_consumed(payload, decision_key)
-            db.dossiers.update_payload(did, payload, commit=False)
         return did
     payload["deliberation_state"] = "held"
     if note.strip():
         payload["deliberation_hold_note"] = note.strip()
-    _mark_deliberation_answer_consumed(payload, decision_key)
     db.dossiers.update_payload(did, payload, commit=False)
     origin = f"dossier:{did}"
     issue = db.conn.execute(
