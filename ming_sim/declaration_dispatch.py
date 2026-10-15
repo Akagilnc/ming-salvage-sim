@@ -934,6 +934,20 @@ _AUTHORITY_EXCLUSIVE_KEYS = (
 )
 
 
+def _declared_object_slot(value: object) -> object | None:
+    """Optional object slot: missing/empty mapping = unused; else the declared value.
+
+    Mirrors appointment's empty-object unused semantics so stub ``{}`` does not
+    seize the commission branch or trip mutual-exclusion against a real sibling.
+    Non-empty bad payloads stay declared and are rejected downstream.
+    """
+    if value is None:
+        return None
+    if isinstance(value, Mapping) and not value:
+        return None
+    return value
+
+
 def _stage_authorization_commission(
     db: Any,
     state: Any,
@@ -949,7 +963,7 @@ def _stage_authorization_commission(
     """#1912：召对授出权项 → authorization 旨意暂存。"""
     if not isinstance(authorization, Mapping) or any(
         item.get(key) for key in _AUTHORITY_EXCLUSIVE_KEYS
-    ) or item.get("revoke_authority") is not None:
+    ) or _declared_object_slot(item.get("revoke_authority")) is not None:
         _reject(rejected, item, "授权交办载荷须为独立对象", "invalid_shape", source)
         return None
     body = _declared_prose(item.get("text"))
@@ -1036,7 +1050,7 @@ def _stage_revoke_authority_commission(
     """#1912：召对收回权项 → revoke_authority 旨意暂存。"""
     if not isinstance(revoke_authority, Mapping) or any(
         item.get(key) for key in _AUTHORITY_EXCLUSIVE_KEYS
-    ) or item.get("authorization") is not None:
+    ) or _declared_object_slot(item.get("authorization")) is not None:
         _reject(rejected, item, "收权交办载荷须为独立对象", "invalid_shape", source)
         return None
     body = _declared_prose(item.get("text"))
@@ -2019,7 +2033,7 @@ def _dispatch_commission_items(
             applied.append({"id": row_id, "kind": "directive"})
             continue
 
-        authorization = item.get("authorization")
+        authorization = _declared_object_slot(item.get("authorization"))
         if authorization is not None:
             staged = _stage_authorization_commission(
                 db, state, item, authorization,
@@ -2032,7 +2046,7 @@ def _dispatch_commission_items(
                 applied.append(staged)
             continue
 
-        revoke_authority = item.get("revoke_authority")
+        revoke_authority = _declared_object_slot(item.get("revoke_authority"))
         if revoke_authority is not None:
             staged = _stage_revoke_authority_commission(
                 db, state, item, revoke_authority,
