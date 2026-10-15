@@ -2537,6 +2537,27 @@ def origin_claims_secret_or_dossier(origin: object) -> bool:
     )
 
 
+def yamen_id_in_origin(origin: object) -> Optional[int]:
+    """从 origin 取出衙门 id；与 secret/dossier 同形（后缀、strict id）。
+
+    id 走 strict_sqlite_id：超界或非十进制返回 None，由调用方 fail-closed。
+    """
+    match = re.match(r"yamen:(\d+)(?:[:/]|$)", str(origin or ""))
+    if match is None:
+        return None
+    from ming_sim.strict_types import strict_sqlite_id
+
+    try:
+        return strict_sqlite_id(match.group(1))
+    except (TypeError, ValueError):
+        return None
+
+
+def origin_claims_yamen(origin: object) -> bool:
+    """来源字符串是否自称衙门身份（不论 id 是否可解析）。"""
+    return bool(re.match(r"yamen:", str(origin or "")))
+
+
 def _character_gazette_rows(public_events: Sequence[dict]) -> list[dict[str, object]]:
     """Person gazette rows come only from that person's typed public projection.
 

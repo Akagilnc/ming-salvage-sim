@@ -89,26 +89,27 @@ def assert_origin_identity_exists(db: Any, origin: object) -> str:
     """Empty origin is public. Claimed durable identities must exist on the ledger.
 
     Covers ``secret_order:`` / ``dossier:`` / ``yamen:`` identity tokens only;
-    free-form origins pass through. Unstorable ids → ``DeclarationDataError``;
-    missing entities → ``DeclarationReferenceError`` (ADR 0015).
+    free-form origins pass through. Claimed-but-unparseable ids →
+    ``DeclarationDataError``; missing entities → ``DeclarationReferenceError``
+    (ADR 0015). Recognition reuses materials claim/id helpers—never treat a
+    failed digit match as free-form public.
     """
     from ming_sim.exceptions import DeclarationDataError, DeclarationReferenceError
     from ming_sim.materials import (
         dossier_id_in_origin,
         origin_claims_secret_or_dossier,
+        origin_claims_yamen,
         secret_order_id_in_origin,
+        yamen_id_in_origin,
     )
-    from ming_sim.strict_types import strict_sqlite_id
 
     text = str(origin or "").strip()
     if not text:
         return ""
-    yamen_match = re.match(r"yamen:(\d+)(?:[:/]|$)", text)
-    if yamen_match is not None:
-        try:
-            yamen_id = strict_sqlite_id(yamen_match.group(1))
-        except (TypeError, ValueError) as exc:
-            raise DeclarationDataError("来源 yamen id 超出可存储范围或不可解析") from exc
+    if origin_claims_yamen(text):
+        yamen_id = yamen_id_in_origin(text)
+        if yamen_id is None:
+            raise DeclarationDataError("来源 yamen id 超出可存储范围或不可解析")
         if db.yamens.get(yamen_id) is None:
             raise DeclarationReferenceError(f"yamen 不存在：{yamen_id}")
         return text
@@ -144,7 +145,9 @@ def origin_visible_to(
         dossier_id_in_origin,
         inquiry_source_order_id,
         origin_claims_secret_or_dossier,
+        origin_claims_yamen,
         secret_order_id_in_origin,
+        yamen_id_in_origin,
     )
     from ming_sim.strict_types import strict_sqlite_id
 
@@ -152,11 +155,10 @@ def origin_visible_to(
     seen = _seen or frozenset()
     if source and source in seen:
         return False
-    yamen_match = re.match(r"yamen:(\d+)(?:[:/]|$)", source)
-    if yamen_match is not None:
-        try:
-            yamen_id = strict_sqlite_id(yamen_match.group(1))
-        except (TypeError, ValueError):
+    if origin_claims_yamen(source):
+        yamen_id = yamen_id_in_origin(source)
+        if yamen_id is None:
+            # 自称 yamen 但 id 不可解析：不得当公开。
             return False
         yamen = db.yamens.get(yamen_id)
         if yamen is None:

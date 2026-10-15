@@ -324,11 +324,29 @@ def test_textual_fact_keeps_origin_and_affair_separate(game):
                     "body": "幻觉来源不得入账",
                     "origin_ref": "yamen:999999",
                 },
+                {
+                    "subject_kind": "yamen",
+                    "subject_id": str(yamen_id),
+                    "body": "畸形字母",
+                    "origin_ref": "yamen:abc",
+                },
+                {
+                    "subject_kind": "yamen",
+                    "subject_id": str(yamen_id),
+                    "body": "畸形负数",
+                    "origin_ref": "yamen:-1",
+                },
+                {
+                    "subject_kind": "yamen",
+                    "subject_id": str(yamen_id),
+                    "body": "畸形后缀",
+                    "origin_ref": "yamen:999999oops",
+                },
             ]
         },
         source=Provenance.system_simulation,
     )
-    assert len(out.textual_facts.rejected) == 1
+    assert len(out.textual_facts.rejected) == 4
     assert len(out.textual_facts.applied) == 1
     facts = db.textual_facts.readable_materials(
         subject_kind="yamen", subject_id=str(yamen_id),
@@ -336,8 +354,11 @@ def test_textual_fact_keeps_origin_and_affair_separate(game):
     assert len(facts) == 1
     assert facts[0].origin_ref == origin
     assert int(facts[0].affair_id) == int(affair.id)
-    # 读口：不存在的 yamen 来源不得当公开
+    # 读口：不存在或无法解析的 yamen 自称身份不得当公开
     assert origin_visible_to(db, "yamen:999999", "") is False
+    assert origin_visible_to(db, "yamen:abc", "") is False
+    assert origin_visible_to(db, "yamen:-1", "") is False
+    assert origin_visible_to(db, "yamen:999999oops", "") is False
 
 
 def test_yamen_fee_rejects_non_storable_amounts(game):
