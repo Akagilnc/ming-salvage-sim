@@ -516,6 +516,9 @@ def create_world_segment_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
         "你推演本月旨意之外的世界事件，并承接开场列出的在途办理案卷。"
         "已经落账的旨不要重算，也不要写月末邸报。",
         "本段只写推演结果。",
+        # #1915：在职衙门本月办理结果由世界段推演；转译只声明，包只记录（P6/ADR 0153）。
+        "材料目录衙门/ 下列有在职衙门。本段推演各衙门本月实际办成什么；"
+        "不要只复述建制或月费。",
         decision_prompt_contract(),
         "若本段消息含 levy_petitions，请饷与议停只按交接契约写并停在问处："
         + LEVY_HANDOFF_RULE,
