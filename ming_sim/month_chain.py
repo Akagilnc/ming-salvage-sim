@@ -967,6 +967,65 @@ def _deliberation_outcome_items(declaration: Mapping[str, object]) -> list[dict]
     return [dict(item) for item in raw_items if isinstance(item, Mapping)]
 
 
+def _flush_settlement_rejections(db: Any, state: Any, outcome: Any) -> int:
+    """把一次 settle_delta 的拒收写入既有 rejection_reports 真源（ADR 0008）。"""
+    from ming_sim.applier import RejectionCollector, mirror_rejections_after_commit
+    from ming_sim.error_pack import rejections_jsonl_path
+
+    collector = RejectionCollector()
+    turn = int(state.turn)
+    recorded = 0
+    for section_name, section in outcome.sections().items():
+        for rejected_item in section.rejected:
+            collector.record(section_name, rejected_item, turn)
+            recorded += 1
+    for section_name, rejected_item in zip(
+        outcome.shape_sections, outcome.shape_rejections,
+    ):
+        collector.record(section_name, rejected_item, turn)
+        recorded += 1
+    if recorded:
+        with atomic(db):
+            collector.flush_to_db(db)
+        mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
+    return recorded
+
+
+def _persisted_staged_verdict(db: Any, decree_ref: str, turn: int) -> Optional[Dict[str, Any]]:
+    """读本旨任一未作废行上的判决（含 settled）；#1846 已有判决不重判。"""
+    ref = str(decree_ref or "").strip()
+    if not ref:
+        return None
+    row = db.conn.execute(
+        "SELECT verdict_json FROM staged_declarations "
+        "WHERE decree_ref=? AND status!='discarded' AND created_turn=? "
+        "AND verdict_json IS NOT NULL ORDER BY id DESC LIMIT 1",
+        (ref, int(turn)),
+    ).fetchone()
+    if row is None:
+        return None
+    verdict = parse_engine_payload_json(row["verdict_json"])
+    return dict(verdict) if isinstance(verdict, Mapping) else None
+
+
+def _persist_staged_verdict(
+    db: Any, decree_ref: str, turn: int, verdict: Mapping[str, object],
+) -> None:
+    """把判决写回本旨最新未作废行，供落账失败后重试复用（#1846）。"""
+    ref = str(decree_ref or "").strip()
+    if not ref:
+        return
+    import json as _json
+    db.conn.execute(
+        "UPDATE staged_declarations SET verdict_json=? "
+        "WHERE id=(SELECT MAX(id) FROM staged_declarations "
+        "WHERE decree_ref=? AND status!='discarded' AND created_turn=?)",
+        (_json.dumps(dict(verdict), ensure_ascii=False), ref, int(turn)),
+    )
+    if connection_owns_transaction(db.conn):
+        db.conn.commit()
+
+
 def _apply_stalled_deliberation_from_declaration(
     db: Any, state: Any, *, dossier_id: int, decree_ref: str, declaration: Any,
     visible_refs: Any = None,
@@ -974,14 +1033,11 @@ def _apply_stalled_deliberation_from_declaration(
     """#1917：预推声明含本原案 stalled 且成功落标时，消费暂存并返回 True（跳过颁布）。
 
     经 bind_decree_effect_sources 把 pending-action 本旨身份绑成案卷 id。
-    仅 stalled **成功落标** 后才 mark settled；坏项拒收留痕且不冒充整旨已消费，
-    合法其它效果仍可走后续正常 settle（ADR 0008）。
+    同批 applied/rejected 一并处理：成功落标则 mark settled 并记下同批坏项拒收；
+    全无落标则不 mark、不在此记账，交后续统一 settle 一次承接（ADR 0008）。
     """
-    from ming_sim.applier import (
-        Provenance, RejectionCollector, mirror_rejections_after_commit,
-    )
+    from ming_sim.applier import Provenance
     from ming_sim.declaration_dispatch import bind_decree_effect_sources
-    from ming_sim.error_pack import rejections_jsonl_path
     from ming_sim.settlement.run import SettlementContext, settle_delta
 
     if not isinstance(declaration, Mapping):
@@ -993,7 +1049,6 @@ def _apply_stalled_deliberation_from_declaration(
     if current is None or str(current.get("status") or "") != "proposed":
         return False
     if str((current.get("payload") or {}).get("deliberation_state") or "") == "backed":
-        # 皇帝已强推：不得被旧 stalled 声明回写。
         return False
     bound, _refs = bind_decree_effect_sources(
         db, ref, declaration, visible_refs if isinstance(visible_refs, Mapping) else {},
@@ -1027,25 +1082,10 @@ def _apply_stalled_deliberation_from_declaration(
         )
     )
     if not applied_ok:
-        # 坏项拒收留痕；不 mark settled，整旨声明仍可由后续正常 settle 承接。
-        collector = RejectionCollector()
-        turn = int(state.turn)
-        recorded = 0
-        for section_name, section in outcome.sections().items():
-            for rejected_item in section.rejected:
-                collector.record(section_name, rejected_item, turn)
-                recorded += 1
-        for section_name, rejected_item in zip(
-            outcome.shape_sections, outcome.shape_rejections,
-        ):
-            collector.record(section_name, rejected_item, turn)
-            recorded += 1
-        if recorded:
-            with atomic(db):
-                collector.flush_to_db(db)
-            mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
+        # 全无落标：不 mark settled，拒收交后续统一 settle 记一次，避免双记。
         return False
-    # stalled 成功：消费本旨暂存（不进颁布，同声明其它效果亦不落）。
+    # 同批有成功 stalled：记下同批坏项拒收，并消费整旨（不进颁布）。
+    _flush_settlement_rejections(db, state, outcome)
     db.staged_declarations.mark_terminal(ref, status="settled")
     row = db.dossiers.get(int(dossier_id))
     return bool(
@@ -1112,46 +1152,22 @@ def _settle_edicts(
             )
         ):
             staged = db.staged_declarations.staged_for(ref, turn=int(state.turn))
+            # #1917：先消费无人站台声明，再过判——避免 produce_forecast 先写入 verdict
+            # 把 stalled 案的「无判决」状态冲掉。
+            if staged and _apply_stalled_deliberation_from_declaration(
+                db, state, dossier_id=int(dossier["id"]), decree_ref=ref,
+                declaration=staged[0].declaration,
+                visible_refs=staged[0].visible_refs,
+            ):
+                continue
+            staged = db.staged_declarations.staged_for(ref, turn=int(state.turn))
             verdict = staged[0].verdict if staged and staged[0].declaration is not None else None
-            # 御笔强推后：暂存已消费，禁止对 settled ref 再预推；判决仍走现行颁布关，
-            # 不伪造 decision=promulgated（ADR 0055 / #1917 F6）。
+            # 强推后暂存可能已 settled：从任一未作废行复用已持久判决（#1846），不重判。
             if backed_awaiting_promulgation and not (
                 isinstance(verdict, dict) and verdict.get("decision")
             ):
-                import ming_sim.decree as decree_mod
-                from ming_sim.llm_transport import audience_transport_policy
-
-                current_row = db.dossiers.get(int(dossier["id"])) or dossier
-
-                def _judge_backed() -> Dict[str, Any]:
-                    payload = current_row.get("payload") or {}
-                    if not isinstance(payload, Mapping):
-                        payload = {}
-                    if decree_mod.dossier_action_policy(
-                        current_row.get("action_type"), payload,
-                    )["external_review"] and session.llm_config is not None:
-                        ctx = decree_mod.build_promulgation_judge_context(
-                            db, state, [current_row],
-                        )
-                        raw = decree_mod.llm_promulgation_verdicts(
-                            [current_row], state, db=db,
-                            agno_db=session.agno_db,
-                            llm_config=session.llm_config,
-                            prepared_context=ctx,
-                            transport_policy=audience_transport_policy(),
-                        )
-                    else:
-                        raw = decree_mod.stub_promulgation_verdicts([current_row])
-                        ctx = None
-                    return dict(decree_mod.validate_promulgation_verdicts(
-                        raw, [current_row], db, prepared_context=ctx,
-                    )[0])
-
-                verdict = _guard_month_call(
-                    db, state, chain, decree_text="", source=Provenance.player_decree,
-                    step="edict_forecast", operation=_judge_backed, decree_ref=ref,
-                )
-            elif (
+                verdict = _persisted_staged_verdict(db, ref, int(state.turn))
+            if (
                 not backed_awaiting_promulgation
                 and verdict is None
                 and session.llm_config is not None
@@ -1166,14 +1182,52 @@ def _settle_edicts(
                     step="edict_forecast", operation=_produce, decree_ref=ref,
                 )
                 verdict = product["verdict"]
-            # #1917：预推转译已声明无人站台时，经绑定落标、消费暂存，跳过当月颁布。
-            staged_now = db.staged_declarations.staged_for(ref, turn=int(state.turn))
-            if staged_now and _apply_stalled_deliberation_from_declaration(
-                db, state, dossier_id=int(dossier["id"]), decree_ref=ref,
-                declaration=staged_now[0].declaration,
-                visible_refs=staged_now[0].visible_refs,
+            elif backed_awaiting_promulgation and not (
+                isinstance(verdict, dict) and verdict.get("decision")
             ):
-                continue
+                # 无持久判决：与 produce_forecast 同形过判并写回行上，禁 stub 顶替缺模型。
+                import ming_sim.decree as decree_mod
+                from ming_sim.exceptions import LLMUnavailable
+                from ming_sim.llm_transport import audience_transport_policy
+
+                current_row = db.dossiers.get(int(dossier["id"])) or dossier
+
+                def _judge_and_persist() -> Dict[str, Any]:
+                    payload = current_row.get("payload") or {}
+                    if not isinstance(payload, Mapping):
+                        payload = {}
+                    needs_review = decree_mod.dossier_action_policy(
+                        current_row.get("action_type"), payload,
+                    )["external_review"]
+                    if needs_review:
+                        if session.llm_config is None:
+                            raise LLMUnavailable(
+                                "御笔强推接回颁布缺少模型配置", stage="edict_forecast",
+                            )
+                        ctx = decree_mod.build_promulgation_judge_context(
+                            db, state, [current_row],
+                        )
+                        raw = decree_mod.llm_promulgation_verdicts(
+                            [current_row], state, db=db,
+                            agno_db=session.agno_db,
+                            llm_config=session.llm_config,
+                            prepared_context=ctx,
+                            transport_policy=audience_transport_policy(),
+                        )
+                    else:
+                        raw = decree_mod.stub_promulgation_verdicts([current_row])
+                        ctx = None
+                    decided = dict(decree_mod.validate_promulgation_verdicts(
+                        raw, [current_row], db, prepared_context=ctx,
+                    )[0])
+                    with atomic(db):
+                        _persist_staged_verdict(db, ref, int(state.turn), decided)
+                    return decided
+
+                verdict = _guard_month_call(
+                    db, state, chain, decree_text="", source=Provenance.player_decree,
+                    step="edict_forecast", operation=_judge_and_persist, decree_ref=ref,
+                )
             if isinstance(verdict, dict) and verdict.get("decision"):
                 current = db.dossiers.get(int(dossier["id"])) or dossier
                 if str(current.get("status") or "") == "proposed":

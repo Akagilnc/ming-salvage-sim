@@ -276,51 +276,81 @@ def test_bad_stalled_item_does_not_swallow_other_effects(game, monkeypatch):
     del before  # 国库另有月初财政 tick，不以总额断言
 
 
-def test_imperial_push_uses_real_promulgation_judge(game, monkeypatch):
-    """F6：强推后接回现行颁布关，不伪造顺颁；判官可打回。"""
-    import ming_sim.decree as decree_mod
-
+def test_mixed_stalled_items_record_rejection_once_and_settle(game, monkeypatch):
+    """F5：同批合法+非法 stalled，成功落标并记坏项拒收一次，整旨 settled。"""
     db, state, content = game
-    did, ref = _plant_proposed_with_pending_stalled_stage(db, state, title="强推过判")
-    judge_calls: list = []
-
-    def reject_all(dossiers, *a, **k):
-        judge_calls.append([int(r["id"]) for r in dossiers])
-        prepared = k.get("prepared_context") or decree_mod.build_promulgation_judge_context(
-            db, state, list(dossiers),
-        )
-        by_id = {int(item["id"]): item for item in prepared.get("dossiers") or []}
-        faction = db.conn.execute("SELECT name FROM factions LIMIT 1").fetchone()["name"]
-        out = []
-        for row in dossiers:
-            did_i = int(row["id"])
-            src = (by_id.get(did_i) or {}).get("criteria_snapshot_source") or {
-                "imperial_authority_band": "中等",
-                "appointment_tenure": "",
-                "authorization_ids": [],
-                "endorsement_entry_ids": [],
-            }
-            out.append({
-                "dossier_id": did_i,
-                "decision": "rejected",
-                "blocked_layer": "six_offices",
-                "reason": "科道封驳",
-                "primary_opponents": [{"kind": "faction", "key": faction}],
-                "affected_parties": [{
-                    "kind": "faction", "key": faction,
-                    "direction": "negative", "intensity": "weak",
-                }],
-                "gatekeeper_id": None,
-                "criteria_snapshot": src,
-            })
-        return out
-
+    minister = _minister_name(db)
+    pending_id = int(db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=minister,
+        payload={
+            "dossier_action_type": "policy", "target_kind": "issue",
+            "target_id": "mixed-stalled", "actor": minister, "mode": "ordinary",
+            "text": "混合探针", "locality_scope": "none",
+            "participant_roster": copy.deepcopy(_ROSTER),
+        },
+    ))
+    did = int(db.create_decree_dossier(
+        state, action_type="policy", decree_text="混合探针",
+        target_kind="issue", target_id="mixed-stalled",
+        pending_action_id=pending_id,
+        payload={
+            "dossier_action_type": "policy", "mode": "ordinary",
+            "target_kind": "issue", "target_id": "mixed-stalled",
+            "locality_scope": "none",
+            "participant_roster": copy.deepcopy(_ROSTER), "text": "混合探针",
+        },
+    ))
+    db.conn.execute(
+        "UPDATE pending_actions SET status='committed' WHERE id=?", (pending_id,),
+    )
+    ref = pending_action_decree_ref(pending_id, 1)
+    stage_declaration(
+        db, decree_ref=ref, turn=int(state.turn),
+        declaration={
+            "effects": {
+                "deliberation_outcomes": [
+                    {"dossier_id": ref, "outcome": "stalled", "note": "合法冷场"},
+                    {"dossier_id": ref, "outcome": "stalled", "note": ""},
+                ],
+            },
+        },
+        verdict={"decision": "promulgated"},
+        visible_refs={"dossiers": [], "affairs": [], "issues": []},
+    )
+    db.conn.commit()
     canned_full_settlement(monkeypatch)
-    monkeypatch.setattr(decree_mod, "llm_promulgation_verdicts", reject_all)
     session = make_light_session(db, state, content)
     session.llm_config = object()
     assert session.resolve_turn(allow_empty_decree=True).awaiting
-    assert db.dossiers.get(did)["payload"].get("deliberation_state") == "stalled"
+    row = db.dossiers.get(did)
+    assert row["payload"].get("deliberation_state") == "stalled"
+    assert not db.dossiers.authorizes_effects(did)
+    assert db.staged_declarations.is_settled(ref)
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM rejection_reports WHERE section='deliberation_outcomes'",
+    ).fetchone()[0] == 1
+
+
+def test_imperial_push_reuses_persisted_verdict_without_rejudge(game, monkeypatch):
+    """F6：强推复用已持久判决，不重开判官（#1846）。"""
+    import ming_sim.decree as decree_mod
+
+    db, state, content = game
+    did, ref = _plant_proposed_with_pending_stalled_stage(db, state, title="强推复用判决")
+    judge_calls: list = []
+
+    def track_judge(dossiers, *a, **k):
+        judge_calls.append([int(r["id"]) for r in dossiers])
+        return [
+            {"dossier_id": int(row["id"]), "decision": "promulgated"}
+            for row in dossiers
+        ]
+
+    canned_full_settlement(monkeypatch)
+    monkeypatch.setattr(decree_mod, "llm_promulgation_verdicts", track_judge)
+    session = make_light_session(db, state, content)
+    session.llm_config = object()
+    assert session.resolve_turn(allow_empty_decree=True).awaiting
     row = next(
         r for r in session.pending_decisions()
         if r["event_id"] == f"deliberation:{did}"
@@ -335,8 +365,78 @@ def test_imperial_push_uses_real_promulgation_judge(game, monkeypatch):
     )
     pushed = db.dossiers.get(did)
     assert pushed["payload"]["deliberation_state"] == "backed"
-    assert judge_calls and did in judge_calls[0]
-    # 判官打回：不得被默认顺颁洗成 promulgated。
-    assert pushed.get("promulgation_decision") == "rejected"
-    assert pushed["status"] == "proposed"
+    assert pushed.get("promulgation_decision") == "promulgated"
+    # 预推已持久 verdict=promulgated；强推不得再调判官。
+    assert judge_calls == []
+
+
+def test_imperial_push_without_model_does_not_stub_promulgate(game, monkeypatch):
+    """F6：缺模型且需外廷过判时，不得 stub 自动顺颁。"""
+    from ming_sim.exceptions import SettlementAbort
+
+    db, state, content = game
+    minister = _minister_name(db)
+    pending_id = int(db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=minister,
+        payload={
+            "dossier_action_type": "policy", "target_kind": "issue",
+            "target_id": "no-model-push", "actor": minister, "mode": "ordinary",
+            "text": "缺模型强推", "locality_scope": "none",
+            "participant_roster": copy.deepcopy(_ROSTER),
+        },
+    ))
+    did = int(db.create_decree_dossier(
+        state, action_type="policy", decree_text="缺模型强推",
+        target_kind="issue", target_id="no-model-push",
+        pending_action_id=pending_id,
+        payload={
+            "dossier_action_type": "policy", "mode": "ordinary",
+            "target_kind": "issue", "target_id": "no-model-push",
+            "locality_scope": "none",
+            "participant_roster": copy.deepcopy(_ROSTER), "text": "缺模型强推",
+        },
+    ))
+    db.conn.execute(
+        "UPDATE pending_actions SET status='committed' WHERE id=?", (pending_id,),
+    )
+    ref = pending_action_decree_ref(pending_id, 1)
+    # 无 verdict：强推后必须过判，缺模型不得 stub。
+    stage_declaration(
+        db, decree_ref=ref, turn=int(state.turn),
+        declaration={
+            "effects": {
+                "deliberation_outcomes": [{
+                    "dossier_id": ref, "outcome": "stalled", "note": "无人站台",
+                }],
+            },
+        },
+        verdict=None,
+        visible_refs={"dossiers": [], "affairs": [], "issues": []},
+    )
+    db.conn.commit()
+    canned_full_settlement(monkeypatch)
+    session = make_light_session(db, state, content)
+    session.llm_config = object()
+    assert session.resolve_turn(allow_empty_decree=True).awaiting
+    assert db.dossiers.get(did)["payload"].get("deliberation_state") == "stalled"
+    row = next(
+        r for r in session.pending_decisions()
+        if r["event_id"] == f"deliberation:{did}"
+    )
+    from ming_sim.month_chain import _persisted_staged_verdict
+    assert _persisted_staged_verdict(db, ref, int(state.turn)) is None
+    # 强推续跑时去掉模型配置。
+    session.llm_config = None
+    with pytest.raises(SettlementAbort, match="缺少模型配置"):
+        session.submit_hitl_choices(
+            [{
+                "decision_key": row["decision_key"],
+                "action": "imperial_push",
+                "note": "朕独担",
+            }],
+            write_gate=session._write_gate,
+        )
+    kept = db.dossiers.get(did)
+    assert kept["payload"]["deliberation_state"] == "backed"
+    assert not kept.get("promulgation_decision")
     assert not db.dossiers.authorizes_effects(did)
