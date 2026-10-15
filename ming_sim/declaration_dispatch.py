@@ -2224,6 +2224,7 @@ def _dispatch_commission_items(
                     content=db.content,
                     tenure=declared_tenure,
                     region_id=str(appointment_fields.get("region_id") or ""),
+                    office_type=str(appointment_fields.get("office_type") or ""),
                 ):
                     return None
             # office 成案链只吃任免字段；禁把 grant 的 execution_surface 等带进
