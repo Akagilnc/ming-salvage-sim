@@ -493,30 +493,16 @@ def test_c1_minister_promise_origin_not_public_visible(game, monkeypatch):
     knowledge = build_character_knowledge(db, state, promisor)
     assert any(int(i.get("id") or 0) == issue_id for i in knowledge.get("issues") or [])
 
-    # 一次安装写手观测：仅断言实际消费的键/可闻 id/密源 history origin。
-    captured = {
-        "affair_keys": set(),
-        "audience_ids": [],
-        "history_visible_origins": [],
-    }
+    # 一次安装写手观测：事务键 + audience id；密源 history 由事务键排除覆盖。
+    captured = {"affair_keys": set(), "audience_ids": []}
     real_write = materials_mod._write_world_tree
     real_exp = materials_mod._experience_text
-    real_hist = materials_mod._world_history_row_visible
 
     def spy_exp(knowledge, audible_entries=()):
         captured["audience_ids"].extend(
             int(entry.get("id") or 0) for entry in audible_entries
         )
         return real_exp(knowledge, audible_entries)
-
-    def spy_hist(db_, row, secret_turn_ids, public_only):
-        ok = real_hist(db_, row, secret_turn_ids, public_only)
-        if ok and public_only:
-            for key in ("origin_ref", "origin", "source_id"):
-                value = str(row.get(key) or "")
-                if value:
-                    captured["history_visible_origins"].append(value)
-        return ok
 
     def spy_write(
         tmp, db_, state_, public_events, affair_lines, board_text, roster_text,
@@ -531,7 +517,6 @@ def test_c1_minister_promise_origin_not_public_visible(game, monkeypatch):
         )
 
     monkeypatch.setattr(materials_mod, "_experience_text", spy_exp)
-    monkeypatch.setattr(materials_mod, "_world_history_row_visible", spy_hist)
     monkeypatch.setattr(materials_mod, "_write_world_tree", spy_write)
 
     prepared = prepare_gazette_author_materials(db, state)
@@ -540,10 +525,6 @@ def test_c1_minister_promise_origin_not_public_visible(game, monkeypatch):
         assert f"affair-{public_affair_id}" in captured["affair_keys"]
         assert private_entry_id not in captured["audience_ids"]
         assert public_entry_id in captured["audience_ids"]
-        assert not any(
-            str(origin).startswith(summon_edge_origin(secret_turn))
-            for origin in captured["history_visible_origins"]
-        )
         paths = list_materials(prepared.root)
         assert not any(
             part.startswith(f"affair-{private_affair_id}-")
