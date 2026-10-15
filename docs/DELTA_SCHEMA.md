@@ -403,7 +403,7 @@ ADR 0054／0058 已署修订与 #1812 删简验收一并退役。既有 `decree_
 `dossier_links` 载荷仍属 0054 通用关联，不在本条「已退役专用机制」之列。
 
 ### `dossier_progress_reports` — 长差密令逐月密奏（#566 / ADR 0058）
-主生产路径＝月链 4a 供料（`run_secret_orders_supply`）产物，由 `_step_4a_secret_order_supply` **直接** `db.record_monthly_dossier_progress` 消费，**不经** `declaration_dispatch`/`settle_delta`。声明 effects 亦可带本段（专属写入口；`defer_monthly_secret_supply` 时延后到独立供料，不与 4a 拼成一条通用 settle 链）。旧五模块 extractor 包装已退役。
+主生产路径＝月链 4a 供料（`run_secret_orders_supply`）产物，由 `_step_4a_secret_order_supply` **直接** `db.record_monthly_dossier_progress` 消费，**不经** `declaration_dispatch`/`settle_delta`。声明 effects 亦可带本段（专属写入口；`defer_disclosure` 时延后到独立供料，不与 4a 拼成一条通用 settle 链）。旧五模块 extractor 包装已退役。
 - 每项必须带 `dossier_id`、`progress_band`、`memorial_text`；三者皆非空。
 - 可选 `origin`：承办人在该条密奏里自己声明的行动。`same_faction_blind` 为睁眼闭眼，`private_goods` 为带私货；两项都声明时用 `+` 连接。未作此选择则省略。同派或敌派不补写行动；未知记号不落成行动。落库后从该条密奏的 origin 续读。
 - 合资格集 = `decree_dossiers.status` 为 `promulgated` / `executing` 且所关联 `secret_orders.status='active'` 的案卷（读缝 `monthly_dossier_reports` / `list_monthly_dossier_progress_nudges`；#1504：不限 tag、不限期限月数）。

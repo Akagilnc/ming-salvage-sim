@@ -1251,7 +1251,7 @@ def merge_investigation_confirmation(
     """同目标汇案：并案卷。只有带事实指针的来源才留下待消费线索。
 
     重复的无指针下令不是来源。pending_action_id 与聊天记录只是确认闸，
-    不制造线索。已落库的空指针旧线索仍由月核算按 ADR 0098:11 消费。
+    不制造线索。
     """
     dossier = db.dossiers.get_for_secret_order(int(order_id))
     if dossier is None:

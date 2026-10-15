@@ -1050,7 +1050,7 @@ def test_world_segment_reads_material_directory(game, monkeypatch):
     assert seen[1]["index"].strip()
 
 def test_month_chain_lands_specialized_facts_before_due_and_gazette(game, monkeypatch):
-    """转译专属案卷与密令实况在到期结算和邸报前落库。"""
+    """世界段专属事实与整月密令供料在到期结算和邸报前落库。"""
     db, state, content = game
     minister = db.conn.execute(
         "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
@@ -1100,7 +1100,6 @@ def test_month_chain_lands_specialized_facts_before_due_and_gazette(game, monkey
                 "purpose": "其它", "reason": "差务实办开支",
                 "origin_ref": f"dossier:{dossier_id}",
             }],
-            "covert_exec_selections": [{"order_id": order_id, "fidelity": "忠实"}],
             "dossier_progress_reports": reports,
             # #1900：沿途损耗归引擎，对账不再由声明提案驱动，故此处不带对账提案。
             "faction_denunciations": [{

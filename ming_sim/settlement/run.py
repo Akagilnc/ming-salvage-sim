@@ -518,8 +518,9 @@ def _stored(run, *names: str) -> SectionResult:
 def _persist_step_specialized(run, step_extracted: Mapping[str, object]) -> None:
     """Persist specialized fields at their effect's ordered step.
 
-    Month-chain step 4a owns monthly reports and covert selections when disclosure
-    is deferred; denunciations still land here before exposure scanning.
+    Month-chain step 4a solely owns covert selections; monthly reports land
+    here unless disclosure is deferred to 4a; denunciations land here before
+    exposure scanning.
     """
     turn = int(run.state.turn)
     if not run.ctx.defer_disclosure:
