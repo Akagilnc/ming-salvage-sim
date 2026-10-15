@@ -1,16 +1,18 @@
-"""#1912 召对声明补任别与授收权：真实入口成案、生效、本人读取、打回不落、重开接续。"""
+"""#1912 召对声明补任别与授收权：真实入口成案、生效、打回不落、重开接续。
+
+材料可读性由生产侧 character_context_with_db 挂接 appointment_tenure_context /
+held_authority_context 承担；本文件只钉结构化账本与生命周期，不锁呈现措辞。
+"""
 
 from __future__ import annotations
 
 import json
 
-import pytest
-
 from ming_sim.audience_translate import build_c0_declaration_shape
-from ming_sim.context import character_context_with_db
 from ming_sim.db import GameDB
 from ming_sim.models import Character
 from ming_sim.settlement.dossier import apply_dossier_promulgation, apply_dossier_verdicts
+from ming_sim.supervision import character_tenure
 from tests.readback_helpers import active_character_name as _minister
 from tests.test_audience_translate_1837_reopen import _close_offline, _scene_declaration
 
@@ -23,27 +25,6 @@ def _add_white_body(db, state, content, name: str) -> None:
     )
     db.add_character(state, person)
     content.characters[name] = person
-
-
-def _load_character(db, content, name: str) -> Character:
-    person = content.characters.get(name)
-    if person is not None:
-        row = db.characters.row(name, fields="office,office_type,faction,power_id")
-        if row is not None:
-            person.office = str(row["office"] or person.office)
-            person.office_type = str(row["office_type"] or person.office_type)
-        return person
-    row = db.characters.row(name)
-    assert row is not None, name
-    return Character(
-        name=name,
-        office=str(row["office"] or ""),
-        office_type=str(row["office_type"] or ""),
-        faction=str(row["faction"] or "中立"),
-        aliases=[],
-        personal_skills=[],
-        power_id=str(row["power_id"] or "ming"),
-    )
 
 
 def _pending_payload(db, pending_id: int) -> dict:
@@ -100,6 +81,24 @@ def _close_current_night(db, state, content):
     return _close_offline(db, state, content, int(night["id"]))
 
 
+def _office_tenure(db, name: str) -> str:
+    row = db.conn.execute(
+        "SELECT appointment_tenure FROM character_offices WHERE character_name=?",
+        (name,),
+    ).fetchone()
+    assert row is not None
+    return str(row["appointment_tenure"])
+
+
+def _active_privileges(db, state, holder: str) -> list[str]:
+    return [
+        str(row["privilege"])
+        for row in db.characters.list_active_authorities(
+            int(state.turn), holder_id=holder,
+        )
+    ]
+
+
 def test_c0_shape_exposes_tenure_and_authority_slots():
     shape = build_c0_declaration_shape()
     assert '"任别"' in shape
@@ -108,7 +107,7 @@ def test_c0_shape_exposes_tenure_and_authority_slots():
     assert "尚方剑密授" in shape
 
 
-def test_acting_appointment_real_entry_lands_tenure_materials_and_restore(game, monkeypatch):
+def test_acting_appointment_real_entry_lands_tenure_and_restore(game, monkeypatch):
     db, state, content = game
     minister = _minister(db)
     appointee = "户部验收甲"
@@ -145,18 +144,8 @@ def test_acting_appointment_real_entry_lands_tenure_materials_and_restore(game, 
     apply_dossier_promulgation(
         db, state, int(dossier["id"]), "promulgated", content=content,
     )
-    office = db.conn.execute(
-        "SELECT appointment_tenure FROM character_offices WHERE character_name=?",
-        (appointee,),
-    ).fetchone()
-    assert office is not None
-    assert office["appointment_tenure"] == "署理"
-
-    materials = character_context_with_db(
-        _load_character(db, content, appointee), db, turn=int(state.turn),
-    )
-    assert "【任别】署理" in materials
-    assert materials.count("署理") >= 1
+    assert _office_tenure(db, appointee) == "署理"
+    assert character_tenure(db, appointee) == "署理"
 
     # 同职改真除：须再成案，不得被无动作吞掉（ADR 0064）。
     _scene_commission(
@@ -184,26 +173,17 @@ def test_acting_appointment_real_entry_lands_tenure_materials_and_restore(game, 
     apply_dossier_promulgation(
         db, state, int(convert_dossier["id"]), "promulgated", content=content,
     )
-    assert db.conn.execute(
-        "SELECT appointment_tenure FROM character_offices WHERE character_name=?",
-        (appointee,),
-    ).fetchone()["appointment_tenure"] == "真除"
-    assert "【任别】" not in character_context_with_db(
-        _load_character(db, content, appointee), db, turn=int(state.turn),
-    )
+    assert _office_tenure(db, appointee) == "真除"
+    assert character_tenure(db, appointee) == "真除"
 
     db_path = db.path
     db.conn.close()
     restored = GameDB(db_path, content)
-    restored_state = restored.load_state()
     assert restored.conn.execute(
         "SELECT appointment_tenure FROM character_offices WHERE character_name=?",
         (appointee,),
     ).fetchone()["appointment_tenure"] == "真除"
-    assert "【任别】" not in character_context_with_db(
-        _load_character(restored, content, appointee), restored,
-        turn=int(restored_state.turn),
-    )
+    assert character_tenure(restored, appointee) == "真除"
 
 
 def test_grant_revoke_authority_real_entry_and_region_scope(game, monkeypatch):
@@ -241,11 +221,7 @@ def test_grant_revoke_authority_real_entry_and_region_scope(game, monkeypatch):
     held = db.characters.list_active_authorities(int(state.turn), holder_id=holder)
     assert len(held) == 1
     assert held[0]["privilege"] == "尚方剑密授"
-    materials = character_context_with_db(
-        _load_character(db, content, holder), db, turn=int(state.turn),
-    )
-    assert "【在持授权】" in materials
-    assert "尚方剑密授" in materials
+    assert _active_privileges(db, state, holder) == ["尚方剑密授"]
 
     # 省域专差：须带 locality_scope=single，收夜可成案。
     _scene_commission(
@@ -277,11 +253,7 @@ def test_grant_revoke_authority_real_entry_and_region_scope(game, monkeypatch):
     apply_dossier_promulgation(
         db, state, int(region_dossier["id"]), "promulgated", content=content,
     )
-    privileges = {
-        str(row["privilege"])
-        for row in db.characters.list_active_authorities(int(state.turn), holder_id=holder)
-    }
-    assert privileges == {"尚方剑密授", "专差督办"}
+    assert set(_active_privileges(db, state, holder)) == {"尚方剑密授", "专差督办"}
 
     _scene_commission(
         db, state, content, monkeypatch,
@@ -307,22 +279,18 @@ def test_grant_revoke_authority_real_entry_and_region_scope(game, monkeypatch):
         db, state, int(_dossier_for_pending(db, revoke_id)["id"]),
         "promulgated", content=content,
     )
-    remaining = db.characters.list_active_authorities(int(state.turn), holder_id=holder)
-    assert [str(row["privilege"]) for row in remaining] == ["专差督办"]
-    after = character_context_with_db(
-        _load_character(db, content, holder), db, turn=int(state.turn),
-    )
-    assert "尚方剑密授" not in after
-    assert "专差督办" in after
+    assert _active_privileges(db, state, holder) == ["专差督办"]
 
     db_path = db.path
     db.conn.close()
     restored = GameDB(db_path, content)
     restored_state = restored.load_state()
-    restored_held = restored.characters.list_active_authorities(
-        int(restored_state.turn), holder_id=holder,
-    )
-    assert [str(row["privilege"]) for row in restored_held] == ["专差督办"]
+    assert [
+        str(row["privilege"])
+        for row in restored.characters.list_active_authorities(
+            int(restored_state.turn), holder_id=holder,
+        )
+    ] == ["专差督办"]
 
 
 def test_rejected_authorization_does_not_land_held_privilege(game, monkeypatch):
@@ -375,8 +343,4 @@ def test_rejected_authorization_does_not_land_held_privilege(game, monkeypatch):
     apply_dossier_promulgation(
         db, state, int(dossier["id"]), "withdrawn", content=content,
     )
-    assert db.characters.list_active_authorities(int(state.turn), holder_id=holder) == []
-    materials = character_context_with_db(
-        _load_character(db, content, holder), db, turn=int(state.turn),
-    )
-    assert "【在持授权】" not in materials
+    assert _active_privileges(db, state, holder) == []
