@@ -95,20 +95,37 @@ def test_xuan_lands_enter_then_present_on_next_prepare(game, monkeypatch, tmp_pa
 
     monkeypatch.setattr("ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent())
     sess = _sess(db, state, content, llm_config=SimpleNamespace(channel=""))
+
+    def _xuan(msg: str):
+        # 正数源轮：与生产 scene 入口一致，覆盖在场去重接缝。
+        ctid = db.create_chat_turn(
+            state, "殿上", f"scene-1836:{msg}", 0,
+            night_id=night_id, status="generating",
+        )
+        return sess.scene_chat(msg, write_gate=sess._write_gate, chat_turn_id=int(ctid))
+
     # 语气尾与无尾同形；不得整串预剥把合法名截坏（#1913 身份与尾缀统一解析）。
-    result = sess.scene_chat(f"宣{target}来", write_gate=sess._write_gate)
+    result = _xuan(f"宣{target}来")
+
+    def _enters():
+        return [
+            e for e in list_ledger(db, night_id)
+            if TAG_ENTER in (e.get("tags") or [])
+            and target in (e.get("person_names") or [])
+            and "常在员额" not in (e.get("tags") or [])
+        ]
 
     # 本次宣入必须新落一条 TAG_ENTER（非常在员额开夜账）。
-    enters = [
-        e for e in list_ledger(db, night_id)
-        if TAG_ENTER in (e.get("tags") or [])
-        and target in (e.get("person_names") or [])
-        and "常在员额" not in (e.get("tags") or [])
-    ]
+    enters = _enters()
     assert enters, f"宣{target} must land a non-roster TAG_ENTER ledger entry"
     enter_tags = enters[0].get("tags") or []
     assert METHOD_XUANRU in enter_tags
     assert METHOD_YUECI not in enter_tags
+    assert target in present_names_at(db, night_id)
+
+    # 已在场再普通宣：不重复入殿（正数源轮下仍走在场去重）。
+    _xuan(f"宣{target}")
+    assert len(_enters()) == 1
     assert target in present_names_at(db, night_id)
 
     prepared = prepare_scene_materials(db, state, dest_root=tmp_path / "after-xuan")

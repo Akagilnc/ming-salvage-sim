@@ -1781,13 +1781,12 @@ class GameSession:
                         method=xuan.method,
                     )
                     if decision.allowed:
-                        # 源轮>0 时 origin_ref 与 admission 同源：已在场仍记本次召法
-                        # （#1913：在场去重 ≠ 召法留账）。ctid==0 无源轮，越次仍靠 method 落账。
+                        # 入殿 ensure 不带 #657 消费账 origin_ref：普通在场宣召仍走
+                        # 在场去重；明确越次靠 method 留账（在场去重 ≠ 召法留账）。
                         ensure_summon_enter(
                             self.db, night_id, target.name,
                             method=xuan.method,
                             origin_chat_turn_id=xuan_ctid,
-                            origin_ref=origin_id if xuan_ctid > 0 else "",
                         )
                         # #1838 / ADR 0158：宣 X 当场先切御前主角（不等转译）。
                         # 夜当前值是投影；ctid>0 时同步写 chat_turns.protagonist_name

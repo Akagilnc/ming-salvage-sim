@@ -185,12 +185,20 @@ def test_yueci_explicit_lands_method_and_survives_reopen(game, monkeypatch, tmp_
     assert standing in present_names_at(db, night_id)
 
     def _scene(msg: str) -> None:
-        # 正数源轮：与生产 scene 入口一致，origin 按轮区分召法账。
+        # 正数源轮：与生产 scene 入口一致（chat_turn_id>0）。
         ctid = db.create_chat_turn(
             state, "殿上", f"xuan-1913:{msg}", 0,
             night_id=night_id, status="generating",
         )
         sess.scene_chat(msg, write_gate=sess._write_gate, chat_turn_id=int(ctid))
+
+    def _enter_count(person: str) -> int:
+        return sum(
+            1 for entry in list_ledger(db, night_id)
+            if TAG_ENTER in (entry.get("tags") or [])
+            and "常在员额" not in (entry.get("tags") or [])
+            and person in (entry.get("person_names") or [])
+        )
 
     sess = _sess(db, state, content, monkeypatch)
     _scene(f"越次召见{capital}、{remote}")
@@ -205,15 +213,24 @@ def test_yueci_explicit_lands_method_and_survives_reopen(game, monkeypatch, tmp_
     assert unsettled and unsettled[0]["kind"] in {"fresh", "in_transit"}
     assert METHOD_YUECI in _unsettled_entry_tags(db, remote)
 
-    # 已在场·常在员额：越次点名仍记召法，不因在场早退吞账。
+    # 已在场·常在员额：普通宣不重复入殿；越次点名仍记召法。
+    standing_before = _enter_count(standing)
+    _scene(f"宣{standing}")
+    assert _enter_count(standing) == standing_before
+    assert METHOD_XUANRU not in _enter_methods(db, night_id, standing)
+    assert standing in present_names_at(db, night_id)
     _scene(f"越次点名{standing}")
     assert METHOD_YUECI in _enter_methods(db, night_id, standing)
     assert standing in present_names_at(db, night_id)
 
-    # 已在场·先普通宣入再越次：保留宣入，另留越次账。
+    # 已在场·先普通宣入再越次：保留宣入，另留越次账；重复普通宣不叠加入殿。
     prior = "毕自严"
     _scene(f"宣{prior}")
     assert METHOD_XUANRU in _enter_methods(db, night_id, prior)
+    prior_enters = _enter_count(prior)
+    assert prior_enters == 1
+    _scene(f"宣{prior}")
+    assert _enter_count(prior) == prior_enters
     _scene(f"越次点名{prior}")
     prior_methods = _enter_methods(db, night_id, prior)
     assert METHOD_XUANRU in prior_methods
