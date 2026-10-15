@@ -784,6 +784,43 @@ class GameSession:
             return self.content.characters[clean_name]
         raise DeclarationDataError(f"人物未建档：{clean_name}")
 
+    def _resolve_one_xuan_target(self, fragment: str) -> Optional[Character]:
+        """单个人名/别名/官职片段 → 在册人物；复用既有 match，不另造启发式。"""
+        text = str(fragment or "").strip()
+        if not text:
+            return None
+        chars = getattr(getattr(self, "content", None), "characters", None) or {}
+        target = chars.get(text) or match_minister_from_text(text)
+        if target is not None:
+            return target
+        try:
+            return self.summon_character(text)
+        except ValueError:
+            return None
+
+    def _resolve_xuan_targets(self, fragment: str) -> List[Character]:
+        """#1913：宣召人名片段 → 目标列表。
+
+        先整段身份匹配（保住「懋和」等含连接字的合法别名）；整段失败才按标点拆多人。
+        """
+        from ming_sim.audience_night import split_xuan_name_fragments
+
+        text = str(fragment or "").strip()
+        if not text:
+            return []
+        whole = self._resolve_one_xuan_target(text)
+        if whole is not None:
+            return [whole]
+        targets: List[Character] = []
+        seen: set[str] = set()
+        for part in split_xuan_name_fragments(text):
+            target = self._resolve_one_xuan_target(part)
+            if target is None or target.name in seen:
+                continue
+            seen.add(target.name)
+            targets.append(target)
+        return targets
+
     def can_summon(self, character: Character) -> Tuple[bool, str]:
         # 宗藩（就藩宗室）非朝堂命官，不可召见——与各 roster 同口径（PR#121 隐藏宗藩）。
         # can_summon 是 summon_minister 工具链（session + web 流式两路）的共用闸，
@@ -854,15 +891,20 @@ class GameSession:
         state: Optional[GameState] = None,
         origin_chat_turn_id: int = 0,
         travel_tone: str = "常行",
+        method: str = "",
     ) -> AudienceAdmissionDecision:
         """Consume the shared audience gate before any turn/entrance/reply is created.
 
         Offsite people get a durable story-ledger summons instead of entering the
         audience.  Ledger failures propagate, so callers cannot accidentally proceed.
         在京放行时结清该人未结传召（候见→宣入）。开夜与传召账同事务全成全败。
+
+        method：#1913 明确越次点名时透传到传召账（ADR 0037「怎么召的」）；
+        普通宣场外仍默认 METHOD_CHUANZHAO，不把宣入误写成传召以外的召法。
         """
         from ming_sim.applier import atomic
         from ming_sim.audience_night import (
+            METHOD_YUECI,
             get_open_night, open_night, record_summon_fresh,
             record_summon_in_transit, settle_unsettled_summons_for_person,
         )
@@ -888,6 +930,15 @@ class GameSession:
             else record_summon_in_transit
         )
         opened_new_night = False
+        record_kwargs: Dict[str, Any] = {
+            "origin_id": str(origin_id).strip(),
+            "origin_chat_turn_id": int(origin_chat_turn_id or 0),
+        }
+        if recorder is record_summon_fresh:
+            record_kwargs["travel_tone"] = travel_tone
+        # 越次点名跨入殿/传召分流保留；距离分流 tags 仍由 recorder 自写。
+        if str(method or "").strip() == METHOD_YUECI:
+            record_kwargs["method"] = METHOD_YUECI
         with atomic(self.db):
             night = get_open_night(self.db)
             if night is None:
@@ -895,9 +946,7 @@ class GameSession:
                 opened_new_night = True
             recorder(
                 self.db, int(night["id"]), character.name,
-                origin_id=str(origin_id).strip(),
-                origin_chat_turn_id=int(origin_chat_turn_id or 0),
-                **({"travel_tone": travel_tone} if recorder is record_summon_fresh else {}),
+                **record_kwargs,
             )
         if opened_new_night:
             from ming_sim.decree_forecast import schedule_held_decree_forecasts
@@ -1678,7 +1727,6 @@ class GameSession:
             get_open_night,
             open_night,
             recognize_xuan_command,
-            split_xuan_name_fragments,
         )
         from ming_sim.llm_model import extract_agent_text
 
@@ -1717,22 +1765,14 @@ class GameSession:
         xuan = recognize_xuan_command(message_text)
         blocked_summon_facts: list[str] = []
         if xuan is not None:
-            chars = getattr(getattr(self, "content", None), "characters", None) or {}
             protagonist_changed = False
-            for fragment in split_xuan_name_fragments(xuan.fragment):
-                target = chars.get(fragment) or match_minister_from_text(fragment)
-                if target is None:
-                    try:
-                        target = self.summon_character(fragment)
-                    except ValueError:
-                        target = None
-                if target is None:
-                    continue
+            for target in self._resolve_xuan_targets(xuan.fragment):
                 with gate:
                     decision = self.consume_audience_admission(
                         target,
                         origin_id=f"scene:xuan:{int(chat_turn_id or 0)}:{target.name}",
                         origin_chat_turn_id=int(chat_turn_id or 0),
+                        method=xuan.method,
                     )
                     if decision.allowed:
                         ensure_summon_enter(

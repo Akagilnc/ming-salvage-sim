@@ -1605,7 +1605,8 @@ _XUAN_COMMAND_RE = re.compile(
     r"(.+?)"
     r"(?:来|到|入殿|上殿|面圣|见我)?$"
 )
-_XUAN_NAME_SPLIT_RE = re.compile(r"[,，、;；/|]|与|及|和")
+# 多人分隔只用标点；禁「和/与/及」等可侵入在册别名（如朱燮元「懋和」）的字。
+_XUAN_NAME_SPLIT_RE = re.compile(r"[,，、;；/|]")
 
 # 场景对话轮挂名：整场戏文不绑单人；归档 involved_people 投影会滤非人（#1331）。
 SCENE_CHAT_SPEAKER = "殿上"
@@ -1620,7 +1621,10 @@ class RecognizedXuanCommand:
 
 
 def split_xuan_name_fragments(fragment: str) -> List[str]:
-    """#1913：一句口令里的多人名按顿号等分隔符拆开；单名保持原样。"""
+    """#1913：多人名仅按顿号等标点拆开；完整单名（含别名）保持原样。
+
+    调用方须先对整段做身份匹配；匹配失败才拆分，避免把合法别名切开。
+    """
     text = str(fragment or "").strip()
     if not text:
         return []
