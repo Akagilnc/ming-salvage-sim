@@ -854,12 +854,14 @@ def test_decree_continuation_keeps_forecast_and_lands_affair_effect(game, monkey
     before = db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE category='问后加赈'",
     ).fetchone()[0]
+    # #1917：请旨未决不颁布——问前暂存效果待问清后随颁布关落；此处只记基线。
     pre_rows = db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE category='陕西赈灾'",
     ).fetchone()[0]
     desk = session.pending_decisions()
     assert len(desk) == 1  # 世界段空：案头仅旨意 staged 问
     desk_row = desk[0]
+    assert db.dossiers.list_dossiers(status="proposed")
 
     session.submit_hitl_choices(
         _hitl_payload(desk_row), write_gate=session._write_gate,
@@ -872,17 +874,22 @@ def test_decree_continuation_keeps_forecast_and_lands_affair_effect(game, monkey
     assert db.staged_declarations.forecast_text_for(ref) == "预推不可见:陕西赈灾\n问后续推已发生。"
     assert payload["answers"][0]["context"] == question_context
     assert payload["this_decree"]["decree_text"] == "陕西赈灾"
-    assert payload["this_decree"]["status"] == "promulgated"
+    # 续推调用时原案仍可为 proposed（请旨未决不先颁）；问清后同月颁布。
+    assert payload["this_decree"]["status"] in {"proposed", "promulgated", "executing"}
     from pathlib import Path
     assert not Path(str(captured["prepared_root"])).exists()
     assert str(affair.id) in str(captured.get("grounding") or "")
     assert db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE category='问后加赈'",
     ).fetchone()[0] == before + 1
+    # 问前暂存与问后效果同月落定；问前项不得重复。
     assert db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE category='陕西赈灾'",
-    ).fetchone()[0] == pre_rows
+    ).fetchone()[0] == pre_rows + 1
     assert not db.staged_declarations.questions_for(ref)
+    assert db.dossiers.authorizes_effects(
+        int(next(r["id"] for r in db.dossiers.list_dossiers()))
+    )
     # 批红问后已落实入须进入 4a 事实供料（#1847／#1843 4a 供料修订）。
     turn = int(state.turn)
     feed = month_chain.build_secret_orders_supply_feed(
