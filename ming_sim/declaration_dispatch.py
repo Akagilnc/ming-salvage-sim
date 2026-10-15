@@ -1672,8 +1672,13 @@ def _dispatch_commission_items(
                 if int(source_chat_turn_id or 0) > 0
                 else f"minister_promise:{int(state.turn)}:{promisor}"
             )
-            issue_id = db.insert_issue(
-                state,
+            # 事务关联：复用既有声明写口，保存模型明确声明（ADR 0154/0155）。
+            affair_payload: Dict[str, Any] = {}
+            if not _attach_commission_affair(
+                db, item, affair_payload, rejected=rejected, source=source,
+            ):
+                continue
+            issue_fields = dict(
                 kind="initiative",
                 title=title,
                 origin_kind="minister_promise",
@@ -1690,6 +1695,15 @@ def _dispatch_commission_items(
                 cancellable="never",
                 commit=False,
             )
+            affair_decl = affair_payload.get("affair_declaration")
+            if affair_decl is not None:
+                issue_id = db.insert_issue_with_affair_declaration(
+                    state,
+                    affair_declaration=affair_decl,
+                    **issue_fields,
+                )
+            else:
+                issue_id = db.insert_issue(state, **issue_fields)
             applied.append({
                 "id": int(issue_id),
                 "issue_id": int(issue_id),

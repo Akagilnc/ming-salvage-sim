@@ -391,10 +391,19 @@ def apply_due_review_for_todo(
             "forged_dossier": False,
             "outcome": None,
         }
-        # 无案卷桥：只消费待办，不伪造案卷终值。
-        consumed = bool(db.dossiers.mark_next_audience_todo_status(
-            int(todo["id"]), TODO_STATUS_CONSUMED, commit=False,
-        ))
+        # 无案卷桥：不伪造案卷终值。承诺仍 active 时保留 pending，
+        # 供首次入对送达（#1916）；承诺已收尾后再消费清理。
+        commitment_ref = int(todo.get("commitment_ref") or 0)
+        issue_row = (
+            db.issues.row(commitment_ref, fields="status")
+            if commitment_ref > 0 else None
+        )
+        if issue_row is not None and str(issue_row["status"] or "") == "active":
+            consumed = False
+        else:
+            consumed = bool(db.dossiers.mark_next_audience_todo_status(
+                int(todo["id"]), TODO_STATUS_CONSUMED, commit=False,
+            ))
 
     return {
         "todo_id": int(todo["id"]),

@@ -261,7 +261,7 @@ def list_due_stages_for_scan(db: Any, turn: int) -> List[Dict[str, object]]:
     """
     rows = db.conn.execute(
         """
-        SELECT id, title, stages_json, origin_ref, origin_turn, stage_text
+        SELECT id, stages_json
         FROM issues
         WHERE status='active'
           AND commitment_kind != ''
@@ -283,8 +283,6 @@ def list_due_stages_for_scan(db: Any, turn: int) -> List[Dict[str, object]]:
                     "due_turn": int(stage["due_turn"]),
                     "criterion_text": stage["criterion_text"],
                     "origin_context": stage["origin_context"],
-                    "title": str(row["title"] or ""),
-                    "origin_ref": str(row["origin_ref"] or ""),
                 })
     return due
 
@@ -331,8 +329,7 @@ def list_due_grant_report_dossiers_for_scan(
             "due_turn": due_turn,
             "criterion_text": criterion,
             "origin_context": origin,
-            "title": title if title.strip() else criterion,
-            "origin_ref": f"dossier:{did}",
+            # 写端不读 title/顶层 origin_ref；来源在 payload_json。
             "payload_json": {
                 "dossier_id": did,
                 "origin_ref": f"dossier:{did}",
@@ -365,8 +362,8 @@ def list_due_minister_promise_oneshots_for_scan(
             "due_turn": int(item.get("due_turn") or 0),
             "criterion_text": criterion,
             "origin_context": criterion,
-            "title": str(item.get("title") or ""),
-            "origin_ref": origin_ref,
+            # 写端只读 commitment_ref/stage/due/criterion/origin_context/payload；
+            # 来源载荷走 payload_json.origin_ref（#1916 删无消费者投影）。
             "payload_json": {"origin_ref": origin_ref} if origin_ref else None,
         })
     return due
