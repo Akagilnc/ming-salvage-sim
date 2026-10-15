@@ -919,6 +919,18 @@ def _omit_secret_order_audience(entries: Sequence[dict], secret_turn_ids: set[in
     ]
 
 
+def _public_audience_experience(
+    entries: Sequence[dict], secret_turn_ids: set[int],
+) -> list[dict]:
+    """公开目录经历：沿既有可闻性，只留殿上公开条目，并去掉密令源轮。"""
+    from ming_sim.audience_night import AUDIBILITY_PUBLIC
+
+    return [
+        entry for entry in _omit_secret_order_audience(entries, secret_turn_ids)
+        if entry.get("audibility") == AUDIBILITY_PUBLIC
+    ]
+
+
 def _write_public_by_month(
     tmp: Path, public_events: list, *, base: str = _PUBLIC_DIR,
 ) -> list[str]:
@@ -1192,14 +1204,21 @@ def _world_affair_lines(
             fact for fact in textual_facts.readable_materials(subject_kind="affair", subject_id=str(int(affair.id)))
             if _keep_fact(fact, include_fact)
         )
-        # Metadata follows durable dossier links, never the free-prose origin.
-        # A public fact or ordinary dossier keeps a mixed affair available.
+        # Metadata follows durable structured links, never the free-prose origin.
+        # A public fact, ordinary dossier, or public-origin issue keeps a mixed
+        # affair available; private-only links (e.g. minister self-promise) do not.
         if public_only and not facts:
             dossiers = db.dossiers.rows_for_affair(affair.id)
-            if dossiers and not any(
+            issues = db.issues.rows_for_affair(affair.id)
+            has_link = bool(dossiers) or bool(issues)
+            public_link = any(
                 origin_visible_to(db, "", linked_dossier_id=dossier["id"])
                 for dossier in dossiers
-            ):
+            ) or any(
+                origin_visible_to(db, str(issue["origin_ref"] or ""))
+                for issue in issues
+            )
+            if has_link and not public_link:
                 continue
         fact_lines = [f"{fact.occurred_month}：{fact.body}" for fact in facts]
         directory_text = "\n".join([
@@ -1550,7 +1569,12 @@ def _write_world_tree(
         knowledge = build_character_knowledge(db, state, name)
         person_dir = f"{_PERSON_DIR}/{_safe_segment(name)}"
         rel = f"{person_dir}/经历.txt"
-        audience = _omit_secret_order_audience(_person_audience_experience(db, name), secret_turn_ids or set())
+        person_audience = _person_audience_experience(db, name)
+        audience = (
+            _public_audience_experience(person_audience, secret_turn_ids or set())
+            if public_only
+            else _omit_secret_order_audience(person_audience, secret_turn_ids or set())
+        )
         _write_text(tmp / rel, _experience_text(
             _knowledge_for_experience(knowledge, include_event),
             audience,

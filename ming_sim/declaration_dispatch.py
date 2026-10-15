@@ -1208,15 +1208,11 @@ def _dispatch_commissions(
         )
         if ids:
             for staged in result.applied:
-                # 只把修正挂到真实 pending_actions 行；禁把 issue id 当 pending id。
-                pending_id = staged.get("id")
-                if pending_id is None or str(staged.get("kind") or "") == "minister_promise":
-                    continue
+                # 自诺纠错已在上方拒收；此处只挂真实 pending 行，缺主键/缺行响亮失败。
+                pending_id = staged["id"]
                 row = db.conn.execute(
                     "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
                 ).fetchone()
-                if row is None:
-                    continue
                 payload = parse_engine_payload_json(row["payload_json"])
                 # 复用改草保留控制键的契约，任免改路径也不丢修正关联。
                 payload["_resolves_rejection_ids"] = list(dict.fromkeys(
