@@ -21,6 +21,7 @@ import re
 import time
 import tempfile
 import traceback
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from collections.abc import Mapping
@@ -1592,21 +1593,69 @@ def recognize_audience_command(message: str) -> str:
     return CMD_NONE
 
 
-# #1836：一夜一场入口的「宣 X」口令——封闭前缀 + 人名片段；引擎落入殿账（ADR 0037），
-# 不另立 summon 动作类型。后缀可有可无（「宣王绍徽」与「宣王绍徽来」同形）。
-_XUAN_COMMAND_RE = re.compile(
-    r"^(?:传召|传|召|宣|叫|带)(.{1,12}?)(?:来|到|入殿|上殿|面圣|见我)?$"
+# #1836 / #1913：一夜一场入口的宣召口令——封闭前缀 + 人名片段（可多人分隔）；
+# 引擎落入殿账（ADR 0037），不另立 summon 动作类型。
+# 越次点名 / 越次＋封闭动词 X 记 METHOD_YUECI；普通宣/召仍记 METHOD_XUANRU。
+# 复合与单字同表，编译按长度降序：短前缀不得截坏「宣召／召见／传召」完整身份。
+# 语气尾不在整串预剥——「施凤来」等以尾字入名的身份须先全名匹配；
+# 逐人未中再试剥尾（strip_xuan_person_tail），多人同形。
+_XUAN_VERBS = ("传召", "召见", "宣召", "传", "召", "宣", "叫", "带")
+_XUAN_PREFIX_RE = re.compile(
+    r"^(?:"
+    r"越次点名|"
+    r"(?:越次(?:地)?)?(?:"
+    + "|".join(sorted(_XUAN_VERBS, key=len, reverse=True))
+    + r")"
+    r")"
 )
+# 语气尾长词在前；只作逐人全名失败后的一次回退，不是第二套解析器。
+_XUAN_PERSON_TAILS = ("入殿", "上殿", "面圣", "见我", "来", "到")
+# 多人分隔只用标点；禁「和/与/及」等可侵入在册别名（如朱燮元「懋和」）的字。
+_XUAN_NAME_SPLIT_RE = re.compile(r"[,，、;；/|]")
 
 # 场景对话轮挂名：整场戏文不绑单人；归档 involved_people 投影会滤非人（#1331）。
 SCENE_CHAT_SPEAKER = "殿上"
 
 
-def recognize_xuan_command(message: str) -> Optional[str]:
-    """解析皇帝「宣 X」口令，返回人名片段；非宣召口令 → None。
+@dataclass(frozen=True)
+class RecognizedXuanCommand:
+    """#1913：宣召口令解析结果——人名片段 + 召法（宣入/越次）。"""
 
-    #1836 / ADR 0035 / 0037：玩家口令确定性落账的前半——只认封闭前缀形状，
-    不靠自由散文启发；人名解析交给调用方 match。
+    fragment: str
+    method: str = METHOD_XUANRU
+
+
+def split_xuan_name_fragments(fragment: str) -> List[str]:
+    """#1913：多人名仅按顿号等标点拆开；完整单名（含别名）保持原样。
+
+    调用方须先对整段做身份匹配；匹配失败才拆分，避免把合法别名切开。
+    """
+    text = str(fragment or "").strip()
+    if not text:
+        return []
+    parts = [part.strip() for part in _XUAN_NAME_SPLIT_RE.split(text)]
+    return [part for part in parts if part]
+
+
+def strip_xuan_person_tail(fragment: str) -> str:
+    """可选语气尾（来/到/入殿…）。全名未命中时由调用方再试；不整串预剥。
+
+    「宣王绍徽来」与「宣王绍徽」同形；「宣施凤来」须先按全名命中，不得先剥「来」。
+    """
+    text = str(fragment or "").strip()
+    if not text:
+        return ""
+    for tail in _XUAN_PERSON_TAILS:
+        if len(text) > len(tail) and text.endswith(tail):
+            return text[: -len(tail)].strip()
+    return text
+
+
+def recognize_xuan_command(message: str) -> Optional[RecognizedXuanCommand]:
+    """解析皇帝宣召口令；非宣召口令 → None。
+
+    #1836 / #1913 / ADR 0035 / 0037：只认封闭前缀形状，不靠自由散文启发；
+    人名解析交给调用方逐人 match（含可选语气尾回退）。明确越次时 method=越次。
     """
     text = str(message or "").strip()
     if not text:
@@ -1614,11 +1663,14 @@ def recognize_xuan_command(message: str) -> Optional[str]:
     # 收夜口令优先，避免「退下」等被宣召形状误吞。
     if recognize_audience_command(text) != CMD_NONE:
         return None
-    m = _XUAN_COMMAND_RE.match(text)
+    m = _XUAN_PREFIX_RE.match(text)
     if not m:
         return None
-    name = str(m.group(1) or "").strip()
-    return name or None
+    name = text[m.end():].strip()
+    if not name:
+        return None
+    method = METHOD_YUECI if text.startswith("越次") else METHOD_XUANRU
+    return RecognizedXuanCommand(fragment=name, method=method)
 
 
 def _presence_delta(entry: Dict[str, Any]) -> Optional[str]:
@@ -1786,14 +1838,24 @@ def ensure_summon_enter(
     name = str(person_name or "").strip()
     if not name:
         raise AudienceNightError("宣召人名不能为空", code="empty_person")
-    # #657：带 origin_ref 的召见消费账即使人物已在场也必须落/复用独立 origin TAG_ENTER，
-    # 不得 ensure_summon_enter 早退 None 当消费（S6）。
-    if not origin_ref and name in present_names_at(db, night_id):
+    method = _validate_summon_method(method, default=METHOD_XUANRU)
+    origin = str(origin_ref or "").strip()
+    # 带 origin_ref（#657 消费账 / 明确越次同源）：按 origin 复用或新落，
+    # 同轮恢复重试不叠账（ADR 0036）。无 origin 时：普通宣入已在场跳过；
+    # 无源轮越次仍靠 method 留账（#1913：在场去重 ≠ 召法留账）。
+    if origin:
+        for entry in list_ledger(db, night_id):
+            if (
+                str(entry.get("origin_ref") or "") == origin
+                and TAG_ENTER in (entry.get("tags") or [])
+            ):
+                return int(entry["id"])
+    elif method == METHOD_XUANRU and name in present_names_at(db, night_id):
         return None
     return summon_enter(
         db, night_id, name, method=method,
         origin_chat_turn_id=origin_chat_turn_id,
-        origin_ref=origin_ref,
+        origin_ref=origin,
         commit=commit,
     )
 
