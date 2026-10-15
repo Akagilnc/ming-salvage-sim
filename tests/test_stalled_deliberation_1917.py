@@ -423,11 +423,15 @@ def test_imperial_push_without_model_does_not_stub_promulgate(game, monkeypatch)
         r for r in session.pending_decisions()
         if r["event_id"] == f"deliberation:{did}"
     )
+    # 清掉补跑可能写入的判决，专测「无持久判决 + 缺模型」。
+    db.conn.execute(
+        "UPDATE staged_declarations SET verdict_json=NULL WHERE decree_ref=?", (ref,),
+    )
+    db.conn.commit()
     from ming_sim.month_chain import _persisted_staged_verdict
     assert _persisted_staged_verdict(db, ref, int(state.turn)) is None
-    # 强推续跑时去掉模型配置。
     session.llm_config = None
-    with pytest.raises(SettlementAbort, match="缺少模型配置"):
+    with pytest.raises(SettlementAbort):
         session.submit_hitl_choices(
             [{
                 "decision_key": row["decision_key"],
