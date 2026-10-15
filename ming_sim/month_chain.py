@@ -949,34 +949,40 @@ def _guard_month_call(
     raise AssertionError("month call abort must raise")
 
 
-def _raw_deliberation_outcome_items(declaration: Mapping[str, object]) -> list:
-    """Collect raw deliberation_outcomes (keep non-objects for rejection)."""
-    effects = declaration.get("effects")
-    raw_items: list = []
+def _declaration_targets_stalled(bound: Mapping[str, object], dossier_id: int) -> bool:
+    """Peek: bound declaration names stalled for this dossier (any shape)."""
+    effects = bound.get("effects")
+    envelopes: list = []
     if isinstance(effects, Mapping):
-        raw = effects.get("deliberation_outcomes") or []
-        if isinstance(raw, list):
-            raw_items = list(raw)
+        envelopes = [effects]
     elif isinstance(effects, list):
-        for envelope in effects:
-            if not isinstance(envelope, Mapping):
+        envelopes = [e for e in effects if isinstance(e, Mapping)]
+    for envelope in envelopes:
+        raw = envelope.get("deliberation_outcomes") or []
+        if not isinstance(raw, list):
+            continue
+        for item in raw:
+            if not isinstance(item, Mapping):
                 continue
-            raw = envelope.get("deliberation_outcomes") or []
-            if isinstance(raw, list):
-                raw_items.extend(raw)
-    return raw_items
+            try:
+                if int(item.get("dossier_id")) != int(dossier_id):
+                    continue
+            except (TypeError, ValueError):
+                continue
+            if str(item.get("outcome") or "").strip() == "stalled":
+                return True
+    return False
 
 
-def _persisted_staged_verdict(db: Any, decree_ref: str, turn: int = 0) -> Optional[Dict[str, Any]]:
-    """读本旨任一未作废行上的判决（含跨月 settled）；#1846 已有判决不重判。"""
+def _persisted_staged_verdict(db: Any, decree_ref: str, turn: int) -> Optional[Dict[str, Any]]:
+    """只读**本月**未作废行上的判决（ADR 0055 turn-scoped；#1846 同月续跑不重判）。"""
     ref = str(decree_ref or "").strip()
     if not ref:
         return None
-    # 当月优先，否则任意未作废行（留中跨月强推）。
     row = db.conn.execute(
         "SELECT verdict_json FROM staged_declarations "
-        "WHERE decree_ref=? AND status!='discarded' AND verdict_json IS NOT NULL "
-        "ORDER BY CASE WHEN created_turn=? THEN 0 ELSE 1 END, id DESC LIMIT 1",
+        "WHERE decree_ref=? AND status!='discarded' AND created_turn=? "
+        "AND verdict_json IS NOT NULL ORDER BY id DESC LIMIT 1",
         (ref, int(turn)),
     ).fetchone()
     if row is None:
@@ -988,7 +994,7 @@ def _persisted_staged_verdict(db: Any, decree_ref: str, turn: int = 0) -> Option
 def _persist_staged_verdict(
     db: Any, decree_ref: str, turn: int, verdict: Mapping[str, object],
 ) -> None:
-    """把判决写回本旨最新未作废行；无行则插入当月 settled 判决行（#1846）。"""
+    """把判决写回本月最新未作废行；无当月行则插入（#1846 本月产物）。"""
     import json as _json
     ref = str(decree_ref or "").strip()
     if not ref:
@@ -997,8 +1003,8 @@ def _persist_staged_verdict(
     cur = db.conn.execute(
         "UPDATE staged_declarations SET verdict_json=? "
         "WHERE id=(SELECT MAX(id) FROM staged_declarations "
-        "WHERE decree_ref=? AND status!='discarded')",
-        (payload, ref),
+        "WHERE decree_ref=? AND status!='discarded' AND created_turn=?)",
+        (payload, ref, int(turn)),
     )
     if int(cur.rowcount or 0) == 0:
         db.conn.execute(
@@ -1009,21 +1015,28 @@ def _persist_staged_verdict(
         )
 
 
+class _StalledApplyMiss(Exception):
+    """Internal: full-declaration trial did not stall this dossier; roll back."""
+
+
 def _apply_stalled_deliberation_from_declaration(
     db: Any, state: Any, *, dossier_id: int, decree_ref: str, declaration: Any,
     visible_refs: Any = None,
 ) -> bool:
-    """#1917：声明含本原案 stalled 且成功落标时，单事务消费暂存并返回 True。
+    """#1917：整份声明经统一分派试消费；本案 stalled 落成则同事务 settled。
 
-    绑定 pending-action 身份；同批好坏项一并交 settle_delta；成功则拒收+终态
-    同事务提交；全失败不 mark，交颁布后统一 settle 记拒收一次。
+    走 ``_dispatch_declaration_sections``（与 settle_staged 同体），保留信封
+    event_id 准入与全部条目；失败整体回滚，交颁布后统一 settle（ADR 0008）。
     """
     from ming_sim.applier import (
         Provenance, RejectionCollector, mirror_rejections_after_commit,
     )
-    from ming_sim.declaration_dispatch import bind_decree_effect_sources
+    from ming_sim.declaration_dispatch import (
+        bind_decree_effect_sources,
+        _dispatch_declaration_sections,
+    )
+    from ming_sim.decree import _is_stalled_deliberation
     from ming_sim.error_pack import rejections_jsonl_path
-    from ming_sim.settlement.run import SettlementContext, settle_delta
 
     if not isinstance(declaration, Mapping):
         return False
@@ -1035,56 +1048,24 @@ def _apply_stalled_deliberation_from_declaration(
         return False
     if str((current.get("payload") or {}).get("deliberation_state") or "") == "backed":
         return False
-    bound, _refs = bind_decree_effect_sources(
+    bound, refs = bind_decree_effect_sources(
         db, ref, declaration, visible_refs if isinstance(visible_refs, Mapping) else {},
     )
-    matched: list = []
-    for item in _raw_deliberation_outcome_items(bound):
-        if not isinstance(item, Mapping):
-            matched.append(item)  # 交 settle 拒收，不预丢
-            continue
-        raw_id = item.get("dossier_id")
-        try:
-            item_did = int(raw_id)
-        except (TypeError, ValueError):
-            matched.append(dict(item))  # 非法 id → settle 拒收
-            continue
-        if item_did != int(dossier_id):
-            continue
-        matched.append(dict(item))  # 含 outcome 非法；settle 逐项处理
-    if not matched:
+    if not _declaration_targets_stalled(bound, int(dossier_id)):
         return False
 
     collector = RejectionCollector()
-    turn = int(state.turn)
     try:
         with atomic(db):
-            outcome = settle_delta(
-                state, db, {"deliberation_outcomes": matched},
-                SettlementContext(
-                    source=Provenance.system_simulation,
-                    content=getattr(db, "content", None),
-                ),
+            _dispatch_declaration_sections(
+                db, state, bound,
+                minister_name="", night_id=0, source=Provenance.system_simulation,
+                collector=collector, chat_turn_id=0,
+                visible_refs=refs, defer_disclosure=True,
             )
-            delib = outcome.sections().get("deliberation_outcomes")
-            applied_ok = bool(
-                delib is not None and any(
-                    isinstance(row, Mapping)
-                    and int(row.get("dossier_id") or 0) == int(dossier_id)
-                    and str(row.get("outcome") or "") == "stalled"
-                    for row in delib.applied
-                )
-            )
-            if not applied_ok:
-                # 全失败：回滚本事务，拒收留给颁布后统一 settle。
+            row = db.dossiers.get(int(dossier_id))
+            if row is None or not _is_stalled_deliberation(row):
                 raise _StalledApplyMiss()
-            for section_name, section in outcome.sections().items():
-                for rejected_item in section.rejected:
-                    collector.record(section_name, rejected_item, turn)
-            for section_name, rejected_item in zip(
-                outcome.shape_sections, outcome.shape_rejections,
-            ):
-                collector.record(section_name, rejected_item, turn)
             collector.flush_to_db(db)
             db.conn.execute(
                 "UPDATE staged_declarations SET status='settled' "
@@ -1095,14 +1076,7 @@ def _apply_stalled_deliberation_from_declaration(
         return False
     mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
     row = db.dossiers.get(int(dossier_id))
-    return bool(
-        row is not None
-        and str((row.get("payload") or {}).get("deliberation_state") or "") == "stalled"
-    )
-
-
-class _StalledApplyMiss(Exception):
-    """Internal: stalled batch fully rejected; roll back pre-promulgate attempt."""
+    return bool(row is not None and _is_stalled_deliberation(row))
 
 
 def _settle_edicts(
