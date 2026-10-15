@@ -103,6 +103,22 @@ _TEXTUAL_FACT_EXISTENCE_TABLES = {
 }
 _AUDIBILITIES = frozenset({AUDIBILITY_PUBLIC, AUDIBILITY_PRIVATE})
 _PRESENCE_ITEM_EFFECTS = {"enter": PRESENCE_ENTER, "exit": PRESENCE_EXIT}
+# 交办专有载荷互斥：一件声明最多一种。前序分支命中不得静默丢掉后序专有键
+# （#1916：secret_order 先落账 continue 致 minister_promise 无拒收无落账）。
+_COMMISSION_SOLE_KEYS = (
+    "strategy_selection",
+    "secret_order_progress",
+    "secret_order_update",
+    "secret_order_review",
+    "secret_order",
+    "minister_promise",
+    "assignment",
+    "revoke",
+    "punishment",
+    "pacification",
+)
+# 专有载荷与普通拟旨合成字段互斥（grant+appointment 彼此可同件，见 ADR 0028）。
+_COMMISSION_ORDINARY_KEYS = ("grant", "appointment")
 
 
 @dataclass(frozen=True)
@@ -1303,6 +1319,17 @@ def _dispatch_commission_items(
     items, rejected = _section_items(raw, label="交办声明", source=source)
     applied: List[Any] = []
     for item in items:
+        sole_present = [key for key in _COMMISSION_SOLE_KEYS if item.get(key) is not None]
+        if len(sole_present) > 1:
+            _reject(
+                rejected, item, "交办专有载荷须为独立对象", "invalid_shape", source,
+            )
+            continue
+        if sole_present and any(item.get(key) for key in _COMMISSION_ORDINARY_KEYS):
+            _reject(
+                rejected, item, "交办专有载荷须为独立对象", "invalid_shape", source,
+            )
+            continue
         # #1837 reopen：禁摊派交办——按场面事实绑定暴露案卷，不解析自由文本。
         if _is_prohibit_covert_levy_item(item):
             try:
@@ -1328,10 +1355,7 @@ def _dispatch_commission_items(
         if strategy is not None:
             from ming_sim.strict_types import strict_sqlite_id
             body = _declared_prose(item.get("text"))
-            if not isinstance(strategy, Mapping) or any(
-                item.get(key) for key in
-                ("grant", "appointment", "punishment", "pacification", "assignment", "secret_order")
-            ):
+            if not isinstance(strategy, Mapping):
                 _reject(rejected, item, "点策交办须为独立结构化载荷", "invalid_shape", source)
                 continue
             try:
@@ -1381,11 +1405,7 @@ def _dispatch_commission_items(
         progress = item.get("secret_order_progress")
         if progress is not None:
             from ming_sim.strict_types import strict_sqlite_id
-            if not isinstance(progress, Mapping) or any(
-                item.get(key) for key in
-                ("grant", "appointment", "punishment", "pacification", "assignment",
-                 "secret_order", "secret_order_update", "secret_order_review")
-            ):
+            if not isinstance(progress, Mapping):
                 _reject(rejected, item, "密令进展载荷须为独立对象", "invalid_shape", source)
                 continue
             try:
@@ -1415,11 +1435,7 @@ def _dispatch_commission_items(
         update = item.get("secret_order_update")
         if update is not None:
             from ming_sim.strict_types import strict_sqlite_id
-            if not isinstance(update, Mapping) or any(
-                item.get(key) for key in
-                ("grant", "appointment", "punishment", "pacification", "assignment",
-                 "secret_order", "secret_order_progress", "secret_order_review")
-            ):
+            if not isinstance(update, Mapping):
                 _reject(rejected, item, "密令修改载荷须为独立对象", "invalid_shape", source)
                 continue
             try:
@@ -1480,11 +1496,7 @@ def _dispatch_commission_items(
         review = item.get("secret_order_review")
         if review is not None:
             from ming_sim.strict_types import strict_sqlite_id
-            if not isinstance(review, Mapping) or any(
-                item.get(key) for key in
-                ("grant", "appointment", "punishment", "pacification", "assignment",
-                 "secret_order", "secret_order_progress", "secret_order_update")
-            ):
+            if not isinstance(review, Mapping):
                 _reject(rejected, item, "密令核议载荷须为独立对象", "invalid_shape", source)
                 continue
             try:
@@ -1516,10 +1528,7 @@ def _dispatch_commission_items(
 
         secret = item.get("secret_order")
         if secret is not None:
-            if not isinstance(secret, Mapping) or any(
-                item.get(key) for key in
-                ("grant", "appointment", "punishment", "pacification", "assignment")
-            ):
+            if not isinstance(secret, Mapping):
                 _reject(rejected, item, "密令新建载荷须为独立对象", "invalid_shape", source)
                 continue
             source_turn = db.reign.active_chat_turn_actor_and_user_message(
@@ -1627,14 +1636,7 @@ def _dispatch_commission_items(
         minister_promise = item.get("minister_promise")
         if minister_promise is not None:
             # #1916：大臣当场自诺 → 直接入承诺账，不经应允/成案/颁布。
-            if not isinstance(minister_promise, Mapping) or any(
-                item.get(key) for key in (
-                    "grant", "appointment", "punishment", "pacification",
-                    "assignment", "secret_order", "secret_order_progress",
-                    "secret_order_update", "secret_order_review", "revoke",
-                    "strategy_selection",
-                )
-            ):
+            if not isinstance(minister_promise, Mapping):
                 _reject(rejected, item, "大臣自诺载荷须为独立对象", "invalid_shape", source)
                 continue
             body = _declared_prose(item.get("text"))
@@ -1711,6 +1713,11 @@ def _dispatch_commission_items(
                 commit=False,
             )
             affair_decl = affair_payload.get("affair_declaration")
+            # 私诺新建 vs 挂入既有：peek 在 resolve 前区分来源（ADR 0154 单向关联）。
+            preexisting_affair_id = (
+                db.affairs.peek_declared_id(affair_decl)
+                if isinstance(affair_decl, Mapping) else None
+            )
             if affair_decl is not None:
                 issue_id = db.insert_issue_with_affair_declaration(
                     state,
@@ -1728,16 +1735,21 @@ def _dispatch_commission_items(
                 "UPDATE issues SET origin_ref=? WHERE id=?",
                 (origin_ref, int(issue_id)),
             )
+            roster = [{"character_id": promisor, "tier": "主办"}]
             # #1916 C1：自诺来源登记为受限见闻，公开邸报/非当事人不得见。
             db.register_character_knowledge_source(
-                state,
-                [{"character_id": promisor, "tier": "主办"}],
-                "minister_promise",
-                title,
-                content,
-                source_id=origin_ref,
-                commit=False,
+                state, roster, "minister_promise", title, content,
+                source_id=origin_ref, commit=False,
             )
+            # 私诺 attach=new 新建的事务：事务自身来源亦受限。挂入既有事务
+            # 不改既有事务来源（关联载体 ≠ 事务来源）。
+            linked_affair_id = int(db.issues.affair_id_of(issue_id) or 0)
+            if linked_affair_id > 0 and preexisting_affair_id is None:
+                db.register_character_knowledge_source(
+                    state, roster, "minister_promise", title, content,
+                    source_id=db.affairs.origin_ref(linked_affair_id),
+                    commit=False,
+                )
             # 不写 pending 形 id 字段：issue 主键 ≠ pending_actions.id（#1916 C2）。
             applied.append({
                 "issue_id": int(issue_id),
@@ -1749,9 +1761,7 @@ def _dispatch_commission_items(
 
         assignment = item.get("assignment")
         if assignment is not None:
-            if not isinstance(assignment, Mapping) or any(
-                item.get(key) for key in ("grant", "appointment", "punishment", "pacification")
-            ):
+            if not isinstance(assignment, Mapping):
                 _reject(rejected, item, "责成交办载荷须为独立对象", "invalid_shape", source)
                 continue
             body = _declared_prose(item.get("text"))
@@ -1809,12 +1819,7 @@ def _dispatch_commission_items(
 
         revoke = item.get("revoke")
         if revoke is not None:
-            if not isinstance(revoke, Mapping) or any(
-                item.get(key) for key in
-                ("grant", "appointment", "punishment", "pacification", "assignment",
-                 "secret_order", "secret_order_progress", "secret_order_update",
-                 "strategy_selection")
-            ):
+            if not isinstance(revoke, Mapping):
                 _reject(rejected, item, "撤令交办载荷须为独立对象", "invalid_shape", source)
                 continue
             body = _declared_prose(item.get("text"))
@@ -1862,7 +1867,7 @@ def _dispatch_commission_items(
 
         punishment = item.get("punishment")
         if punishment is not None:
-            if not isinstance(punishment, Mapping) or item.get("grant") or item.get("appointment"):
+            if not isinstance(punishment, Mapping):
                 _reject(rejected, item, "惩处交办载荷须为独立对象", "invalid_shape", source)
                 continue
             body = _declared_prose(item.get("text"))
@@ -1901,7 +1906,7 @@ def _dispatch_commission_items(
 
         pacification = item.get("pacification")
         if pacification is not None:
-            if not isinstance(pacification, Mapping) or item.get("grant") or item.get("appointment"):
+            if not isinstance(pacification, Mapping):
                 _reject(rejected, item, "招抚交办载荷须为独立对象", "invalid_shape", source)
                 continue
             body = _declared_prose(item.get("text"))

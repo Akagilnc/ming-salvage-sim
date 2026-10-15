@@ -1227,7 +1227,6 @@ def _world_affair_lines(
     include_fact: Any = None,
     *,
     public_only: bool = False,
-    secret_turn_ids: set[int] | None = None,
 ) -> tuple[
     list[tuple[str, str, str, str]], list[tuple[str, str, str, str]],
 ]:
@@ -1241,7 +1240,6 @@ def _world_affair_lines(
     store = db.affairs
     textual_facts = db.textual_facts
     from ming_sim.knowledge import origin_visible_to
-    secret_ids = set(secret_turn_ids or ())
     lines: list[tuple[str, str, str, str]] = []
     opening_lines: list[tuple[str, str, str, str]] = []
     for affair in store.list_all():
@@ -1249,30 +1247,17 @@ def _world_affair_lines(
             fact for fact in textual_facts.readable_materials(subject_kind="affair", subject_id=str(int(affair.id)))
             if _keep_fact(fact, include_fact)
         )
-        # Metadata follows durable structured signals, never free-prose origin.
-        # Private-only newborns (restricted carriers, no public trace) stay out.
-        # Attaching a private promise to an already-public affair must not hide
-        # that affair's public facts, dossiers, origins, or effect history.
-        # History uses the same secret-turn boundary as the world tree writer.
-        if public_only and not facts:
-            dossiers = db.dossiers.rows_for_affair(affair.id)
-            issues = db.issues.rows_for_affair(affair.id)
-            has_restricted_carrier = bool(dossiers) or bool(issues)
-            public_carrier = any(
-                origin_visible_to(db, "", linked_dossier_id=dossier["id"])
-                for dossier in dossiers
-            ) or any(
-                origin_visible_to(db, str(issue["origin_ref"] or ""))
-                for issue in issues
-            )
-            if has_restricted_carrier and not public_carrier:
-                history = db.list_world_effect_history(store.origin_ref(affair.id))
-                if not any(
-                    _world_history_row_visible(db, row, secret_ids, True)
-                    for rows in history.values()
-                    for row in rows
-                ):
-                    continue
+        # Directory identity follows the affair's own birth source (ADR 0154),
+        # not the restrictedness of carriers later attached to it. Private-newborn
+        # affairs register affair:<id> as restricted at birth; existing public
+        # affairs stay visible when a private promise attaches. Public facts still
+        # admit a once-private affair as mixed content.
+        if (
+            public_only
+            and not facts
+            and not origin_visible_to(db, store.origin_ref(affair.id))
+        ):
+            continue
         fact_lines = [f"{fact.occurred_month}：{fact.body}" for fact in facts]
         directory_text = "\n".join([
             f"起因：{affair.origin}", f"状态：{affair.status}", *fact_lines,
@@ -2353,7 +2338,6 @@ def prepare_world_materials(
     )
     affair_lines, opening_affair_lines = _world_affair_lines(
         db, include_fact, public_only=public_feed,
-        secret_turn_ids=secret_turn_ids or set(),
     )
     dossier_facts = continuing_dossier_facts(db, int(state.turn))
     if secret_dossiers:
