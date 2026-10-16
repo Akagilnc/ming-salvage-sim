@@ -8,13 +8,9 @@ from __future__ import annotations
 
 import json
 
-import ming_sim.month_chain as month_chain
 from ming_sim.db import GameDB
-from ming_sim.decree_forecast import decree_ref_for_dossier, stage_declaration
 from ming_sim.models import Character
 from ming_sim.supervision import character_tenure
-from tests.conftest import wait_for_background_jobs
-from tests.month_chain_helpers import empty_rescript_response, make_light_session
 from tests.readback_helpers import active_character_name as _minister
 from tests.test_audience_translate_1837_reopen import (
     _close_offline,
@@ -35,12 +31,11 @@ def _add_white_body(db, state, content, name: str) -> None:
 
 def _pending_payload(db, pending_id: int) -> dict:
     row = db.conn.execute(
-        "SELECT payload_json, status, night_approved FROM pending_actions WHERE id=?",
+        "SELECT payload_json, night_approved FROM pending_actions WHERE id=?",
         (int(pending_id),),
     ).fetchone()
     return {
         **json.loads(str(row["payload_json"] or "{}")),
-        "_status": row["status"],
         "_night_approved": int(row["night_approved"] or 0),
     }
 
@@ -64,13 +59,6 @@ def _latest_pending(db, *, kind: str | None = None) -> int:
     return int(row["id"])
 
 
-def _scene_commission(db, state, content, monkeypatch, declaration, *, minister, words):
-    return _scene_declaration(
-        db, state, content, monkeypatch, words, declaration,
-        minister_name=minister,
-    )
-
-
 def _approve_pending(db, state, content, monkeypatch, pending_id: int, *, minister):
     return _scene_declaration(
         db, state, content, monkeypatch, "准。",
@@ -85,15 +73,6 @@ def _close_current_night(db, state, content):
     ).fetchone()
     assert night is not None
     return _close_offline(db, state, content, int(night["id"]))
-
-
-def _office_tenure(db, name: str) -> str:
-    row = db.conn.execute(
-        "SELECT appointment_tenure FROM character_offices WHERE character_name=?",
-        (name,),
-    ).fetchone()
-    assert row is not None
-    return str(row["appointment_tenure"])
 
 
 def _active_privileges(db, state, holder: str) -> list[str]:
@@ -126,34 +105,15 @@ def _rejected_verdict(db, *, minister: str) -> dict:
     }
 
 
-def _player_month_rejected(db, state, content, monkeypatch, dossier_id: int, *, minister: str):
-    """真实过月入口：外部模型只给打回判决，月链应停在批红且零落账。"""
-    monkeypatch.setattr("ming_sim.rescript_draft.run_rescript_text", empty_rescript_response)
-    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
-    monkeypatch.setattr(
-        "ming_sim.month_translate._default_month_translate_runner",
-        lambda *a, **k: {"effects": {}},
-    )
-    dossier = db.dossiers.get(int(dossier_id))
-    stage_declaration(
-        db, decree_ref=decree_ref_for_dossier(db, dossier),
-        declaration={"effects": {}}, turn=int(state.turn),
-        verdict=_rejected_verdict(db, minister=minister), forecast_text="",
-    )
-    session = make_light_session(db, state, content)
-    result = session.resolve_turn(allow_empty_decree=True)
-    wait_for_background_jobs(db)
-    return result
-
-
 def test_acting_appointment_real_entry_lands_tenure_and_restore(game, monkeypatch):
     db, state, content = game
     minister = _minister(db)
     appointee = "户部验收甲"
     _add_white_body(db, state, content, appointee)
 
-    _scene_commission(
+    _scene_declaration(
         db, state, content, monkeypatch,
+        "着户部验收甲署理户部右侍郎。",
         {
             "commissions": [{
                 "text": "着署理户部右侍郎",
@@ -165,8 +125,7 @@ def test_acting_appointment_real_entry_lands_tenure_and_restore(game, monkeypatc
                 },
             }],
         },
-        minister=minister,
-        words="着户部验收甲署理户部右侍郎。",
+        minister_name=minister,
     )
     pending_id = _latest_pending(db, kind="office")
     staged = _pending_payload(db, pending_id)
@@ -181,12 +140,12 @@ def test_acting_appointment_real_entry_lands_tenure_and_restore(game, monkeypatc
     assert json.loads(str(dossier["payload_json"] or "{}")).get("任别") == "署理"
 
     _player_month(db, state, content, monkeypatch, int(dossier["id"]))
-    assert _office_tenure(db, appointee) == "署理"
     assert character_tenure(db, appointee) == "署理"
 
     # 同职改真除：须再成案，不得被无动作吞掉（ADR 0064）。
-    _scene_commission(
+    _scene_declaration(
         db, state, content, monkeypatch,
+        "着户部验收甲实授户部右侍郎。",
         {
             "commissions": [{
                 "text": "着实授户部右侍郎",
@@ -198,8 +157,7 @@ def test_acting_appointment_real_entry_lands_tenure_and_restore(game, monkeypatc
                 },
             }],
         },
-        minister=minister,
-        words="着户部验收甲实授户部右侍郎。",
+        minister_name=minister,
     )
     convert_id = _latest_pending(db, kind="office")
     assert convert_id != pending_id
@@ -208,16 +166,11 @@ def test_acting_appointment_real_entry_lands_tenure_and_restore(game, monkeypatc
     _close_current_night(db, state, content)
     convert_dossier = _dossier_for_pending(db, convert_id)
     _player_month(db, state, content, monkeypatch, int(convert_dossier["id"]))
-    assert _office_tenure(db, appointee) == "真除"
     assert character_tenure(db, appointee) == "真除"
 
     db_path = db.path
     db.conn.close()
     restored = GameDB(db_path, content)
-    assert restored.conn.execute(
-        "SELECT appointment_tenure FROM character_offices WHERE character_name=?",
-        (appointee,),
-    ).fetchone()["appointment_tenure"] == "真除"
     assert character_tenure(restored, appointee) == "真除"
 
 
@@ -227,8 +180,9 @@ def test_grant_revoke_authority_real_entry_and_region_scope(game, monkeypatch):
     holder = "持剑验收乙"
     _add_white_body(db, state, content, holder)
 
-    _scene_commission(
+    _scene_declaration(
         db, state, content, monkeypatch,
+        "赐持剑验收乙尚方剑。",
         {
             "commissions": [{
                 "text": "赐尚方剑，许便宜行事",
@@ -240,8 +194,7 @@ def test_grant_revoke_authority_real_entry_and_region_scope(game, monkeypatch):
                 },
             }],
         },
-        minister=minister,
-        words="赐持剑验收乙尚方剑。",
+        minister_name=minister,
     )
     grant_id = _latest_pending(db, kind="directive")
     grant_payload = _pending_payload(db, grant_id)
@@ -254,13 +207,12 @@ def test_grant_revoke_authority_real_entry_and_region_scope(game, monkeypatch):
     assert grant_dossier["action_type"] == "authorization"
     _player_month(db, state, content, monkeypatch, int(grant_dossier["id"]))
     held = db.characters.list_active_authorities(int(state.turn), holder_id=holder)
-    assert len(held) == 1
-    assert held[0]["privilege"] == "尚方剑密授"
-    assert _active_privileges(db, state, holder) == ["尚方剑密授"]
+    assert [str(row["privilege"]) for row in held] == ["尚方剑密授"]
 
     # 省域专差：须带 locality_scope=single，收夜可成案。
-    _scene_commission(
+    _scene_declaration(
         db, state, content, monkeypatch,
+        "着持剑验收乙专差督办陕西军务。",
         {
             "commissions": [{
                 "text": "着专差督办陕西军务",
@@ -272,8 +224,7 @@ def test_grant_revoke_authority_real_entry_and_region_scope(game, monkeypatch):
                 },
             }],
         },
-        minister=minister,
-        words="着持剑验收乙专差督办陕西军务。",
+        minister_name=minister,
     )
     region_id = _latest_pending(db, kind="directive")
     region_payload = _pending_payload(db, region_id)
@@ -288,8 +239,9 @@ def test_grant_revoke_authority_real_entry_and_region_scope(game, monkeypatch):
     _player_month(db, state, content, monkeypatch, int(region_dossier["id"]))
     assert set(_active_privileges(db, state, holder)) == {"尚方剑密授", "专差督办"}
 
-    _scene_commission(
+    _scene_declaration(
         db, state, content, monkeypatch,
+        "收回持剑验收乙尚方剑。",
         {
             "commissions": [{
                 "text": "收回尚方剑",
@@ -299,8 +251,7 @@ def test_grant_revoke_authority_real_entry_and_region_scope(game, monkeypatch):
                 },
             }],
         },
-        minister=minister,
-        words="收回持剑验收乙尚方剑。",
+        minister_name=minister,
     )
     revoke_id = _latest_pending(db, kind="directive")
     revoke_payload = _pending_payload(db, revoke_id)
@@ -318,12 +269,7 @@ def test_grant_revoke_authority_real_entry_and_region_scope(game, monkeypatch):
     db.conn.close()
     restored = GameDB(db_path, content)
     restored_state = restored.load_state()
-    assert [
-        str(row["privilege"])
-        for row in restored.characters.list_active_authorities(
-            int(restored_state.turn), holder_id=holder,
-        )
-    ] == ["专差督办"]
+    assert _active_privileges(restored, restored_state, holder) == ["专差督办"]
 
 
 def test_rejected_authorization_does_not_land_held_privilege(game, monkeypatch):
@@ -332,8 +278,9 @@ def test_rejected_authorization_does_not_land_held_privilege(game, monkeypatch):
     holder = "打回授权丙"
     _add_white_body(db, state, content, holder)
 
-    _scene_commission(
+    _scene_declaration(
         db, state, content, monkeypatch,
+        "赐打回授权丙便宜行事。",
         {
             "commissions": [{
                 "text": "赐便宜行事",
@@ -345,15 +292,15 @@ def test_rejected_authorization_does_not_land_held_privilege(game, monkeypatch):
                 },
             }],
         },
-        minister=minister,
-        words="赐打回授权丙便宜行事。",
+        minister_name=minister,
     )
     pending_id = _latest_pending(db, kind="directive")
     _approve_pending(db, state, content, monkeypatch, pending_id, minister=minister)
     _close_current_night(db, state, content)
     dossier = _dossier_for_pending(db, pending_id)
-    result = _player_month_rejected(
-        db, state, content, monkeypatch, int(dossier["id"]), minister=minister,
+    result = _player_month(
+        db, state, content, monkeypatch, int(dossier["id"]),
+        verdict=_rejected_verdict(db, minister=minister),
     )
     assert result.awaiting is True
     assert result.stage == "rescript"

@@ -949,13 +949,13 @@ _COMMISSION_EXCLUSIVE_OBJECT_KEYS = (
 
 
 def _declared_object_slot(value: object) -> object | None:
-    """Optional object slot: missing/empty mapping = unused; else the declared value.
+    """Optional object slot: missing/empty mapping/blank = unused; else the declared value.
 
-    Mirrors appointment's empty-object unused semantics so stub ``{}`` does not
-    seize the commission branch or trip mutual-exclusion against a real sibling.
+    Mirrors appointment/grant empty-slot unused semantics so stub ``{}`` / ``""``
+    do not seize a commission branch or trip mutual-exclusion against a sibling.
     Non-empty bad payloads stay declared and are rejected downstream.
     """
-    if value is None:
+    if value is None or value == "":
         return None
     if isinstance(value, Mapping) and not value:
         return None
@@ -971,18 +971,10 @@ def _declared_commission_kinds(item: Mapping[str, object]) -> frozenset[str]:
     for key in _COMMISSION_EXCLUSIVE_OBJECT_KEYS:
         if _declared_object_slot(item.get(key)) is not None:
             kinds.add(key)
-    grant = item.get("grant")
-    if isinstance(grant, Mapping):
-        if grant:
-            kinds.add("grant")
-    elif grant not in (None, ""):
-        kinds.add("grant")
-    appointment = item.get("appointment")
-    if isinstance(appointment, Mapping):
-        if appointment:
-            kinds.add("appointment")
-    elif appointment not in (None, ""):
-        kinds.add("appointment")
+    # grant/appointment 与对象槽同空槽语义；二者可合成一件事，故不在 exclusive 表。
+    for key in ("grant", "appointment"):
+        if _declared_object_slot(item.get(key)) is not None:
+            kinds.add(key)
     if _is_prohibit_covert_levy_item(item):
         kinds.add("prohibit_covert_levy")
     return frozenset(kinds)
@@ -1075,17 +1067,12 @@ def _stage_authorization_commission(
         "assignee_id": holder,
         "mode": mode,
     }
-    if not _attach_commission_affair(
-        db, item, payload, rejected=rejected, source=source,
-    ):
-        return None
-    actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
-    row_id = db.stage_pending_action(
-        int(state.turn), "directive", "拟旨", actor, payload,
-        night_id=int(night_id),
-        source_chat_turn_id=source_chat_turn_id,
+    return _stage_attached_directive(
+        db, state, item, payload,
+        minister_name=minister_name, source=source,
+        night_id=night_id, source_chat_turn_id=source_chat_turn_id,
+        rejected=rejected,
     )
-    return {"id": row_id, "payload": payload, "kind": "directive"}
 
 
 def _stage_revoke_authority_commission(
@@ -1193,6 +1180,27 @@ def _stage_revoke_authority_commission(
         payload["target_id"] = holder
     if privilege in AUTHORITY_PRIVILEGE_SET:
         payload["privilege"] = privilege
+    return _stage_attached_directive(
+        db, state, item, payload,
+        minister_name=minister_name, source=source,
+        night_id=night_id, source_chat_turn_id=source_chat_turn_id,
+        rejected=rejected,
+    )
+
+
+def _stage_attached_directive(
+    db: Any,
+    state: Any,
+    item: Mapping[str, object],
+    payload: Dict[str, Any],
+    *,
+    minister_name: str,
+    source: Provenance,
+    night_id: int,
+    source_chat_turn_id: int,
+    rejected: List[RejectedItem],
+) -> Optional[Dict[str, Any]]:
+    """事务关联 + 拟旨暂存；关联拒收则返回 None（授出/收回共用尾）。"""
     if not _attach_commission_affair(
         db, item, payload, rejected=rejected, source=source,
     ):
