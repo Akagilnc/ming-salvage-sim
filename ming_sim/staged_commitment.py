@@ -261,7 +261,7 @@ def list_due_stages_for_scan(db: Any, turn: int) -> List[Dict[str, object]]:
     """
     rows = db.conn.execute(
         """
-        SELECT id, title, stages_json, origin_ref, origin_turn, stage_text
+        SELECT id, stages_json
         FROM issues
         WHERE status='active'
           AND commitment_kind != ''
@@ -283,8 +283,6 @@ def list_due_stages_for_scan(db: Any, turn: int) -> List[Dict[str, object]]:
                     "due_turn": int(stage["due_turn"]),
                     "criterion_text": stage["criterion_text"],
                     "origin_context": stage["origin_context"],
-                    "title": str(row["title"] or ""),
-                    "origin_ref": str(row["origin_ref"] or ""),
                 })
     return due
 
@@ -331,13 +329,42 @@ def list_due_grant_report_dossiers_for_scan(
             "due_turn": due_turn,
             "criterion_text": criterion,
             "origin_context": origin,
-            "title": title if title.strip() else criterion,
-            "origin_ref": f"dossier:{did}",
+            # 写端不读 title/顶层 origin_ref；来源在 payload_json。
             "payload_json": {
                 "dossier_id": did,
                 "origin_ref": f"dossier:{did}",
                 "grant_report_deadline": True,
             },
+        })
+    return due
+
+
+def list_due_minister_promise_oneshots_for_scan(
+    db: Any, state: Any,
+) -> List[Dict[str, object]]:
+    """#1916：大臣自诺 form③ 到期 → 召对待办投影。
+
+    到期谓词唯一真源＝``settlement_payload.list_due_commitments``；此处只滤
+    ``origin_kind=minister_promise`` 并投影 next_audience_todos 字段。
+    收尾仍走 close_issues acknowledged。
+    """
+    from ming_sim.settlement_payload import list_due_commitments
+
+    due: List[Dict[str, object]] = []
+    for item in list_due_commitments(db, state):
+        if str(item.get("origin_kind") or "") != "minister_promise":
+            continue
+        criterion = str(item.get("content") or item.get("title") or "")
+        origin_ref = str(item.get("origin_ref") or "")
+        due.append({
+            "commitment_ref": int(item["issue_id"]),
+            "stage_idx": 0,
+            "due_turn": int(item.get("due_turn") or 0),
+            "criterion_text": criterion,
+            "origin_context": criterion,
+            # 写端只读 commitment_ref/stage/due/criterion/origin_context/payload；
+            # 来源载荷走 payload_json.origin_ref（#1916 删无消费者投影）。
+            "payload_json": {"origin_ref": origin_ref} if origin_ref else None,
         })
     return due
 
@@ -348,10 +375,12 @@ def write_due_staged_commitment_todos(db: Any, state: Any) -> int:
     待裁载体改道 next_audience_todos；不置 TurnPhase.AWAITING_DECISION，
     不写 <<DECISION>>，不停轮（0074/0076）。
     #1783：并入拨帑案卷 due_turn 直挂（commitment_ref=0），不另立承诺事项。
+    #1916：并入大臣自诺 form③ 一次性到期（谓词复用 list_due_commitments）。
     """
     turn = int(getattr(state, "turn", 0) or 0)
     due_stages = list_due_stages_for_scan(db, turn)
     due_stages.extend(list_due_grant_report_dossiers_for_scan(db, turn))
+    due_stages.extend(list_due_minister_promise_oneshots_for_scan(db, state))
     if not due_stages:
         return 0
     written = 0

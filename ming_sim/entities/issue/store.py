@@ -31,7 +31,8 @@ class IssueStore(RowStore):
 
     TABLE = "issues"
     PK = "id"
-    TABLES = {"turn_directives": "id"}
+    # issues 亦入召对前像：夜内直写（如大臣自诺）须可随 undo 逆转（ADR 0038）。
+    TABLES = {"issues": "id", "turn_directives": "id"}
     TOUCH = True
 
     def active_rows(self, kind: str | None = None) -> Any:

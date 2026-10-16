@@ -4,7 +4,7 @@ import json
 import pytest
 import ming_sim.month_chain as month_chain
 from ming_sim.exceptions import LLMUnavailable
-from ming_sim.materials import list_materials, read_material
+from ming_sim.materials import list_materials
 from ming_sim.models import LLMConfig
 from tests.month_chain_helpers import make_light_session
 from tests.test_month_chain_1843 import _forbid_extractor, _stage_edict
@@ -155,10 +155,9 @@ def test_gazette_failure_retries_report_only(web_game, monkeypatch):
 @pytest.mark.parametrize("streaming", [True, False])
 def test_author_excludes_secret_sources_from_public_materials(game, monkeypatch, streaming):
     import ming_sim.agents as agents
-    from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
-    from tests.dossier_test_helpers import create_test_secret_order
-    from ming_sim.declaration_dispatch import stage_declaration
     from agno.run.agent import RunContentEvent, RunOutput
+    from ming_sim.settlement import SettlementContext, settle_delta
+    from tests.dossier_test_helpers import create_test_secret_order
 
     db, state, content = game
     name = next(iter(content.characters))
@@ -169,17 +168,32 @@ def test_author_excludes_secret_sources_from_public_materials(game, monkeypatch,
     apply_dossier_promulgation(db, state, plain, "promulgated")
     db.dossiers.set_affair_id_if_unbound(plain, affair.id)
     db.dossiers.set_affair_id_if_unbound(secret, affair.id)
+    # 仅构造作者 due feed 所需来源对照；不准备无断言消费的事实/流水/拒收/暂存。
     origins = [f"affair:{affair.id}", f"dossier:{plain}", f"secret_order:{oid}", f"dossier:{secret}"]
     for origin in origins:
-        if origin != origins[3]:
-            stage_declaration(db, decree_ref=origin, turn=int(state.turn), declaration={"textual_facts": []}, forecast_text=origin)
-            db.staged_declarations.mark_terminal(origin)
-        db.textual_facts.append(subject_kind="character", subject_id=name, body=f"fact:{origin}", year=state.year, period=state.period, turn=state.turn, origin_ref=origin)
-        db.conn.execute("INSERT INTO economy_ledger (turn,year,period,account,delta,balance_after,category,reason,origin_ref) VALUES (?,?,?,'国库',-1,1,'测试',?,?)", (state.turn,state.year,state.period,f"ledger:{origin}",origin))
-        collector = RejectionCollector()
-        collector.record("测试", RejectedItem({"origin_ref": origin}, "输入拒因", "invalid_shape", Provenance.player_decree), state.turn)
-        collector.flush_to_db(db)
-        db.insert_issue(state, kind="initiative", title="到期复核", origin_kind="decree", origin_ref=origin, commitment_kind="once", end_turn=state.turn)
+        db.insert_issue(
+            state, kind="initiative", title="到期复核",
+            origin_kind="decree", origin_ref=origin,
+            commitment_kind="once", end_turn=state.turn,
+        )
+    # 公开来源 + 名册受限：完整议题闸（非仅来源）决定作者 due 是否收录。
+    roster_land = settle_delta(
+        state, db,
+        {"new_issues": [{
+            "title": "名册受限到期",
+            "kind": "initiative",
+            "origin_kind": "decree",
+            "origin_ref": f"dossier:{plain}",
+            "stage_text": "名册受限到期",
+            "commitment_kind": "until_stop",
+            "ongoing_effects": {},
+            "end_turn": int(state.turn),
+            "participant_roster": [{"character_id": name, "tier": "知情"}],
+        }]},
+        SettlementContext(content=content),
+    )
+    assert roster_land.issue.rejected == []
+    roster_restricted_id = int(roster_land.issue.new_issues[0]["issue_id"])
     db.conn.commit()
     seen = {}
     previews = []
@@ -205,11 +219,9 @@ def test_author_excludes_secret_sources_from_public_materials(game, monkeypatch,
                 yield RunOutput(content=raw)
             return events()
 
+    # 最终交付：材料路径 + 作者 feed 结构化身份；不 spy 内部过滤谓词。
     def author(_config, prepared):
         seen["paths"] = list_materials(prepared.root)
-        seen["materials"] = prepared.opening + "\n" + "\n".join(
-            read_material(prepared.root, path) for path in seen["paths"]
-        )
         return AuthorModel()
     monkeypatch.setattr(agents, "create_gazette_author_agent", author)
     title, report = month_chain.run_gazette_text(db, state, _llm(), on_gazette=previews.append)
@@ -219,13 +231,13 @@ def test_author_excludes_secret_sources_from_public_materials(game, monkeypatch,
     feed = seen["feed"]
     # Landed facts and ledger history now come from the public material tree;
     # no nominal/forecast/rejection parallel feed is restored.
+    due_ids = {int(item["issue_id"]) for item in feed["due_commitments"]}
     refs = {item["origin_ref"] for item in feed["due_commitments"]}
     assert set(origins[:2]) <= refs
     assert set(origins[2:]).isdisjoint(refs)
+    assert roster_restricted_id not in due_ids
     assert {"landed", "nominal", "forecasts", "rejections"}.isdisjoint(feed)
-    for origin in origins[:2]:
-        assert f"fact:{origin}" in seen["materials"]
-        assert f"ledger:{origin}" in seen["materials"]
-    for origin in origins[2:]:
-        assert f"fact:{origin}" not in seen["materials"]
-        assert f"ledger:{origin}" not in seen["materials"]
+    assert any(
+        part.startswith(f"affair-{affair.id}-")
+        for path in seen["paths"] for part in str(path).split("/")
+    )

@@ -126,6 +126,30 @@ def assert_origin_identity_exists(db: Any, origin: object) -> str:
     return text
 
 
+def _secret_order_visible_to(db: Any, order_id: int, character_name: str) -> bool:
+    """Single truth for secret-order access: assignee, dossier roster, inquiry."""
+    from ming_sim.materials import inquiry_source_order_id
+
+    if not character_name:
+        return False
+    order = db.character_knowledge.get_secret_order(int(order_id))
+    if order is None:
+        return False
+    if character_name == str(order["minister_name"]):
+        return True
+    dossier = db.dossiers.get_for_secret_order(int(order_id))
+    if dossier is not None and character_name in participant_roster_names(
+        dossier["participant_roster"],
+    ):
+        return True
+    # Inquiry assignments are actual delegated handling, not a position grant.
+    return any(
+        inquiry_source_order_id(event["source_id"]) == int(order_id)
+        for event in db._character_knowledge_events(character_name)
+        if event["kind"] == "inquiry_assignment"
+    )
+
+
 def origin_visible_to(
     db: Any, origin: object, character_name: str = "", *, linked_dossier_id: int = 0,
 ) -> bool:
@@ -140,10 +164,13 @@ def origin_visible_to(
     Identity tokens reuse materials.secret_order_id_in_origin / dossier_id_in_origin
     (strict id). Claimed zero stays a claimed id (not undeclared). Unresolvable or
     missing secret/dossier/yamen identity fails closed—never public (#1915).
+
+    ``private_affair_birth`` marks restricted birth metadata. Access is the birth
+    roster and, when body pins ``secret_order:<id>``, that birth order's handlers
+    only—later affair-linked secret orders never unlock the name (#1916).
     """
     from ming_sim.materials import (
         dossier_id_in_origin,
-        inquiry_source_order_id,
         origin_claims_secret_or_dossier,
         origin_claims_yamen,
         secret_order_id_in_origin,
@@ -167,9 +194,20 @@ def origin_visible_to(
                 db, nested, character_name, linked_dossier_id=linked_dossier_id,
             )
     registered = db.conn.execute(
-        'SELECT kind, participant_roster FROM character_knowledge_sources WHERE source_id=?',
+        'SELECT kind, participant_roster, body FROM character_knowledge_sources '
+        'WHERE source_id=?',
         (source,),
     ).fetchone()
+    if registered is not None and str(registered["kind"] or "") == "private_affair_birth":
+        # Birth metadata: roster or the pinned birth secret-order path only.
+        # Do not walk later affair-linked secret dossiers (cross-origin leak).
+        participants = participant_roster_names(registered["participant_roster"])
+        if character_name and character_name in participants:
+            return True
+        birth_order_id = secret_order_id_in_origin(str(registered["body"] or ""))
+        if birth_order_id is not None:
+            return _secret_order_visible_to(db, birth_order_id, character_name)
+        return False
     if registered is not None and registered["kind"] != "public":
         participants = participant_roster_names(registered["participant_roster"])
         if participants and character_name not in participants:
@@ -211,22 +249,7 @@ def origin_visible_to(
                 return False
     if order_id is None:
         return True
-    if not character_name:
-        return False
-    order = db.character_knowledge.get_secret_order(order_id)
-    if order is None:
-        return False
-    if character_name == str(order["minister_name"]):
-        return True
-    dossier = db.dossiers.get_for_secret_order(order_id)
-    if dossier is not None and character_name in participant_roster_names(dossier["participant_roster"]):
-        return True
-    # Inquiry assignments are actual delegated handling, not a position grant.
-    return any(
-        inquiry_source_order_id(event["source_id"]) == order_id
-        for event in db._character_knowledge_events(character_name)
-        if event["kind"] == "inquiry_assignment"
-    )
+    return _secret_order_visible_to(db, order_id, character_name)
 
 
 def knowledge_row_visible_to(db: Any, row: Any, character_name: str) -> bool:
@@ -236,6 +259,43 @@ def knowledge_row_visible_to(db: Any, row: Any, character_name: str) -> bool:
         return True
     source_id = str(item.get("source_id") or "")
     return origin_visible_to(db, source_id, character_name)
+
+
+def issue_readable_to(
+    db: Any, issue: Any, character_name: str = "",
+) -> bool:
+    """Whether an issue record is readable to this reader.
+
+    Single authority for character knowledge, public material admission, and
+    issue-derived due feeds: origin visibility, then non-empty
+    ``participant_roster`` membership, then the issue source gate. Empty roster
+    does not restrict. Empty reader is the public feed and is never a named
+    participant.
+    """
+    if not origin_visible_to(db, issue["origin_ref"], character_name):
+        return False
+    participants = participant_roster_names(issue["participant_roster"])
+    if participants and character_name not in participants:
+        return False
+    return knowledge_row_visible_to(
+        db, {"source_id": f"issue:{int(issue['id'])}"}, character_name,
+    )
+
+
+def issue_id_readable_to(
+    db: Any, issue_id: object, character_name: str = "",
+) -> bool:
+    """Load durable issue row then apply ``issue_readable_to``; missing → closed."""
+    try:
+        iid = int(issue_id)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return False
+    if iid <= 0:
+        return False
+    row = db.issues.row(iid)
+    if row is None:
+        return False
+    return issue_readable_to(db, row, character_name)
 
 
 def project_court_roster_rows(
@@ -492,18 +552,9 @@ def build_character_knowledge(
     visible_public.extend(public_saying_events)
     visible_issues = []
     for issue in db.issues.active_rows():
-        if not origin_visible_to(db, issue["origin_ref"], character_name):
+        if not issue_readable_to(db, issue, character_name):
             continue
         source_id = f"issue:{issue['id']}"
-        participants = participant_roster_names(issue["participant_roster"])
-        if participants and character_name not in participants:
-            continue
-        if not knowledge_row_visible_to(
-            db,
-            {"source_id": source_id, "office_type": office_type, "office": office_name},
-            character_name,
-        ):
-            continue
         if issue["origin_kind"] != "impeachment_surge":
             target_roster = []
         else:

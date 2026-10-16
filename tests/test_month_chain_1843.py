@@ -223,7 +223,12 @@ def test_player_rejection_lifecycle_through_translation_and_month(game, monkeypa
         nid = int(night["id"])
         ctid = db.create_chat_turn(state, minister, "s", 0, night_id=nid, status="active")
         db.persist_minister_reply(minister, state.turn, "奉旨修正", ctid)
-        commission = {"text": "修正该旨", "resolves_rejection_ids": ids}
+        # 空对象桩与缺键同语义（未使用），不得挡住合法纠错关联。
+        commission = {
+            "text": "修正该旨",
+            "resolves_rejection_ids": ids,
+            "minister_promise": {},
+        }
         if grant:
             commission["grant"] = grant
         result = apply_audience_round_translation(
@@ -1002,15 +1007,29 @@ def test_month_drift_settles_due_secret_and_records_inertia_rejection(game, monk
     ).fetchall()) == 1
 
 def test_world_segment_reads_material_directory(game, monkeypatch):
-    """世界段复用列目录／读文件与 CLI materials_dir，不只把 opening 交进上下文。"""
+    """世界段复用列目录／读文件与 CLI materials_dir，不只把 opening 交进上下文。
+
+    #1914：同一消费接缝承接派系态势与全人物行止（含离朝）目录检查，
+    不另建 prepare 树充当证据。
+    """
     from pathlib import Path
 
     import ming_sim.agents as agents_mod
     from ming_sim.agents import bind_content
+    from ming_sim.materials import _safe_segment
     from ming_sim.models import LLMConfig
 
     db, state, content = game
     bind_content(content)
+    active_names = {
+        row["name"]
+        for row in db.characters.current_court_rows(int(state.year), int(state.period))
+    }
+    all_names = [
+        row["name"]
+        for row in db.conn.execute("SELECT name FROM characters ORDER BY name").fetchall()
+    ]
+    off_court = next(name for name in all_names if name not in active_names)
     seen = []
 
     def capture(agent, _message, **_kwargs):
@@ -1033,15 +1052,18 @@ def test_world_segment_reads_material_directory(game, monkeypatch):
         model="gpt-test", channel="api",
     )
     assert month_chain.run_world_segment_text(db, state, api) == "静"
-    assert "INDEX.txt" in seen[0]["listing"].splitlines()
+    names = [line for line in seen[0]["listing"].splitlines() if line]
+    assert "INDEX.txt" in names
     assert seen[0]["index"].strip()
     assert seen[0]["has_dir"] is False
     # Directory listing must expose materials beyond the index file itself.
-    extra = next(
-        line for line in seen[0]["listing"].splitlines()
-        if line and line != "INDEX.txt"
-    )
+    extra = next(line for line in names if line != "INDEX.txt")
     assert extra
+    assert "盘面/派系态势.txt" in names
+    assert any(p.startswith("人物/") and p.endswith("/行止.txt") for p in names)
+    assert f"人物/{_safe_segment(off_court)}/行止.txt" in names, (
+        f"{off_court}（不在当前朝臣名册）应仍有行止路径"
+    )
 
     cli = LLMConfig(api_key="", base_url="", model="", channel="cli", cli_runner="agy")
     assert month_chain.run_world_segment_text(db, state, cli) == "静"

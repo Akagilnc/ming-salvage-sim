@@ -109,7 +109,11 @@ class TextualFactStore(RowStore):
     def readable_materials(
         self, *, subject_kind: str, subject_id: str
     ) -> tuple[TextualFact, ...]:
-        """All textual facts on this object, oldest month first. No collapse, no expiry."""
+        """All textual facts on this object, oldest month first. No collapse, no expiry.
+
+        Affair queries also collect rows whose structured ``affair_id`` pointer
+        targets this affair. Provenance stays on ``origin_ref``.
+        """
         kind, target = parse_subject(subject_kind, subject_id)
         rows = self._conn.execute(
             "SELECT id, subject_kind, subject_id, year, period, turn, body, origin_ref, affair_id "

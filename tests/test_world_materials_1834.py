@@ -89,7 +89,11 @@ def test_read_material_stays_inside_directory(game, tmp_path):
 def test_all_characters_get_an_experience_file_not_just_current_court(game, tmp_path):
     """大理寺 bounce 2：经历目录曾只给当前在朝名册白名单里的人，已离朝/致仕/未在
     朝的人物经历整条消失（#1819 决定 1：各人物经历三层全可读，不按当前在朝状态
-    收窄）。挑一个真实不在当前朝臣名册里的人物，断言其经历文件仍存在于目录。"""
+    收窄）。挑一个真实不在当前朝臣名册里的人物，断言其经历文件仍存在于目录。
+
+    #1914：行止交付由世界段消费接缝承接（test_world_segment_reads_material_directory），
+    本案只守经历独立契约。
+    """
     db, state, content = game
     active_names = {row["name"] for row in db.characters.current_court_rows(int(state.year), int(state.period))}
     all_names = [
