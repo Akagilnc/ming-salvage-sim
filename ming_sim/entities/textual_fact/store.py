@@ -112,21 +112,15 @@ class TextualFactStore(RowStore):
         """All textual facts on this object, oldest month first. No collapse, no expiry.
 
         Affair queries also collect rows whose structured ``affair_id`` pointer
-        targets this affair (character/army/region facts linked by declaration).
-        Provenance stays on ``origin_ref`` and is not used as the association key.
+        targets this affair. Provenance stays on ``origin_ref``.
         """
         kind, target = _parse_subject(subject_kind, subject_id)
-        clauses = ["(subject_kind = ? AND subject_id = ?)"]
-        params: list[object] = [kind, target]
-        if kind == "affair" and target.isdecimal():
-            clauses.append("(affair_id = ? AND affair_id > 0)")
-            params.append(int(target))
         rows = self._conn.execute(
             "SELECT id, subject_kind, subject_id, year, period, turn, body, origin_ref, affair_id "
             "FROM textual_facts "
-            f"WHERE {' OR '.join(clauses)} "
+            "WHERE (subject_kind = ? AND subject_id = ?) OR (affair_id = ? AND affair_id > 0) "
             "ORDER BY year ASC, period ASC, id ASC",
-            params,
+            (kind, target, int(target) if kind == "affair" and target.isdecimal() else 0),
         ).fetchall()
         return tuple(_row_to_fact(row) for row in rows)
 

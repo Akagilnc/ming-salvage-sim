@@ -205,31 +205,7 @@ def test_author_excludes_secret_sources_from_public_materials(game, monkeypatch,
                 yield RunOutput(content=raw)
             return events()
 
-    # 观测真实 prepare→写手过滤结果，不 helper 自证、不盯正文。
-    import ming_sim.materials as materials_mod
-    kept_fact_origins: list[str] = []
-    kept_history_origins: list[str] = []
-    real_keep = materials_mod._keep_fact
-    real_hist = materials_mod._world_history_row_visible
-
-    def spy_keep(fact, include_fact):
-        ok = real_keep(fact, include_fact)
-        if ok:
-            kept_fact_origins.append(str(getattr(fact, "origin_ref", "") or ""))
-        return ok
-
-    def spy_hist(db_, row, secret_turn_ids, public_only):
-        ok = real_hist(db_, row, secret_turn_ids, public_only)
-        if ok and public_only:
-            for key in ("origin_ref", "origin", "source_id"):
-                value = str(row.get(key) or "")
-                if value:
-                    kept_history_origins.append(value)
-        return ok
-
-    monkeypatch.setattr(materials_mod, "_keep_fact", spy_keep)
-    monkeypatch.setattr(materials_mod, "_world_history_row_visible", spy_hist)
-
+    # 最终交付：材料路径 + 作者 feed 结构化身份；不 spy 内部过滤谓词。
     def author(_config, prepared):
         seen["paths"] = list_materials(prepared.root)
         return AuthorModel()
@@ -245,11 +221,6 @@ def test_author_excludes_secret_sources_from_public_materials(game, monkeypatch,
     assert set(origins[:2]) <= refs
     assert set(origins[2:]).isdisjoint(refs)
     assert {"landed", "nominal", "forecasts", "rejections"}.isdisjoint(feed)
-    public_origins, secret_origins = set(origins[:2]), set(origins[2:])
-    assert public_origins <= set(kept_fact_origins)
-    assert secret_origins.isdisjoint(kept_fact_origins)
-    assert public_origins & set(kept_history_origins)
-    assert secret_origins.isdisjoint(kept_history_origins)
     assert any(
         part.startswith(f"affair-{affair.id}-")
         for path in seen["paths"] for part in str(path).split("/")

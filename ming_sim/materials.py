@@ -2147,27 +2147,18 @@ def _scene_spoken_text(db: Any) -> str:
 
 
 def _pending_todo_origin_by_id(db: Any) -> dict[int, str]:
-    """Map pending next-audience todo id → durable origin_ref (empty = open)."""
+    """Map pending next-audience todo id → durable origin_ref (empty = open).
+
+    Issue-linked dues gate via ``issue_readable_to``; this map only supplies
+    payload origin for non-issue todos (dossier / covert-levy lanes).
+    """
     from ming_sim.due_review import _todo_origin_ref
     from ming_sim.staged_commitment import TODO_STATUS_PENDING
 
-    issue_origins: dict[int, str] = {}
-    origins: dict[int, str] = {}
-    for todo in db.dossiers.list_next_audience_todos(status=TODO_STATUS_PENDING):
-        commitment_ref = int(todo["commitment_ref"] or 0)
-        meta_origin = ""
-        if commitment_ref > 0:
-            if commitment_ref not in issue_origins:
-                row = db.conn.execute(
-                    "SELECT origin_ref FROM issues WHERE id=?",
-                    (commitment_ref,),
-                ).fetchone()
-                issue_origins[commitment_ref] = (
-                    str(row["origin_ref"] or "") if row is not None else ""
-                )
-            meta_origin = issue_origins[commitment_ref]
-        origins[int(todo["id"])] = _todo_origin_ref(todo, meta_origin)
-    return origins
+    return {
+        int(todo["id"]): _todo_origin_ref(todo)
+        for todo in db.dossiers.list_next_audience_todos(status=TODO_STATUS_PENDING)
+    }
 
 
 def _origin_readable_to_present(
@@ -2225,15 +2216,16 @@ def _scene_pending_audience_facts(
     ):
         if not isinstance(scene, dict):
             continue
-        todo_id = int(scene.get("todo_id") or 0)
-        origin = origin_by_todo.get(todo_id, str(scene.get("origin_ref") or ""))
         commitment_ref = int(scene.get("commitment_ref") or 0)
         if commitment_ref > 0:
             issue = db.issues.row(commitment_ref)
             if issue is None or not _issue_readable_to_present(db, issue, readers):
                 continue
-        elif not _origin_readable_to_present(db, origin, readers):
-            continue
+        else:
+            todo_id = int(scene.get("todo_id") or 0)
+            origin = origin_by_todo.get(todo_id, str(scene.get("origin_ref") or ""))
+            if not _origin_readable_to_present(db, origin, readers):
+                continue
         lines.append(json.dumps(scene, ensure_ascii=False, sort_keys=True))
     for summon in list_unsettled_summons(db):
         facts = {key: summon[key] for key in ("person_name", "kind", "travel_tone") if key in summon}

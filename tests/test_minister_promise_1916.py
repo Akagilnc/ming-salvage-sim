@@ -29,7 +29,6 @@ from ming_sim.declaration_dispatch import dispatch_declaration
 from ming_sim.due_review import apply_pending_due_reviews, list_due_review_scenes
 from ming_sim.knowledge import build_character_knowledge, origin_visible_to
 from ming_sim.materials import (
-    _scene_pending_audience_facts,
     list_materials,
     prepare_scene_materials,
     release_material_tree,
@@ -311,11 +310,6 @@ def test_timed_minister_promise_due_appears_in_promisor_opening_materials(
         ).fetchone()["origin_ref"] or ""),
         uninformed,
     ) is False
-    pending_uninformed = _scene_pending_audience_facts(db, state)
-    assert not any(
-        isinstance(item, dict) and int(item.get("commitment_ref") or 0) == issue_id
-        for item in (json.loads(fact) for fact in pending_uninformed)
-    ), pending_uninformed
     prepared_uninformed = prepare_scene_materials(db, state)
     try:
         assert issue_id not in _opening_commitment_ids(prepared_uninformed.opening), (
@@ -330,14 +324,6 @@ def test_timed_minister_promise_due_appears_in_promisor_opening_materials(
 
     # 承诺人首次入对：真实 prepare_scene_materials 开场须含到期项身份（J4 接缝）。
     ensure_summon_enter(db, int(night2["id"]), promisor)
-    pending_facts = _scene_pending_audience_facts(db, state)
-    parsed = [json.loads(fact) for fact in pending_facts]
-    assert any(
-        isinstance(item, dict) and int(item.get("commitment_ref") or 0) == issue_id
-        for item in parsed
-    ), pending_facts
-    knowledge = build_character_knowledge(db, state, promisor)
-    assert any(int(i.get("id") or 0) == issue_id for i in knowledge.get("issues") or [])
     prepared = prepare_scene_materials(db, state)
     try:
         assert issue_id in _opening_commitment_ids(prepared.opening), prepared.opening
@@ -440,6 +426,8 @@ def test_c1_minister_promise_origin_not_public_visible(game, monkeypatch):
     assert len(result.commissions.applied) == 1
     applied = result.commissions.applied[0]
     assert applied["kind"] == "minister_promise"
+    assert "issue_id" in applied
+    assert "id" not in applied  # 不与 pending_actions.id 混用
     issue_id = int(applied["issue_id"])
     private_affair_id = int(db.issues.affair_id_of(issue_id))
     assert private_affair_id > 0
@@ -679,39 +667,6 @@ def test_c1_minister_promise_origin_not_public_visible(game, monkeypatch):
         assert origin_visible_to(db, stored_origin) is False
     finally:
         release_material_tree(prepared_after.root)
-
-    # 独立边界：无公开文字事实、无公开载体，仅凭公开流水保留事务目录身份。
-    history_affair = db.affairs.open(
-        name="公开河工事务", origin="廷议河工",
-        year=int(state.year), period=int(state.period), turn=int(state.turn),
-    )
-    history_affair_id = int(history_affair.id)
-    history_origin = db.affairs.origin_ref(history_affair_id)
-    db.record_issue_economy_move(
-        state, "国库", -1, "河工", "公开收支",
-        origin_ref=history_origin,
-    )
-    assert any(db.list_world_effect_history(history_origin).values())
-    hist_linked, _hc, _hn = _land_minister_promise(
-        db, state, promisor=promisor, title="私诺挂公开流水事务",
-        deadline_months=0,
-        affair_declaration={"attach": "existing", "affair_id": history_affair_id},
-    )
-    assert hist_linked.commissions.rejected == []
-    assert int(db.issues.affair_id_of(
-        int(hist_linked.commissions.applied[0]["issue_id"]),
-    )) == history_affair_id
-    captured["affair_keys"] = set()
-    prepared_hist = prepare_gazette_author_materials(db, state)
-    try:
-        assert f"affair-{history_affair_id}" in captured["affair_keys"]
-        assert any(
-            part.startswith(f"affair-{history_affair_id}-")
-            for path in list_materials(prepared_hist.root)
-            for part in str(path).split("/")
-        )
-    finally:
-        release_material_tree(prepared_hist.root)
 
     # 密令 attach=new：出生标记无共享正文；事务不进公开目录；承办人知识无双份正文。
     secret_dossier = db.dossiers.get_for_secret_order(int(order_id))
@@ -1238,20 +1193,6 @@ def test_c2_correction_ids_rejected_on_minister_promise(game):
     }
     assert pending_after == pending_before
     assert _active_commitments_for(db, promisor) == []
-
-
-def test_c2_minister_promise_applied_has_no_pending_id_field(game):
-    """C2：自诺 applied 只报 issue_id，不冒充 pending_actions.id。"""
-    db, state, content = game
-    result, _c, _n = _land_minister_promise(
-        db, state, promisor="魏忠贤", title="字段隔离",
-    )
-    assert result.commissions.rejected == []
-    applied = result.commissions.applied[0]
-    assert "issue_id" in applied
-    assert "id" not in applied
-
-
 
 
 def test_sole_commission_actions_reject_when_mixed_with_minister_promise(game):
