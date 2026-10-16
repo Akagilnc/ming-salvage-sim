@@ -527,13 +527,16 @@ def test_two_questions_first_lands_then_second_stalled_keeps_ledger(game, monkey
 
 @pytest.mark.parametrize(
     "own_stall",
-    ["valid", "plain", "rejected"],
-    ids=["leftover_stall", "leftover_plain", "leftover_rejected_stall"],
+    ["valid", "plain", "rejected", "cross_other"],
+    ids=[
+        "leftover_stall", "leftover_plain",
+        "leftover_rejected_stall", "leftover_cross_other",
+    ],
 )
 def test_cross_case_stall_leftover_does_not_undo_imperial_push(
     game, monkeypatch, own_stall,
 ):
-    """跨案落标后本案遗留暂存：合法 stalled 闭合且不撤销强推；拒收/无 stalled 保留颁布后入账。"""
+    """跨案落标后遗留暂存：按落标目标当轮闭合；合法/跨案不撤销强推；拒收/无 stalled 颁布后入账。"""
     db, state, content = game
     did_a, ref_a = _plant_proposed(db, state, title="跨案先", target_id="cross-first")
     did_b, ref_b = _plant_proposed(db, state, title="跨案目标", target_id="cross-target")
@@ -554,32 +557,36 @@ def test_cross_case_stall_leftover_does_not_undo_imperial_push(
         effects["deliberation_outcomes"] = [{
             "dossier_id": ref_b, "outcome": "stalled", "note": "",
         }]
+    elif own_stall == "cross_other":
+        # 他旨声明只点名先案 stalled：须在落标目标侧当轮闭合，不得拖到强推后撤销御笔。
+        effects["deliberation_outcomes"] = [{
+            "dossier_id": did_a, "outcome": "stalled", "note": "他旨再标先案",
+        }]
     _stage(db, state, ref_b, {"effects": effects})
     canned_full_settlement(monkeypatch)
     session = make_light_session(db, state, content)
     session.llm_config = object()
     assert session.resolve_turn(allow_empty_decree=True).awaiting
+    assert db.dossiers.get(did_a)["payload"].get("deliberation_state") == "stalled"
     assert db.dossiers.get(did_b)["payload"].get("deliberation_state") == "stalled"
-    if own_stall == "valid":
-        # 合法 stalled 遗留须在落标当轮闭合，不得拖到强推后再消费。
+    if own_stall in {"valid", "cross_other"}:
+        # 合法 stalled（自指或跨案点名已 stalled 案）须在落标当轮闭合。
         assert db.staged_declarations.is_settled(ref_b)
     else:
         # plain / 拒收：不闭合，留给颁布后 settle（合法支出仍可入账）。
         assert not db.staged_declarations.is_settled(ref_b)
     row_b = _deliberation_desk_row(session, did_b)
     row_a = _deliberation_desk_row(session, did_a)
-    session.submit_hitl_choices([
-        {"decision_key": row_b["decision_key"], "action": "imperial_push", "note": "朕独担目标"},
-        {"decision_key": row_a["decision_key"], "action": "hold", "note": "先案留中"},
-    ], write_gate=session._write_gate)
-    # 若同批只消费其一，再清另一案头以续月链。
-    remain_a = [
-        r for r in session.pending_decisions()
-        if r.get("event_id") == f"deliberation:{did_a}" and r.get("status") == "pending"
-    ]
-    if remain_a:
+    if own_stall == "cross_other":
+        # 两案均强推：旧跨案声明不得把任一案打回 stalled。
         session.submit_hitl_choices([
-            {"decision_key": remain_a[0]["decision_key"], "action": "hold", "note": "先案留中"},
+            {"decision_key": row_a["decision_key"], "action": "imperial_push", "note": "朕独担先案"},
+            {"decision_key": row_b["decision_key"], "action": "imperial_push", "note": "朕独担目标"},
+        ], write_gate=session._write_gate)
+    else:
+        session.submit_hitl_choices([
+            {"decision_key": row_b["decision_key"], "action": "imperial_push", "note": "朕独担目标"},
+            {"decision_key": row_a["decision_key"], "action": "hold", "note": "先案留中"},
         ], write_gate=session._write_gate)
     pushed = db.dossiers.get(did_b)
     assert pushed["payload"].get("deliberation_state") == "backed"
@@ -593,12 +600,22 @@ def test_cross_case_stall_leftover_does_not_undo_imperial_push(
         and str(r.get("status") or "") == "pending"
         for r in session.pending_decisions()
     )
+    if own_stall == "cross_other":
+        first = db.dossiers.get(did_a)
+        assert first["payload"].get("deliberation_state") == "backed"
+        assert db.dossiers.authorizes_effects(did_a)
+        assert first.get("promulgation_decision") == "promulgated"
+        assert not any(
+            str(r.get("event_id") or "").startswith(f"deliberation:{did_a}")
+            and str(r.get("status") or "") == "pending"
+            for r in session.pending_decisions()
+        )
     moves = [
         int(r[0]) for r in db.conn.execute(
             "SELECT delta FROM economy_ledger WHERE category='跨案遗留支'",
         )
     ]
-    if own_stall == "valid":
+    if own_stall in {"valid", "cross_other"}:
         # 与单案 stalled 同声明支出一致：试消费时尚未颁布，支出不入账。
         assert moves == []
     else:
