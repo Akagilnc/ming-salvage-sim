@@ -523,3 +523,78 @@ def test_two_questions_first_lands_then_second_stalled_keeps_ledger(game, monkey
     assert pushed["status"] != "proposed"
     assert {int(d["id"]) for d in db.dossiers.list_dossiers()} == before_ids
     assert ledger_deltas() == [-5]
+
+
+@pytest.mark.parametrize(
+    "own_stall",
+    [True, False],
+    ids=["leftover_stall", "leftover_plain"],
+)
+def test_cross_case_stall_leftover_does_not_undo_imperial_push(
+    game, monkeypatch, own_stall,
+):
+    """跨案落标后本案遗留暂存须闭合消费：强推不被旧 stalled 撤销；无 stalled 的合法支出仍落。"""
+    db, state, content = game
+    did_a, ref_a = _plant_proposed(db, state, title="跨案先", target_id="cross-first")
+    did_b, ref_b = _plant_proposed(db, state, title="跨案目标", target_id="cross-target")
+    _stage(db, state, ref_a, {"effects": {"deliberation_outcomes": [
+        {"dossier_id": did_a, "outcome": "stalled", "note": "先案无人站台"},
+        {"dossier_id": did_b, "outcome": "stalled", "note": "目标案被牵连"},
+    ]}})
+    effects = {"economy_moves": [{
+        "origin_ref": ref_b, "account": "国库", "delta": -3,
+        "category": "跨案遗留支", "reason": "本旨支出",
+    }]}
+    if own_stall:
+        effects["deliberation_outcomes"] = [{
+            "dossier_id": ref_b, "outcome": "stalled", "note": "目标案原预推无人站台",
+        }]
+    _stage(db, state, ref_b, {"effects": effects})
+    canned_full_settlement(monkeypatch)
+    session = make_light_session(db, state, content)
+    session.llm_config = object()
+    assert session.resolve_turn(allow_empty_decree=True).awaiting
+    assert db.dossiers.get(did_b)["payload"].get("deliberation_state") == "stalled"
+    if own_stall:
+        # 含本案 stalled 的遗留须在落标当轮闭合，不得拖到强推后再消费。
+        assert db.staged_declarations.is_settled(ref_b)
+    else:
+        # 未点名本案 stalled 的合法声明留给颁布后 settle。
+        assert not db.staged_declarations.is_settled(ref_b)
+    row_b = _deliberation_desk_row(session, did_b)
+    row_a = _deliberation_desk_row(session, did_a)
+    session.submit_hitl_choices([
+        {"decision_key": row_b["decision_key"], "action": "imperial_push", "note": "朕独担目标"},
+        {"decision_key": row_a["decision_key"], "action": "hold", "note": "先案留中"},
+    ], write_gate=session._write_gate)
+    # 若同批只消费其一，再清另一案头以续月链。
+    remain_a = [
+        r for r in session.pending_decisions()
+        if r.get("event_id") == f"deliberation:{did_a}" and r.get("status") == "pending"
+    ]
+    if remain_a:
+        session.submit_hitl_choices([
+            {"decision_key": remain_a[0]["decision_key"], "action": "hold", "note": "先案留中"},
+        ], write_gate=session._write_gate)
+    pushed = db.dossiers.get(did_b)
+    assert pushed["payload"].get("deliberation_state") == "backed"
+    assert db.dossiers.authorizes_effects(did_b)
+    assert pushed["status"] != "proposed"
+    assert pushed.get("promulgation_decision") == "promulgated"
+    assert len(db.dossiers.endorsements(did_b)) == 1
+    assert db.staged_declarations.is_settled(ref_b)
+    assert not any(
+        str(r.get("event_id") or "").startswith(f"deliberation:{did_b}")
+        and str(r.get("status") or "") == "pending"
+        for r in session.pending_decisions()
+    )
+    moves = [
+        int(r[0]) for r in db.conn.execute(
+            "SELECT delta FROM economy_ledger WHERE category='跨案遗留支'",
+        )
+    ]
+    if own_stall:
+        # 与单案 stalled 同声明支出一致：试消费时尚未颁布，支出不入账。
+        assert moves == []
+    else:
+        assert moves == [-3]

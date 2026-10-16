@@ -1165,6 +1165,14 @@ def _settle_edicts(
         if dossier is None:
             continue
         if _is_stalled_deliberation(dossier):
+            # 跨案落标后本案仍可能留有未消费暂存；复用试消费完整生命周期收口，
+            # 避免强推后再 settle 旧 deliberation_outcomes 撤销御笔（#1917）。
+            # 声明未点名本案 stalled 时 helper 不消费，留给颁布后正常 settle。
+            ref = decree_ref_for_dossier(db, dossier)
+            _apply_stalled_deliberation_from_declaration(
+                db, state, dossier_id=int(dossier["id"]), decree_ref=ref,
+                alongside=persist_result,
+            )
             continue
         status = str(dossier.get("status") or "")
         held = _is_held_for_rejudgment(dossier, int(state.turn))
