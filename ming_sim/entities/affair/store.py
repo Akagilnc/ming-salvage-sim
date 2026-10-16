@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from ming_sim.applier import connection_owns_transaction
+from ming_sim.entities.column_write import RowStore
 from ming_sim.entities.dossier import DossierStore
 from ming_sim.entities.issue import IssueStore
 from ming_sim.entities.character.store import CharacterStore
@@ -74,11 +75,16 @@ class Affair:
     closed_turn: int
 
 
-class AffairStore:
-    """World-record home for affairs. Status becomes closed only via world archive."""
+class AffairStore(RowStore):
+    """World-record home for affairs. Status becomes closed only via world archive.
 
-    def __init__(self, conn: Any) -> None:
-        self._conn = conn
+    TABLES 入召对前像：夜内 attach=new 创建的事务随 undo 逆转（ADR 0038）；
+    既有事务行仅在本轮被改时还原，不得误删。
+    """
+
+    TABLE = "affairs"
+    PK = "id"
+    TABLES = {"affairs": "id"}
 
     @staticmethod
     def ensure_schema(conn: Any) -> None:

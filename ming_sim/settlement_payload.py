@@ -139,6 +139,7 @@ def list_due_commitments(db: GameDB, state: GameState) -> List[Dict[str, object]
             "title": str(row["title"] or ""),
             # Free stage prose: full text (P6); no fixed-length clip.
             "content": str(row["stage_text"] or row["title"] or ""),
+            "origin_kind": str(row["origin_kind"] or ""),
             "origin_ref": str(row["origin_ref"] or ""),
             "turn_issued": int(row["origin_turn"] or 0),
             "due_turn": int(row["end_turn"] or 0),

@@ -31,6 +31,17 @@ from ming_sim.staged_commitment import (
 logger = logging.getLogger(__name__)
 
 ENTRY_KIND_BREACH_PLEA = "midcourse_breach_plea"
+ORIGIN_KIND_MINISTER_PROMISE = "minister_promise"
+
+
+def _is_minister_self_promise(row: Any) -> bool:
+    """#1916 C5：臣下自诺共用承诺账，但不构成皇命违诺责任。
+
+    调用方只喂 ``issues.active_commitments()`` 的 SELECT * 行；缺字段/类型异常
+    是内部契约错误，不得静默当成普通承诺。
+    """
+    return str(row["origin_kind"] or "") == ORIGIN_KIND_MINISTER_PROMISE
+
 
 # 哭谏 todo.payload_json 判决痕迹（#626 path① 真源；不扩三态枚举）
 PLEA_VERDICT_KEY = "verdict"
@@ -754,6 +765,8 @@ def _scan_funding_cutoff(db: Any, state: Any) -> List[int]:
     written: List[int] = []
     turn = int(getattr(state, "turn", 0) or 0)
     for row in db.issues.active_commitments():
+        if _is_minister_self_promise(row):
+            continue
         cid = int(row["id"])
         if has_pending_plea(db, cid, breach_kind=BREACH_KIND_FUNDING):
             continue
@@ -797,6 +810,8 @@ def _scan_misappropriation(db: Any, state: Any) -> List[int]:
     written: List[int] = []
     turn = int(getattr(state, "turn", 0) or 0)
     for row in db.issues.active_commitments():
+        if _is_minister_self_promise(row):
+            continue
         cid = int(row["id"])
         accounts = _dedicated_accounts(row)
         if not accounts:
@@ -942,6 +957,8 @@ def _scan_remove_sponsor(db: Any, state: Any) -> List[int]:
     """撤人：主办罢/调（status 离岗 或 职务变动而仍 active）。"""
     written: List[int] = []
     for row in db.issues.active_commitments():
+        if _is_minister_self_promise(row):
+            continue
         cid = int(row["id"])
         if has_pending_plea(db, cid, breach_kind=BREACH_KIND_REMOVE_SPONSOR):
             continue
