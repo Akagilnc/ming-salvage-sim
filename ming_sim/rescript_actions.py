@@ -90,19 +90,14 @@ def apply_imperial_deliberation_push(
 ) -> int:
     """Reuse the stalled dossier and retain imperial decision-key provenance."""
     did = int(target_dossier_id)
-    row = db.dossiers.get(did)
-    if not decision_key or row is None or row["status"] != "proposed":
-        raise ValueError("御笔强推要求原 proposed 案卷与 decision_key")
-    payload = dict(row["payload"] or {})
-    if payload.get("deliberation_state") != "stalled":
-        raise ValueError("御笔强推只接无人站台原案")
+    if not decision_key or db.dossiers.get(did) is None:
+        raise ValueError("御笔强推要求原案与 decision_key")
     origin = f"dossier:{did}"
     issue = db.issues.active_by_origin("deliberation", origin)
     if issue is None:
         raise ValueError("无人站台原案缺局势记录")
-    payload["deliberation_state"] = "backed"
-    payload["imperial_push_note"] = decree_text
-    db.dossiers.update_payload(did, payload, commit=False)
+    # 门闸＝deliberation_state；不要求 status==proposed（ADR 0151 不拨 status）。
+    db.dossiers.mark_deliberation_backed(did, note=decree_text, commit=False)
     db.dossiers.add_endorsement(
         did, form="御笔手敕", endorser_id="", imperial=True,
         decision_key=decision_key, source_chat_turn_id=0, commit=False,
@@ -116,16 +111,9 @@ def apply_imperial_deliberation_hold(
 ) -> int:
     """#1917：留中结束本次无人站台等待，原案留存，不再开案头。"""
     did = int(target_dossier_id)
-    row = db.dossiers.get(did)
-    if row is None or row["status"] != "proposed":
-        raise ValueError("留中要求原 proposed 案卷")
-    payload = dict(row["payload"] or {})
-    if payload.get("deliberation_state") != "stalled":
-        return did
-    payload["deliberation_state"] = "held"
-    if note.strip():
-        payload["deliberation_hold_note"] = note.strip()
-    db.dossiers.update_payload(did, payload, commit=False)
+    if db.dossiers.get(did) is None:
+        raise ValueError("留中要求原案")
+    db.dossiers.mark_deliberation_held(did, note=note, commit=False)
     origin = f"dossier:{did}"
     issue = db.issues.active_by_origin("deliberation", origin)
     if issue is not None:

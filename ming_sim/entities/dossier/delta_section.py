@@ -122,39 +122,20 @@ def apply_deliberation_outcomes(run):
         except (TypeError, ValueError) as exc:
             reject_item(rejected, raw_item, str(exc), "invalid_transition", source)
             continue
-        dossier = run.db.dossiers.get(dossier_id)
-        status = str((dossier or {}).get("status") or "")
         # #1917 runner 裁定（二）：先答效果可已颁/执行；后道 stalled 转待裁，不回滚已落。
-        # ADR0055：密令绕外廷，不入无人站台待裁。
-        if (
-            dossier is None
-            or status not in {"proposed", "promulgated", "executing"}
-            or dossier.get("secret_order_id")
-        ):
+        # ADR 0151：案卷生命周期写口归 DossierStore；不拨 status、不备份恢复。
+        try:
+            dossier = run.db.dossiers.mark_deliberation_stalled(
+                int(dossier_id), note=note, commit=False,
+            )
+        except KeyError:
             reject_item(
                 rejected, raw_item, "无人站台只接原案", "invalid_transition", source,
             )
             continue
-        payload = dict(dossier.get("payload") or {})
-        if str(payload.get("deliberation_state") or "") == "stalled":
-            applied.append({
-                "dossier_id": dossier_id, "outcome": "stalled", "source_item": item,
-            })
+        except ValueError as exc:
+            reject_item(rejected, raw_item, str(exc), "invalid_transition", source)
             continue
-        payload["deliberation_state"] = "stalled"
-        if note.strip() and not str(payload.get("deliberation_note") or "").strip():
-            payload["deliberation_note"] = note
-        if status != "proposed":
-            # 记拨回前状态，强推恢复办理时不重放载荷（#1917 C1）。
-            payload["_pre_stall_status"] = status
-        run.db.dossiers.update_payload(dossier_id, payload, commit=False)
-        if status != "proposed":
-            # 回 proposed 仅供待裁案头；已落效果不动。
-            run.db.conn.execute(
-                "UPDATE decree_dossiers SET status='proposed', "
-                "updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                (int(dossier_id),),
-            )
         origin = f"dossier:{dossier_id}"
         # 廷议局势身份＝origin_kind=deliberation + origin_ref；不与同 ref 国策/承诺混同。
         existing = run.db.issues.by_origin("deliberation", origin)

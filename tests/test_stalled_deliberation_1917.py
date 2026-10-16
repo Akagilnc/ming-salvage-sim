@@ -270,18 +270,39 @@ def test_deliberation_outcome_rejects_missing_dossier(game):
     assert rejected
 
 
-def test_bad_stalled_item_does_not_swallow_other_effects(game, monkeypatch):
-    """F5：stalled 坏项拒收留痕，不 mark settled，合法 economy_moves 仍可落。"""
+@pytest.mark.parametrize(
+    "bad_item,spend_category,spend_delta",
+    [
+        (
+            {"dossier_id": "__ref__", "outcome": "stalled", "note": ""},
+            "坏项旁合法支出",
+            -3,
+        ),
+        (
+            {"dossier_id": float("inf"), "outcome": "stalled", "note": "冷场"},
+            "坏编号旁合法支出",
+            -2,
+        ),
+    ],
+    ids=["empty_note", "bad_dossier_id"],
+)
+def test_bad_stalled_item_does_not_swallow_other_effects(
+    game, monkeypatch, bad_item, spend_category, spend_delta,
+):
+    """F5/C2：不同负向 stalled 输入共用主干——拒收恰好一次，合法支出仍落，不中止整月。"""
     db, state, content = game
-    did, ref = _plant_proposed(db, state, title="坏项探针", target_id="bad-stalled")
+    did, ref = _plant_proposed(
+        db, state, title=f"坏项-{spend_category}", target_id=f"bad-{spend_category}",
+    )
+    item = dict(bad_item)
+    if item.get("dossier_id") == "__ref__":
+        item["dossier_id"] = ref
     _stage(db, state, ref, {
         "effects": {
-            "deliberation_outcomes": [{
-                "dossier_id": ref, "outcome": "stalled", "note": "",
-            }],
+            "deliberation_outcomes": [item],
             "economy_moves": [{
-                "origin_ref": ref, "account": "国库", "delta": -3,
-                "category": "坏项旁合法支出", "reason": "应落",
+                "origin_ref": ref, "account": "国库", "delta": spend_delta,
+                "category": spend_category, "reason": "应落",
             }],
         },
     })
@@ -294,14 +315,16 @@ def test_bad_stalled_item_does_not_swallow_other_effects(game, monkeypatch):
     assert db.dossiers.authorizes_effects(did)
     assert db.staged_declarations.is_settled(ref)
     assert db.conn.execute(
-        "SELECT COUNT(*) FROM economy_ledger WHERE category='坏项旁合法支出'",
+        "SELECT COUNT(*) FROM economy_ledger WHERE category=?",
+        (spend_category,),
     ).fetchone()[0] == 1
     assert db.conn.execute(
-        "SELECT delta FROM economy_ledger WHERE category='坏项旁合法支出'",
-    ).fetchone()[0] == -3
+        "SELECT delta FROM economy_ledger WHERE category=?",
+        (spend_category,),
+    ).fetchone()[0] == spend_delta
     assert db.conn.execute(
         "SELECT COUNT(*) FROM rejection_reports WHERE section='deliberation_outcomes'",
-    ).fetchone()[0] >= 1
+    ).fetchone()[0] == 1
 
 
 def test_mixed_stalled_items_record_rejection_once_and_settle(game, monkeypatch):
@@ -360,39 +383,6 @@ def test_imperial_push_without_model_does_not_stub_promulgate(game, monkeypatch)
     assert kept["payload"]["deliberation_state"] == "backed"
     assert not kept.get("promulgation_decision")
     assert not db.dossiers.authorizes_effects(did)
-
-
-def test_bad_dossier_id_in_stalled_peek_does_not_abort_month(game, monkeypatch):
-    """C2：非法编号（如 JSON 1e309→inf）窥探不得 OverflowError 中止整月；写口逐项拒收。"""
-    db, state, content = game
-    did, ref = _plant_proposed(db, state, title="坏编号探针", target_id="bad-id-stalled")
-    _stage(db, state, ref, {
-        "effects": {
-            "deliberation_outcomes": [{
-                "dossier_id": float("inf"),
-                "outcome": "stalled",
-                "note": "冷场",
-            }],
-            "economy_moves": [{
-                "origin_ref": ref, "account": "国库", "delta": -2,
-                "category": "坏编号旁合法支出", "reason": "应落",
-            }],
-        },
-    })
-    canned_full_settlement(monkeypatch)
-    session = make_light_session(db, state, content)
-    session.llm_config = object()
-    session.resolve_turn(allow_empty_decree=True)
-    row = db.dossiers.get(did)
-    assert row["payload"].get("deliberation_state") != "stalled"
-    assert db.dossiers.authorizes_effects(did)
-    assert db.staged_declarations.is_settled(ref)
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM economy_ledger WHERE category='坏编号旁合法支出'",
-    ).fetchone()[0] == 1
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM rejection_reports WHERE section='deliberation_outcomes'",
-    ).fetchone()[0] >= 1
 
 
 def test_continuation_bad_stalled_does_not_swallow_legal_decree_spend(game, monkeypatch):
@@ -481,7 +471,7 @@ def test_two_questions_first_lands_then_second_stalled_keeps_ledger(game, monkey
         "案卷编号": did, "outcome": "stalled", "note": "后道无人站台",
     }]}})
     row = db.dossiers.get(did)
-    assert row["status"] == "proposed"
+    # stalled 只改 deliberation_state，不回拨 status（先问已落可已在办）。
     assert row["payload"].get("deliberation_state") == "stalled"
     assert not db.dossiers.authorizes_effects(did)
     assert ledger_deltas() == [-5]

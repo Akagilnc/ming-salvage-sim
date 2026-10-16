@@ -1265,30 +1265,20 @@ def _settle_edicts(
                 )
             # 预存或本次补跑声明：颁布前消费 stalled。
             # #1917 runner 裁定（二）：请旨不挡颁布——效果跟判决走、逐问可落；
-            # 后道 stalled 可将 status 拨回 proposed 待裁，已落效果不回滚。
+            # stalled 只改 deliberation_state，不拨 status、不回滚已落。
             if _apply_stalled_deliberation_from_declaration(
                 db, state, dossier_id=int(dossier["id"]), decree_ref=ref,
                 alongside=persist_result,
             ):
                 continue
             current = db.dossiers.get(int(dossier["id"])) or dossier
-            if str(current.get("status") or "") == "proposed" and resume_promulgated:
-                # 批红强颁史亦经 authorizes_effects；原判字段仍可能是 rejected。
-                pre_stall = str(
-                    (current.get("payload") or {}).get("_pre_stall_status") or ""
-                )
-                restore = pre_stall if pre_stall in {"promulgated", "executing"} else "promulgated"
-                with atomic(db):
-                    payload = dict(current.get("payload") or {})
-                    payload.pop("_pre_stall_status", None)
-                    db.dossiers.update_payload(
-                        int(dossier["id"]), payload, commit=False,
-                    )
-                    db.conn.execute(
-                        "UPDATE decree_dossiers SET status=?, "
-                        "updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                        (restore, int(dossier["id"])),
-                    )
+            if resume_promulgated:
+                # 已有颁布事实：只对齐 status，不重放物化（无 _pre_stall 备份）。
+                if str(current.get("status") or "") == "proposed":
+                    with atomic(db):
+                        db.dossiers.transition(
+                            int(dossier["id"]), "promulgated", commit=False,
+                        )
             elif (
                 str(current.get("status") or "") == "proposed"
                 and isinstance(verdict, dict)
@@ -1996,9 +1986,7 @@ def _materialize_rescript_desk(
         for r in db.issues.list_pending_decisions(turn)
         if str(r.get("status") or "") == "pending"
     }
-    for dossier in db.dossiers.list_dossiers(status="proposed"):
-        if (dossier["payload"] or {}).get("deliberation_state") != "stalled":
-            continue
+    for dossier in db.dossiers.list_stalled_deliberations():
         did = int(dossier["id"])
         base_event = f"deliberation:{did}"
         # 已有 pending 入口则不重复；曾 decided 的同 id 换新 event_id 保留历史御批（C7）。
