@@ -29,7 +29,7 @@ from ming_sim.materials import (
     prepare_scene_materials,
     release_material_tree,
 )
-from ming_sim.month_chain import prepare_gazette_author_materials, run_gazette_text
+from ming_sim.month_chain import prepare_gazette_author_materials
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement_payload import list_due_commitments
 from ming_sim.staged_commitment import (
@@ -43,9 +43,12 @@ from tests.conftest import (
     stub_scene_agent,
     wait_for_background_jobs,
 )
-from tests.dossier_test_helpers import create_test_secret_order, promulgated_policy_origin
+from tests.dossier_test_helpers import (
+    TYPED_COVERT_TASK,
+    create_test_secret_order,
+    promulgated_policy_origin,
+)
 from tests.test_audience_translate_1837 import _scene_turn, _sess
-from tests.test_gazette_author_1862 import _llm as _gazette_llm
 from tests.test_month_chain_1843 import _prepare_player_month
 
 
@@ -682,7 +685,10 @@ def test_personal_birth_title_visible_to_cohort_not_later_link(game, monkeypatch
     db, state, content = game
     promisor = "魏忠贤"
     later = "杨嗣昌"
+    host, aide, witness = "乔允升", "周延儒", "孙承宗"
     person_titles = _install_person_matter_title_capture(monkeypatch)
+
+    # 先备齐正反输入，再一次 prepare 观测出生人／同源参与人／后来关联者。
     priv_name = "私密后挂事务"
     priv, _c, _n = _land_minister_promise(
         db, state, promisor=promisor, title="私诺后挂公开案",
@@ -713,28 +719,6 @@ def test_personal_birth_title_visible_to_cohort_not_later_link(game, monkeypatch
     assert origin_visible_to(db, birth_ref, later) is False
     assert origin_visible_to(db, birth_ref, promisor) is True
 
-    night = open_night(db, state, location="乾清宫", time_of_day="昼")
-    ensure_summon_enter(db, int(night["id"]), later)
-    person_titles.clear()
-    prepared_later = prepare_scene_materials(db, state)
-    try:
-        paths = list_materials(prepared_later.root)
-        assert _paths_have_affair(paths, priv_id)
-        assert person_titles.get(later, {}).get(priv_key) == ""
-        assert person_titles.get(later, {}).get(priv_key) != priv_name
-    finally:
-        release_material_tree(prepared_later.root)
-
-    close_night(db, state, content=content)
-    night_p = open_night(db, state, location="乾清宫", time_of_day="昼")
-    ensure_summon_enter(db, int(night_p["id"]), promisor)
-    person_titles.clear()
-    prepared_p = prepare_scene_materials(db, state)
-    try:
-        assert person_titles.get(promisor, {}).get(priv_key) == priv_name
-    finally:
-        release_material_tree(prepared_p.root)
-
     secret_name = "密令专属查案事务"
     secret_id = create_test_secret_order(
         db, state, promisor, "密查粮科", "密查粮科私卖", [],
@@ -751,7 +735,6 @@ def test_personal_birth_title_visible_to_cohort_not_later_link(game, monkeypatch
     db.append_decree_dossier_participants(secret_dossier_id, [{
         "character_id": promisor, "tier": "主办", "role": "密访",
     }])
-    host, aide, witness = "乔允升", "周延儒", "孙承宗"
     added = settle_delta(
         state, db,
         {"secret_dossier_participants": [
@@ -767,18 +750,6 @@ def test_personal_birth_title_visible_to_cohort_not_later_link(game, monkeypatch
     assert added is not None
     for name in (promisor, host, aide, witness):
         assert origin_visible_to(db, secret_affair_ref, name) is True
-
-    close_night(db, state, content=content)
-    night_co = open_night(db, state, location="乾清宫", time_of_day="昼")
-    for name in (promisor, host, aide, witness):
-        ensure_summon_enter(db, int(night_co["id"]), name)
-    person_titles.clear()
-    prepared_co = prepare_scene_materials(db, state)
-    try:
-        for name in (promisor, host, aide, witness):
-            assert person_titles.get(name, {}).get(secret_key) == secret_name
-    finally:
-        release_material_tree(prepared_co.root)
 
     later_secret_id = create_test_secret_order(
         db, state, later, "后挂密令", "后挂密查", [],
@@ -796,25 +767,30 @@ def test_personal_birth_title_visible_to_cohort_not_later_link(game, monkeypatch
     assert origin_visible_to(db, birth_ref, later) is False
 
     close_night(db, state, content=content)
-    night_x = open_night(db, state, location="乾清宫", time_of_day="昼")
-    ensure_summon_enter(db, int(night_x["id"]), later)
+    night = open_night(db, state, location="乾清宫", time_of_day="昼")
+    for name in (promisor, later, host, aide, witness):
+        ensure_summon_enter(db, int(night["id"]), name)
     person_titles.clear()
-    prepared_x = prepare_scene_materials(db, state)
+    prepared = prepare_scene_materials(db, state)
     try:
+        paths = list_materials(prepared.root)
+        assert _paths_have_affair(paths, priv_id)
+        assert person_titles.get(promisor, {}).get(priv_key) == priv_name
+        for name in (promisor, host, aide, witness):
+            assert person_titles.get(name, {}).get(secret_key) == secret_name
+        assert person_titles.get(later, {}).get(priv_key) == ""
+        assert person_titles.get(later, {}).get(priv_key) != priv_name
         assert person_titles.get(later, {}).get(secret_key, "") != secret_name
         assert person_titles.get(later, {}).get(priv_key, "") != priv_name
     finally:
-        release_material_tree(prepared_x.root)
+        release_material_tree(prepared.root)
 
 
 # ── 材料可读：到期派生供料 ──────────────────────────────────
 
 
-def test_due_feeds_respect_issue_roster_and_origin(game, monkeypatch):
-    """来源公开 + 名册约束：作者 due 与召对开场只收合法读者可见项。"""
-    import ming_sim.agents as agents
-    from agno.run.agent import RunOutput
-
+def test_due_feeds_respect_issue_roster_and_origin(game):
+    """来源公开 + 名册约束：召对开场只收合法读者可见项（作者 due 见 gazette 案）。"""
     db, state, content = game
     promisor = "魏忠贤"
     public_origin = promulgated_policy_origin(db, state, "due-roster-anchor")
@@ -870,29 +846,6 @@ def test_due_feeds_respect_issue_roster_and_origin(game, monkeypatch):
 
     due_ledger = {int(i["issue_id"]) for i in list_due_commitments(db, state)}
     assert form3_restricted in due_ledger and form3_public in due_ledger
-
-    author_seen: dict[str, object] = {}
-
-    def _author(_config, _prepared):
-        class _Model:
-            supports_stream = False
-
-            def run(self, message, **_kwargs):
-                author_seen["feed"] = json.loads(message)
-                return RunOutput(content=json.dumps(
-                    {"title": "测", "report": "测"}, ensure_ascii=False,
-                ))
-
-        return _Model()
-
-    monkeypatch.setattr(agents, "create_gazette_author_agent", _author)
-    run_gazette_text(db, state, _gazette_llm())
-    author_due = {
-        int(i["issue_id"])
-        for i in (author_seen.get("feed") or {}).get("due_commitments") or []
-    }
-    assert form3_public in author_due
-    assert form3_restricted not in author_due
 
     written = write_due_staged_commitment_todos(db, state)
     assert written >= 2
@@ -993,7 +946,6 @@ def test_c2_correction_ids_rejected_on_minister_promise(game):
 def _mutex_commission_pair(db, state, promisor: str, case: str):
     """三种互斥输入的最小 (mixed, legal, words, expect) 表；公共分派链复用。"""
     from ming_sim.covert_levy import PROHIBITION_ACTION
-    from ming_sim.covert_progress import build_covert_task_contract
 
     if case == "secret_order":
         mixed = {
@@ -1001,13 +953,7 @@ def _mutex_commission_pair(db, state, promisor: str, case: str):
             "secret_order": {
                 "title": "密查", "content": "密查粮科", "assignee": promisor,
                 "tags": [], "deadline_months": 1,
-                "covert_task": build_covert_task_contract(covert_task={
-                    "kind": "查案", "axes": ["实务事功"], "direction": 1,
-                    "delivery": {
-                        "unit": "人犯", "target_units": 1.0,
-                        "person_action": "处置", "effect_sign": 1,
-                    },
-                }),
+                "covert_task": dict(TYPED_COVERT_TASK),
             },
             "minister_promise": _promise_item(promisor, "臣自诺查清"),
         }

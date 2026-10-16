@@ -155,8 +155,9 @@ def test_gazette_failure_retries_report_only(web_game, monkeypatch):
 @pytest.mark.parametrize("streaming", [True, False])
 def test_author_excludes_secret_sources_from_public_materials(game, monkeypatch, streaming):
     import ming_sim.agents as agents
-    from tests.dossier_test_helpers import create_test_secret_order
     from agno.run.agent import RunContentEvent, RunOutput
+    from ming_sim.settlement import SettlementContext, settle_delta
+    from tests.dossier_test_helpers import create_test_secret_order
 
     db, state, content = game
     name = next(iter(content.characters))
@@ -175,6 +176,24 @@ def test_author_excludes_secret_sources_from_public_materials(game, monkeypatch,
             origin_kind="decree", origin_ref=origin,
             commitment_kind="once", end_turn=state.turn,
         )
+    # 公开来源 + 名册受限：完整议题闸（非仅来源）决定作者 due 是否收录。
+    roster_land = settle_delta(
+        state, db,
+        {"new_issues": [{
+            "title": "名册受限到期",
+            "kind": "initiative",
+            "origin_kind": "decree",
+            "origin_ref": f"dossier:{plain}",
+            "stage_text": "名册受限到期",
+            "commitment_kind": "until_stop",
+            "ongoing_effects": {},
+            "end_turn": int(state.turn),
+            "participant_roster": [{"character_id": name, "tier": "知情"}],
+        }]},
+        SettlementContext(content=content),
+    )
+    assert roster_land.issue.rejected == []
+    roster_restricted_id = int(roster_land.issue.new_issues[0]["issue_id"])
     db.conn.commit()
     seen = {}
     previews = []
@@ -212,9 +231,11 @@ def test_author_excludes_secret_sources_from_public_materials(game, monkeypatch,
     feed = seen["feed"]
     # Landed facts and ledger history now come from the public material tree;
     # no nominal/forecast/rejection parallel feed is restored.
+    due_ids = {int(item["issue_id"]) for item in feed["due_commitments"]}
     refs = {item["origin_ref"] for item in feed["due_commitments"]}
     assert set(origins[:2]) <= refs
     assert set(origins[2:]).isdisjoint(refs)
+    assert roster_restricted_id not in due_ids
     assert {"landed", "nominal", "forecasts", "rejections"}.isdisjoint(feed)
     assert any(
         part.startswith(f"affair-{affair.id}-")
