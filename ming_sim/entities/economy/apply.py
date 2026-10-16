@@ -40,6 +40,9 @@ def _apply_economy_list(
     )
     from ming_sim.assets import format_wanliang_amount
     from ming_sim.constants import ECONOMY_ACCOUNTS, ECONOMY_PURPOSES, ECONOMY_TARGET_KINDS
+    # 别名真源 ITEM_FIELD_ALIASES（#1917 C4：来源引用／诏书引用须入写口）。
+    # 共享写口须先规范化再读契约字段，嵌套/承诺等未预规范化入口同吃（#1917 P2）。
+    from ming_sim.simulation import _canonical_item_fields
     applied: List[Dict[str, object]] = []
     # Guard non-list input for all callers, including economy delta and dossier (#117).
     if not isinstance(economy, list):
@@ -48,6 +51,8 @@ def _apply_economy_list(
         if not isinstance(move, dict):
             rejections.append(RejectedItem(item={"raw_value": move}, reason="经济效果项须为对象", category="invalid_shape", source=source))
             continue
+        # _canonical_item_fields(dict) 必回 dict；后置同形校验不可达（#1917 R3）。
+        move = _canonical_item_fields(move)
         # 先解析 delta：None/"" = 缺额 → 0 no-op；bool/float/坏串 → bad_delta（_strict_int 拒
         # bool/float，与 faction/region/army 同约）。no-op（可解析的 0/缺额）行无钱动 → 静默跳，
         # 不论 account（空占位行不当拒收，免噪声 + 假玩家提示，#14 cmr r1 线上 codex）。
@@ -75,9 +80,6 @@ def _apply_economy_list(
         category = str(category_raw)
         reason_raw = move.get("reason")
         reason = "" if reason_raw is None else str(reason_raw)
-        # 别名真源 ITEM_FIELD_ALIASES（#1917 C4：来源引用／诏书引用须入写口）。
-        from ming_sim.simulation import _canonical_item_fields
-        move = _canonical_item_fields(move)
         move_origin_ref = str(move.get("origin_ref") or "").strip()
         effective_origin_ref = str(origin_ref or move_origin_ref).strip()
         # #622：旨外标记与 origin_ref 同载体同寿命；路由前统一读取，三分支共用（不得在补饷分叉丢键）。
