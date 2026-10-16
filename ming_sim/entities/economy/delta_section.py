@@ -28,26 +28,25 @@ def apply(run, moves: List[object] | None = None) -> SectionResult:
 
     rows: List[object] = []
     rejections: List[RejectedItem] = []
+    from ming_sim.simulation import _canonical_item_fields
+
     for raw_move in moves:
-        move = raw_move
-        origin_ref = ""
-        if isinstance(move, dict):
-            try:
-                origin_ref = run.origin_ref_from_result_item(move)
-            except UnauthorizedAffairOriginRef as exc:
-                rejections.append(RejectedItem(item=raw_move, reason=str(exc), category="invalid_enum", source=run.ctx.source))
+        # moves 来自 sanitize 后的当前笔；共享原语 _apply_economy_list 仍守真实边界。
+        move = _canonical_item_fields(raw_move)
+        try:
+            origin_ref = run.origin_ref_from_result_item(move)
+        except UnauthorizedAffairOriginRef as exc:
+            rejections.append(RejectedItem(item=raw_move, reason=str(exc), category="invalid_enum", source=run.ctx.source))
+            continue
+        if origin_ref and not str(move.get("origin_ref") or "").strip():
+            move["origin_ref"] = origin_ref
+        if origin_ref.startswith("dossier:"):
+            dossier = _payload_owned_dossier_for_origin(run.db, origin_ref)
+            if dossier is not None and str(
+                dossier.get("action_type") or ""
+            ) == "grant_allocation":
+                # 拨款单轨已有唯一承载（#1503），重复申报不认。
                 continue
-            if origin_ref and not str(
-                move.get("origin_ref") or move.get("来源引用") or ""
-            ).strip():
-                move["origin_ref"] = origin_ref
-            if origin_ref.startswith("dossier:"):
-                dossier = _payload_owned_dossier_for_origin(run.db, origin_ref)
-                if dossier is not None and str(
-                    dossier.get("action_type") or ""
-                ) == "grant_allocation":
-                    # 拨款单轨已有唯一承载（#1503），重复申报不认。
-                    continue
         results, refused = _apply_economy_list(
             run.db, run.state, [move], require_origin=True, source=run.ctx.source,
         )

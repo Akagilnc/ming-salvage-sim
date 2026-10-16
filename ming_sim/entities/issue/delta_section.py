@@ -54,10 +54,10 @@ def apply(run) -> SectionResult:
     # 承诺月支载体：同批新建的承诺局势其 ongoing 月支被财政段用作 dedup 依据
     # （ADR 0027 承诺是主载体）。
     carriers: List[Dict[str, object]] = []
+    # applied_new 由 tracker 构造 dict；只筛承诺业务字段。
     for item in issue_summary.new_issues:
         if not (
-            isinstance(item, dict)
-            and str(item.get("commitment_kind") or "").strip()
+            str(item.get("commitment_kind") or "").strip()
             and item.get("issue_id") is not None
         ):
             continue
@@ -96,8 +96,8 @@ def _suppressed_rows(run, event_id: str, event_title: str, reason: str = "") -> 
     for item in run.event_person_changes(event_id):
         rows["person_issue"].append(RejectedItem(item=dict(item), reason=reason, category="event_rejected", source=run.ctx.source))
     for item in run.event_new_armies(event_id):
-        raw_item = dict(item) if isinstance(item, dict) else item
-        rows["new_armies"].append(RejectedItem(item={"event_id": event_id, "new_army": raw_item}, reason=reason, category="event_rejected", source=run.ctx.source))
+        # strategic_new_armies_raw 来自 sanitize 后的 clean 列表，项必为 dict。
+        rows["new_armies"].append(RejectedItem(item={"event_id": event_id, "new_army": dict(item)}, reason=reason, category="event_rejected", source=run.ctx.source))
     from ming_sim.settlement import registry
     sections = {key: spec.name for spec in registry.section_specs() for key in spec.delta_keys}
     sections["bandit_absorptions"] = "bandit_absorptions"
@@ -140,10 +140,9 @@ def _resolve_strategic_events(run, issue_summary) -> Dict[str, SectionResult]:
     reject_bucket = {name: [] for name in bucket}
     new_issues = issue_summary.new_issues
     seen = {str(row.get("id") or "").strip() for row in new_issues}
+    # RejectedItem.item 契约恒为 dict（applier 产生处保证）。
     for refusal in issue_summary.rejected:
         original = refusal.item
-        if not isinstance(original, dict):
-            continue
         event_id = str(original.get("id") or original.get("origin_ref") or "").strip()
         if event_id not in run.strategic_event_referenced_ids:
             continue
@@ -158,11 +157,9 @@ def _resolve_strategic_events(run, issue_summary) -> Dict[str, SectionResult]:
             run, event_id, ev.title if ev is not None else event_id,
         ))
 
+    # applied_new 项恒为 dict；只看 deferred_trigger 业务条件。
     for new_issue in list(new_issues):
-        if not (
-            isinstance(new_issue, dict)
-            and new_issue.get("deferred_trigger")
-        ):
+        if not new_issue.get("deferred_trigger"):
             continue
         event_id = str(new_issue.get("id") or "").strip()
         if event_id not in run.strategic_event_pool_ids:
@@ -177,7 +174,12 @@ def _resolve_strategic_events(run, issue_summary) -> Dict[str, SectionResult]:
                 run, event_id, str(new_issue.get("title") or ""),
             ))
             continue
-        for item in run.event_new_armies(event_id):
+        from ming_sim.constants import ARMY_FIELD_ALIASES
+        from ming_sim.simulation import normalize_item_keys
+
+        for raw in run.event_new_armies(event_id):
+            # clean 列表已滤非 dict；建军仍需领域别名（势力→owner_power）。
+            item = normalize_item_keys(raw, domain_aliases=ARMY_FIELD_ALIASES)
             origin_ref = str(item.get("origin_ref") or "").strip()
             landed, refused = run.db.create_armies_from_extraction(
                 run.state, [item], actor="档房", commit=False,
@@ -186,6 +188,7 @@ def _resolve_strategic_events(run, issue_summary) -> Dict[str, SectionResult]:
             bucket["new_armies"].extend(landed)
             reject_bucket["new_armies"].extend(refused)
         for region_id, raw_changes in run.ordered_strategic_items("region_delta", event_id):
+            # ordered 嵌套子项经 sanitize 已为 dict；身份槽已升，段内只剥 origin_ref。
             origin_ref = str(raw_changes.get("origin_ref") or "").strip()
             payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
             landed, refused = run.db.apply_region_deltas(
@@ -195,6 +198,7 @@ def _resolve_strategic_events(run, issue_summary) -> Dict[str, SectionResult]:
             bucket["region_changes"].extend(landed)
             reject_bucket["region_changes"].extend(refused)
         for army_id, raw_changes in run.ordered_strategic_items("army_delta", event_id):
+            # 共享写核自带身份升格（issue/effects 等入口未保证 sanitize）。
             landed, refused = apply_army_delta_with_cannon_transfer(
                 run.db, run.state, run.pseudo_event, army_id, raw_changes,
             source=run.ctx.source)
@@ -213,7 +217,9 @@ def _resolve_strategic_events(run, issue_summary) -> Dict[str, SectionResult]:
             )
             bucket["person_issue"].extend(results)
             reject_bucket["person_issue"].extend(refused)
+
         for power_id, raw_changes in run.ordered_strategic_items("power_updates", event_id):
+            # ordered 嵌套子项经 sanitize 已为 dict；身份槽已升，段内只剥 origin_ref。
             origin_ref = str(raw_changes.get("origin_ref") or "").strip()
             payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
             landed, refused = run.db.apply_power_deltas(

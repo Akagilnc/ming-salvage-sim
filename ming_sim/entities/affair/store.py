@@ -321,7 +321,9 @@ class AffairStore(RowStore):
         """Birth declaration on a result item becomes affair:<id> when origin_ref is empty."""
         if not item:
             return ""
-        origin_ref = str(item.get("origin_ref") or item.get("来源引用") or "").strip()
+        from ming_sim.simulation import read_item_origin_ref
+
+        origin_ref = read_item_origin_ref(item)
         if origin_ref:
             kind, target = parse_origin_ref(origin_ref)
             if (

@@ -23,8 +23,7 @@ def apply(run):
     applied: List[Dict[str, object]] = []
     rejections: List[RejectedItem] = []
     for item in run.current_extracted.get("secret_order_updates") or []:
-        if not isinstance(item, dict):
-            continue
+        # sanitize 已滤非 dict 列表项。
         raw_id = item.get("order_id")
         raw_note = item.get("sim_note")
         if raw_note is None:

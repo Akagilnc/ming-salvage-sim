@@ -21,6 +21,7 @@ def apply(run):
             run.current_event_ids,
         ):
             continue
+        # 身份槽已由 sanitize_delta_shape 升格；ordered 子项已保证 dict，本段只剥 origin_ref 交写核。
         origin_ref = str(raw_changes.get("origin_ref") or "").strip()
         payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
         landed, refused = run.db.apply_region_deltas(

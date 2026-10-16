@@ -552,6 +552,7 @@ def continue_decree_after_answers(
     payload = dossier["payload"]
 
     def consume(result: Any = None) -> None:
+        # 终局与披露唯一承接口（J3）：只在此处理 result。
         candidate = _ending_from_dispatch_result(result)
         if candidate is not None:
             chain["declaration_outcome"] = candidate
@@ -565,18 +566,29 @@ def continue_decree_after_answers(
         db.staged_declarations.replace_questions(decree_ref, remaining + pinned, forecast_text=str(text or ""))
         products.pop(event_id)
         _save_chain(db, int(state.turn), chain, source=source)
+        # 续推 stalled 落成后终结未结算暂存，避免 settle 重放已落效果。
+        row = db.dossiers.get(int(dossier["id"]))
+        if (
+            row is not None
+            and str((row.get("payload") or {}).get("deliberation_state") or "") == "stalled"
+            and not db.staged_declarations.is_settled(decree_ref)
+        ):
+            db.staged_declarations.mark_terminal(decree_ref, status="settled")
 
     if not prefix.strip():
         with atomic(db):
             consume()
         return
+
+    # #1917 runner 裁定（二）／#1847：判决授权下活口逐问落账；stalled 转待裁且已落不动。
     dispatch_month_segment(
         db, state, segment=prefix,
         decree_payload=payload,
         decree_ref=decree_ref,
         llm_config=session.llm_config,
         source=source,
-        alongside=consume, prepared=prepared,
+        alongside=consume,
+        prepared=prepared,
     )
 
 
@@ -950,6 +962,185 @@ def _guard_month_call(
     raise AssertionError("month call abort must raise")
 
 
+def _deliberation_dossier_id(event_id: object) -> Optional[int]:
+    """Parse dossier id from deliberation:<id> or deliberation:<id>:rN."""
+    text = str(event_id or "")
+    if not text.startswith("deliberation:"):
+        return None
+    rest = text.split(":", 1)[1]
+    head = rest.split(":", 1)[0]
+    if not head.isdigit():
+        return None
+    return int(head)
+
+
+def _declaration_names_stalled(
+    bound: Mapping[str, object], dossier_id: int | None = None,
+) -> bool:
+    """Peek: bound declaration names stalled (for dossier_id, or any target if None)."""
+    from ming_sim.strict_types import _parse_sqlite_id
+    from ming_sim.simulation import _canonical_item_fields
+
+    effects = bound.get("effects")
+    envelopes: list = []
+    if isinstance(effects, Mapping):
+        envelopes = [effects]
+    elif isinstance(effects, list):
+        envelopes = [e for e in effects if isinstance(e, Mapping)]
+    for envelope in envelopes:
+        raw = envelope.get("deliberation_outcomes") or []
+        if not isinstance(raw, list):
+            continue
+        for item in raw:
+            if not isinstance(item, Mapping):
+                continue
+            # 与写口同一权威规范化；不得自拟 outcome/结果 别名子集。
+            canonical = _canonical_item_fields(dict(item))
+            try:
+                item_id = _parse_sqlite_id(canonical.get("dossier_id"))
+            except (TypeError, ValueError):
+                # 坏编号留给正式写口逐项拒收；窥探不得 OverflowError 中止整月。
+                continue
+            if dossier_id is not None and item_id != int(dossier_id):
+                continue
+            if str(canonical.get("outcome") or "").strip() == "stalled":
+                return True
+    return False
+
+
+def _persisted_staged_verdict(db: Any, decree_ref: str, turn: int) -> Optional[Dict[str, Any]]:
+    """只读**本月**未作废行上的判决（ADR 0055 turn-scoped；#1846 同月续跑不重判）。"""
+    ref = str(decree_ref or "").strip()
+    if not ref:
+        return None
+    row = db.conn.execute(
+        "SELECT verdict_json FROM staged_declarations "
+        "WHERE decree_ref=? AND status!='discarded' AND created_turn=? "
+        "AND verdict_json IS NOT NULL ORDER BY id DESC LIMIT 1",
+        (ref, int(turn)),
+    ).fetchone()
+    if row is None:
+        return None
+    verdict = parse_engine_payload_json(row["verdict_json"])
+    return dict(verdict) if isinstance(verdict, Mapping) else None
+
+
+def _persist_staged_verdict(
+    db: Any, decree_ref: str, turn: int, verdict: Mapping[str, object],
+) -> None:
+    """把判决写回本月最新未作废行；无当月行则插入（#1846 本月产物）。"""
+    import json as _json
+    ref = str(decree_ref or "").strip()
+    if not ref:
+        return
+    payload = _json.dumps(dict(verdict), ensure_ascii=False)
+    cur = db.conn.execute(
+        "UPDATE staged_declarations SET verdict_json=? "
+        "WHERE id=(SELECT MAX(id) FROM staged_declarations "
+        "WHERE decree_ref=? AND status!='discarded' AND created_turn=?)",
+        (payload, ref, int(turn)),
+    )
+    if int(cur.rowcount or 0) == 0:
+        db.conn.execute(
+            "INSERT INTO staged_declarations "
+            "(decree_ref, declaration_json, status, created_turn, verdict_json) "
+            "VALUES (?, '{}', 'settled', ?, ?)",
+            (ref, int(turn), payload),
+        )
+
+
+class _StalledApplyMiss(Exception):
+    """Internal: full-declaration trial did not stall this dossier; roll back."""
+
+
+def _apply_stalled_deliberation_from_declaration(
+    db: Any, state: Any, *, dossier_id: int, decree_ref: str,
+    alongside: Optional[Any] = None,
+    match_any_stalled: bool = False,
+) -> bool:
+    """#1917：该旨全部暂存声明统一试消费；stalled 落成则同事务 settled。
+
+    复用 :func:`settle_staged_declarations_in_decree_order` 完整消费生命周期；
+    仅在其 alongside 内保留颁布前 stalled 成功判定与结果承接。
+    成功返回 True；未 stalled 则事务回滚并返回 False。
+
+    ``match_any_stalled``：所属旨已 stalled 时收口本旨遗留——声明点名任一案
+    stalled 即试消费，接受任一 stalled 落标（含跨案点名）；默认 False 只认本案，
+    供颁布前决定是否跳过顺颁。不扫描他旨，保全未 stalled 所属旨的颁布时序。
+    """
+    from ming_sim.applier import Provenance
+    from ming_sim.declaration_dispatch import (
+        bind_decree_effect_sources,
+        settle_staged_declarations_in_decree_order,
+    )
+
+    ref = str(decree_ref or "").strip()
+    if not ref or db.staged_declarations.is_settled(ref):
+        return False
+    current = db.dossiers.get(int(dossier_id))
+    if current is None or str(current.get("status") or "") != "proposed":
+        return False
+    if str((current.get("payload") or {}).get("deliberation_state") or "") == "backed":
+        return False
+    staged = db.staged_declarations.staged_for(ref)
+    if not staged or not all(
+        item.declaration is None or isinstance(item.declaration, Mapping) for item in staged
+    ):
+        return False
+    peek_id = None if match_any_stalled else int(dossier_id)
+    targets = False
+    for item in staged:
+        if item.declaration is None:
+            continue
+        bound, _refs = bind_decree_effect_sources(
+            db, ref, item.declaration, item.visible_refs or {},
+        )
+        if _declaration_names_stalled(bound, peek_id):
+            targets = True
+            break
+    if not targets:
+        return False
+
+    def accept_stalled(settled_ref: str, result: Any) -> None:
+        # 以本次声明的结构化落标为准，不以案卷既有 stalled 冒充成功
+        # （跨案先落标后，坏项+合法支出不得提前提交 settled）。
+        # DeclarationDispatchResult / SettlementOutcome 为内部 typed 契约，直接读。
+        from ming_sim.settlement.views import view
+
+        applied_items = (
+            item
+            for outcome in result.effects.applied
+            for item in view(outcome, "deliberation_outcomes")
+        )
+        if match_any_stalled:
+            applied_here = any(
+                str(item.get("outcome") or "") == "stalled" for item in applied_items
+            )
+        else:
+            applied_here = any(
+                int(item["dossier_id"]) == int(dossier_id)
+                and str(item.get("outcome") or "") == "stalled"
+                for item in applied_items
+            )
+        if not applied_here:
+            raise _StalledApplyMiss()
+        if alongside is not None:
+            alongside(settled_ref, result)
+
+    try:
+        results = settle_staged_declarations_in_decree_order(
+            db, state, [ref], source=Provenance.player_decree,
+            alongside=accept_stalled,
+        )
+    except _StalledApplyMiss as miss:
+        # 普通未命中：atomic_and_reload 已回滚并成功 reload → False。
+        # 重载失败经 raise miss from reload_exc 挂在 __cause__，须原样上抛（N1）。
+        if miss.__cause__ is not None:
+            raise
+        return False
+    return ref in results
+
+
 def _settle_edicts(
     session: Any, *, chain: Dict[str, Any], on_outcome: Any = None,
 ) -> Optional[Dict[str, object]]:
@@ -964,6 +1155,20 @@ def _settle_edicts(
 
     db, state = session.db, session.state
     outcome = None
+
+    def persist_result(_decree_ref: str, result: Any) -> None:
+        """分派结果唯一承接：终局、披露入月链（stalled 试消费与 settle_staged 共用）。"""
+        nonlocal outcome
+        candidate = _ending_from_dispatch_result(result)
+        if candidate is not None:
+            outcome = candidate
+            if on_outcome is not None:
+                on_outcome(candidate)
+        _collect_disclosures_from_result(chain, result)
+        _save_chain(
+            db, int(state.turn), chain, source=Provenance.player_decree,
+        )
+
     # 同月任免的快照均以首案物化前盘面为准。未判案只记录校验结果，
     # 直到判官实际顺颁才消费；中断重开仍认这一批的原始盘面。
     prevalidated = set(_load_durable_json_list(chain.get("recommendation_prevalidated_ids"), surface="month_chain.recommendation_prevalidated_ids"))
@@ -980,8 +1185,19 @@ def _settle_edicts(
             chain["recommendation_prevalidated_ids"] = sorted(prevalidated)
             chain["recommendation_invalid_ids"] = sorted(invalid)
             _save_chain(db, int(state.turn), chain, source=Provenance.player_decree)
-    for dossier in db.dossiers.list_dossiers():
+    for dossier_row in db.dossiers.list_dossiers():
+        # 每轮重读：同批试消费可能已把其它案标 stalled，不得用批次起点快照颁布。
+        dossier = db.dossiers.get(int(dossier_row["id"]))
+        if dossier is None:
+            continue
         if _is_stalled_deliberation(dossier):
+            # 所属旨已 stalled：收口本旨遗留（含只点名他案的跨案 stalled），
+            # 避免强推后再 settle 撤销御笔。不扫描他旨，未 stalled 所属旨照常颁布。
+            ref = decree_ref_for_dossier(db, dossier)
+            _apply_stalled_deliberation_from_declaration(
+                db, state, dossier_id=int(dossier["id"]), decree_ref=ref,
+                alongside=persist_result, match_any_stalled=True,
+            )
             continue
         status = str(dossier.get("status") or "")
         held = _is_held_for_rejudgment(dossier, int(state.turn))
@@ -992,16 +1208,59 @@ def _settle_edicts(
             promulgated and not db.staged_declarations.is_settled(ref)
             and bool(db.staged_declarations.staged_for(ref))
         )
-        if not pending_judgment and not pending_settle:
+        payload_state = str((dossier.get("payload") or {}).get("deliberation_state") or "")
+        # 强推后 backed 仍 proposed：即便曾有旧 promulgation_decision / 暂存已结，
+        # 也须接回颁布（#1917 条款 2 / C1）。
+        # 当月留中锁（held_turn）与批红待抉期间不重入——ADR0055 下月再判，不覆盖留中。
+        same_month_hold_lock = (
+            int(dossier.get("held_turn") or 0) > 0
+            and int(state.turn) <= int(dossier.get("held_turn") or 0)
+        )
+        backed_awaiting_promulgation = (
+            status == "proposed"
+            and payload_state == "backed"
+            and not same_month_hold_lock
+            and not bool(dossier.get("rescript_pending"))
+        )
+        if not pending_judgment and not pending_settle and not backed_awaiting_promulgation:
             continue
         if (
             status == "proposed"
-            and (not dossier.get("promulgation_decision") or held)
-            and not db.staged_declarations.is_settled(ref)
+            and (
+                not dossier.get("promulgation_decision")
+                or held
+                or backed_awaiting_promulgation
+            )
+            and (
+                not db.staged_declarations.is_settled(ref)
+                or backed_awaiting_promulgation
+            )
         ):
             staged = db.staged_declarations.staged_for(ref, turn=int(state.turn))
-            verdict = staged[0].verdict if staged and staged[0].declaration is not None else None
-            if verdict is None and session.llm_config is not None:
+            # #1846：判决+声明（及推演）三步齐全才算本月产物完成；仅有裸判决不算。
+            product_complete = bool(
+                staged
+                and staged[0].declaration is not None
+                and isinstance(staged[0].verdict, dict)
+                and staged[0].verdict.get("decision")
+            )
+            verdict = staged[0].verdict if product_complete else None
+            # 强推且未留中：当月已持久判决可复用（#1846）。次月普通留中不取裸判决
+            # 冒充完成——未完成产物须回共享补跑（#1917 R1）。
+            if (
+                backed_awaiting_promulgation
+                and not held
+                and not (isinstance(verdict, dict) and verdict.get("decision"))
+            ):
+                verdict = _persisted_staged_verdict(db, ref, int(state.turn))
+            # 过月补跑：先 produce（可新产 stalled 声明），再消费 stalled，最后颁布（F7）。
+            # 次月普通留中（held）即便历史 backed 也走共享补跑（#1917 R1）。
+            # 合法主链不回拨 status，故无「proposed 且已有颁布事实」对齐分支（#1917 N2）。
+            if (
+                (held or not backed_awaiting_promulgation)
+                and not product_complete
+                and session.llm_config is not None
+            ):
                 snapshot = snapshot_for_existing_dossier(session, dossier)
 
                 def _produce() -> Dict[str, Any]:
@@ -1012,46 +1271,63 @@ def _settle_edicts(
                     step="edict_forecast", operation=_produce, decree_ref=ref,
                 )
                 verdict = product["verdict"]
-            if isinstance(verdict, dict) and verdict.get("decision"):
-                current = db.dossiers.get(int(dossier["id"])) or dossier
-                if str(current.get("status") or "") == "proposed":
-                    # 失效快照只在实际顺颁时拒，不因未判/打回阻断整月。
-                    if int(dossier["id"]) in invalid and verdict["decision"] in {"promulgated", "force_promulgated"}:
-                        raise ValueError("任免案卷载荷物化失败")
-                    # 判决与元数据、预声明中旨代价同一事务；两种入口共用 DB 写口。
-                    previous = getattr(db.conn, "_recommendation_snapshots_prevalidated", False)
-                    db.conn._recommendation_snapshots_prevalidated = previous or int(dossier["id"]) in prevalidated
-                    try:
-                        with atomic(db):
-                            apply_dossier_promulgation(db,
-                                state, int(dossier["id"]), str(verdict["decision"]),
-                                blocked_layer=str(verdict.get("blocked_layer") or ""),
-                                reason=str(verdict.get("reason") or ""),
-                                legal_reason_code=str(verdict.get("legal_reason_code") or ""),
-                                primary_opponents=verdict.get("primary_opponents") or [],
-                                gatekeeper_id=verdict.get("gatekeeper_id"),
-                                criteria_snapshot=verdict.get("criteria_snapshot") or {},
-                                content=session.content,
-                            )
-                            apply_dossier_verdict_metadata(db, state, int(dossier["id"]), verdict)
-                    finally:
-                        db.conn._recommendation_snapshots_prevalidated = previous
+            elif (
+                backed_awaiting_promulgation
+                and not held
+                and not (isinstance(verdict, dict) and verdict.get("decision"))
+            ):
+                from ming_sim.decree_forecast import judge_dossier_verdict
+
+                current_row = db.dossiers.get(int(dossier["id"])) or dossier
+
+                def _judge_and_persist() -> Dict[str, Any]:
+                    decided = judge_dossier_verdict(session, dict(current_row))
+                    with atomic(db):
+                        _persist_staged_verdict(db, ref, int(state.turn), decided)
+                    return decided
+
+                verdict = _guard_month_call(
+                    db, state, chain, decree_text="", source=Provenance.player_decree,
+                    step="edict_forecast", operation=_judge_and_persist, decree_ref=ref,
+                )
+            # 预存或本次补跑声明：颁布前只认本案 stalled（本旨声明）。
+            # #1917 runner 裁定（二）：请旨不挡颁布——效果跟判决走、逐问可落；
+            # stalled 只改 deliberation_state，不拨 status、不回滚已落。
+            if _apply_stalled_deliberation_from_declaration(
+                db, state, dossier_id=int(dossier["id"]), decree_ref=ref,
+                alongside=persist_result,
+            ):
+                continue
+            current = db.dossiers.get(int(dossier["id"])) or dossier
+            if (
+                str(current.get("status") or "") == "proposed"
+                and isinstance(verdict, dict)
+                and verdict.get("decision")
+            ):
+                # 失效快照只在实际顺颁时拒，不因未判/打回阻断整月。
+                if int(dossier["id"]) in invalid and verdict["decision"] in {"promulgated", "force_promulgated"}:
+                    raise ValueError("任免案卷载荷物化失败")
+                previous = getattr(db.conn, "_recommendation_snapshots_prevalidated", False)
+                db.conn._recommendation_snapshots_prevalidated = previous or int(dossier["id"]) in prevalidated
+                try:
+                    with atomic(db):
+                        apply_dossier_promulgation(db,
+                            state, int(dossier["id"]), str(verdict["decision"]),
+                            blocked_layer=str(verdict.get("blocked_layer") or ""),
+                            reason=str(verdict.get("reason") or ""),
+                            legal_reason_code=str(verdict.get("legal_reason_code") or ""),
+                            primary_opponents=verdict.get("primary_opponents") or [],
+                            gatekeeper_id=verdict.get("gatekeeper_id"),
+                            criteria_snapshot=verdict.get("criteria_snapshot") or {},
+                            content=session.content,
+                        )
+                        apply_dossier_verdict_metadata(
+                            db, state, int(dossier["id"]), verdict,
+                        )
+                finally:
+                    db.conn._recommendation_snapshots_prevalidated = previous
         current = db.dossiers.get(int(dossier["id"])) or dossier
         if db.dossiers.authorizes_effects(int(current["id"])):
-            def persist_result(_decree_ref: str, result: Any) -> None:
-                # 披露暂缓与旨意落账同事务：alongside 在 settle 的 atomic 内，
-                # 须把 pending_disclosures 一并写入月链。
-                nonlocal outcome
-                candidate = _ending_from_dispatch_result(result)
-                if candidate is not None:
-                    outcome = candidate
-                    if on_outcome is not None:
-                        on_outcome(candidate)
-                _collect_disclosures_from_result(chain, result)
-                _save_chain(
-                    db, int(state.turn), chain, source=Provenance.player_decree,
-                )
-
             settle_staged_declarations_in_decree_order(
                 db, state, [ref], source=Provenance.player_decree,
                 alongside=persist_result,
@@ -1073,11 +1349,10 @@ def _collect_disclosures_from_result(chain: Optional[Dict[str, Any]], result: An
     if chain is None or result is None:
         return
     pending = chain.setdefault("pending_disclosures", [])
-    effects = getattr(result, "effects", None)
-    applied = getattr(effects, "applied", []) if effects is not None else []
     from ming_sim.settlement.views import view
 
-    for outcome in applied:
+    # DeclarationDispatchResult.effects 为内部 typed SectionResult，直接读 applied。
+    for outcome in result.effects.applied:
         for update in view(outcome, "secret_order_updates"):
             if isinstance(update, dict) and update.get("disclosed"):
                 item = {
@@ -1725,16 +2000,47 @@ def _materialize_rescript_desk(
                 ),
             })
         decisions.extend(_rescript_decisions(verdicts, open_items["triad"]))
-    for dossier in db.dossiers.list_dossiers(status="proposed"):
-        if (dossier["payload"] or {}).get("deliberation_state") != "stalled":
+    # 未结束的本次待裁＝pending，或 decided 且 decision_key 尚未入 rescript_consumed。
+    # 仅 pending 会把「已答未消费」误当历史，同 stall 再开 :rN（#1917 / C7）。
+    consumed_keys = set(chain.get("rescript_consumed") or [])
+    open_deliberation_events = {
+        str(r.get("event_id") or "")
+        for r in db.issues.list_pending_decisions(turn)
+        if str(r.get("event_id") or "").startswith("deliberation:")
+        and (
+            str(r.get("status") or "") == "pending"
+            or (
+                str(r.get("status") or "") == "decided"
+                and str(r.get("decision_key") or "") not in consumed_keys
+            )
+        )
+    }
+    open_deliberation_events.discard("")
+    for dossier in db.dossiers.list_stalled_deliberations():
+        did = int(dossier["id"])
+        base_event = f"deliberation:{did}"
+        # 未结束入口不重复；已消费历史才换新 event_id 保留御批（C7）。
+        if any(
+            eid == base_event or eid.startswith(f"{base_event}:")
+            for eid in open_deliberation_events
+        ):
             continue
+        decided = {
+            str(r.get("event_id") or "")
+            for r in db.issues.list_pending_decisions(turn)
+        }
+        event_id = base_event
+        if event_id in decided:
+            n = sum(1 for e in decided if e == base_event or e.startswith(f"{base_event}:"))
+            event_id = f"{base_event}:r{n}"
         decisions.append({
-            "event_id": f"deliberation:{dossier['id']}", "title": "无人站台原案",
+            "event_id": event_id, "title": "无人站台原案",
             "context": dossier["decree_text"], "options": [
                 {"label": "御笔强推", "hint": "皇帝独担，复用原案颁布", "action": "imperial_push"},
                 {"label": "留中", "hint": "原案留存", "action": "hold"},
             ],
         })
+        open_deliberation_events.add(event_id)
     for ref, questions in open_items["decree_questions"]:
         offsets = chain.setdefault("decree_question_offsets", {})
         pinned, offsets[ref] = _pin_rescript_questions(
@@ -1861,15 +2167,22 @@ def _eligible_rescript_answers(
             if choice_decision(row.get("choice")) in {"force_promulgated", "withdrawn", "hold"}:
                 eligible.append(row)
         elif event.startswith("deliberation:"):
-            # Decided imperial push still stalled blocks month-tail (#1847 K2/K6).
-            raw_id = event.partition(":")[2]
-            if not raw_id.isdigit():
+            # 本次待裁未消费的强推／留中仍挡月尾；已入 rescript_consumed 不再入选（C7／#1847）。
+            did = _deliberation_dossier_id(event)
+            if did is None:
                 continue
-            if choice_decision(row.get("choice")) != "imperial_push":
+            action = choice_decision(row.get("choice"))
+            if action not in {"imperial_push", "hold"}:
                 continue
-            original = db.dossiers.get(int(raw_id))
-            if original is not None and (original.get("payload") or {}).get("deliberation_state") == "stalled":
-                eligible.append(row)
+            key = str(row.get("decision_key") or "")
+            if key in chain.get("rescript_consumed", []):
+                continue
+            original = db.dossiers.get(did)
+            if original is None:
+                continue
+            if str((original.get("payload") or {}).get("deliberation_state") or "") != "stalled":
+                continue
+            eligible.append(row)
     return eligible
 
 
@@ -1906,14 +2219,32 @@ def _consume_rescript_answers(
         for row in eligible:
             event_id = str(row.get("event_id") or "")
             if event_id.startswith("deliberation:"):
-                from ming_sim.rescript_actions import apply_imperial_deliberation_push
-                original_id = int(event_id.partition(":")[2])
+                from ming_sim.rescript_actions import (
+                    apply_imperial_deliberation_hold,
+                    apply_imperial_deliberation_push,
+                )
+                original_id = _deliberation_dossier_id(event_id)
+                if original_id is None:
+                    continue
+                action = choice_decision(row.get("choice"))
+                key = str(row["decision_key"])
                 with atomic(db):
-                    apply_imperial_deliberation_push(
-                        db, state, target_dossier_id=original_id,
-                        decision_key=row["decision_key"],
-                        decree_text=(row.get("choice") or {}).get("note", ""),
-                    )
+                    if action == "hold":
+                        apply_imperial_deliberation_hold(
+                            db, state, target_dossier_id=original_id,
+                            note=(row.get("choice") or {}).get("note", ""),
+                        )
+                    else:
+                        apply_imperial_deliberation_push(
+                            db, state, target_dossier_id=original_id,
+                            decision_key=key,
+                            decree_text=(row.get("choice") or {}).get("note", ""),
+                        )
+                    # 与急务票拟同缝：效果与 rescript_consumed 同事务持久。
+                    consumed = chain.setdefault("rescript_consumed", [])
+                    if key not in consumed:
+                        consumed.append(key)
+                    _save_chain(db, turn, chain, source=source)
             elif event_id.startswith("dossier:"):
                 dossier_id = int(event_id.split(":", 1)[1])
                 apply_dossier_promulgation(

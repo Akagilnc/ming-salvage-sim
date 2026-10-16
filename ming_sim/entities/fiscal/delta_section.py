@@ -66,7 +66,11 @@ def apply_removes(run) -> SectionResult:
 
     applied: List[Dict[str, object]] = []
     rejections: List[RejectedItem] = []
-    for remove in run.current_extracted.get("fiscal_removes") or []:
+    from ming_sim.simulation import normalize_item_keys
+
+    for raw in run.current_extracted.get("fiscal_removes") or []:
+        # sanitize 已滤非 dict；此处只做条目键规范化（身份已升，仍走通用别名）。
+        remove = normalize_item_keys(raw)
         key = str(remove.get("key") or "").strip()
         if not key:
             rejections.append(RejectedItem(item=remove, reason="fiscal_removes 缺 key,无法定位裁撤目标。", category="invalid_enum", source=run.ctx.source))
@@ -123,7 +127,11 @@ def apply_creates(run) -> SectionResult:
 
     applied: List[Dict[str, object]] = []
     rejections: List[RejectedItem] = []
-    for create in run.current_extracted.get("fiscal_creates") or []:
+    from ming_sim.simulation import normalize_item_keys
+
+    for raw in run.current_extracted.get("fiscal_creates") or []:
+        # sanitize 已滤非 dict；此处只做条目键规范化。
+        create = normalize_item_keys(raw)
         # direction 同义词在唯一守门人处归一：表与清洗层共用同一张表（懒 import
         # 避循环）。先归一再去重——ADR 0027 的承诺载体都是月度【支出】(delta<0)，
         # 同名的【收入】新科目（如新税）与承诺无关，绝不可被误去重或误报残留。
@@ -204,7 +212,11 @@ def apply_changes(run) -> SectionResult:
     loss_pair_running: Dict[str, int] = {}
     loss_pair_final_by_pair: Dict[Tuple[str, str], Dict[str, int]] = {}
 
-    for change in run.current_extracted.get("fiscal_changes") or []:
+    from ming_sim.simulation import normalize_item_keys
+
+    for raw in run.current_extracted.get("fiscal_changes") or []:
+        # sanitize 已滤非 dict；此处只做条目键规范化。
+        change = normalize_item_keys(raw)
         key = str(change.get("key") or "").strip()
         if not key:
             # 空 key＝脏项，先于一切无操作短路记拒——否则 delta 0/null 的空 key
@@ -293,6 +305,8 @@ def apply_changes(run) -> SectionResult:
             continue
         run.db.set_fiscal_config_batch(final_values, commit=False)
         for change in pair_changes:
+            # item 来自本段 normalize_item_keys，必为 dict。
+            source_item = change["item"]
             run.db.fiscal_config.set_origin(
                 change["key"], change["origin_ref"]
             )
@@ -300,12 +314,10 @@ def apply_changes(run) -> SectionResult:
                 turn=run.state.turn, key=str(change["key"]),
                 old_value=int(change["old"]), new_value=int(change["new"]),
                 origin_ref=str(change["origin_ref"]), reason=str(change["reason"]),
-                beyond_intent=change["item"].get("beyond_intent")
-                if isinstance(change.get("item"), dict) else 0,
+                beyond_intent=source_item.get("beyond_intent"),
             )
-            source = change["item"] if isinstance(change.get("item"), dict) else {}
             applied.append(canonical_fiscal_result(
-                run.db, source, applied=change["new"] != change["old"],
+                run.db, source_item, applied=change["new"] != change["old"],
                 key=change["key"], old=change["old"], new=change["new"],
                 delta=change["delta"], reason=change["reason"],
             ))

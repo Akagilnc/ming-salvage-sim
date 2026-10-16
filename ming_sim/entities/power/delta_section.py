@@ -41,8 +41,7 @@ def apply(run) -> SectionResult:
         )
     )
     for power_id, raw_changes in power_items:
-        if not isinstance(raw_changes, dict):
-            continue
+        # ordered 子项经 sanitize 已为 dict；不再段内重复形状判断。
         if _is_bandit_power_id(str(power_id)):
             # 只剥正实力；威望/经济等同包其它字段仍可落。
             stripped: Dict[str, object] = {}
@@ -69,6 +68,7 @@ def apply(run) -> SectionResult:
             if not stripped:
                 continue
             raw_changes = stripped
+        # 身份槽已由 sanitize_delta_shape 升格；上游已保证 dict，本段只剥 origin_ref 交写核。
         origin_ref = str(raw_changes.get("origin_ref") or "").strip()
         payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
         landed, refused = run.db.apply_power_deltas(

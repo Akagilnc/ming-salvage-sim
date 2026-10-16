@@ -854,9 +854,11 @@ def test_decree_continuation_keeps_forecast_and_lands_affair_effect(game, monkey
     before = db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE category='问后加赈'",
     ).fetchone()[0]
+    # 请旨不挡颁布：问前暂存已随判决落；续推不得重落。
     pre_rows = db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE category='陕西赈灾'",
     ).fetchone()[0]
+    assert pre_rows == 1
     desk = session.pending_decisions()
     assert len(desk) == 1  # 世界段空：案头仅旨意 staged 问
     desk_row = desk[0]
@@ -872,6 +874,7 @@ def test_decree_continuation_keeps_forecast_and_lands_affair_effect(game, monkey
     assert db.staged_declarations.forecast_text_for(ref) == "预推不可见:陕西赈灾\n问后续推已发生。"
     assert payload["answers"][0]["context"] == question_context
     assert payload["this_decree"]["decree_text"] == "陕西赈灾"
+    # #1861：续推供料本旨事实统一按已颁投影，与库内 status 是否已转 executing 无关。
     assert payload["this_decree"]["status"] == "promulgated"
     from pathlib import Path
     assert not Path(str(captured["prepared_root"])).exists()
@@ -879,6 +882,7 @@ def test_decree_continuation_keeps_forecast_and_lands_affair_effect(game, monkey
     assert db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE category='问后加赈'",
     ).fetchone()[0] == before + 1
+    # 问前项不得因续推重复落账。
     assert db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE category='陕西赈灾'",
     ).fetchone()[0] == pre_rows

@@ -33,9 +33,7 @@ def apply(run):
     results: List[Dict[str, object]] = []
     rejections: List[RejectedItem] = []
     for item in run.current_extracted.get("authority_changes") or []:
-        if not isinstance(item, dict):
-            rejections.append(RejectedItem(item={"raw_value": item}, reason="授权变更项必须为对象", category="invalid_shape", source=run.ctx.source))
-            continue
+        # sanitize 已滤非 dict 列表项。
         try:
             prepared = _prepare_authority_change_item(run.db, run.state, item)
         except AuthorityDataError as exc:

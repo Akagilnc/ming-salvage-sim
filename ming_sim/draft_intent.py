@@ -901,12 +901,11 @@ def _stalled_deliberation_push_facts(db: Any) -> str:
     if db is None:
         return ""
     # #1902 F1：库查询失败不得洗成空事实继续抽取；逐行脏载荷仍可跳过。
-    rows = db.dossiers.list_dossiers(status="proposed")
+    # 门闸归 store.list_stalled_deliberations（deliberation_state，不拨 status）。
+    rows = db.dossiers.list_stalled_deliberations()
     lines: List[str] = []
     for row in rows or []:
         payload = row["payload"]
-        if str(payload.get("deliberation_state") or "") != "stalled":
-            continue
         did = int(row["id"])
         try:
             issue = db.conn.execute(

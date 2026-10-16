@@ -18,6 +18,11 @@ from ming_sim.constants import (
     ARMY_SCORE_FIELDS, ARMY_QUANTITY_FIELDS, ARMY_TEXT_FIELDS, FISCAL_SCORE_FIELDS,
     REGION_FIELD_ALIASES, ARMY_FIELD_ALIASES,
 )
+from ming_sim.simulation import (
+    IDENTITY_ITEM_FIELDS,
+    ITEM_FIELD_ALIASES,
+    lift_identity_field_aliases,
+)
 from ming_sim.content import GameContent
 from ming_sim.db import (
     GameDB,
@@ -33,6 +38,16 @@ from ming_sim.entities.character.transit import (  # noqa: E402
     admit_transit_departure,
     load_valid_regions,
 )
+
+
+def _is_effect_meta_field(raw_field: object, domain_aliases: dict) -> bool:
+    """身份槽／reason 不是领域数值字段；别名须先认 ITEM 再认领域表。"""
+    raw = str(raw_field).strip()
+    via_item = ITEM_FIELD_ALIASES.get(raw, raw)
+    if via_item in IDENTITY_ITEM_FIELDS or via_item == "reason":
+        return True
+    field = domain_aliases.get(raw, raw)
+    return field in {"reason", "origin_ref"}
 
 
 # 会崩坏的局势：人为可控、有明确「彻底失败」时刻——镇压不住/边镇沦陷/朝局崩坏。
@@ -138,9 +153,8 @@ def _event_pool_ids_for_strategic_foreign_nodes(
     content: GameContent,
 ) -> set[str]:
     ids: set[str] = set()
+    # 仅由 run._preflight 传入 sanitize 后的 clean；列表项已为 dict。
     for item in extracted.get("new_issues") or []:
-        if not isinstance(item, dict):
-            continue
         if str(item.get("origin_kind") or "").lower() != "event_pool":
             continue
         event_id = str(item.get("id") or item.get("origin_ref") or "").strip()
@@ -159,10 +173,10 @@ _ORDERED_DELTA_FIELDS = (
 def _derive_ordered_deltas(extracted: Dict[str, object]) -> Dict[str, list[tuple[str, object]]]:
     """缺省有序声明：按 extracted 字段原序派生，无声明归属。"""
     ordered: Dict[str, list[tuple[str, object]]] = {field: [] for field in _ORDERED_DELTA_FIELDS}
+    # 仅由 run._preflight 在 sanitize 后调用；嵌套容器已为 dict 或空。
     for field in _ORDERED_DELTA_FIELDS:
         raw = extracted.get(field) or {}
-        if isinstance(raw, dict):
-            ordered[field] = list(raw.items())
+        ordered[field] = list(raw.items())
     return ordered
 
 
@@ -299,7 +313,8 @@ def _strategic_event_result_preflight_error(
         if event_id != "jisi_lubian" or outcome_label not in {"挡于边墙", "入塞被遏"}:
             return ""
         for region_id, raw_changes in (ordered_region_items if ordered_region_items is not None else region_deltas.items()):
-            if region_id != "beizhili" or not isinstance(raw_changes, dict):
+            # 嵌套子项经 sanitize 已为 dict。
+            if region_id != "beizhili":
                 continue
             for raw_field, value in raw_changes.items():
                 field = REGION_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
@@ -372,17 +387,16 @@ def _strategic_event_result_preflight_error(
     db.conn.execute("SAVEPOINT strategic_entity_result_preflight")
     try:
         for region_id, raw_changes in region_items:
-            if not isinstance(raw_changes, dict):
-                return f"战略/外敌事件「{event_title or event_id}」地区战果须为对象：{region_id}"
-            # #1835 S2：领域字段/整数/势力准入交写核；此处只组 noop 快照并消费写核拒收。
+            # sanitize 嵌套子项已为 dict；此处只组 noop 快照并消费写核拒收。
+            # #1835 S2：领域字段/整数/势力准入交写核。
             snapshots: List[tuple[object, str, str, object, object]] = []
             seen_fields: set[str] = set()
             region_row = db.regions.row(region_id, fields="1")
             if region_row is not None:
                 for raw_field, value in raw_changes.items():
-                    field = REGION_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
-                    if field in ("reason", "origin_ref"):
+                    if _is_effect_meta_field(raw_field, REGION_FIELD_ALIASES):
                         continue
+                    field = REGION_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
                     if field in REGION_TEXT_FIELDS or field in seen_fields:
                         continue
                     if field not in region_numeric_fields:
@@ -392,15 +406,16 @@ def _strategic_event_result_preflight_error(
                         (raw_field, str(region_id), field, _region_world_value(str(region_id), field), value)
                     )
 
+            # sanitize 已升身份槽；此处只剥 origin_ref 再交写核。
+            region_payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
             landed, refused = db.apply_region_deltas(
-                preview_state, preflight_event, None, "档房", {region_id: raw_changes}, commit=False,
+                preview_state, preflight_event, None, "档房", {region_id: region_payload}, commit=False,
             source=Provenance.system_simulation)
             for result in refused:
-                if isinstance(result, RejectedItem):
-                    return (
-                        f"战略/外敌事件「{event_title or event_id}」地区战果拒收："
-                        f"{result.reason or result.category}"
-                    )
+                return (
+                    f"战略/外敌事件「{event_title or event_id}」地区战果拒收："
+                    f"{result.reason or result.category}"
+                )
             err = _reject_landed_or_unchanged(
                 "region", str(region_id), landed, snapshots, _region_world_value,
             )
@@ -408,16 +423,15 @@ def _strategic_event_result_preflight_error(
                 return err
 
         for army_id, raw_changes in army_items:
-            if not isinstance(raw_changes, dict):
-                return f"战略/外敌事件「{event_title or event_id}」军队战果须为对象：{army_id}"
+            # sanitize 嵌套子项已为 dict。
             # #1835 S2：炮转移/字段/整数准入复用 apply_army_delta_with_cannon_transfer。
             snapshots = []
             seen_fields = set()
             army_row = db.armies.row(army_id, fields="1")
             for raw_field, value in raw_changes.items():
-                field = ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
-                if field in ("reason", "origin_ref"):
+                if _is_effect_meta_field(raw_field, ARMY_FIELD_ALIASES):
                     continue
+                field = ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
                 if field == "cannon_transfer_to":
                     transfer_target = str(value)
                     target_row = db.armies.row(transfer_target, fields="1")
@@ -448,11 +462,10 @@ def _strategic_event_result_preflight_error(
                 db, preview_state, preflight_event, str(army_id), raw_changes,
             source=Provenance.system_simulation)
             for result in refused:
-                if isinstance(result, RejectedItem):
-                    return (
-                        f"战略/外敌事件「{event_title or event_id}」军队战果拒收："
-                        f"{result.reason or result.category}"
-                    )
+                return (
+                    f"战略/外敌事件「{event_title or event_id}」军队战果拒收："
+                    f"{result.reason or result.category}"
+                )
             err = _reject_landed_or_unchanged(
                 "army", str(army_id), landed, snapshots, _army_world_value,
             )
@@ -466,17 +479,17 @@ def _strategic_event_result_preflight_error(
     # power：回旧跨势力聚合 any(material)；逐字段/快照拒属 a16d5804e 擅自新增口径。
     power_items = ordered_power_items if ordered_power_items is not None else list(power_updates.items())
     if power_items:
-        for power_id, raw_changes in power_items:
-            if not isinstance(raw_changes, dict):
-                return f"战略/外敌事件「{event_title or event_id}」势力战果须为对象：{power_id}"
+        # sanitize 嵌套子项已为 dict；上环不再逐项形状拒收。
         power_results: List[Dict[str, object]] = []
         power_rejections: List[RejectedItem] = []
         db.conn.execute("SAVEPOINT strategic_power_result_preflight")
         try:
             for power_id, raw_changes in power_items:
+                # sanitize 已升身份槽；此处只剥 origin_ref 再交写核。
+                power_payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
                 landed, refused = db.apply_power_deltas(
                     state,
-                    {power_id: {key: value for key, value in raw_changes.items() if key != "origin_ref"}},
+                    {power_id: power_payload},
                     commit=False,
                 source=Provenance.system_simulation)
                 power_results.extend(landed)
@@ -485,11 +498,10 @@ def _strategic_event_result_preflight_error(
             db.conn.execute("ROLLBACK TO SAVEPOINT strategic_power_result_preflight")
             db.conn.execute("RELEASE SAVEPOINT strategic_power_result_preflight")
         for result in power_rejections:
-            if isinstance(result, RejectedItem):
-                return (
-                    f"战略/外敌事件「{event_title or event_id}」势力战果拒收："
-                    f"{result.reason or result.category}"
-                )
+            return (
+                f"战略/外敌事件「{event_title or event_id}」势力战果拒收："
+                f"{result.reason or result.category}"
+            )
         if not any(_strategic_result_item_has_material_world_state(result) for result in power_results):
             power_id, raw_changes = power_items[0]
             return _noop_error("power", str(power_id), "power_updates", raw_changes)
@@ -577,9 +589,11 @@ def _strategic_event_result_preflight_error(
             from ming_sim.settlement.run import land_person_changes_isolated
             results_rejections = []
             for person_item in person_changes:
+                # clean 人物项已为 dict；身份槽已升，直接读 canonical origin_ref。
                 applied, refused = land_person_changes_isolated(
                     db, copy.deepcopy(state), [person_item], content=probe_content,
-                    llm_config=llm_config, origin_ref=str(person_item.get("origin_ref") or ""),
+                    llm_config=llm_config,
+                    origin_ref=str(person_item.get("origin_ref") or "").strip(),
                     require_origin=True, source=Provenance.system_simulation,
                 )
                 results.extend(applied)
@@ -591,7 +605,8 @@ def _strategic_event_result_preflight_error(
         if blocked_by_person:
             return f"战略事件被同项人物变更阻断：{event_id}"
         for result in results_rejections:
-            if isinstance(result, RejectedItem) and result.category != "unauthorized_affair_origin":
+            # 写核拒收恒为 RejectedItem；只滤业务类别。
+            if result.category != "unauthorized_affair_origin":
                 return (
                     f"战略/外敌事件「{event_title or event_id}」人物战果拒收："
                     f"{result.item.get('name') or ''}{result.item.get('动作') or ''} {result.reason}"
@@ -600,36 +615,32 @@ def _strategic_event_result_preflight_error(
     if new_armies:
         # Invisible origins are already itemwise. Do not field-probe them into
         # an envelope failure; the origin loop and the real write still own them.
+        # clean 新军列表项已为 dict；身份槽已升，直接读 canonical origin_ref。
         field_armies = [
             raw for raw in new_armies
-            if not (
-                isinstance(raw, dict)
-                and (db.effect_origin_rejection(str(raw.get("origin_ref") or "").strip()) or {}).get("category")
-                == "unauthorized_affair_origin"
-            )
+            if (db.effect_origin_rejection(str(raw.get("origin_ref") or "").strip()) or {}).get("category")
+            != "unauthorized_affair_origin"
         ]
         if field_armies:
             db.conn.execute("SAVEPOINT strategic_new_army_result_preflight")
             try:
+                from ming_sim.simulation import normalize_item_keys
+
                 for raw in field_armies:
+                    item = normalize_item_keys(raw, domain_aliases=ARMY_FIELD_ALIASES)
                     landed, refused = db.create_armies_from_extraction(
-                        state, [raw], actor="档房", commit=False, require_origin=False,
+                        state, [item], actor="档房", commit=False, require_origin=False,
                     source=Provenance.system_simulation)
                     for result in refused:
-                        if isinstance(result, RejectedItem):
-                            return (
-                                f"战略/外敌事件「{event_title or event_id}」新军战果拒收："
-                                f"{result.reason or result.category}"
-                            )
+                        return (
+                            f"战略/外敌事件「{event_title or event_id}」新军战果拒收："
+                            f"{result.reason or result.category}"
+                        )
                     if not any(
                         _strategic_result_item_has_material_world_state(item)
                         for item in landed
                     ):
-                        army_label = (
-                            str(raw.get("id") or raw.get("name") or "new_army")
-                            if isinstance(raw, dict)
-                            else "new_army"
-                        )
+                        army_label = str(raw.get("id") or raw.get("name") or "new_army")
                         return _noop_error("army", army_label, "new_armies", raw)
             finally:
                 db.conn.execute("ROLLBACK TO SAVEPOINT strategic_new_army_result_preflight")
@@ -649,7 +660,8 @@ def _strategic_event_result_preflight_error(
     admissible_origin = False
     saw_unauthorized = False
     for kind, item in origin_items:
-        origin_ref = item.get("origin_ref") if isinstance(item, dict) else None
+        # 嵌套子项与 clean 列表项均已为 dict；身份槽已升，直接读 canonical。
+        origin_ref = str(item.get("origin_ref") or "").strip()
         origin_error = db.effect_origin_rejection(origin_ref)
         if not origin_error:
             admissible_origin = True
@@ -756,9 +768,9 @@ def _preflight_declared_event_groups(
         if event_id not in candidates or db.issues.event_terminal_state(event_id) or event.auto_trigger:
             _reject(pending, f"战略事件当前不能触发：{event_id}")
             continue
+        # group 来自 sanitize 后的 clean；new_issues 项已为 dict，只判事件身份。
         if not any(
-            isinstance(issue, dict)
-            and str(issue.get("origin_kind") or "").lower() == "event_pool"
+            str(issue.get("origin_kind") or "").lower() == "event_pool"
             and str(issue.get("id") or issue.get("origin_ref") or "").strip() == event_id
             for item in group for issue in (item.get("new_issues") or [])
         ):
@@ -842,9 +854,7 @@ def sanitize_delta_shape(
     拒收在产生处即为 canonical :class:`~ming_sim.applier.RejectedItem`；section 名作为
     框架上下文与项配对返回，不塞进项级四字段。
     """
-    from ming_sim.simulation import (  # 懒 import 避 issues↔simulation 循环
-        DECLARATION_EFFECT_FIELDS,
-    )
+    from ming_sim.simulation import DECLARATION_EFFECT_FIELDS  # 懒 import 避 issues↔simulation 循环
 
     cleaned = {**extracted}
     rejections: list[tuple[str, RejectedItem]] = []
@@ -885,6 +895,9 @@ def sanitize_delta_shape(
                             {"entity_id": str(ent), "raw_value": sub},
                             f"delta 字段 {key}.{ent} 必须是 object(dict)，实得 {type(sub).__name__}",
                         )
+                    else:
+                        # 身份槽别名在 sanitize 一次升到 canonical；写口不再各自补洞（#1917 R2）。
+                        section_clean[ent] = lift_identity_field_aliases(sub)
                 cleaned[key] = section_clean
         elif isinstance(expected, list):
             if not isinstance(value, list):
@@ -900,7 +913,8 @@ def sanitize_delta_shape(
                         f"delta 字段 {key}[{i}] 必须是 object(dict)，实得 {type(item).__name__}",
                     )
                 else:
-                    section_clean.append(item)
+                    # 列表段项级身份槽（案卷编号／来源引用等）统一升格；领域键原样。
+                    section_clean.append(lift_identity_field_aliases(item))
             cleaned[key] = section_clean
     return cleaned, rejections
 

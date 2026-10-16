@@ -397,7 +397,9 @@ def _payload_owned_person_duplicate(
     llm_config=None,
 ) -> bool:
     from ming_sim.entities.authority.apply import _payload_owned_dossier_for_origin
-    dossier = _payload_owned_dossier_for_origin(db, item.get("origin_ref") or item.get("来源引用"))
+    from ming_sim.simulation import read_item_origin_ref
+
+    dossier = _payload_owned_dossier_for_origin(db, read_item_origin_ref(item))
     if dossier is None or dossier.get("action_type") not in {"appointment", "dismiss_assignment"}:
         return False
     payload = dossier["payload"]

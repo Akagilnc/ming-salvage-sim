@@ -431,26 +431,106 @@ class DossierStore(RowStore):
         return [hydrate_dossier_row(row) for row in rows]
 
     def authorizes_effects(self, dossier_id: int) -> bool:
-        """Return whether a dossier crossed either lawful promulgation path."""
-        row = self._conn.execute(
-            """
-            SELECT d.status,d.promulgation_decision,
-                   EXISTS(
-                       SELECT 1 FROM decree_dossier_decisions h
-                       WHERE h.dossier_id=d.id
-                         AND h.rescript_action='force_promulgated'
-                   ) AS was_force_promulgated
-            FROM decree_dossiers d WHERE d.id=?
-            """,
-            (int(dossier_id),),
-        ).fetchone()
+        """Return whether a dossier crossed either lawful promulgation path.
+
+        #1917 runner 裁定：无人站台待裁期间不再授权新的本旨效果；已落不动。
+        """
+        row = self.get(int(dossier_id))
         if row is None:
             return False
+        delib = str((row.get("payload") or {}).get("deliberation_state") or "")
+        if delib in {"stalled", "held"}:
+            return False
         return (
-            str(row["status"] or "") in {"promulgated", "executing"}
-            or str(row["promulgation_decision"] or "") == "promulgated"
-            or bool(row["was_force_promulgated"])
+            str(row.get("status") or "") in {"promulgated", "executing"}
+            or str(row.get("promulgation_decision") or "") == "promulgated"
+            or bool(self._conn.execute(
+                "SELECT 1 FROM decree_dossier_decisions "
+                "WHERE dossier_id=? AND rescript_action='force_promulgated' LIMIT 1",
+                (int(dossier_id),),
+            ).fetchone())
         )
+
+    def list_stalled_deliberations(self) -> list[dict[str, Any]]:
+        """原案无人站台待裁列表；以 deliberation_state 为唯一门闸，不拨 status。"""
+        return [
+            row for row in self.list_dossiers()
+            if str((row.get("payload") or {}).get("deliberation_state") or "") == "stalled"
+        ]
+
+    def mark_deliberation_stalled(
+        self, dossier_id: int, *, note: str = "", commit: bool = True,
+    ) -> dict[str, Any]:
+        """标 stalled 待裁；不回拨 status、不备份、不重放已落效果。
+
+        已颁/在办原案也只改 deliberation_state；authorizes_effects 据此停新效果。
+        """
+        owns = connection_owns_transaction(self._conn)
+        did = int(dossier_id)
+        row = self.get(did)
+        if row is None:
+            raise KeyError(f"案卷不存在：{did}")
+        status = str(row.get("status") or "")
+        if status not in {"proposed", "promulgated", "executing"} or row.get("secret_order_id"):
+            raise ValueError("无人站台只接原案")
+        payload = dict(row.get("payload") or {})
+        if str(payload.get("deliberation_state") or "") == "stalled":
+            self._commit(commit, owns)
+            return row
+        payload["deliberation_state"] = "stalled"
+        # 判空可 strip；落库原文零删改（P6 / #1917 N1）。
+        note_text = note if isinstance(note, str) else str(note or "")
+        if note_text.strip() and not str(payload.get("deliberation_note") or "").strip():
+            payload["deliberation_note"] = note_text
+        self.update_payload(did, payload, commit=False)
+        self._commit(commit, owns)
+        updated = dict(row)
+        updated["payload"] = payload
+        return updated
+
+    def mark_deliberation_backed(
+        self, dossier_id: int, *, note: str = "", commit: bool = True,
+    ) -> dict[str, Any]:
+        """御笔强推：stalled → backed；不改 status（颁布/恢复由既有颁布路径承接）。"""
+        owns = connection_owns_transaction(self._conn)
+        did = int(dossier_id)
+        row = self.get(did)
+        if row is None:
+            raise KeyError(f"案卷不存在：{did}")
+        payload = dict(row.get("payload") or {})
+        if str(payload.get("deliberation_state") or "") != "stalled":
+            raise ValueError("御笔强推只接无人站台原案")
+        payload["deliberation_state"] = "backed"
+        payload["imperial_push_note"] = note
+        self.update_payload(did, payload, commit=False)
+        self._commit(commit, owns)
+        updated = dict(row)
+        updated["payload"] = payload
+        return updated
+
+    def mark_deliberation_held(
+        self, dossier_id: int, *, note: str = "", commit: bool = True,
+    ) -> dict[str, Any]:
+        """留中：stalled → held，结束本次等待；不改 status。"""
+        owns = connection_owns_transaction(self._conn)
+        did = int(dossier_id)
+        row = self.get(did)
+        if row is None:
+            raise KeyError(f"案卷不存在：{did}")
+        payload = dict(row.get("payload") or {})
+        if str(payload.get("deliberation_state") or "") != "stalled":
+            self._commit(commit, owns)
+            return row
+        payload["deliberation_state"] = "held"
+        # 判空可 strip；落库原文零删改（P6 / #1917 N1）。
+        note_text = note if isinstance(note, str) else str(note or "")
+        if note_text.strip():
+            payload["deliberation_hold_note"] = note_text
+        self.update_payload(did, payload, commit=False)
+        self._commit(commit, owns)
+        updated = dict(row)
+        updated["payload"] = payload
+        return updated
 
     # ── status chain ──────────────────────────────────────────────
 

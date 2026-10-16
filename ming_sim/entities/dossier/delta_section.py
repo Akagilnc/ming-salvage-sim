@@ -52,9 +52,7 @@ def apply_executions(run):
     source = run.ctx.source
 
     for item in run.current_extracted.get("dossier_executions") or []:
-        if not isinstance(item, dict):
-            reject_item(rejected, item, "执行格须为对象", "invalid_shape", source)
-            continue
+        # sanitize 已滤非 dict 列表项。
         try:
             dossier_id = _parse_sqlite_id(item.get("dossier_id"))
             outcome = str(item.get("outcome") or "").strip()
@@ -92,5 +90,81 @@ def apply_executions(run):
             "dossier_id": dossier_id,
             "outcome": outcome,
             "source_item": item,
+        })
+    return SectionResult(applied=applied, rejected=rejected)
+
+
+def apply_deliberation_outcomes(run):
+    """#1917：过月转译声明廷议结果——无人站台标 stalled，原案待裁。
+
+    人物肯不肯站台归推演 LLM；本段只记录声明、不代判。
+    """
+    from ming_sim.strict_types import _parse_sqlite_id
+
+    applied: List[object] = []
+    rejected: List[RejectedItem] = []
+    source = run.ctx.source
+
+    from ming_sim.simulation import _canonical_item_fields
+
+    for raw_item in run.current_extracted.get("deliberation_outcomes") or []:
+        # sanitize 已滤非 dict 列表项。
+        item = _canonical_item_fields(raw_item)
+        try:
+            dossier_id = _parse_sqlite_id(item.get("dossier_id"))
+            outcome = str(item.get("outcome") or "").strip()
+            if outcome != "stalled":
+                raise ValueError("廷议结果只收 stalled")
+            note = item.get("note")
+            note = note if isinstance(note, str) else str(note or "")
+            if not note.strip():
+                raise ValueError("廷议说明不能为空")
+        except (TypeError, ValueError) as exc:
+            reject_item(rejected, raw_item, str(exc), "invalid_transition", source)
+            continue
+        # #1917 runner 裁定（二）：先答效果可已颁/执行；后道 stalled 转待裁，不回滚已落。
+        # ADR 0151：案卷生命周期写口归 DossierStore；不拨 status、不备份恢复。
+        try:
+            dossier = run.db.dossiers.mark_deliberation_stalled(
+                int(dossier_id), note=note, commit=False,
+            )
+        except KeyError:
+            reject_item(
+                rejected, raw_item, "无人站台只接原案", "invalid_transition", source,
+            )
+            continue
+        except ValueError as exc:
+            reject_item(rejected, raw_item, str(exc), "invalid_transition", source)
+            continue
+        origin = f"dossier:{dossier_id}"
+        # 廷议局势身份＝origin_kind=deliberation + origin_ref；不与同 ref 国策/承诺混同。
+        existing = run.db.issues.by_origin("deliberation", origin)
+        if existing is None:
+            # 判空可 strip；title/stage 落原文，不裁 decree_text 与 note（P6 / #1917 N1）。
+            decree_text = str(dossier.get("decree_text") or "")
+            if decree_text.strip():
+                title = decree_text
+            elif note.strip():
+                title = note
+            else:
+                title = "无人站台原案"
+            run.db.insert_issue(
+                run.state,
+                kind="situation",
+                title=title,
+                origin_kind="deliberation",
+                origin_ref=origin,
+                stage_text=note,
+                commit=False,
+            )
+        elif str(existing["status"] or "") != "active":
+            # 再次待裁：重开局势，保留历史 resolved 记录语义由 status 翻转承接。
+            run.db.conn.execute(
+                "UPDATE issues SET status='active', stage_text=COALESCE(?, stage_text) "
+                "WHERE id=?",
+                (note if note.strip() else None, int(existing["id"])),
+            )
+        applied.append({
+            "dossier_id": dossier_id, "outcome": "stalled", "source_item": item,
         })
     return SectionResult(applied=applied, rejected=rejected)

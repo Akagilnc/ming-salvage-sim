@@ -211,3 +211,69 @@ def _canonical_item_fields(value: object) -> object:
         ITEM_FIELD_ALIASES.get(str(key).strip(), str(key).strip()): _canonical_item_fields(val)
         for key, val in value.items()
     }
+
+
+# 身份槽闭集：与领域别名表（ARMY_FIELD_ALIASES 等）分责。整树 ITEM_FIELD_ALIASES
+# 会把「势力」抢成 leverage，而建军「势力」权威是 owner_power（#1917）。
+IDENTITY_ITEM_FIELDS = frozenset({"origin_ref", "dossier_id", "target_dossier_id"})
+
+
+def normalize_item_keys(
+    item: Mapping,
+    *,
+    domain_aliases: Mapping[str, str] | None = None,
+) -> Dict[str, object]:
+    """按段契约规范化条目键（非递归）。
+
+    - 身份槽始终走 ITEM_FIELD_ALIASES（来源引用／诏书引用 → origin_ref 等）；
+      同槽多键时后写覆盖（与 lift／read 同一解释）。
+    - 其余键：领域表命中优先（建军「势力」→ owner_power）；未命中再走
+      ITEM_FIELD_ALIASES（编号→id 等非冲突通用别名），禁止领域分支整段
+      屏蔽通用表。
+    - 嵌套 dict 值原样保留，不整树抢译。
+    """
+    result: Dict[str, object] = {}
+    for key, val in item.items():
+        raw = str(key).strip()
+        via_item = ITEM_FIELD_ALIASES.get(raw, raw)
+        if via_item in IDENTITY_ITEM_FIELDS:
+            result[via_item] = val
+            continue
+        if domain_aliases is not None and raw in domain_aliases:
+            result[domain_aliases[raw]] = val
+        else:
+            result[via_item] = val
+    return result
+
+
+def lift_identity_field_aliases(item: Mapping) -> Dict[str, object]:
+    """只把身份槽别名升到 canonical 键；其它键原样保留。
+
+    适用于已有领域核自行吃 ARMY/REGION 别名、只需贯通 origin_ref 的写口。
+    需要业务字段别名的段请用 :func:`normalize_item_keys`。
+    同槽多键后写覆盖，与 :func:`normalize_item_keys` / :func:`read_item_origin_ref` 一致。
+
+    无身份别名改写时返回原 dict，保持对象身份——sanitize 可能对同一批
+    条目跑两次（effects 逐笔 envelope + settle 合并载荷），#1844 盖章依赖
+    effect_sequence 与合并列表共享同一对象。
+    """
+    result: Dict[str, object] = {}
+    rewritten = False
+    for key, val in item.items():
+        field = ITEM_FIELD_ALIASES.get(str(key).strip(), str(key).strip())
+        if field in IDENTITY_ITEM_FIELDS:
+            if key != field:
+                rewritten = True
+            result[field] = val
+        else:
+            result[key] = val
+    if not rewritten and isinstance(item, dict):
+        return item
+    return result
+
+
+def read_item_origin_ref(item: Mapping | None) -> str:
+    """从条目读取 origin_ref；权威＝lift 后的身份槽（与写口同一解释）。"""
+    if not item:
+        return ""
+    return str(lift_identity_field_aliases(item).get("origin_ref") or "").strip()

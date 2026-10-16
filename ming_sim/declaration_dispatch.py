@@ -662,15 +662,16 @@ def discard_staged_declaration(db: Any, decree_ref: str) -> int:
 def bind_decree_effect_sources(
     db: Any, decree_ref: str, declaration: Mapping[str, object], visible_refs: Mapping[str, object],
 ) -> Tuple[Mapping[str, object], Mapping[str, object]]:
-    """Bind this draft's structured identity slots to the formal dossier.
+    """Bind only this draft's structured identity slots to the formal dossier.
 
-    Walks the whole declaration: origin_ref / dossier_id / target_dossier_id
-    (and aliases) equal to the pending-action ref become dossier:<id>. Other
-    keys and prose pass through untouched. Covers effects, textual_facts,
-    yamen_creates, and any future section that carries the same slots.
+    Walks the declaration for origin_ref / dossier_id / target_dossier_id
+    (and aliases) equal to the pending-action ref → dossier:<id>. Identity
+    slots emit under canonical keys so write paths reading origin_ref see the
+    binding; domain keys (e.g. faction names inside faction_delta) and prose
+    pass through untouched — no whole-tree field rename.
     """
     from ming_sim.decree_forecast import dossier_for_decree_ref
-    from ming_sim.simulation import ITEM_FIELD_ALIASES
+    from ming_sim.simulation import IDENTITY_ITEM_FIELDS, ITEM_FIELD_ALIASES
 
     if not decree_ref.startswith("pending-action:"):
         return declaration, visible_refs
@@ -683,11 +684,14 @@ def bind_decree_effect_sources(
         if isinstance(value, Mapping):
             result = {}
             for key, item in value.items():
-                field = ITEM_FIELD_ALIASES.get(key, key)
-                if field == "origin_ref" and item == decree_ref:
-                    result[key] = held_dossier_decree_ref(dossier_id)
-                elif field in {"dossier_id", "target_dossier_id"} and item == decree_ref:
-                    result[key] = dossier_id
+                field = ITEM_FIELD_ALIASES.get(str(key).strip(), str(key).strip())
+                if field in IDENTITY_ITEM_FIELDS:
+                    if field == "origin_ref" and item == decree_ref:
+                        result[field] = held_dossier_decree_ref(dossier_id)
+                    elif field in {"dossier_id", "target_dossier_id"} and item == decree_ref:
+                        result[field] = dossier_id
+                    else:
+                        result[field] = bind(item)
                 else:
                     result[key] = bind(item)
             return result
@@ -825,6 +829,9 @@ def _section_items(
     单项单独拒收，只把合法 Mapping 项交回调用方（J4：容器拆分 + 形状归一
     收进一个入口，九个 section 分派器不再各自重复同一段
     `isinstance(item, Mapping)` 判断）。"""
+    # 写口与 ITEM_FIELD_ALIASES 同一真源：项级键规范化（#1917 R2），不另造别名表。
+    from ming_sim.simulation import _canonical_item_fields
+
     if raw is None:
         return (), []
     if not (isinstance(raw, Sequence) and not isinstance(raw, (str, bytes))):
@@ -836,7 +843,8 @@ def _section_items(
     rejected: List[RejectedItem] = []
     for entry in raw:
         if isinstance(entry, Mapping):
-            items.append(entry)
+            # dict 入 → dict 出；不保留非 Mapping 回退原项的不可达分支（#1917 R3）。
+            items.append(_canonical_item_fields(dict(entry)))
         else:
             rejected.append(RejectedItem(
                 item={"raw_value": entry}, reason=f"{label}须为对象",
