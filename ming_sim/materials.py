@@ -742,25 +742,30 @@ def _write_region_detail_files(tmp: Path, db: Any, knowledge: dict) -> list[str]
 
 
 def _yamen_current_fee_line(db: Any, yamen: Any) -> str:
-    """当前月费只读财政科目；实体 ``monthly_fee`` 是成立时的历史，不当现值。"""
+    """当前月费复用 flows.fixed_config_amount（base×rate）；实体列只是成立历史。"""
     from ming_sim.assets import format_money
+    from ming_sim.flows import fixed_config_amount
 
     key = str(getattr(yamen, "fiscal_key", "") or "").strip()
-    if key:
-        row = db.fiscal_config.row(key)
-        if row is not None:
-            account = str(row["account"] or "").strip() or str(
-                getattr(yamen, "fee_account", "") or ""
-            )
-            return f"月费：{format_money(int(row['value']))}（{account}）"
-    return "月费：（无在册科目）"
+    if not key:
+        return "月费：（无在册科目）"
+    cfg = db.fiscal_config.values()
+    if key not in cfg:
+        return "月费：（无在册科目）"
+    row = db.fiscal_config.row(key)
+    account = ""
+    if row is not None:
+        account = str(row["account"] or "").strip()
+    if not account:
+        account = str(getattr(yamen, "fee_account", "") or "")
+    return f"月费：{format_money(fixed_config_amount(cfg, key))}（{account}）"
 
 
 def _yamen_material_text(db: Any, yamen: Any, *, include_fact: Any = None) -> str:
     """主官/推演可读的衙门账：名称、主官、当前月费与历月下落。
 
     月度下落复用既有 ``_textual_facts_text``（保留 body 原样，P6），不另写投影循环。
-    当前月费复用 fiscal_config（与扣款同一真源）；单位＝账本万两。
+    当前月费复用 fixed_config_amount（与预算/扣款同一 base×rate 真源）。
     ``include_fact`` 与人物/军队/地区按月实况同一来源可见性接缝；世界推演默认不筛。
     """
     lines = [

@@ -5,7 +5,7 @@ from ming_sim.applier import parse_engine_payload_json
 
 import copy
 import math
-from typing import Any, Dict, List, NamedTuple, Optional, Tuple
+from typing import Any, Dict, List, Mapping, NamedTuple, Optional, Tuple
 
 from ming_sim.applier import connection_owns_transaction
 from ming_sim.army_pay import (
@@ -216,6 +216,17 @@ def _substrate_hub_budget_income_lines(
 # UI budget_payload / db.treasury_budget_summary 三处共用。
 
 
+def fixed_config_amount(cfg: Mapping[str, int], base_key: str) -> int:
+    """fiscal_config 固定科目现值＝base×rate/100（与预算/扣款同一口径）。
+
+    ``base_key`` 须为 ``*_base``；配套 rate 缺省按 100。材料等现值读者只调本函数，
+    不另造计算副本。
+    """
+    key = str(base_key or "")
+    rate_key = key[:-5] + "_rate"  # 去 _base 换 _rate
+    return int(round(int(cfg.get(key, 0)) * int(cfg.get(rate_key, 100)) / 100))
+
+
 def compute_budget_lines(
     db: GameDB, state: GameState, *, project_substrate_hub: bool = True
 ) -> Dict[str, Dict[str, list]]:
@@ -269,14 +280,16 @@ def compute_budget_lines(
     budget["国库"]["expense"].extend(army_pay_lines)
     budget["国库"]["expense"].extend(hub_expense_lines)
     # 皇庄＝fiscal_config 基准（开局校准月额）。
-    huang_base = round(int(cfg.get("皇庄_base", 20)) * cfg.get("皇庄_rate", 100) / 100)
+    huang_base = fixed_config_amount(
+        {**cfg, "皇庄_base": int(cfg.get("皇庄_base", 20))},
+        "皇庄_base",
+    )
     budget["内库"]["income"].append(
         {"name": "皇庄", "amount": int(huang_base), "note": "皇庄月地租（fiscal_config 基准）"}
     )
     for item in db.iter_budget_items():
         base_key = str(item["key"])
-        rate_key = base_key[:-5] + "_rate"  # 去 _base 换 _rate
-        amount = round(int(cfg.get(base_key, 0)) * cfg.get(rate_key, 100) / 100)
+        amount = fixed_config_amount(cfg, base_key)
         budget[str(item["account"])][str(item["direction"])].append(
             {
                 "name": str(item["display"]), "amount": int(amount),
