@@ -246,7 +246,7 @@ def test_authorized_dossier_outside_frozen_batch_rejected_zero_edges(game):
     rejected = section(out, "relation_edge_event_resolutions").rejected
     assert len(rejected) == 1
     assert rejected[0].category == "invalid_relation_event"
-    assert rejected[0].item["来源引用"] == f"dossier:{stale}"
+    assert rejected[0].item["origin_ref"] == f"dossier:{stale}"
     # 好项不牵连：闭集内且授权的照常落库
     rows = _edge_rows(db)
     assert len(rows) == 1

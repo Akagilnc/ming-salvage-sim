@@ -869,10 +869,7 @@ def sanitize_delta_shape(
     拒收在产生处即为 canonical :class:`~ming_sim.applier.RejectedItem`；section 名作为
     框架上下文与项配对返回，不塞进项级四字段。
     """
-    from ming_sim.simulation import (  # 懒 import 避 issues↔simulation 循环
-        DECLARATION_EFFECT_FIELDS,
-        lift_identity_field_aliases,
-    )
+    from ming_sim.simulation import DECLARATION_EFFECT_FIELDS  # 懒 import 避 issues↔simulation 循环
 
     cleaned = {**extracted}
     rejections: list[tuple[str, RejectedItem]] = []
