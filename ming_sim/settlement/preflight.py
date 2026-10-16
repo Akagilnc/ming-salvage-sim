@@ -492,7 +492,8 @@ def _strategic_event_result_preflight_error(
         db.conn.execute("SAVEPOINT strategic_power_result_preflight")
         try:
             for power_id, raw_changes in power_items:
-                power_payload = lift_identity_field_aliases(raw_changes) if isinstance(raw_changes, dict) else {}
+                # 上环已逐项确认 dict；此处不再重复形状判断。
+                power_payload = lift_identity_field_aliases(raw_changes)
                 power_payload = {k: v for k, v in power_payload.items() if k != "origin_ref"}
                 landed, refused = db.apply_power_deltas(
                     state,

@@ -31,9 +31,8 @@ def apply_new_armies(run, items: List[object] | None = None):
     from ming_sim.simulation import normalize_item_keys
 
     for raw in items:
-        if not isinstance(raw, dict):
-            continue
-        # id(raw) 是战略事件归属真源；身份槽走 ITEM，领域键走 ARMY（势力→owner_power）。
+        # sanitize 已滤非 dict；id(raw) 是战略事件归属真源。
+        # 身份槽走 ITEM，领域键走 ARMY（势力→owner_power）。
         if run.declared_new_army_event_by_item.get(id(raw), "") in run.strategic_event_referenced_ids:
             continue
         item = normalize_item_keys(raw, domain_aliases=ARMY_FIELD_ALIASES)
