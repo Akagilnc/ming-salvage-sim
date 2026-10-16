@@ -1,7 +1,9 @@
-"""Yamen (新设衙门) ledger entity: identity, chief, monthly fee (#1915).
+"""Yamen (新设衙门) ledger entity: identity, chief, founding fee (#1915).
 
 Monthly progress lives on textual_facts with subject_kind='yamen' (ADR 0156).
-Monthly fee is a fiscal_config fixed expense keyed from this row.
+``monthly_fee`` / ``fee_account`` are founding history written at create time.
+Present fee and live account live only on fiscal_config via ``fiscal_key``;
+no bidirectional sync back onto this row.
 
 No lifecycle status: presence on the ledger is the only existence signal.
 Withdraw removes the row (undo); this ticket has no suspend/dissolve protocol.
@@ -44,8 +46,8 @@ class Yamen:
     id: int
     name: str
     chief_name: str
-    monthly_fee: int
-    fee_account: str
+    monthly_fee: int  # founding amount; present value = fiscal_config[fiscal_key]
+    fee_account: str  # founding account; live account on fiscal row
     fiscal_key: str
     origin_ref: str
     created_turn: int

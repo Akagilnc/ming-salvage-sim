@@ -741,20 +741,33 @@ def _write_region_detail_files(tmp: Path, db: Any, knowledge: dict) -> list[str]
     return index
 
 
-def _yamen_material_text(db: Any, yamen: Any, *, include_fact: Any = None) -> str:
-    """主官/推演可读的衙门账：名称、主官、月费与历月下落。
-
-    月度下落复用既有 ``_textual_facts_text``（保留 body 原样，P6），不另写投影循环。
-    月费单位＝账本万两（与 fiscal_config / MONEY_UNIT 同契约）。
-    ``include_fact`` 与人物/军队/地区按月实况同一来源可见性接缝；世界推演默认不筛。
-    """
+def _yamen_current_fee_line(db: Any, yamen: Any) -> str:
+    """当前月费只读财政科目；实体 ``monthly_fee`` 是成立时的历史，不当现值。"""
     from ming_sim.assets import format_money
 
+    key = str(getattr(yamen, "fiscal_key", "") or "").strip()
+    if key:
+        row = db.fiscal_config.row(key)
+        if row is not None:
+            account = str(row["account"] or "").strip() or str(
+                getattr(yamen, "fee_account", "") or ""
+            )
+            return f"月费：{format_money(int(row['value']))}（{account}）"
+    return "月费：（无在册科目）"
+
+
+def _yamen_material_text(db: Any, yamen: Any, *, include_fact: Any = None) -> str:
+    """主官/推演可读的衙门账：名称、主官、当前月费与历月下落。
+
+    月度下落复用既有 ``_textual_facts_text``（保留 body 原样，P6），不另写投影循环。
+    当前月费复用 fiscal_config（与扣款同一真源）；单位＝账本万两。
+    ``include_fact`` 与人物/军队/地区按月实况同一来源可见性接缝；世界推演默认不筛。
+    """
     lines = [
         f"id：{int(yamen.id)}",
         f"名称：{yamen.name}",
         f"主官：{yamen.chief_name or '（未指定）'}",
-        f"月费：{format_money(int(yamen.monthly_fee))}（{yamen.fee_account}）",
+        _yamen_current_fee_line(db, yamen),
         "月度下落：",
         _textual_facts_text(
             db.textual_facts,
@@ -795,7 +808,7 @@ def _write_world_yamen_files(
     """过月推演/邸报材料：在职衙门及其月度下落。
 
     世界推演保留完整实体与事实；邸报 ``public_only`` 先按衙门 origin_ref 过滤整本
-    （名称/主官/月费不得泄漏），再对月度下落复用 ``include_fact``。
+    （名称/主官/当前月费不得泄漏），再对月度下落复用 ``include_fact``。
     """
     from ming_sim.knowledge import origin_visible_to
 
