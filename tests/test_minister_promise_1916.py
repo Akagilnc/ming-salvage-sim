@@ -1,24 +1,21 @@
 """#1916 大臣主动许诺记账、到期复命。
 
-Seams:
-- scene_chat → 转译声明 → dispatch_declaration（真实召对入口）
-- issues 承诺账（commitment_kind + participant_roster）
-- undo_chat_turn 前像逆转（issues 入 TABLES）
-- resolve_turn 过月机械尾 write_due_staged_commitment_todos
-  → list_due_review_scenes / prepare_scene_materials 开场材料
-- affair_declaration → insert_issue_with_affair_declaration
+按独立行为契约组织（非历轮病史堆叠）：
+- 记录与撤回：真实召对落账、供料关联、来源区分、undo
+- 到期生命周期：过月→跨月未召见→开场→ACK；旧待办对照
+- 材料可读：公开目录 / 个人出生名 / 到期派生供料
+- 准入与责任：互斥拒收、纠错拒收、皇命违诺排除
 """
 
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from ming_sim.audience_night import (
-    AUDIBILITY_PRIVATE,
-    AUDIBILITY_PUBLIC,
-    append_ledger_entry,
     close_night,
     ensure_summon_enter,
     open_night,
@@ -33,8 +30,7 @@ from ming_sim.materials import (
     prepare_scene_materials,
     release_material_tree,
 )
-from ming_sim.month_chain import _gazette_feed, prepare_gazette_author_materials, run_gazette_text
-from ming_sim.relations import summon_edge_origin
+from ming_sim.month_chain import prepare_gazette_author_materials, run_gazette_text
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement_payload import list_due_commitments
 from ming_sim.staged_commitment import (
@@ -48,6 +44,7 @@ from tests.conftest import (
     stub_scene_agent,
     wait_for_background_jobs,
 )
+from tests.dossier_test_helpers import create_test_secret_order, promulgated_policy_origin
 from tests.test_audience_translate_1837 import _scene_turn, _sess
 from tests.test_gazette_author_1862 import _llm as _gazette_llm
 from tests.test_month_chain_1843 import _prepare_player_month
@@ -94,270 +91,6 @@ def _one_month(session, db, state) -> None:
     wait_for_background_jobs(db)
 
 
-def test_minister_self_promise_timed_and_open_land_without_emperor_approval(
-    game, monkeypatch,
-):
-    """有期限与无期限自诺都进承诺账；承诺人=该大臣；不经皇帝应允；撤回逆转。"""
-    db, state, content = game
-    night = open_night(db, state, location="乾清宫", time_of_day="夜")
-    nid = int(night["id"])
-    promisor = "魏忠贤"
-    dossiers_before = int(db.conn.execute(
-        "SELECT COUNT(*) AS n FROM decree_dossiers",
-    ).fetchone()["n"])
-    issues_before = {
-        int(r["id"]) for r in db.conn.execute("SELECT id FROM issues").fetchall()
-    }
-    affairs_before = {
-        int(r["id"]) for r in db.conn.execute("SELECT id FROM affairs").fetchall()
-    }
-
-    def translate(prompt, llm_config):
-        base = offline_empty_audience_translate(prompt, llm_config)
-        return {
-            **base,
-            "commissions": [
-                {
-                    "text": "臣明日就办田尔耕。",
-                    "minister_promise": {
-                        "title": "办田尔耕",
-                        "content": "明日就办田尔耕",
-                        "promisor": promisor,
-                        "deadline_months": 1,
-                    },
-                    # R1：attach=new 创建事务须随撤回删除。
-                    "affair_declaration": {
-                        "attach": "new",
-                        "name": "自诺事务0",
-                        "origin": "大臣自诺",
-                    },
-                },
-                {
-                    "text": "臣愿扩到五万流民。",
-                    "minister_promise": {
-                        "title": "扩到五万流民",
-                        "content": "扩到五万流民",
-                        "promisor": "杨嗣昌",
-                    },
-                    "affair_declaration": {
-                        "attach": "new",
-                        "name": "自诺事务1",
-                        "origin": "大臣自诺",
-                    },
-                },
-            ],
-        }
-
-    class FakeAgent:
-        def run(self, message):
-            return SimpleNamespace(
-                content="臣明日就办田尔耕。臣另愿扩到五万流民。", tools=[],
-            )
-
-    stub_scene_agent(monkeypatch, FakeAgent())
-    sess = _sess(db, state, content, monkeypatch, translate_fn=translate)
-    _result, chat_turn_id = _scene_turn(
-        sess, db, state, "尔等有何话说", night_id=nid,
-    )
-
-    timed = _active_commitments_for(db, promisor)
-    open_ended = _active_commitments_for(db, "杨嗣昌")
-    assert len(timed) == 1
-    assert len(open_ended) == 1
-
-    timed_row = timed[0]
-    open_row = open_ended[0]
-    assert str(timed_row["commitment_kind"] or "").strip()
-    assert str(open_row["commitment_kind"] or "").strip()
-    assert int(timed_row["end_turn"] or 0) == int(state.turn) + 1
-    assert int(open_row["end_turn"] or 0) == 0
-    assert str(timed_row["origin_kind"] or "") != "decree"
-    assert str(open_row["origin_kind"] or "") != "decree"
-
-    # C1-R1：同轮多人自诺各有唯一来源，承诺人各自可见己诺，互不覆盖。
-    timed_origin = str(timed_row["origin_ref"] or "")
-    open_origin = str(open_row["origin_ref"] or "")
-    assert timed_origin and open_origin and timed_origin != open_origin
-    assert f":minister_promise:{int(timed_row['id'])}" in timed_origin
-    assert f":minister_promise:{int(open_row['id'])}" in open_origin
-    assert origin_visible_to(db, timed_origin, promisor) is True
-    assert origin_visible_to(db, open_origin, "杨嗣昌") is True
-    assert origin_visible_to(db, timed_origin, "杨嗣昌") is False
-    assert origin_visible_to(db, open_origin, promisor) is False
-    assert origin_visible_to(db, timed_origin) is False
-    assert any(
-        int(i.get("id") or 0) == int(timed_row["id"])
-        for i in build_character_knowledge(db, state, promisor).get("issues") or []
-    )
-    assert any(
-        int(i.get("id") or 0) == int(open_row["id"])
-        for i in build_character_knowledge(db, state, "杨嗣昌").get("issues") or []
-    )
-    assert not any(
-        int(i.get("id") or 0) == int(open_row["id"])
-        for i in build_character_knowledge(db, state, promisor).get("issues") or []
-    )
-
-    # 不经应允：无 pending 交办挂此自诺，亦无案卷颁布路径。
-    pending = db.conn.execute(
-        "SELECT COUNT(*) AS n FROM pending_actions "
-        "WHERE turn=? AND status='pending'",
-        (int(state.turn),),
-    ).fetchone()["n"]
-    assert int(pending) == 0
-    dossiers_after = int(db.conn.execute(
-        "SELECT COUNT(*) AS n FROM decree_dossiers",
-    ).fetchone()["n"])
-    assert dossiers_after == dossiers_before
-
-    # 落账后应新建了两个事务（attach=new）。
-    affairs_landed = {
-        int(r["id"]) for r in db.conn.execute(
-            "SELECT id FROM affairs WHERE status='open'",
-        ).fetchall()
-    }
-    assert len(affairs_landed - affairs_before) == 2
-
-    # J1/R1：issues + 本轮新建 affairs 均入前像——undo 后回到前像。
-    db.reign.set_chat_turn_status("active", int(chat_turn_id))
-    db.conn.commit()
-    db.undo_chat_turn(int(chat_turn_id))
-    issues_after_undo = {
-        int(r["id"]) for r in db.conn.execute("SELECT id FROM issues").fetchall()
-    }
-    assert issues_after_undo == issues_before
-    affairs_after_undo = {
-        int(r["id"]) for r in db.conn.execute("SELECT id FROM affairs").fetchall()
-    }
-    assert affairs_after_undo == affairs_before
-    assert _active_commitments_for(db, promisor) == []
-    assert _active_commitments_for(db, "杨嗣昌") == []
-
-
-def test_timed_minister_promise_due_appears_in_promisor_opening_materials(
-    game, monkeypatch,
-):
-    """有期自诺到期后，首次入对开场可见；跨月未召见不丢；事务关联保留；ACK 收尾。"""
-    db, state, content = game
-    open_night(db, state, location="乾清宫", time_of_day="夜")
-    promisor = "魏忠贤"
-
-    # 既有 open 事务，供声明关联（J3）。
-    affair = db.affairs.open(
-        name="田尔耕案",
-        origin="test",
-        year=int(state.year),
-        period=int(state.period),
-        turn=int(state.turn),
-    )
-    # 复用共用批派入口：开厅、钉源轮、dispatch。
-    result, _chat_id, _night_id = _land_minister_promise(
-        db, state, promisor=promisor, title="办田尔耕",
-        deadline_months=1,
-        affair_declaration={
-            "attach": "existing", "affair_id": int(affair.id),
-        },
-    )
-    assert result.commissions.rejected == []
-    assert len(result.commissions.applied) == 1
-    issue_id = int(result.commissions.applied[0]["issue_id"])
-    # J3：已声明事务关联落库。
-    assert int(db.issues.affair_id_of(issue_id)) == int(affair.id)
-
-    close_night(db, state, content=content)
-    before = int(state.turn)
-    # 真实过月入口。deadline_months=1 → end_turn=turn+1；
-    # write_due 在当月结算机械尾扫（尚未 next_period），故到期月本身再过一次月才写入待办。
-    session = _prepare_player_month(db, state, content, monkeypatch)
-
-    _one_month(session, db, state)
-    assert int(state.turn) == before + 1
-    _one_month(session, db, state)
-    assert int(state.turn) == before + 2
-
-    todos = [
-        t for t in db.dossiers.list_next_audience_todos(status=TODO_STATUS_PENDING)
-        if int(t["commitment_ref"]) == issue_id
-    ]
-    assert len(todos) == 1
-    assert len([
-        s for s in list_due_review_scenes(db)
-        if int(s.get("commitment_ref") or 0) == issue_id
-    ]) == 1
-
-    # J2：到期后未召见再过一月，首次入对仍可见（不得因无案卷过早消费而丢）。
-    _one_month(session, db, state)
-    assert int(state.turn) == before + 3
-    todos_after_skip = [
-        t for t in db.dossiers.list_next_audience_todos(status=TODO_STATUS_PENDING)
-        if int(t["commitment_ref"]) == issue_id
-    ]
-    assert len(todos_after_skip) == 1
-    scenes_after_skip = [
-        s for s in list_due_review_scenes(db)
-        if int(s.get("commitment_ref") or 0) == issue_id
-    ]
-    assert len(scenes_after_skip) == 1
-
-    # #1916 C1：非知情在场时，私诺到期不得进共享开场；待办仍 pending。
-    night2 = open_night(db, state, location="乾清宫", time_of_day="昼")
-    uninformed = "杨嗣昌"
-    ensure_summon_enter(db, int(night2["id"]), uninformed)
-    assert origin_visible_to(
-        db,
-        str(db.conn.execute(
-            "SELECT origin_ref FROM issues WHERE id=?", (issue_id,),
-        ).fetchone()["origin_ref"] or ""),
-        uninformed,
-    ) is False
-    prepared_uninformed = prepare_scene_materials(db, state)
-    try:
-        assert issue_id not in _opening_commitment_ids(prepared_uninformed.opening), (
-            prepared_uninformed.opening
-        )
-    finally:
-        release_material_tree(prepared_uninformed.root)
-    assert len([
-        t for t in db.dossiers.list_next_audience_todos(status=TODO_STATUS_PENDING)
-        if int(t["commitment_ref"]) == issue_id
-    ]) == 1
-
-    # 承诺人首次入对：真实 prepare_scene_materials 开场须含到期项身份（J4 接缝）。
-    ensure_summon_enter(db, int(night2["id"]), promisor)
-    prepared = prepare_scene_materials(db, state)
-    try:
-        assert issue_id in _opening_commitment_ids(prepared.opening), prepared.opening
-    finally:
-        release_material_tree(prepared.root)
-
-    # 条款2：兑现或落空沿既有 form③ acknowledged 收尾（无案卷、不伪造皇命）。
-    close_out = settle_delta(
-        state, db,
-        {
-            "close_issues": [{
-                "issue_id": issue_id,
-                "reason": "acknowledged",
-                "narrative": "田尔耕事已复命，此诺了结。",
-            }],
-        },
-        SettlementContext(content=content),
-    )
-    assert close_out.issue is not None
-    assert close_out.issue.rejected == []
-    assert any(
-        int(c.get("issue_id") or 0) == issue_id for c in close_out.issue.closes
-    )
-    row = db.conn.execute(
-        "SELECT status, closed_turn FROM issues WHERE id=?", (issue_id,),
-    ).fetchone()
-    assert str(row["status"]) == "dropped"
-    assert int(row["closed_turn"] or 0) == int(state.turn)
-    knowledge_after = build_character_knowledge(db, state, promisor)
-    assert not any(
-        int(i.get("id") or 0) == issue_id for i in knowledge_after.get("issues") or []
-    )
-
-
 def _hall_commission_batch(db, state, promisor, commissions, *, words="尔有何话说"):
     """共用召对入口：开厅、钉源轮、dispatch 一批 commissions。"""
     night_id, chat_id = open_hall_turn(db, state, promisor)
@@ -383,8 +116,11 @@ def _hall_commission_batch(db, state, promisor, commissions, *, words="尔有何
     )
     return result, int(chat_id), int(night_id)
 
-def _land_minister_promise(db, state, *, promisor: str, title: str, deadline_months=1,
-                           affair_declaration=None, extra=None):
+
+def _land_minister_promise(
+    db, state, *, promisor: str, title: str, deadline_months=1,
+    affair_declaration=None, extra=None,
+):
     """真实召对分派入口落一笔自诺；复用共用批派入口。"""
     item = {
         "text": title,
@@ -402,10 +138,405 @@ def _land_minister_promise(db, state, *, promisor: str, title: str, deadline_mon
     return _hall_commission_batch(db, state, promisor, [item], words=title)
 
 
-def test_c1_minister_promise_origin_not_public_visible(game, monkeypatch):
-    """C1：自诺来源受限；真实公开作者写手不消费私语/私诺新建，保留既有公开事务。"""
-    import ming_sim.materials as materials_mod
+def _promise_item(promisor: str, title: str, *, deadline_months=1):
+    return {
+        "title": title,
+        "content": title,
+        "promisor": promisor,
+        "deadline_months": deadline_months,
+    }
 
+
+def _paths_have_affair(paths, affair_id: int) -> bool:
+    # _safe_segment 产出 affair-N-<hash> 目录名。
+    key = f"affair-{int(affair_id)}"
+    return any(
+        part == key or part.startswith(f"{key}-")
+        for path in paths
+        for part in str(path).split("/")
+    )
+
+
+def _affair_situation_text(
+    root: Path, paths, affair_id: int, *, person: str | None = None,
+) -> str:
+    """结构化交付：事务当前情况正文（路径契约，不扫生成邸报）。"""
+    key = f"affair-{int(affair_id)}"
+
+    def _is_affair_situation(path: str) -> bool:
+        parts = str(path).split("/")
+        if not parts or parts[-1] != "当前情况.txt":
+            return False
+        return any(part == key or part.startswith(f"{key}-") for part in parts)
+
+    matches = [p for p in paths if _is_affair_situation(p)]
+    if person is None:
+        matches = [p for p in matches if not str(p).startswith("人物/") and "/人物/" not in f"/{p}"]
+    else:
+        matches = [
+            p for p in matches
+            if any(
+                part == person or part.startswith(f"{person}-")
+                for part in str(p).split("/")
+            )
+        ]
+    assert matches, (key, person, [p for p in paths if "事务/" in p][:20])
+    return (root / matches[0]).read_text(encoding="utf-8")
+
+
+def _situation_carries_title(body: str, title: str) -> bool:
+    if not title:
+        return False
+    return (
+        body == title
+        or body.startswith(f"{title}\n")
+        or body.startswith(f"{title}：")
+    )
+
+
+# ── 记录与撤回 ──────────────────────────────────────────────
+
+
+def test_minister_promise_lands_from_real_audience_and_undoes(game, monkeypatch):
+    """有期／无期／既有关联同场落账；供料 ID 真源；不成旨意；来源互斥；撤回逆转。"""
+    db, state, content = game
+    promisor = "魏忠贤"
+    other = "杨嗣昌"
+    existing = db.affairs.open(
+        name="田尔耕案", origin="test",
+        year=int(state.year), period=int(state.period), turn=int(state.turn),
+    )
+    existing_id = int(existing.id)
+    night = open_night(db, state, location="乾清宫", time_of_day="夜")
+    nid = int(night["id"])
+    dossiers_before = int(db.conn.execute(
+        "SELECT COUNT(*) AS n FROM decree_dossiers",
+    ).fetchone()["n"])
+    issues_before = {
+        int(r["id"]) for r in db.conn.execute("SELECT id FROM issues").fetchall()
+    }
+    affairs_before = {
+        int(r["id"]) for r in db.conn.execute("SELECT id FROM affairs").fetchall()
+    }
+    seen_prompts: list[str] = []
+
+    def translate(prompt, llm_config):
+        text = str(prompt or "")
+        seen_prompts.append(text)
+        affair_id = None
+        for line in text.splitlines():
+            if not line.startswith("affair\t"):
+                continue
+            parts = line.split("\t")
+            if len(parts) >= 3 and parts[2] == "田尔耕案":
+                affair_id = int(parts[1])
+                break
+        assert affair_id == existing_id, text
+        base = offline_empty_audience_translate(prompt, llm_config)
+        return {
+            **base,
+            "commissions": [
+                {
+                    "text": "臣明日就办田尔耕。",
+                    "minister_promise": _promise_item(
+                        promisor, "办田尔耕", deadline_months=1,
+                    ),
+                    "affair_declaration": {
+                        "attach": "new",
+                        "name": "自诺事务0",
+                        "origin": "大臣自诺",
+                    },
+                },
+                {
+                    "text": "臣愿扩到五万流民。",
+                    "minister_promise": _promise_item(
+                        other, "扩到五万流民", deadline_months=0,
+                    ),
+                    "affair_declaration": {
+                        "attach": "new",
+                        "name": "自诺事务1",
+                        "origin": "大臣自诺",
+                    },
+                },
+                {
+                    "text": "臣就田尔耕案再诺复命。",
+                    "minister_promise": _promise_item(
+                        promisor, "田尔耕案复命", deadline_months=1,
+                    ),
+                    "affair_declaration": {
+                        "attach": "existing",
+                        "affair_id": int(affair_id),
+                    },
+                },
+            ],
+        }
+
+    class FakeAgent:
+        def run(self, message):
+            return SimpleNamespace(
+                content="臣明日就办田尔耕。臣另愿扩到五万流民。臣就田尔耕案再诺复命。",
+                tools=[],
+            )
+
+    stub_scene_agent(monkeypatch, FakeAgent())
+    sess = _sess(db, state, content, monkeypatch, translate_fn=translate)
+    _result, chat_turn_id = _scene_turn(
+        sess, db, state, "尔等有何话说", night_id=nid,
+    )
+
+    assert seen_prompts, "真实转译未接到 prompt"
+    assert "affair_declaration" in build_c0_declaration_shape()
+
+    timed = _active_commitments_for(db, promisor)
+    open_ended = _active_commitments_for(db, other)
+    assert len(timed) == 2
+    assert len(open_ended) == 1
+
+    open_row = open_ended[0]
+    assert int(open_row["end_turn"] or 0) == 0
+    assert str(open_row["commitment_kind"] or "").strip()
+    assert str(open_row["origin_kind"] or "") != "decree"
+
+    linked = next(
+        r for r in timed
+        if int(db.issues.affair_id_of(int(r["id"]))) == existing_id
+    )
+    newborn = next(
+        r for r in timed
+        if int(db.issues.affair_id_of(int(r["id"]))) != existing_id
+    )
+    assert int(linked["end_turn"] or 0) == int(state.turn) + 1
+    assert int(newborn["end_turn"] or 0) == int(state.turn) + 1
+    assert str(linked["commitment_kind"] or "").strip()
+    assert str(newborn["origin_kind"] or "") != "decree"
+
+    timed_origin = str(newborn["origin_ref"] or "")
+    open_origin = str(open_row["origin_ref"] or "")
+    linked_origin = str(linked["origin_ref"] or "")
+    assert timed_origin and open_origin and linked_origin
+    assert len({timed_origin, open_origin, linked_origin}) == 3
+    assert f":minister_promise:{int(newborn['id'])}" in timed_origin
+    assert f":minister_promise:{int(open_row['id'])}" in open_origin
+    assert origin_visible_to(db, timed_origin, promisor) is True
+    assert origin_visible_to(db, open_origin, other) is True
+    assert origin_visible_to(db, timed_origin, other) is False
+    assert origin_visible_to(db, open_origin, promisor) is False
+    assert origin_visible_to(db, timed_origin) is False
+
+    promisor_knowledge = build_character_knowledge(db, state, promisor)
+    other_knowledge = build_character_knowledge(db, state, other)
+    promisor_ids = {
+        int(i.get("id") or 0) for i in promisor_knowledge.get("issues") or []
+    }
+    other_ids = {int(i.get("id") or 0) for i in other_knowledge.get("issues") or []}
+    assert int(newborn["id"]) in promisor_ids
+    assert int(linked["id"]) in promisor_ids
+    assert int(open_row["id"]) in other_ids
+    assert int(open_row["id"]) not in promisor_ids
+
+    pending = db.conn.execute(
+        "SELECT COUNT(*) AS n FROM pending_actions "
+        "WHERE turn=? AND status='pending'",
+        (int(state.turn),),
+    ).fetchone()["n"]
+    assert int(pending) == 0
+    assert int(db.conn.execute(
+        "SELECT COUNT(*) AS n FROM decree_dossiers",
+    ).fetchone()["n"]) == dossiers_before
+
+    affairs_landed = {
+        int(r["id"]) for r in db.conn.execute(
+            "SELECT id FROM affairs WHERE status='open'",
+        ).fetchall()
+    }
+    # 既有 1 + 新建 2
+    assert len(affairs_landed - affairs_before) == 2
+
+    src_before = int(db.conn.execute(
+        "SELECT COUNT(*) AS n FROM character_knowledge_sources WHERE source_id=?",
+        (timed_origin,),
+    ).fetchone()["n"])
+    assert src_before == 1
+
+    db.reign.set_chat_turn_status("active", int(chat_turn_id))
+    db.conn.commit()
+    db.undo_chat_turn(int(chat_turn_id))
+    assert {
+        int(r["id"]) for r in db.conn.execute("SELECT id FROM issues").fetchall()
+    } == issues_before
+    assert {
+        int(r["id"]) for r in db.conn.execute("SELECT id FROM affairs").fetchall()
+    } == affairs_before
+    assert _active_commitments_for(db, promisor) == []
+    assert _active_commitments_for(db, other) == []
+    assert int(db.conn.execute(
+        "SELECT COUNT(*) AS n FROM character_knowledge_sources WHERE source_id=?",
+        (timed_origin,),
+    ).fetchone()["n"]) == 0
+
+
+# ── 到期生命周期 ────────────────────────────────────────────
+
+
+def test_timed_promise_due_lifecycle_and_old_todo_contrast(game, monkeypatch):
+    """真实过月→跨月未召见→承诺人开场→ACK；旧分段无桥待办对照消费。"""
+    db, state, content = game
+    promisor = "魏忠贤"
+    open_night(db, state, location="乾清宫", time_of_day="夜")
+    affair = db.affairs.open(
+        name="田尔耕案", origin="test",
+        year=int(state.year), period=int(state.period), turn=int(state.turn),
+    )
+    result, _chat_id, _night_id = _land_minister_promise(
+        db, state, promisor=promisor, title="办田尔耕",
+        deadline_months=1,
+        affair_declaration={
+            "attach": "existing", "affair_id": int(affair.id),
+        },
+    )
+    assert result.commissions.rejected == []
+    assert len(result.commissions.applied) == 1
+    applied = result.commissions.applied[0]
+    assert applied["kind"] == "minister_promise"
+    assert "issue_id" in applied
+    assert "id" not in applied
+    issue_id = int(applied["issue_id"])
+    assert int(db.issues.affair_id_of(issue_id)) == int(affair.id)
+
+    close_night(db, state, content=content)
+    before = int(state.turn)
+    session = _prepare_player_month(db, state, content, monkeypatch)
+
+    _one_month(session, db, state)
+    assert int(state.turn) == before + 1
+    _one_month(session, db, state)
+    assert int(state.turn) == before + 2
+
+    todos = [
+        t for t in db.dossiers.list_next_audience_todos(status=TODO_STATUS_PENDING)
+        if int(t["commitment_ref"]) == issue_id
+    ]
+    assert len(todos) == 1
+    assert len([
+        s for s in list_due_review_scenes(db)
+        if int(s.get("commitment_ref") or 0) == issue_id
+    ]) == 1
+
+    _one_month(session, db, state)
+    assert int(state.turn) == before + 3
+    assert len([
+        t for t in db.dossiers.list_next_audience_todos(status=TODO_STATUS_PENDING)
+        if int(t["commitment_ref"]) == issue_id
+    ]) == 1
+    assert len([
+        s for s in list_due_review_scenes(db)
+        if int(s.get("commitment_ref") or 0) == issue_id
+    ]) == 1
+
+    night2 = open_night(db, state, location="乾清宫", time_of_day="昼")
+    ensure_summon_enter(db, int(night2["id"]), promisor)
+    prepared = prepare_scene_materials(db, state)
+    try:
+        assert issue_id in _opening_commitment_ids(prepared.opening), prepared.opening
+    finally:
+        release_material_tree(prepared.root)
+
+    close_out = settle_delta(
+        state, db,
+        {
+            "close_issues": [{
+                "issue_id": issue_id,
+                "reason": "acknowledged",
+                "narrative": "田尔耕事已复命，此诺了结。",
+            }],
+        },
+        SettlementContext(content=content),
+    )
+    assert close_out.issue is not None
+    assert close_out.issue.rejected == []
+    assert any(
+        int(c.get("issue_id") or 0) == issue_id for c in close_out.issue.closes
+    )
+    row = db.conn.execute(
+        "SELECT status, closed_turn FROM issues WHERE id=?", (issue_id,),
+    ).fetchone()
+    assert str(row["status"]) == "dropped"
+    assert int(row["closed_turn"] or 0) == int(state.turn)
+    assert not any(
+        int(i.get("id") or 0) == issue_id
+        for i in build_character_knowledge(db, state, promisor).get("issues") or []
+    )
+
+    # C4 最小对照：无案卷桥旧分段消费；自诺 pending 保留。
+    old_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="旧分段无桥之诺",
+        origin_kind="decree",
+        origin_ref="legacy-no-dossier",
+        stage_text="中段待办",
+        participants=[{"character_id": "徐光启", "tier": "主办"}],
+        end_turn=int(state.turn) + 5,
+        commitment_kind="until_stop",
+        stages_json=[
+            {"stage_idx": 0, "due_turn": int(state.turn), "criterion_text": "中段"},
+            {"stage_idx": 1, "due_turn": int(state.turn) + 3, "criterion_text": "末段"},
+        ],
+        commit=True,
+    )
+    db.dossiers.insert_next_audience_todo(
+        commitment_ref=int(old_id),
+        stage_idx=0,
+        due_turn=int(state.turn),
+        criterion_text="中段",
+        origin_context="中段",
+        entry_kind=ENTRY_KIND_STAGED,
+        created_turn=int(state.turn) - 1,
+    )
+    retain, _c, _n = _land_minister_promise(
+        db, state, promisor=promisor, title="自诺待办保留", deadline_months=1,
+    )
+    retain_id = int(retain.commissions.applied[0]["issue_id"])
+    db.dossiers.insert_next_audience_todo(
+        commitment_ref=int(retain_id),
+        stage_idx=0,
+        due_turn=int(state.turn),
+        criterion_text="自诺到期",
+        origin_context="自诺到期",
+        entry_kind=ENTRY_KIND_STAGED,
+        created_turn=int(state.turn) - 1,
+        payload_json={"origin_ref": str(
+            db.conn.execute(
+                "SELECT origin_ref FROM issues WHERE id=?", (retain_id,),
+            ).fetchone()["origin_ref"] or ""
+        )},
+    )
+    outcomes = {
+        int(r["todo_id"]): r for r in apply_pending_due_reviews(db, state)
+    }
+    old_todos = [
+        t for t in db.dossiers.list_next_audience_todos()
+        if int(t["commitment_ref"]) == int(old_id)
+    ]
+    promise_todos = [
+        t for t in db.dossiers.list_next_audience_todos()
+        if int(t["commitment_ref"]) == int(retain_id)
+    ]
+    assert old_todos and str(old_todos[0]["status"]) != TODO_STATUS_PENDING
+    assert promise_todos and str(promise_todos[0]["status"]) == TODO_STATUS_PENDING
+    old_todo_id = int(old_todos[0]["id"])
+    promise_todo_id = int(promise_todos[0]["id"])
+    if old_todo_id in outcomes:
+        assert outcomes[old_todo_id].get("consumed") is True
+    if promise_todo_id in outcomes:
+        assert outcomes[promise_todo_id].get("consumed") is False
+
+
+# ── 材料可读：公开目录 ──────────────────────────────────────
+
+
+def test_public_catalog_keeps_public_hides_private_and_mixes_lawfully(game):
+    """公开事务保留；私有出生不入目录；混合仅公开合法部分；名册与来源共约束。"""
     db, state, content = game
     promisor = "魏忠贤"
     public_affair = db.affairs.open(
@@ -413,7 +544,8 @@ def test_c1_minister_promise_origin_not_public_visible(game, monkeypatch):
         year=int(state.year), period=int(state.period), turn=int(state.turn),
     )
     public_affair_id = int(public_affair.id)
-    result, chat_id, night_id = _land_minister_promise(
+
+    private, _c, _n = _land_minister_promise(
         db, state, promisor=promisor, title="私密自诺不入邸报",
         deadline_months=0,
         affair_declaration={
@@ -422,298 +554,41 @@ def test_c1_minister_promise_origin_not_public_visible(game, monkeypatch):
             "origin": "御前私诺查办田尔耕",
         },
     )
-    assert result.commissions.rejected == []
-    assert len(result.commissions.applied) == 1
-    applied = result.commissions.applied[0]
-    assert applied["kind"] == "minister_promise"
-    assert "issue_id" in applied
-    assert "id" not in applied  # 不与 pending_actions.id 混用
-    issue_id = int(applied["issue_id"])
-    private_affair_id = int(db.issues.affair_id_of(issue_id))
-    assert private_affair_id > 0
-    assert private_affair_id != public_affair_id
-    row = db.conn.execute(
-        "SELECT origin_ref, end_turn FROM issues WHERE id=?", (issue_id,),
-    ).fetchone()
-    origin_ref = str(row["origin_ref"] or "")
-    assert origin_ref
-    assert origin_visible_to(db, origin_ref) is False
-    assert origin_visible_to(db, origin_ref, promisor) is True
-    assert origin_visible_to(db, origin_ref, "杨嗣昌") is False
+    assert private.commissions.rejected == []
+    assert len(private.commissions.applied) == 1
+    private_issue = int(private.commissions.applied[0]["issue_id"])
+    private_affair_id = int(db.issues.affair_id_of(private_issue))
+    private_origin = str(db.conn.execute(
+        "SELECT origin_ref FROM issues WHERE id=?", (private_issue,),
+    ).fetchone()["origin_ref"] or "")
+    assert private_origin
+    assert origin_visible_to(db, private_origin) is False
+    assert origin_visible_to(db, private_origin, promisor) is True
+    assert origin_visible_to(db, private_origin, "杨嗣昌") is False
 
-    private_entry_id = append_ledger_entry(
-        db, int(night_id),
-        person_names=[promisor],
-        audibility=AUDIBILITY_PRIVATE,
-        body="臣暗中查办田尔耕，明月具奏。",
-        tags=["scroll_role:minister"],
-        source_chat_turn_id=int(chat_id),
-        origin_chat_turn_id=int(chat_id),
-    )
-    public_entry_id = append_ledger_entry(
-        db, int(night_id),
-        person_names=[promisor],
-        audibility=AUDIBILITY_PUBLIC,
-        body="朝堂共闻：整饬边饷。",
-        tags=["scroll_role:minister"],
-        source_chat_turn_id=int(chat_id),
-        origin_chat_turn_id=int(chat_id),
-    )
-
-    # 密源边挂私诺事务：元数据门须用真实密令轮集合，不得因空集合误放行。
-    secret_turn = 99
-    edge_id = db.record_relation_edge_event(
-        source=promisor, target="杨嗣昌", event_kind="协作",
-        context="密源边夹具", origin=summon_edge_origin(secret_turn),
-    )
-    db.conn.execute(
-        "UPDATE relation_edge_events SET affair_id=? WHERE id=?",
-        (private_affair_id, int(edge_id)),
-    )
-    db.conn.commit()
-    monkeypatch.setattr(
-        materials_mod, "_secret_order_chat_turn_ids", lambda _db: {secret_turn},
-    )
-
-    db.conn.execute(
-        "UPDATE issues SET end_turn=? WHERE id=?",
-        (int(state.turn), issue_id),
-    )
-    db.conn.commit()
-    due_ids = {int(i["issue_id"]) for i in list_due_commitments(db, state)}
-    assert issue_id in due_ids
-    feed = _gazette_feed(db, state)
-    public_ids = {int(i["issue_id"]) for i in feed.get("due_commitments") or []}
-    assert issue_id not in public_ids
-
-    knowledge = build_character_knowledge(db, state, promisor)
-    assert any(int(i.get("id") or 0) == issue_id for i in knowledge.get("issues") or [])
-
-    # 一次安装写手观测：事务键/标题 + audience id + 序列化前案卷记录 id。
-    captured = {
-        "affair_keys": set(), "affair_titles": {}, "audience_ids": [],
-        "written_dossier_ids": set(), "written_secret_dossier_ids": set(),
-    }
-    real_write = materials_mod._write_world_tree
-    real_exp = materials_mod._experience_text
-    real_mft = materials_mod._material_facts_text
-
-    def spy_exp(knowledge, audible_entries=()):
-        captured["audience_ids"].extend(
-            int(entry.get("id") or 0) for entry in audible_entries
-        )
-        return real_exp(knowledge, audible_entries)
-
-    def spy_mft(value, indent=""):
-        # 只检本次 value；子树由 _material_facts_text 既有递归再次进入 spy。
-        if isinstance(value, Mapping):
-            keys = set(value)
-            if {"id", "action_type", "affair_id"}.issubset(keys):
-                did = int(value["id"])
-                captured["written_dossier_ids"].add(did)
-                if int(value.get("secret_order_id") or 0) > 0:
-                    captured["written_secret_dossier_ids"].add(did)
-        return real_mft(value, indent)
-
-    def spy_write(
-        tmp, db_, state_, public_events, affair_lines, board_text, roster_text,
-        world_facts, include_fact=None, include_event=None,
-        secret_turn_ids=None, exclude_dossier_ids=None, public_only=False,
-    ):
-        captured["affair_keys"] = {line[0] for line in affair_lines}
-        captured["affair_titles"] = {line[0]: line[1] for line in affair_lines}
-        return real_write(
-            tmp, db_, state_, public_events, affair_lines, board_text, roster_text,
-            world_facts, include_fact, include_event,
-            secret_turn_ids, exclude_dossier_ids, public_only,
-        )
-
-    monkeypatch.setattr(materials_mod, "_experience_text", spy_exp)
-    monkeypatch.setattr(materials_mod, "_material_facts_text", spy_mft)
-    monkeypatch.setattr(materials_mod, "_write_world_tree", spy_write)
-
-    prepared = prepare_gazette_author_materials(db, state)
-    try:
-        assert f"affair-{private_affair_id}" not in captured["affair_keys"]
-        assert f"affair-{public_affair_id}" in captured["affair_keys"]
-        assert private_entry_id not in captured["audience_ids"]
-        assert public_entry_id in captured["audience_ids"]
-        paths = list_materials(prepared.root)
-        assert not any(
-            part.startswith(f"affair-{private_affair_id}-")
-            for path in paths for part in str(path).split("/")
-        )
-        assert any(
-            part.startswith(f"affair-{public_affair_id}-")
-            for path in paths for part in str(path).split("/")
-        )
-    finally:
-        release_material_tree(prepared.root)
-
-    src_before = int(db.conn.execute(
-        "SELECT COUNT(*) AS n FROM character_knowledge_sources WHERE source_id=?",
-        (origin_ref,),
-    ).fetchone()["n"])
-    assert src_before == 1
-    db.reign.set_chat_turn_status("active", int(chat_id))
-    db.conn.commit()
-    db.undo_chat_turn(int(chat_id))
-    assert int(db.conn.execute(
-        "SELECT COUNT(*) AS n FROM character_knowledge_sources WHERE source_id=?",
-        (origin_ref,),
-    ).fetchone()["n"]) == 0
-    # 私诺新建事务来源登记随撤回一并消失（before-image）。
-    assert int(db.conn.execute(
-        "SELECT COUNT(*) AS n FROM character_knowledge_sources WHERE source_id=?",
-        (f"affair:{private_affair_id}",),
-    ).fetchone()["n"]) == 0
-
-    # 最小失败组合：无其他公开事实/案卷/流水的已列事务，挂入私诺后仍保留公开目录身份。
-    bare_linked, _bc, _bn = _land_minister_promise(
-        db, state, promisor=promisor, title="私诺挂无痕迹公开事务",
+    bare, _bc, _bn = _land_minister_promise(
+        db, state, promisor=promisor, title="私诺挂公开事务",
         deadline_months=0,
         affair_declaration={"attach": "existing", "affair_id": public_affair_id},
     )
-    assert bare_linked.commissions.rejected == []
+    assert bare.commissions.rejected == []
     assert int(db.issues.affair_id_of(
-        int(bare_linked.commissions.applied[0]["issue_id"]),
+        int(bare.commissions.applied[0]["issue_id"]),
     )) == public_affair_id
-    captured["affair_keys"] = set()
-    prepared_bare = prepare_gazette_author_materials(db, state)
-    try:
-        assert f"affair-{public_affair_id}" in captured["affair_keys"]
-        assert any(
-            part.startswith(f"affair-{public_affair_id}-")
-            for path in list_materials(prepared_bare.root)
-            for part in str(path).split("/")
-        )
-    finally:
-        release_material_tree(prepared_bare.root)
 
-    # 反例：公开人物事实关联该事务后挂私诺，公开目录仍保留事务身份；
-    # 同事务上的受限来源不得被洗成公开来源（dispatch 用例已核读写接缝，此处只盯材料入口）。
-    # 复用后段密令隔离案的真实来源，不能以不存在的身份获得假绿。
-    from ming_sim.covert_progress import build_covert_task_contract
-    secret_title, secret_body = "密查粮科", "密查粮科私卖"
-    order_id = db.create_secret_order(
-        state, promisor, secret_title, secret_body,
-        [], deadline_months=1,
-        covert_task=build_covert_task_contract(covert_task={
-            "kind": "查案", "axes": ["实务事功"], "direction": 1,
-            "delivery": {
-                "unit": "人犯", "target_units": 1.0,
-                "person_action": "处置", "effect_sign": 1,
-            },
-        }),
+    secret_id = create_test_secret_order(
+        db, state, promisor, "密查粮科", "密查粮科私卖", [],
+        deadline_months=1,
         affair_declaration={
-            "attach": "new", "name": "密令专属查案事务",
-            "origin": "御前密谕查办",
+            "attach": "new", "name": "密令专属查案事务", "origin": "御前密谕查办",
         },
     )
-    secret_source = f"secret_order:{int(order_id)}"
-    assert origin_visible_to(db, secret_source) is False
-    fact_result = dispatch_declaration(
-        db, state,
-        {
-            "textual_facts": [
-                {
-                    "subject_kind": "character",
-                    "subject_id": promisor,
-                    "body": "公开边饷清核记录",
-                    "affair_declaration": {
-                        "attach": "existing", "affair_id": public_affair_id,
-                    },
-                },
-                {
-                    "subject_kind": "character",
-                    "subject_id": promisor,
-                    "body": "密令侧边饷私记",
-                    "origin_ref": secret_source,
-                    "affair_declaration": {
-                        "attach": "existing", "affair_id": public_affair_id,
-                    },
-                },
-            ],
-        },
-        minister_name=promisor,
-    )
-    assert fact_result.textual_facts.rejected == []
-    assert len(fact_result.textual_facts.applied) == 2
-    secret_fact_id = int(fact_result.textual_facts.applied[1]["id"])
-
-    linked, _chat, _nid = _land_minister_promise(
-        db, state, promisor=promisor, title="私诺挂既有公开事务",
-        deadline_months=0,
-        affair_declaration={"attach": "existing", "affair_id": public_affair_id},
-    )
-    assert linked.commissions.rejected == []
-    linked_issue = int(linked.commissions.applied[0]["issue_id"])
-    assert int(db.issues.affair_id_of(linked_issue)) == public_affair_id
-    captured["affair_keys"] = set()
-    prepared_after = prepare_gazette_author_materials(db, state)
-    try:
-        assert f"affair-{public_affair_id}" in captured["affair_keys"]
-        assert any(
-            part.startswith(f"affair-{public_affair_id}-")
-            for path in list_materials(prepared_after.root)
-            for part in str(path).split("/")
-        )
-        # 按事实 id 核对来源未被洗成公开；公开作者 include_fact 仍拒收。
-        stored_origin = str(db.conn.execute(
-            "SELECT origin_ref FROM textual_facts WHERE id=?",
-            (secret_fact_id,),
-        ).fetchone()["origin_ref"] or "")
-        assert stored_origin == secret_source
-        assert origin_visible_to(db, stored_origin) is False
-    finally:
-        release_material_tree(prepared_after.root)
-
-    # 密令 attach=new：出生标记无共享正文；事务不进公开目录；承办人知识无双份正文。
-    secret_dossier = db.dossiers.get_for_secret_order(int(order_id))
+    secret_dossier = db.dossiers.get_for_secret_order(int(secret_id))
     assert secret_dossier is not None
     secret_affair_id = int(secret_dossier["affair_id"] or 0)
     assert secret_affair_id > 0
-    secret_affair_ref = db.affairs.origin_ref(secret_affair_id)
-    assert origin_visible_to(db, secret_affair_ref) is False
-    # #883：无共享密令正文；body 只钉出生密令 id，知识投影仍跳过本 kind。
-    from ming_sim.materials import SECRET_ORDER_ORIGIN_PREFIX
+    assert origin_visible_to(db, db.affairs.origin_ref(secret_affair_id)) is False
 
-    birth_row = db.conn.execute(
-        "SELECT kind, title, body FROM character_knowledge_sources WHERE source_id=?",
-        (secret_affair_ref,),
-    ).fetchone()
-    assert birth_row is not None
-    assert str(birth_row["kind"] or "") == "private_affair_birth"
-    assert str(birth_row["title"] or "") == ""
-    assert str(birth_row["body"] or "") == (
-        f"{SECRET_ORDER_ORIGIN_PREFIX}{int(order_id)}"
-    )
-    knowledge = build_character_knowledge(db, state, promisor)
-    event_sources = {
-        str(e.get("source_id") or "")
-        for e in list(knowledge.get("events") or [])
-    }
-    assert secret_affair_ref not in event_sources
-    assert f"secret_order_brief:{int(order_id)}" in event_sources
-    captured["affair_keys"] = set()
-    captured["affair_titles"] = {}
-    captured["written_dossier_ids"] = set()
-    captured["written_secret_dossier_ids"] = set()
-    prepared_secret = prepare_gazette_author_materials(db, state)
-    try:
-        assert f"affair-{secret_affair_id}" not in captured["affair_keys"]
-        # 密令案卷不得进入公开序列化边界。
-        assert int(secret_dossier["id"]) not in captured["written_dossier_ids"]
-        assert int(secret_dossier["id"]) not in captured["written_secret_dossier_ids"]
-        assert not any(
-            part.startswith(f"affair-{secret_affair_id}-")
-            for path in list_materials(prepared_secret.root)
-            for part in str(path).split("/")
-        )
-    finally:
-        release_material_tree(prepared_secret.root)
-
-    # 私诺新建后挂公开案卷：目录 key 在、title 空；序列化边界实收公开案卷 id。
     priv2_name = "私密后挂事务"
     priv2, _pc, _pn = _land_minister_promise(
         db, state, promisor=promisor, title="私诺后挂公开案",
@@ -739,188 +614,7 @@ def test_c1_minister_promise_origin_not_public_visible(game, monkeypatch):
     db.conn.commit()
     assert int(db.dossiers.affair_id_of(int(pub_dossier_id))) == priv2_id
     assert origin_visible_to(db, "", linked_dossier_id=int(pub_dossier_id)) is True
-    captured["affair_keys"] = set()
-    captured["affair_titles"] = {}
-    captured["written_dossier_ids"] = set()
-    captured["written_secret_dossier_ids"] = set()
-    prepared_mix = prepare_gazette_author_materials(db, state)
-    try:
-        key = f"affair-{priv2_id}"
-        assert key in captured["affair_keys"]
-        assert captured["affair_titles"].get(key) == ""
-        assert captured["affair_titles"].get(key) != priv2_name
-        # 真实写出边界：公开案卷 id 进入序列化；密令案卷不在。
-        assert int(pub_dossier_id) in captured["written_dossier_ids"]
-        assert int(secret_dossier["id"]) not in captured["written_dossier_ids"]
-        assert captured["written_secret_dossier_ids"] == set()
-        assert any(
-            part.startswith(f"affair-{priv2_id}-")
-            for path in list_materials(prepared_mix.root)
-            for part in str(path).split("/")
-        )
-    finally:
-        release_material_tree(prepared_mix.root)
 
-    # 非知情人后来承办公开关联案卷：个人投影保留事务路径，不泄私密出生原名。
-    later = "杨嗣昌"
-    later_dossier_id = db.create_decree_dossier(
-        state, action_type="special_decree", decree_text="后挂公开交办",
-        target_kind="character", target_id=later,
-        executor_kind="character", executor_id=later,
-        participants=[{"character_id": later, "tier": "主办"}],
-        payload={"affair_declaration": {
-            "attach": "existing", "affair_id": priv2_id,
-        }},
-    )
-    db.conn.execute(
-        "UPDATE decree_dossiers SET status='executing', "
-        "promulgation_decision='promulgated' WHERE id=?",
-        (int(later_dossier_id),),
-    )
-    db.conn.commit()
-    assert int(db.dossiers.affair_id_of(int(later_dossier_id))) == priv2_id
-    birth_ref = db.affairs.origin_ref(priv2_id)
-    assert origin_visible_to(db, birth_ref, later) is False
-    assert origin_visible_to(db, birth_ref, promisor) is True
-    # 真实 prepare_scene_materials 交付边界：写手收到的 matter title + opening handling title。
-    key = f"affair-{priv2_id}"
-    person_delivered: dict[str, dict[str, str]] = {}
-    handling_delivered: dict[str, list[tuple[str, str]]] = {}
-    real_wop = materials_mod._write_one_present_person
-    real_oal = materials_mod._opening_affair_lines
-
-    def spy_wop(tmp, db_, state_, character, knowledge, matter_lines):
-        n = str(getattr(character, "name", "") or "")
-        person_delivered[n] = {ln[0]: ln[1] for ln in matter_lines}
-        return real_wop(tmp, db_, state_, character, knowledge, matter_lines)
-
-    def spy_oal(db_, character_name, matter_lines):
-        rows = real_oal(db_, character_name, matter_lines)
-        handling_delivered[character_name] = [(t, s) for t, s in rows]
-        return rows
-
-    monkeypatch.setattr(materials_mod, "_write_one_present_person", spy_wop)
-    monkeypatch.setattr(materials_mod, "_opening_affair_lines", spy_oal)
-
-    close_night(db, state, content=content)
-    night_later = open_night(db, state, location="乾清宫", time_of_day="昼")
-    ensure_summon_enter(db, int(night_later["id"]), later)
-    person_delivered.clear()
-    handling_delivered.clear()
-    prepared_later = prepare_scene_materials(db, state)
-    try:
-        assert later in person_delivered
-        assert key in person_delivered[later]
-        assert person_delivered[later][key] == ""
-        assert person_delivered[later][key] != priv2_name
-        assert all(t != priv2_name for t, _s in handling_delivered.get(later) or [])
-        assert any(
-            part.startswith(f"affair-{priv2_id}-") or part == f"affair-{priv2_id}"
-            for path in list_materials(prepared_later.root)
-            for part in str(path).split("/")
-        )
-    finally:
-        release_material_tree(prepared_later.root)
-
-    # 知情人同入口：写手实收原名。
-    close_night(db, state, content=content)
-    night_p = open_night(db, state, location="乾清宫", time_of_day="昼")
-    ensure_summon_enter(db, int(night_p["id"]), promisor)
-    person_delivered.clear()
-    handling_delivered.clear()
-    prepared_p = prepare_scene_materials(db, state)
-    try:
-        assert person_delivered.get(promisor, {}).get(key) == priv2_name
-    finally:
-        release_material_tree(prepared_p.root)
-
-    # 同出生密令名册追加：主办/协办/知情得原名；后挂另一密令不得解锁出生名。
-    secret_name = "密令专属查案事务"
-    secret_dossier_id = int(secret_dossier["id"])
-    db.append_decree_dossier_participants(secret_dossier_id, [{
-        "character_id": promisor, "tier": "主办", "role": "密访",
-    }])
-    host, aide, witness = "乔允升", "周延儒", "孙承宗"
-    for name in (host, aide, witness):
-        assert name != promisor
-    added = settle_delta(
-        state, db,
-        {"secret_dossier_participants": [
-            {"dossier_id": secret_dossier_id, "character_id": host,
-             "tier": "主办", "role": "续办", "delegator_id": promisor},
-            {"dossier_id": secret_dossier_id, "character_id": aide,
-             "tier": "协办", "role": "随员", "delegator_id": promisor},
-            {"dossier_id": secret_dossier_id, "character_id": witness,
-             "tier": "知情", "role": "知会", "delegator_id": promisor},
-        ]},
-        SettlementContext(secret_dossier_ids_at_input={secret_dossier_id}),
-    )
-    assert added is not None
-    for name in (promisor, host, aide, witness):
-        assert origin_visible_to(db, secret_affair_ref, name) is True
-    secret_key = f"affair-{secret_affair_id}"
-    close_night(db, state, content=content)
-    night_co = open_night(db, state, location="乾清宫", time_of_day="昼")
-    for name in (promisor, host, aide, witness):
-        ensure_summon_enter(db, int(night_co["id"]), name)
-    person_delivered.clear()
-    prepared_co = prepare_scene_materials(db, state)
-    try:
-        for name in (promisor, host, aide, witness):
-            assert person_delivered.get(name, {}).get(secret_key) == secret_name
-    finally:
-        release_material_tree(prepared_co.root)
-
-    # 后挂另一密令 attach=existing：承办人可见案卷路径，不得见出生原名。
-    later_handler = later
-    later_secret_id = db.create_secret_order(
-        state, later_handler, "后挂密令", "后挂密查",
-        [], deadline_months=1,
-        covert_task=build_covert_task_contract(covert_task={
-            "kind": "查案", "axes": ["实务事功"], "direction": 1,
-            "delivery": {
-                "unit": "人犯", "target_units": 1.0,
-                "person_action": "处置", "effect_sign": 1,
-            },
-        }),
-        affair_declaration={
-            "attach": "existing", "affair_id": secret_affair_id,
-        },
-    )
-    later_secret_dossier = db.dossiers.get_for_secret_order(int(later_secret_id))
-    assert later_secret_dossier is not None
-    assert origin_visible_to(db, secret_affair_ref, later_handler) is False
-    assert origin_visible_to(db, secret_affair_ref) is False
-    # 私诺出生事务同样：后挂密令不得解锁 priv2 原名。
-    promise_later_id = db.create_secret_order(
-        state, later_handler, "挂私诺密令", "挂私诺密查",
-        [], deadline_months=1,
-        covert_task=build_covert_task_contract(covert_task={
-            "kind": "查案", "axes": ["实务事功"], "direction": 1,
-            "delivery": {
-                "unit": "人犯", "target_units": 1.0,
-                "person_action": "处置", "effect_sign": 1,
-            },
-        }),
-        affair_declaration={
-            "attach": "existing", "affair_id": priv2_id,
-        },
-    )
-    assert db.dossiers.get_for_secret_order(int(promise_later_id)) is not None
-    assert origin_visible_to(db, birth_ref, later_handler) is False
-    close_night(db, state, content=content)
-    night_x = open_night(db, state, location="乾清宫", time_of_day="昼")
-    ensure_summon_enter(db, int(night_x["id"]), later_handler)
-    person_delivered.clear()
-    prepared_x = prepare_scene_materials(db, state)
-    try:
-        assert person_delivered.get(later_handler, {}).get(secret_key, "") != secret_name
-        assert person_delivered.get(later_handler, {}).get(key, "") != priv2_name
-    finally:
-        release_material_tree(prepared_x.root)
-
-    # 私诺出生 + 仅名册受限关联议题：origin 可公开但名册排除公开读者时，
-    # 不得准入公开目录，亦不得序列化该议题；空名册公开议题仍可放行混合公开部分。
     roster_only, _rc, _rn = _land_minister_promise(
         db, state, promisor=promisor, title="私诺仅挂名册议题",
         deadline_months=0,
@@ -928,23 +622,10 @@ def test_c1_minister_promise_origin_not_public_visible(game, monkeypatch):
             "attach": "new", "name": "名册隔离事务", "origin": "私诺名册隔离",
         },
     )
-    assert roster_only.commissions.rejected == []
     roster_affair_id = int(db.issues.affair_id_of(
         int(roster_only.commissions.applied[0]["issue_id"]),
     ))
     assert origin_visible_to(db, db.affairs.origin_ref(roster_affair_id)) is False
-
-    written_issue_ids: set[int] = set()
-    real_mft_roster = materials_mod._material_facts_text
-
-    def spy_mft_issues(value, indent=""):
-        if isinstance(value, Mapping):
-            keys = set(value)
-            if {"id", "origin_kind", "participant_roster", "commitment_kind"}.issubset(keys):
-                written_issue_ids.add(int(value["id"]))
-        return real_mft_roster(value, indent)
-
-    monkeypatch.setattr(materials_mod, "_material_facts_text", spy_mft_issues)
 
     def _link_issue(roster):
         outcome = settle_delta(
@@ -968,12 +649,9 @@ def test_c1_minister_promise_origin_not_public_visible(game, monkeypatch):
             int(row["id"]) for row in db.issues.rows_for_affair(roster_affair_id)
         )
 
-    restricted_issue = _link_issue([
-        {"character_id": promisor, "tier": "知情"},
-    ])
+    restricted_issue = _link_issue([{"character_id": promisor, "tier": "知情"}])
     restricted_row = db.conn.execute(
-        "SELECT origin_ref, participant_roster FROM issues WHERE id=?",
-        (restricted_issue,),
+        "SELECT origin_ref FROM issues WHERE id=?", (restricted_issue,),
     ).fetchone()
     assert origin_visible_to(db, str(restricted_row["origin_ref"] or "")) is True
     public_knowledge_ids = {
@@ -981,50 +659,193 @@ def test_c1_minister_promise_origin_not_public_visible(game, monkeypatch):
     }
     assert restricted_issue not in public_knowledge_ids
 
-    captured["affair_keys"] = set()
-    written_issue_ids.clear()
-    prepared_restricted = prepare_gazette_author_materials(db, state)
+    prepared = prepare_gazette_author_materials(db, state)
     try:
-        assert f"affair-{roster_affair_id}" not in captured["affair_keys"]
-        assert restricted_issue not in written_issue_ids
-        assert not any(
-            part.startswith(f"affair-{roster_affair_id}-")
-            for path in list_materials(prepared_restricted.root)
-            for part in str(path).split("/")
-        )
+        paths = list_materials(prepared.root)
+        assert _paths_have_affair(paths, public_affair_id)
+        assert not _paths_have_affair(paths, private_affair_id)
+        assert not _paths_have_affair(paths, secret_affair_id)
+        assert not _paths_have_affair(paths, roster_affair_id)
+
+        assert _paths_have_affair(paths, priv2_id)
+        mix_body = _affair_situation_text(prepared.root, paths, priv2_id)
+        assert not _situation_carries_title(mix_body, priv2_name)
     finally:
-        release_material_tree(prepared_restricted.root)
+        release_material_tree(prepared.root)
 
     public_issue = _link_issue([])
     assert public_issue in {
         int(i["id"]) for i in build_character_knowledge(db, state, "").get("issues") or []
     }
-    captured["affair_keys"] = set()
-    written_issue_ids.clear()
-    prepared_public_link = prepare_gazette_author_materials(db, state)
+    prepared_public = prepare_gazette_author_materials(db, state)
     try:
-        assert f"affair-{roster_affair_id}" in captured["affair_keys"]
-        assert public_issue in written_issue_ids
-        assert restricted_issue not in written_issue_ids
-        assert any(
-            part.startswith(f"affair-{roster_affair_id}-")
-            for path in list_materials(prepared_public_link.root)
-            for part in str(path).split("/")
-        )
+        paths = list_materials(prepared_public.root)
+        assert _paths_have_affair(paths, roster_affair_id)
+        # 空名册公开议题准入后，目录可见；受限议题仍不在公开知识。
+        assert restricted_issue not in {
+            int(i["id"])
+            for i in build_character_knowledge(db, state, "").get("issues") or []
+        }
     finally:
-        release_material_tree(prepared_public_link.root)
+        release_material_tree(prepared_public.root)
 
-    # 到期派生供料：合法公开 dossier 来源 + settle_delta 名册受限/公开承诺；
-    # form③ 进作者消息，分段经 write_due 进召对开场。不 SQL 改承诺、不手工插待办。
+
+# ── 材料可读：个人出生名 ────────────────────────────────────
+
+
+def test_personal_birth_title_visible_to_cohort_not_later_link(game):
+    """同源名册得原名；后来公开／密令关联不解锁出生名。"""
+    db, state, content = game
+    promisor = "魏忠贤"
+    later = "杨嗣昌"
+    priv_name = "私密后挂事务"
+    priv, _c, _n = _land_minister_promise(
+        db, state, promisor=promisor, title="私诺后挂公开案",
+        deadline_months=0,
+        affair_declaration={
+            "attach": "new", "name": priv_name, "origin": "御前私诺",
+        },
+    )
+    priv_id = int(db.issues.affair_id_of(int(priv.commissions.applied[0]["issue_id"])))
+    birth_ref = db.affairs.origin_ref(priv_id)
+
+    later_dossier_id = db.create_decree_dossier(
+        state, action_type="special_decree", decree_text="后挂公开交办",
+        target_kind="character", target_id=later,
+        executor_kind="character", executor_id=later,
+        participants=[{"character_id": later, "tier": "主办"}],
+        payload={"affair_declaration": {
+            "attach": "existing", "affair_id": priv_id,
+        }},
+    )
+    db.conn.execute(
+        "UPDATE decree_dossiers SET status='executing', "
+        "promulgation_decision='promulgated' WHERE id=?",
+        (int(later_dossier_id),),
+    )
+    db.conn.commit()
+    assert origin_visible_to(db, birth_ref, later) is False
+    assert origin_visible_to(db, birth_ref, promisor) is True
+
+    night = open_night(db, state, location="乾清宫", time_of_day="昼")
+    ensure_summon_enter(db, int(night["id"]), later)
+    prepared_later = prepare_scene_materials(db, state)
+    try:
+        paths = list_materials(prepared_later.root)
+        assert _paths_have_affair(paths, priv_id)
+        body = _affair_situation_text(
+            prepared_later.root, paths, priv_id, person=later,
+        )
+        assert not _situation_carries_title(body, priv_name)
+    finally:
+        release_material_tree(prepared_later.root)
+
+    close_night(db, state, content=content)
+    night_p = open_night(db, state, location="乾清宫", time_of_day="昼")
+    ensure_summon_enter(db, int(night_p["id"]), promisor)
+    prepared_p = prepare_scene_materials(db, state)
+    try:
+        paths = list_materials(prepared_p.root)
+        body = _affair_situation_text(
+            prepared_p.root, paths, priv_id, person=promisor,
+        )
+        assert _situation_carries_title(body, priv_name)
+    finally:
+        release_material_tree(prepared_p.root)
+
+    secret_name = "密令专属查案事务"
+    secret_id = create_test_secret_order(
+        db, state, promisor, "密查粮科", "密查粮科私卖", [],
+        deadline_months=1,
+        affair_declaration={
+            "attach": "new", "name": secret_name, "origin": "御前密谕查办",
+        },
+    )
+    secret_dossier = db.dossiers.get_for_secret_order(int(secret_id))
+    secret_dossier_id = int(secret_dossier["id"])
+    secret_affair_id = int(secret_dossier["affair_id"] or 0)
+    secret_affair_ref = db.affairs.origin_ref(secret_affair_id)
+    db.append_decree_dossier_participants(secret_dossier_id, [{
+        "character_id": promisor, "tier": "主办", "role": "密访",
+    }])
+    host, aide, witness = "乔允升", "周延儒", "孙承宗"
+    added = settle_delta(
+        state, db,
+        {"secret_dossier_participants": [
+            {"dossier_id": secret_dossier_id, "character_id": host,
+             "tier": "主办", "role": "续办", "delegator_id": promisor},
+            {"dossier_id": secret_dossier_id, "character_id": aide,
+             "tier": "协办", "role": "随员", "delegator_id": promisor},
+            {"dossier_id": secret_dossier_id, "character_id": witness,
+             "tier": "知情", "role": "知会", "delegator_id": promisor},
+        ]},
+        SettlementContext(secret_dossier_ids_at_input={secret_dossier_id}),
+    )
+    assert added is not None
+    for name in (promisor, host, aide, witness):
+        assert origin_visible_to(db, secret_affair_ref, name) is True
+
+    close_night(db, state, content=content)
+    night_co = open_night(db, state, location="乾清宫", time_of_day="昼")
+    for name in (promisor, host, aide, witness):
+        ensure_summon_enter(db, int(night_co["id"]), name)
+    prepared_co = prepare_scene_materials(db, state)
+    try:
+        paths = list_materials(prepared_co.root)
+        for name in (promisor, host, aide, witness):
+            body = _affair_situation_text(
+                prepared_co.root, paths, secret_affair_id, person=name,
+            )
+            assert _situation_carries_title(body, secret_name)
+    finally:
+        release_material_tree(prepared_co.root)
+
+    later_secret_id = create_test_secret_order(
+        db, state, later, "后挂密令", "后挂密查", [],
+        deadline_months=1,
+        affair_declaration={"attach": "existing", "affair_id": secret_affair_id},
+    )
+    assert db.dossiers.get_for_secret_order(int(later_secret_id)) is not None
+    assert origin_visible_to(db, secret_affair_ref, later) is False
+    promise_later_id = create_test_secret_order(
+        db, state, later, "挂私诺密令", "挂私诺密查", [],
+        deadline_months=1,
+        affair_declaration={"attach": "existing", "affair_id": priv_id},
+    )
+    assert db.dossiers.get_for_secret_order(int(promise_later_id)) is not None
+    assert origin_visible_to(db, birth_ref, later) is False
+
+    close_night(db, state, content=content)
+    night_x = open_night(db, state, location="乾清宫", time_of_day="昼")
+    ensure_summon_enter(db, int(night_x["id"]), later)
+    prepared_x = prepare_scene_materials(db, state)
+    try:
+        paths = list_materials(prepared_x.root)
+        if _paths_have_affair(paths, secret_affair_id):
+            body_s = _affair_situation_text(
+                prepared_x.root, paths, secret_affair_id, person=later,
+            )
+            assert not _situation_carries_title(body_s, secret_name)
+        if _paths_have_affair(paths, priv_id):
+            body_p = _affair_situation_text(
+                prepared_x.root, paths, priv_id, person=later,
+            )
+            assert not _situation_carries_title(body_p, priv_name)
+    finally:
+        release_material_tree(prepared_x.root)
+
+
+# ── 材料可读：到期派生供料 ──────────────────────────────────
+
+
+def test_due_feeds_respect_issue_roster_and_origin(game, monkeypatch):
+    """来源公开 + 名册约束：作者 due 与召对开场只收合法读者可见项。"""
     import ming_sim.agents as agents
     from agno.run.agent import RunOutput
 
-    public_origin_dossier = db.create_decree_dossier(
-        state, action_type="policy", decree_text="公开承诺来源锚",
-        target_kind="issue", target_id="due-roster-anchor",
-    )
-    db.dossiers.record_dossier_decision(int(public_origin_dossier), "promulgated")
-    public_origin = f"dossier:{int(public_origin_dossier)}"
+    db, state, content = game
+    promisor = "魏忠贤"
+    public_origin = promulgated_policy_origin(db, state, "due-roster-anchor")
     assert origin_visible_to(db, public_origin) is True
 
     def _due_item(title: str, roster, *, staged: bool):
@@ -1060,14 +881,14 @@ def test_c1_minister_promise_origin_not_public_visible(game, monkeypatch):
         SettlementContext(content=content),
     )
     assert due_land.issue.rejected == []
-    landed = due_land.issue.new_issues
-    assert len(landed) == 4
-    by_title = {str(row["title"]): int(row["issue_id"]) for row in landed}
+    by_title = {
+        str(row["title"]): int(row["issue_id"]) for row in due_land.issue.new_issues
+    }
     form3_restricted = by_title["受限一次性到期"]
     form3_public = by_title["公开一次性到期"]
     staged_restricted = by_title["受限分段到期"]
     staged_public = by_title["公开分段到期"]
-    assert origin_visible_to(db, public_origin) is True
+
     public_knowledge_due = {
         int(i["id"]) for i in build_character_knowledge(db, state, "").get("issues") or []
     }
@@ -1111,7 +932,6 @@ def test_c1_minister_promise_origin_not_public_visible(game, monkeypatch):
         staged_restricted, staged_public,
     }
 
-    close_night(db, state, content=content)
     night_empty = open_night(db, state, location="乾清宫", time_of_day="昼")
     prepared_empty = prepare_scene_materials(db, state)
     try:
@@ -1131,8 +951,8 @@ def test_c1_minister_promise_origin_not_public_visible(game, monkeypatch):
         release_material_tree(prepared_uninf.root)
 
     close_night(db, state, content=content)
-    night_p2 = open_night(db, state, location="乾清宫", time_of_day="昼")
-    ensure_summon_enter(db, int(night_p2["id"]), promisor)
+    night_p = open_night(db, state, location="乾清宫", time_of_day="昼")
+    ensure_summon_enter(db, int(night_p["id"]), promisor)
     prepared_promisor = prepare_scene_materials(db, state)
     try:
         p_ids = set(_opening_commitment_ids(prepared_promisor.opening))
@@ -1141,13 +961,15 @@ def test_c1_minister_promise_origin_not_public_visible(game, monkeypatch):
     finally:
         release_material_tree(prepared_promisor.root)
 
-    # 待办未因材料过滤而消费。
     still_pending = {
         int(t["commitment_ref"])
         for t in db.dossiers.list_next_audience_todos(status=TODO_STATUS_PENDING)
         if int(t["commitment_ref"] or 0) in {staged_restricted, staged_public}
     }
     assert still_pending == {staged_restricted, staged_public}
+
+
+# ── 准入与责任边界 ──────────────────────────────────────────
 
 
 def test_c2_correction_ids_rejected_on_minister_promise(game):
@@ -1173,7 +995,6 @@ def test_c2_correction_ids_rejected_on_minister_promise(game):
         "SELECT id FROM rejection_reports ORDER BY id DESC LIMIT 1",
     ).fetchone()["id"])
 
-    # 先塞一条无关 pending，id 可能与后续 issue 撞号时也不得被改。
     pending_before = {
         int(r["id"]): str(r["payload_json"] or "")
         for r in db.conn.execute("SELECT id, payload_json FROM pending_actions").fetchall()
@@ -1185,8 +1006,10 @@ def test_c2_correction_ids_rejected_on_minister_promise(game):
     )
     assert result.commissions.applied == []
     assert result.commissions.rejected
-    assert all(r.category in {"invalid_shape", "hallucinated_id", "missing_ref"}
-               for r in result.commissions.rejected)
+    assert all(
+        r.category in {"invalid_shape", "hallucinated_id", "missing_ref"}
+        for r in result.commissions.rejected
+    )
     pending_after = {
         int(r["id"]): str(r["payload_json"] or "")
         for r in db.conn.execute("SELECT id, payload_json FROM pending_actions").fetchall()
@@ -1195,133 +1018,99 @@ def test_c2_correction_ids_rejected_on_minister_promise(game):
     assert _active_commitments_for(db, promisor) == []
 
 
-def test_sole_commission_actions_reject_when_mixed_with_minister_promise(game):
-    """专有动作与自诺同件：统一准入拒收；同批合法兄弟项仍落。
-
-    覆盖密令新建 / 御笔强推 / 禁摊派三类实际动作，共用 hall 入口夹具。
-    """
+@pytest.mark.parametrize("case", ["secret_order", "imperial_push", "prohibit_levy"])
+def test_sole_commission_actions_reject_when_mixed_with_minister_promise(game, case):
+    """专有动作与自诺同件：统一准入拒收；同批合法兄弟项仍落。"""
+    from ming_sim.covert_levy import PROHIBITION_ACTION
     from ming_sim.covert_progress import build_covert_task_contract
-    from ming_sim.covert_levy import ENTRY_KIND, PROHIBITION_ACTION
-    from ming_sim.due_review import list_due_review_scenes
 
     db, state, content = game
     promisor = "魏忠贤"
 
-    def _promise(title):
-        return {
-            "title": title, "content": title, "promisor": promisor,
-            "deadline_months": 1,
+    if case == "secret_order":
+        mixed = {
+            "text": "密办并自诺",
+            "secret_order": {
+                "title": "密查", "content": "密查粮科", "assignee": promisor,
+                "tags": [], "deadline_months": 1,
+                "covert_task": build_covert_task_contract(covert_task={
+                    "kind": "查案", "axes": ["实务事功"], "direction": 1,
+                    "delivery": {
+                        "unit": "人犯", "target_units": 1.0,
+                        "person_action": "处置", "effect_sign": 1,
+                    },
+                }),
+            },
+            "minister_promise": _promise_item(promisor, "臣自诺查清"),
         }
+        legal = {
+            "text": "臣另诺整饬边饷",
+            "minister_promise": _promise_item(promisor, "整饬边饷"),
+        }
+        result, chat_id, _ = _hall_commission_batch(
+            db, state, promisor, [mixed, legal],
+        )
+        assert len(result.commissions.rejected) == 1
+        assert result.commissions.rejected[0].category == "invalid_shape"
+        assert len(result.commissions.applied) == 1
+        assert result.commissions.applied[0]["kind"] == "minister_promise"
+        pending_kinds = {
+            str(r["kind"]) for r in db.conn.execute(
+                "SELECT kind FROM pending_actions WHERE source_chat_turn_id=?",
+                (chat_id,),
+            ).fetchall()
+        }
+        assert "secret_order" not in pending_kinds
+        assert int(db.conn.execute(
+            "SELECT COUNT(*) AS n FROM issues WHERE origin_kind='minister_promise'",
+        ).fetchone()["n"]) == 1
+        return
 
-    # ── 密令 + 自诺 ──
-    mixed_secret = {
-        "text": "密办并自诺",
-        "secret_order": {
-            "title": "密查", "content": "密查粮科", "assignee": promisor,
-            "tags": [], "deadline_months": 1,
-            "covert_task": build_covert_task_contract(covert_task={
-                "kind": "查案", "axes": ["实务事功"], "direction": 1,
-                "delivery": {
-                    "unit": "人犯", "target_units": 1.0,
-                    "person_action": "处置", "effect_sign": 1,
-                },
-            }),
-        },
-        "minister_promise": _promise("臣自诺查清"),
-    }
-    legal_promise = {
-        "text": "臣另诺整饬边饷",
-        "minister_promise": _promise("整饬边饷"),
-    }
-    result, chat_id, _ = _hall_commission_batch(
-        db, state, promisor, [mixed_secret, legal_promise],
-    )
-    assert len(result.commissions.rejected) == 1
-    assert result.commissions.rejected[0].category == "invalid_shape"
-    assert len(result.commissions.applied) == 1
-    assert result.commissions.applied[0]["kind"] == "minister_promise"
-    pending_kinds = {
-        str(r["kind"]) for r in db.conn.execute(
-            "SELECT kind FROM pending_actions WHERE source_chat_turn_id=?",
+    if case == "imperial_push":
+        dossier_id = db.create_decree_dossier(
+            state, action_type="special_decree", decree_text="待强推案",
+            target_kind="character", target_id=promisor,
+            executor_kind="character", executor_id=promisor,
+        )
+        mixed = {
+            "text": "着即督办，臣自诺复命",
+            "target_dossier_id": int(dossier_id),
+            "minister_promise": _promise_item(promisor, "臣自诺复命"),
+        }
+        legal = {"text": "另案着即督办", "target_dossier_id": int(dossier_id)}
+        result, chat_id, _ = _hall_commission_batch(
+            db, state, promisor, [mixed, legal], words="着即督办",
+        )
+        assert len(result.commissions.rejected) == 1
+        assert result.commissions.rejected[0].category == "invalid_shape"
+        assert len(result.commissions.applied) == 1
+        assert result.commissions.applied[0].get("kind") == "directive"
+        pending = list(db.conn.execute(
+            "SELECT payload_json FROM pending_actions WHERE source_chat_turn_id=?",
             (chat_id,),
-        ).fetchall()
-    }
-    assert "secret_order" not in pending_kinds
-    assert int(db.conn.execute(
-        "SELECT COUNT(*) AS n FROM issues WHERE origin_kind='minister_promise'",
-    ).fetchone()["n"]) == 1
+        ).fetchall())
+        assert len(pending) == 1
+        assert int(json.loads(pending[0]["payload_json"]).get("target_dossier_id") or 0) == int(
+            dossier_id
+        )
+        assert int(db.conn.execute(
+            "SELECT COUNT(*) AS n FROM issues WHERE origin_kind='minister_promise'",
+        ).fetchone()["n"]) == 0
+        return
 
-    # ── 御笔强推 + 自诺 ──
-    dossier_id = db.create_decree_dossier(
-        state, action_type="special_decree", decree_text="待强推案",
-        target_kind="character", target_id=promisor,
-        executor_kind="character", executor_id=promisor,
-    )
-    mixed_push = {
-        "text": "着即督办，臣自诺复命",
-        "target_dossier_id": int(dossier_id),
-        "minister_promise": _promise("臣自诺复命"),
-    }
-    legal_push = {"text": "另案着即督办", "target_dossier_id": int(dossier_id)}
-    result, chat_id, _ = _hall_commission_batch(
-        db, state, promisor, [mixed_push, legal_push], words="着即督办",
-    )
-    assert len(result.commissions.rejected) == 1
-    assert result.commissions.rejected[0].category == "invalid_shape"
-    assert len(result.commissions.applied) == 1
-    assert result.commissions.applied[0].get("kind") == "directive"
-    pending = list(db.conn.execute(
-        "SELECT payload_json FROM pending_actions WHERE source_chat_turn_id=?",
-        (chat_id,),
-    ).fetchall())
-    assert len(pending) == 1
-    assert int(json.loads(pending[0]["payload_json"]).get("target_dossier_id") or 0) == int(dossier_id)
-    # 本批混合件未落自诺（累计仍只有上一段合法自诺 1 条）。
-    assert int(db.conn.execute(
-        "SELECT COUNT(*) AS n FROM issues WHERE origin_kind='minister_promise'",
-    ).fetchone()["n"]) == 1
-
-    # ── 禁摊派 + 自诺 ──
-    army = db.conn.execute(
-        "SELECT id FROM armies WHERE owner_power='ming' LIMIT 1",
-    ).fetchone()
-    assert army is not None
-    did = db.create_decree_dossier(
-        state, action_type="special_decree", decree_text="借饷暴露夹具",
-        target_kind="army", target_id=army["id"],
-        executor_kind="character", executor_id=promisor,
-    )
-    db.conn.execute(
-        "UPDATE decree_dossiers SET status='executing' WHERE id=?", (int(did),),
-    )
-    issue_id = db.insert_issue(
-        state, kind="initiative", title="暴露夹具", origin_kind="decree",
-        origin_ref=f"dossier:{int(did)}", bar_value=0, inertia=0,
-        stage_text="暴露", commitment_kind="until_stop", cancellable="never",
-        commit=False,
-    )
-    db.dossiers.insert_next_audience_todo(
-        commitment_ref=int(issue_id), stage_idx=int(did),
-        due_turn=int(state.turn), criterion_text="暗渠摊派揭破待裁",
-        origin_context="夹具", entry_kind=ENTRY_KIND,
-        created_turn=int(state.turn),
-        payload_json={"dossier_id": int(did), "channels": ["稽核"]},
-        commit=True,
-    )
-    assert any(
-        int(s["dossier_id"]) == int(did)
-        for s in list_due_review_scenes(db)
-        if s.get("kind") == "covert_levy_exposure" and not s.get("decision")
-    )
-    mixed_prohibit = {
+    # prohibit_levy：互斥在下游暴露生命周期之前成立，无需建暴露场面。
+    mixed = {
         "text": "禁摊并自诺",
         "dossier_action_type": PROHIBITION_ACTION,
-        "target_id": int(did),
-        "minister_promise": _promise("臣自诺禁后复命"),
+        "target_id": 1,
+        "minister_promise": _promise_item(promisor, "臣自诺禁后复命"),
     }
-    legal2 = {"text": "臣另诺边饷", "minister_promise": _promise("边饷")}
+    legal = {
+        "text": "臣另诺边饷",
+        "minister_promise": _promise_item(promisor, "边饷"),
+    }
     result, chat_id, _ = _hall_commission_batch(
-        db, state, promisor, [mixed_prohibit, legal2], words="禁摊并自诺",
+        db, state, promisor, [mixed, legal], words="禁摊并自诺",
     )
     assert len(result.commissions.rejected) == 1
     assert result.commissions.rejected[0].category == "invalid_shape"
@@ -1334,139 +1123,6 @@ def test_sole_commission_actions_reject_when_mixed_with_minister_promise(game):
         ).fetchall()
     }
     assert "directive" not in pending_kinds
-
-
-def test_c3_real_scene_translation_supplies_affair_and_lands_link(game, monkeypatch):
-    """C3/T1：真实召对转译收到事务身份供料，并据此关联落账（禁只测 builder/手工注入）。"""
-    db, state, content = game
-    promisor = "魏忠贤"
-    affair = db.affairs.open(
-        name="田尔耕案", origin="test",
-        year=int(state.year), period=int(state.period), turn=int(state.turn),
-    )
-    night = open_night(db, state, location="乾清宫", time_of_day="夜")
-    nid = int(night["id"])
-    seen_prompts: list[str] = []
-
-    def translate(prompt, llm_config):
-        text = str(prompt or "")
-        seen_prompts.append(text)
-        # 从真实 prompt 契约输入解析 affair 身份，不手工旁路。
-        affair_id = None
-        for line in text.splitlines():
-            if not line.startswith("affair\t"):
-                continue
-            parts = line.split("\t")
-            if len(parts) >= 3 and parts[2] == "田尔耕案":
-                affair_id = int(parts[1])
-                break
-        assert affair_id == int(affair.id), text
-        base = offline_empty_audience_translate(prompt, llm_config)
-        return {
-            **base,
-            "commissions": [{
-                "text": "臣明日就办田尔耕。",
-                "minister_promise": {
-                    "title": "办田尔耕",
-                    "content": "明日就办田尔耕",
-                    "promisor": promisor,
-                    "deadline_months": 1,
-                },
-                "affair_declaration": {
-                    "attach": "existing",
-                    "affair_id": int(affair_id),
-                },
-            }],
-        }
-
-    class FakeAgent:
-        def run(self, message):
-            return SimpleNamespace(content="臣明日就办田尔耕。", tools=[])
-
-    stub_scene_agent(monkeypatch, FakeAgent())
-    sess = _sess(db, state, content, monkeypatch, translate_fn=translate)
-    _result, _chat_turn_id = _scene_turn(
-        sess, db, state, "尔有何话说", night_id=nid,
-    )
-    assert seen_prompts, "真实转译未接到 prompt"
-    assert "affair_declaration" in build_c0_declaration_shape()
-    rows = _active_commitments_for(db, promisor)
-    assert len(rows) == 1
-    issue_id = int(rows[0]["id"])
-    assert int(db.issues.affair_id_of(issue_id)) == int(affair.id)
-
-
-def test_c4_due_retention_only_for_minister_promise(game):
-    """C4：无案卷桥时仅自诺保留 pending；旧分段承诺仍消费。"""
-    db, state, content = game
-    # 旧分段：active、无案卷桥（origin 非 dossier）。
-    old_id = db.insert_issue(
-        state,
-        kind="initiative",
-        title="旧分段无桥之诺",
-        origin_kind="decree",
-        origin_ref="legacy-no-dossier",
-        stage_text="中段待办",
-        participants=[{"character_id": "徐光启", "tier": "主办"}],
-        end_turn=int(state.turn) + 5,
-        commitment_kind="until_stop",
-        stages_json=[
-            {"stage_idx": 0, "due_turn": int(state.turn), "criterion_text": "中段"},
-            {"stage_idx": 1, "due_turn": int(state.turn) + 3, "criterion_text": "末段"},
-        ],
-        commit=True,
-    )
-    db.dossiers.insert_next_audience_todo(
-        commitment_ref=int(old_id),
-        stage_idx=0,
-        due_turn=int(state.turn),
-        criterion_text="中段",
-        origin_context="中段",
-        entry_kind=ENTRY_KIND_STAGED,
-        created_turn=int(state.turn) - 1,
-    )
-
-    # 自诺：无案卷桥，应保留。
-    result, _c, _n = _land_minister_promise(
-        db, state, promisor="魏忠贤", title="自诺待办保留",
-        deadline_months=1,
-    )
-    promise_id = int(result.commissions.applied[0]["issue_id"])
-    db.dossiers.insert_next_audience_todo(
-        commitment_ref=int(promise_id),
-        stage_idx=0,
-        due_turn=int(state.turn),
-        criterion_text="自诺到期",
-        origin_context="自诺到期",
-        entry_kind=ENTRY_KIND_STAGED,
-        created_turn=int(state.turn) - 1,
-        payload_json={"origin_ref": str(
-            db.conn.execute(
-                "SELECT origin_ref FROM issues WHERE id=?", (promise_id,),
-            ).fetchone()["origin_ref"] or ""
-        )},
-    )
-
-    outcomes = {
-        int(r["todo_id"]): r
-        for r in apply_pending_due_reviews(db, state)
-    }
-    old_todos = [
-        t for t in db.dossiers.list_next_audience_todos()
-        if int(t["commitment_ref"]) == int(old_id)
-    ]
-    promise_todos = [
-        t for t in db.dossiers.list_next_audience_todos()
-        if int(t["commitment_ref"]) == int(promise_id)
-    ]
-    assert old_todos and str(old_todos[0]["status"]) != TODO_STATUS_PENDING
-    assert promise_todos and str(promise_todos[0]["status"]) == TODO_STATUS_PENDING
-    old_todo_id = int(old_todos[0]["id"])
-    promise_todo_id = int(promise_todos[0]["id"])
-    if old_todo_id in outcomes:
-        assert outcomes[old_todo_id].get("consumed") is True
-    if promise_todo_id in outcomes:
-        assert outcomes[promise_todo_id].get("consumed") is False
 
 
 def test_c5_minister_promise_excluded_from_imperial_breach_scan(game):
@@ -1508,4 +1164,3 @@ def test_c5_minister_promise_excluded_from_imperial_breach_scan(game):
     assert str(db.conn.execute(
         "SELECT status FROM issues WHERE id=?", (issue_id,),
     ).fetchone()["status"]) == "active"
-

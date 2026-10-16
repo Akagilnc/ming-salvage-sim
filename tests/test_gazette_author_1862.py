@@ -155,9 +155,7 @@ def test_gazette_failure_retries_report_only(web_game, monkeypatch):
 @pytest.mark.parametrize("streaming", [True, False])
 def test_author_excludes_secret_sources_from_public_materials(game, monkeypatch, streaming):
     import ming_sim.agents as agents
-    from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
     from tests.dossier_test_helpers import create_test_secret_order
-    from ming_sim.declaration_dispatch import stage_declaration
     from agno.run.agent import RunContentEvent, RunOutput
 
     db, state, content = game
@@ -169,17 +167,14 @@ def test_author_excludes_secret_sources_from_public_materials(game, monkeypatch,
     apply_dossier_promulgation(db, state, plain, "promulgated")
     db.dossiers.set_affair_id_if_unbound(plain, affair.id)
     db.dossiers.set_affair_id_if_unbound(secret, affair.id)
+    # 仅构造作者 due feed 所需来源对照；不准备无断言消费的事实/流水/拒收/暂存。
     origins = [f"affair:{affair.id}", f"dossier:{plain}", f"secret_order:{oid}", f"dossier:{secret}"]
     for origin in origins:
-        if origin != origins[3]:
-            stage_declaration(db, decree_ref=origin, turn=int(state.turn), declaration={"textual_facts": []}, forecast_text=origin)
-            db.staged_declarations.mark_terminal(origin)
-        db.textual_facts.append(subject_kind="character", subject_id=name, body=f"fact:{origin}", year=state.year, period=state.period, turn=state.turn, origin_ref=origin)
-        db.conn.execute("INSERT INTO economy_ledger (turn,year,period,account,delta,balance_after,category,reason,origin_ref) VALUES (?,?,?,'国库',-1,1,'测试',?,?)", (state.turn,state.year,state.period,f"ledger:{origin}",origin))
-        collector = RejectionCollector()
-        collector.record("测试", RejectedItem({"origin_ref": origin}, "输入拒因", "invalid_shape", Provenance.player_decree), state.turn)
-        collector.flush_to_db(db)
-        db.insert_issue(state, kind="initiative", title="到期复核", origin_kind="decree", origin_ref=origin, commitment_kind="once", end_turn=state.turn)
+        db.insert_issue(
+            state, kind="initiative", title="到期复核",
+            origin_kind="decree", origin_ref=origin,
+            commitment_kind="once", end_turn=state.turn,
+        )
     db.conn.commit()
     seen = {}
     previews = []
