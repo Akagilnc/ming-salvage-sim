@@ -69,9 +69,8 @@ def apply_removes(run) -> SectionResult:
     from ming_sim.simulation import normalize_item_keys
 
     for raw in run.current_extracted.get("fiscal_removes") or []:
-        remove = normalize_item_keys(raw) if isinstance(raw, dict) else raw
-        if not isinstance(remove, dict):
-            continue
+        # sanitize 已滤非 dict；此处只做条目键规范化（身份已升，仍走通用别名）。
+        remove = normalize_item_keys(raw)
         key = str(remove.get("key") or "").strip()
         if not key:
             rejections.append(RejectedItem(item=remove, reason="fiscal_removes 缺 key,无法定位裁撤目标。", category="invalid_enum", source=run.ctx.source))
@@ -131,9 +130,8 @@ def apply_creates(run) -> SectionResult:
     from ming_sim.simulation import normalize_item_keys
 
     for raw in run.current_extracted.get("fiscal_creates") or []:
-        create = normalize_item_keys(raw) if isinstance(raw, dict) else raw
-        if not isinstance(create, dict):
-            continue
+        # sanitize 已滤非 dict；此处只做条目键规范化。
+        create = normalize_item_keys(raw)
         # direction 同义词在唯一守门人处归一：表与清洗层共用同一张表（懒 import
         # 避循环）。先归一再去重——ADR 0027 的承诺载体都是月度【支出】(delta<0)，
         # 同名的【收入】新科目（如新税）与承诺无关，绝不可被误去重或误报残留。
@@ -217,9 +215,8 @@ def apply_changes(run) -> SectionResult:
     from ming_sim.simulation import normalize_item_keys
 
     for raw in run.current_extracted.get("fiscal_changes") or []:
-        change = normalize_item_keys(raw) if isinstance(raw, dict) else raw
-        if not isinstance(change, dict):
-            continue
+        # sanitize 已滤非 dict；此处只做条目键规范化。
+        change = normalize_item_keys(raw)
         key = str(change.get("key") or "").strip()
         if not key:
             # 空 key＝脏项，先于一切无操作短路记拒——否则 delta 0/null 的空 key

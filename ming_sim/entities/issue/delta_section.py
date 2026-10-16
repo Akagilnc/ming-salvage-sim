@@ -178,11 +178,12 @@ def _resolve_strategic_events(run, issue_summary) -> Dict[str, SectionResult]:
             ))
             continue
         from ming_sim.constants import ARMY_FIELD_ALIASES
-        from ming_sim.simulation import lift_identity_field_aliases, normalize_item_keys
+        from ming_sim.simulation import normalize_item_keys
 
         for raw in run.event_new_armies(event_id):
             if not isinstance(raw, dict):
                 continue
+            # 建军仍需领域别名（势力→owner_power）；身份槽已由 sanitize 升格。
             item = normalize_item_keys(raw, domain_aliases=ARMY_FIELD_ALIASES)
             origin_ref = str(item.get("origin_ref") or "").strip()
             landed, refused = run.db.create_armies_from_extraction(
@@ -192,11 +193,11 @@ def _resolve_strategic_events(run, issue_summary) -> Dict[str, SectionResult]:
             bucket["new_armies"].extend(landed)
             reject_bucket["new_armies"].extend(refused)
         for region_id, raw_changes in run.ordered_strategic_items("region_delta", event_id):
+            # 身份槽已由 sanitize 升格；段内不再重复 lift。
             if not isinstance(raw_changes, dict):
                 continue
-            changes = lift_identity_field_aliases(raw_changes)
-            origin_ref = str(changes.get("origin_ref") or "").strip()
-            payload = {k: v for k, v in changes.items() if k != "origin_ref"}
+            origin_ref = str(raw_changes.get("origin_ref") or "").strip()
+            payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
             landed, refused = run.db.apply_region_deltas(
                 run.state, run.pseudo_event, None, "档房", {region_id: payload},
                 commit=False, origin_ref=origin_ref, require_origin=True,
@@ -204,6 +205,7 @@ def _resolve_strategic_events(run, issue_summary) -> Dict[str, SectionResult]:
             bucket["region_changes"].extend(landed)
             reject_bucket["region_changes"].extend(refused)
         for army_id, raw_changes in run.ordered_strategic_items("army_delta", event_id):
+            # 共享写核自带身份升格（issue/effects 等入口未保证 sanitize）。
             landed, refused = apply_army_delta_with_cannon_transfer(
                 run.db, run.state, run.pseudo_event, army_id, raw_changes,
             source=run.ctx.source)
@@ -224,11 +226,11 @@ def _resolve_strategic_events(run, issue_summary) -> Dict[str, SectionResult]:
             reject_bucket["person_issue"].extend(refused)
 
         for power_id, raw_changes in run.ordered_strategic_items("power_updates", event_id):
+            # 身份槽已由 sanitize 升格；段内不再重复 lift。
             if not isinstance(raw_changes, dict):
                 continue
-            changes = lift_identity_field_aliases(raw_changes)
-            origin_ref = str(changes.get("origin_ref") or "").strip()
-            payload = {k: v for k, v in changes.items() if k != "origin_ref"}
+            origin_ref = str(raw_changes.get("origin_ref") or "").strip()
+            payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
             landed, refused = run.db.apply_power_deltas(
                 run.state, {power_id: payload}, commit=False,
                 origin_ref=origin_ref, require_origin=True,

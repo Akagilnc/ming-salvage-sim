@@ -21,9 +21,8 @@ def apply(run):
             run.current_event_ids,
         ):
             continue
-        from ming_sim.simulation import lift_identity_field_aliases
-
-        changes = lift_identity_field_aliases(raw_changes) if isinstance(raw_changes, dict) else {}
+        # 身份槽已由 sanitize_delta_shape 升格；本段只剥 origin_ref 交写核。
+        changes = raw_changes if isinstance(raw_changes, dict) else {}
         origin_ref = str(changes.get("origin_ref") or "").strip()
         payload = {k: v for k, v in changes.items() if k != "origin_ref"}
         landed, refused = run.db.apply_region_deltas(

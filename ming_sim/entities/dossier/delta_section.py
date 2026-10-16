@@ -167,7 +167,7 @@ def apply_deliberation_outcomes(run):
             run.db.insert_issue(
                 run.state,
                 kind="situation",
-                title=title[:80],
+                title=title,
                 origin_kind="deliberation",
                 origin_ref=origin,
                 stage_text=note,
