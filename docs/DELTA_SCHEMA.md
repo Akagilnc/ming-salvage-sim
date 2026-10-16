@@ -373,7 +373,7 @@ canonical 段形＝list，每项落一道加派旨：逐省累积账当回合落
 - 每项必须带 `dossier_id`（别名 `案卷编号`）、`outcome`、`note`。
 - `dossier_id` 指向真实原案；`outcome` 只收 `stalled`（无人站台）；`note` 不得为空。
 - 人物肯不肯站台由推演 LLM 演出；转译只声明结构事实。包据此把原案标为 `deliberation_state=stalled`，并确保 `origin_ref=dossier:<id>` 的局势记录存在（再次待裁可重开），进入其后批红页「御笔强推 / 留中」。
-- 已 stalled 的同案再声明幂等。允许 `proposed` / `promulgated` / `executing`：后二者仅将 status 拨回 `proposed` 待裁，**已落效果不回滚**（runner 裁定二）。未知或已关闭案卷拒收不落库。
+- 已 stalled 的同案再声明幂等。允许 `proposed` / `promulgated` / `executing`：只写 `deliberation_state=stalled`，**不拨 status、不备份不恢复**；待裁门闸＝`deliberation_state`，**已落效果不回滚**（runner 裁定二；ADR 0151 写口归 DossierStore）。未知或已关闭案卷拒收不落库。
 
 ### `faction_denunciations` — 政敌检举条目（#627 / ADR 0077 ID-12）
 别名 `政敌检举` / `检举条目`。settle 内经 `accept_faction_denunciations` 承接落库。

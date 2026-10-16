@@ -466,13 +466,15 @@ def test_two_questions_first_lands_then_second_stalled_keeps_ledger(game, monkey
         if str(r.get("event_id") or "").startswith(_DECREE_QUESTION_PREFIX)
     ]
     assert len(remain) == 1
+    # 第二问前主状态：stalled 后必须保持（禁回拨 proposed）。
+    status_before_stall = db.dossiers.get(did)["status"]
     # 第二问：案卷编号别名 stalled → 案头两选（承接续推待裁与编号别名）。
     answer(remain[0], {"effects": {"deliberation_outcomes": [{
         "案卷编号": did, "outcome": "stalled", "note": "后道无人站台",
     }]}})
     row = db.dossiers.get(did)
-    # stalled 只改 deliberation_state，不回拨 status（先问已落可已在办）。
     assert row["payload"].get("deliberation_state") == "stalled"
+    assert row["status"] == status_before_stall
     assert not db.dossiers.authorizes_effects(did)
     assert ledger_deltas() == [-5]
     desk_open = [
