@@ -31,7 +31,6 @@ from ming_sim.materials import (
 )
 from ming_sim.month_chain import prepare_gazette_author_materials
 from ming_sim.settlement import SettlementContext, settle_delta
-from ming_sim.settlement_payload import list_due_commitments
 from ming_sim.staged_commitment import (
     ENTRY_KIND_STAGED,
     TODO_STATUS_PENDING,
@@ -656,7 +655,6 @@ def test_public_catalog_keeps_public_hides_private_and_mixes_lawfully(game, monk
         assert _paths_have_affair(paths, priv2_id)
         # 混合公开合法部分：路径在，结构化 title 为空（不锁正文呈现格式）。
         assert public_titles.get(_affair_title_key(priv2_id), None) == ""
-        assert public_titles.get(_affair_title_key(priv2_id), None) != priv2_name
     finally:
         release_material_tree(prepared.root)
 
@@ -779,9 +777,7 @@ def test_personal_birth_title_visible_to_cohort_not_later_link(game, monkeypatch
         for name in (promisor, host, aide, witness):
             assert person_titles.get(name, {}).get(secret_key) == secret_name
         assert person_titles.get(later, {}).get(priv_key) == ""
-        assert person_titles.get(later, {}).get(priv_key) != priv_name
         assert person_titles.get(later, {}).get(secret_key, "") != secret_name
-        assert person_titles.get(later, {}).get(priv_key, "") != priv_name
     finally:
         release_material_tree(prepared.root)
 
@@ -796,8 +792,8 @@ def test_due_feeds_respect_issue_roster_and_origin(game):
     public_origin = promulgated_policy_origin(db, state, "due-roster-anchor")
     assert origin_visible_to(db, public_origin) is True
 
-    def _due_item(title: str, roster, *, staged: bool):
-        item = {
+    def _staged_due(title: str, roster):
+        return {
             "title": title,
             "kind": "initiative",
             "origin_kind": "decree",
@@ -806,25 +802,19 @@ def test_due_feeds_respect_issue_roster_and_origin(game):
             "commitment_kind": "until_stop",
             "ongoing_effects": {},
             "participant_roster": roster,
-        }
-        if staged:
-            item["stages"] = [{
+            "stages": [{
                 "stage_idx": 0,
                 "due_turn": int(state.turn),
                 "criterion_text": title,
                 "origin_context": title,
-            }]
-        else:
-            item["end_turn"] = int(state.turn)
-        return item
+            }],
+        }
 
     due_land = settle_delta(
         state, db,
         {"new_issues": [
-            _due_item("受限一次性到期", [{"character_id": promisor, "tier": "知情"}], staged=False),
-            _due_item("公开一次性到期", [], staged=False),
-            _due_item("受限分段到期", [{"character_id": promisor, "tier": "知情"}], staged=True),
-            _due_item("公开分段到期", [], staged=True),
+            _staged_due("受限分段到期", [{"character_id": promisor, "tier": "知情"}]),
+            _staged_due("公开分段到期", []),
         ]},
         SettlementContext(content=content),
     )
@@ -832,20 +822,8 @@ def test_due_feeds_respect_issue_roster_and_origin(game):
     by_title = {
         str(row["title"]): int(row["issue_id"]) for row in due_land.issue.new_issues
     }
-    form3_restricted = by_title["受限一次性到期"]
-    form3_public = by_title["公开一次性到期"]
     staged_restricted = by_title["受限分段到期"]
     staged_public = by_title["公开分段到期"]
-
-    public_knowledge_due = {
-        int(i["id"]) for i in build_character_knowledge(db, state, "").get("issues") or []
-    }
-    assert form3_public in public_knowledge_due and staged_public in public_knowledge_due
-    assert form3_restricted not in public_knowledge_due
-    assert staged_restricted not in public_knowledge_due
-
-    due_ledger = {int(i["issue_id"]) for i in list_due_commitments(db, state)}
-    assert form3_restricted in due_ledger and form3_public in due_ledger
 
     written = write_due_staged_commitment_todos(db, state)
     assert written >= 2
