@@ -1968,16 +1968,30 @@ def _materialize_rescript_desk(
                 ),
             })
         decisions.extend(_rescript_decisions(verdicts, open_items["triad"]))
-    pending_event_ids = {
+    # 未结束的本次待裁＝pending，或 decided 且 decision_key 尚未入 rescript_consumed。
+    # 仅 pending 会把「已答未消费」误当历史，同 stall 再开 :rN（#1917 / C7）。
+    consumed_keys = set(chain.get("rescript_consumed") or [])
+    open_deliberation_events = {
         str(r.get("event_id") or "")
         for r in db.issues.list_pending_decisions(turn)
-        if str(r.get("status") or "") == "pending"
+        if str(r.get("event_id") or "").startswith("deliberation:")
+        and (
+            str(r.get("status") or "") == "pending"
+            or (
+                str(r.get("status") or "") == "decided"
+                and str(r.get("decision_key") or "") not in consumed_keys
+            )
+        )
     }
+    open_deliberation_events.discard("")
     for dossier in db.dossiers.list_stalled_deliberations():
         did = int(dossier["id"])
         base_event = f"deliberation:{did}"
-        # 已有 pending 入口则不重复；曾 decided 的同 id 换新 event_id 保留历史御批（C7）。
-        if any(eid == base_event or eid.startswith(f"{base_event}:") for eid in pending_event_ids):
+        # 未结束入口不重复；已消费历史才换新 event_id 保留御批（C7）。
+        if any(
+            eid == base_event or eid.startswith(f"{base_event}:")
+            for eid in open_deliberation_events
+        ):
             continue
         decided = {
             str(r.get("event_id") or "")
@@ -1994,7 +2008,7 @@ def _materialize_rescript_desk(
                 {"label": "留中", "hint": "原案留存", "action": "hold"},
             ],
         })
-        pending_event_ids.add(event_id)
+        open_deliberation_events.add(event_id)
     for ref, questions in open_items["decree_questions"]:
         offsets = chain.setdefault("decree_question_offsets", {})
         pinned, offsets[ref] = _pin_rescript_questions(
