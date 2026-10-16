@@ -22,10 +22,9 @@ Seams:
 - prepare_scene_materials（在场诸人各一棵私有子树 + 开场最小集）
 - GameSession.scene_chat（宣 X 落入殿账 → 场景调用；退朝收夜；一轮一次调用）
 - 关档重开：list_chat_turns_for_night 回到最后一条持久化对话轮
+
+#1913 与本文件共用轻量 scene 装配／入殿账筛选／源轮 scene_chat，避免平行复制。
 """
-
-
-
 
 
 def _sess(db, state, content, *, llm_config=None):
@@ -39,9 +38,38 @@ def _sess(db, state, content, *, llm_config=None):
     sess._write_gate = sess._write_queue.write_gate
     return sess
 
+
+def _non_roster_enters(db, night_id: int, person: str) -> list:
+    """非常在员额的入殿账（#1836／#1913 共用筛选）。"""
+    return [
+        e for e in list_ledger(db, night_id)
+        if TAG_ENTER in (e.get("tags") or [])
+        and person in (e.get("person_names") or [])
+        and "常在员额" not in (e.get("tags") or [])
+    ]
+
+
+def _scene_chat_with_turn(
+    sess, db, state, night_id: int, msg: str, *,
+    chat_turn_id: int = 0, label: str = "scene",
+) -> int:
+    """正数源轮 scene_chat；可复用同 ctid 模拟中断恢复（ADR 0036）。"""
+    ctid = int(chat_turn_id or 0)
+    if ctid <= 0:
+        ctid = int(db.create_chat_turn(
+            state, "殿上", f"{label}:{msg}", 0,
+            night_id=night_id, status="generating",
+        ))
+    sess.scene_chat(msg, write_gate=sess._write_gate, chat_turn_id=ctid)
+    return ctid
+
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_scene_chat_one_call_returns_multi_person_script(game, monkeypatch):
-    """AC1：一轮戏文（可含多人）出自同一次场景调用。"""
+    """AC1：一轮戏文（可含多人）出自同一次场景调用。
+
+    #1914：同一入口实交 agent 的 PreparedMaterials 须含近侍公事档案与派系态势路径
+    （召对消费接缝；不另建无关材料树）。
+    """
     db, state, content = game
     open_night(db, state, location="乾清宫", time_of_day="夜")
     night_id = int(get_open_night(db)["id"])
@@ -55,6 +83,7 @@ def test_scene_chat_one_call_returns_multi_person_script(game, monkeypatch):
         "王承恩欠身低语：皇爷，此人可用。"
     )
     calls: list[str] = []
+    prepared_box: list = []
 
     class FakeAgent:
         tools = []
@@ -63,7 +92,11 @@ def test_scene_chat_one_call_returns_multi_person_script(game, monkeypatch):
             calls.append(message)
             return SimpleNamespace(content=script, tools=[])
 
-    monkeypatch.setattr("ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent())
+    def _factory(_llm_config, prepared, **_kwargs):
+        prepared_box.append(prepared)
+        return FakeAgent()
+
+    monkeypatch.setattr("ming_sim.session.create_scene_agent", _factory)
     # #1842：ctid=0 同步转译走 conftest 离线空声明缝，不另造平行 fixture。
     sess = _sess(db, state, content, llm_config=SimpleNamespace(channel=""))
     emperor = "洪承畴可堪大任？"
@@ -73,6 +106,13 @@ def test_scene_chat_one_call_returns_multi_person_script(game, monkeypatch):
     # #1842：opening 已在 create_scene_agent instructions；run 输入不得再拼一份。
     assert calls[0] == emperor
     assert result.court_action == ""
+
+    assert prepared_box, "scene_chat must hand prepared materials to the scene agent"
+    mats = list_materials(prepared_box[0].root)
+    assert "盘面/派系态势.txt" in mats
+    attendant = "王承恩"
+    assert attendant in present_names_at(db, night_id)
+    assert f"人物/{_safe_segment(attendant)}/公事档案.txt" in mats
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_xuan_lands_enter_then_present_on_next_prepare(game, monkeypatch, tmp_path):
@@ -96,27 +136,17 @@ def test_xuan_lands_enter_then_present_on_next_prepare(game, monkeypatch, tmp_pa
     monkeypatch.setattr("ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent())
     sess = _sess(db, state, content, llm_config=SimpleNamespace(channel=""))
 
-    def _xuan(msg: str):
+    def _xuan(msg: str) -> int:
         # 正数源轮：与生产 scene 入口一致，覆盖在场去重接缝。
-        ctid = db.create_chat_turn(
-            state, "殿上", f"scene-1836:{msg}", 0,
-            night_id=night_id, status="generating",
+        return _scene_chat_with_turn(
+            sess, db, state, night_id, msg, label="scene-1836",
         )
-        return sess.scene_chat(msg, write_gate=sess._write_gate, chat_turn_id=int(ctid))
 
     # 语气尾与无尾同形；不得整串预剥把合法名截坏（#1913 身份与尾缀统一解析）。
-    result = _xuan(f"宣{target}来")
-
-    def _enters():
-        return [
-            e for e in list_ledger(db, night_id)
-            if TAG_ENTER in (e.get("tags") or [])
-            and target in (e.get("person_names") or [])
-            and "常在员额" not in (e.get("tags") or [])
-        ]
+    _xuan(f"宣{target}来")
 
     # 本次宣入必须新落一条 TAG_ENTER（非常在员额开夜账）。
-    enters = _enters()
+    enters = _non_roster_enters(db, night_id, target)
     assert enters, f"宣{target} must land a non-roster TAG_ENTER ledger entry"
     enter_tags = enters[0].get("tags") or []
     assert METHOD_XUANRU in enter_tags
@@ -125,12 +155,11 @@ def test_xuan_lands_enter_then_present_on_next_prepare(game, monkeypatch, tmp_pa
 
     # 已在场再普通宣：不重复入殿（正数源轮下仍走在场去重）。
     _xuan(f"宣{target}")
-    assert len(_enters()) == 1
+    assert len(_non_roster_enters(db, night_id, target)) == 1
     assert target in present_names_at(db, night_id)
 
     prepared = prepare_scene_materials(db, state, dest_root=tmp_path / "after-xuan")
     assert any(p.startswith(f"人物/{_safe_segment(target)}/") for p in list_materials(prepared.root))
-    assert result.court_action == ""
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
