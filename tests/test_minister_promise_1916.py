@@ -958,6 +958,101 @@ def test_c1_minister_promise_origin_not_public_visible(game, monkeypatch):
     finally:
         release_material_tree(prepared_x.root)
 
+    # 私诺出生 + 仅名册受限关联议题：origin 可公开但名册排除公开读者时，
+    # 不得准入公开目录，亦不得序列化该议题；空名册公开议题仍可放行混合公开部分。
+    roster_only, _rc, _rn = _land_minister_promise(
+        db, state, promisor=promisor, title="私诺仅挂名册议题",
+        deadline_months=0,
+        affair_declaration={
+            "attach": "new", "name": "名册隔离事务", "origin": "私诺名册隔离",
+        },
+    )
+    assert roster_only.commissions.rejected == []
+    roster_affair_id = int(db.issues.affair_id_of(
+        int(roster_only.commissions.applied[0]["issue_id"]),
+    ))
+    assert origin_visible_to(db, db.affairs.origin_ref(roster_affair_id)) is False
+
+    written_issue_ids: set[int] = set()
+    real_mft_roster = materials_mod._material_facts_text
+
+    def spy_mft_issues(value, indent=""):
+        if isinstance(value, Mapping):
+            keys = set(value)
+            if {"id", "origin_kind", "participant_roster", "commitment_kind"}.issubset(keys):
+                written_issue_ids.add(int(value["id"]))
+        return real_mft_roster(value, indent)
+
+    monkeypatch.setattr(materials_mod, "_material_facts_text", spy_mft_issues)
+
+    def _link_issue(roster):
+        outcome = settle_delta(
+            state, db,
+            {"new_issues": [{
+                "title": "关联议题",
+                "kind": "initiative",
+                "origin_kind": "decree",
+                "participant_roster": roster,
+                "affair_declaration": {
+                    "attach": "existing", "affair_id": roster_affair_id,
+                },
+            }]},
+            SettlementContext(
+                content=content,
+                open_affair_ids_at_input={roster_affair_id},
+            ),
+        )
+        assert outcome.issue.rejected == []
+        return max(
+            int(row["id"]) for row in db.issues.rows_for_affair(roster_affair_id)
+        )
+
+    restricted_issue = _link_issue([
+        {"character_id": promisor, "tier": "知情"},
+    ])
+    restricted_row = db.conn.execute(
+        "SELECT origin_ref, participant_roster FROM issues WHERE id=?",
+        (restricted_issue,),
+    ).fetchone()
+    assert origin_visible_to(db, str(restricted_row["origin_ref"] or "")) is True
+    public_knowledge_ids = {
+        int(i["id"]) for i in build_character_knowledge(db, state, "").get("issues") or []
+    }
+    assert restricted_issue not in public_knowledge_ids
+
+    captured["affair_keys"] = set()
+    written_issue_ids.clear()
+    prepared_restricted = prepare_gazette_author_materials(db, state)
+    try:
+        assert f"affair-{roster_affair_id}" not in captured["affair_keys"]
+        assert restricted_issue not in written_issue_ids
+        assert not any(
+            part.startswith(f"affair-{roster_affair_id}-")
+            for path in list_materials(prepared_restricted.root)
+            for part in str(path).split("/")
+        )
+    finally:
+        release_material_tree(prepared_restricted.root)
+
+    public_issue = _link_issue([])
+    assert public_issue in {
+        int(i["id"]) for i in build_character_knowledge(db, state, "").get("issues") or []
+    }
+    captured["affair_keys"] = set()
+    written_issue_ids.clear()
+    prepared_public_link = prepare_gazette_author_materials(db, state)
+    try:
+        assert f"affair-{roster_affair_id}" in captured["affair_keys"]
+        assert public_issue in written_issue_ids
+        assert restricted_issue not in written_issue_ids
+        assert any(
+            part.startswith(f"affair-{roster_affair_id}-")
+            for path in list_materials(prepared_public_link.root)
+            for part in str(path).split("/")
+        )
+    finally:
+        release_material_tree(prepared_public_link.root)
+
 
 def test_c2_correction_ids_rejected_on_minister_promise(game):
     """C2：自诺不得挂 resolves_rejection_ids；不崩批、不污染 pending_actions。"""

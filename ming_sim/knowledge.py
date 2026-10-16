@@ -265,6 +265,26 @@ def knowledge_row_visible_to(db: Any, row: Any, character_name: str) -> bool:
     return origin_visible_to(db, source_id, character_name)
 
 
+def issue_readable_to(
+    db: Any, issue: Any, character_name: str = "",
+) -> bool:
+    """Whether an issue record is readable to this reader.
+
+    Single authority for character knowledge and public material admission:
+    origin visibility, then non-empty ``participant_roster`` membership, then
+    the issue source gate. Empty roster does not restrict. Empty reader is the
+    public feed and is never a named participant.
+    """
+    if not origin_visible_to(db, issue["origin_ref"], character_name):
+        return False
+    participants = participant_roster_names(issue["participant_roster"])
+    if participants and character_name not in participants:
+        return False
+    return knowledge_row_visible_to(
+        db, {"source_id": f"issue:{int(issue['id'])}"}, character_name,
+    )
+
+
 def project_court_roster_rows(
     rows: list[Any], knowledge: Dict[str, object], office_type: str,
 ) -> list[Any]:
@@ -519,18 +539,9 @@ def build_character_knowledge(
     visible_public.extend(public_saying_events)
     visible_issues = []
     for issue in db.issues.active_rows():
-        if not origin_visible_to(db, issue["origin_ref"], character_name):
+        if not issue_readable_to(db, issue, character_name):
             continue
         source_id = f"issue:{issue['id']}"
-        participants = participant_roster_names(issue["participant_roster"])
-        if participants and character_name not in participants:
-            continue
-        if not knowledge_row_visible_to(
-            db,
-            {"source_id": source_id, "office_type": office_type, "office": office_name},
-            character_name,
-        ):
-            continue
         if issue["origin_kind"] != "impeachment_surge":
             target_roster = []
         else:

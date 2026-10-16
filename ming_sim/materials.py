@@ -1324,7 +1324,7 @@ def _world_affair_lines(
     """
     store = db.affairs
     textual_facts = db.textual_facts
-    from ming_sim.knowledge import origin_visible_to
+    from ming_sim.knowledge import issue_readable_to, origin_visible_to
     secret_ids = set(secret_turn_ids or ())
     lines: list[tuple[str, str, str, str]] = []
     opening_lines: list[tuple[str, str, str, str]] = []
@@ -1346,14 +1346,18 @@ def _world_affair_lines(
                 origin_visible_to(db, "", linked_dossier_id=dossier["id"])
                 for dossier in dossiers
             ) or any(
-                origin_visible_to(db, str(issue["origin_ref"] or ""))
+                issue_readable_to(db, issue, "")
                 for issue in issues
             )
             if not has_public_content:
                 history = db.list_world_effect_history(affair_ref)
                 has_public_content = any(
-                    _world_history_row_visible(db, row, secret_ids, True)
-                    for rows in history.values()
+                    (
+                        issue_readable_to(db, row, "")
+                        if table == "issues"
+                        else _world_history_row_visible(db, row, secret_ids, True)
+                    )
+                    for table, rows in history.items()
                     for row in rows
                 )
             if not has_public_content:
@@ -1633,6 +1637,7 @@ def _world_effect_materials(
 ) -> dict[str, Any]:
     """Landed history crosses the same input/source boundary as the world board."""
     from ming_sim.entities.character.normalize import PERSON_CHANGE_KEY
+    from ming_sim.knowledge import issue_readable_to
 
     history = db.list_world_effect_history(origin)
     for table, rows in history.items():
@@ -1641,6 +1646,9 @@ def _world_effect_materials(
             if not _world_history_row_visible(
                 db, row, secret_turn_ids, public_only,
             ):
+                continue
+            # Issues reuse the knowledge roster gate; origin-only is not enough.
+            if table == "issues" and public_only and not issue_readable_to(db, row, ""):
                 continue
             if table == "issues":
                 # list_world_effect_history 已用 loads_effect_dict / parse_engine 保证
