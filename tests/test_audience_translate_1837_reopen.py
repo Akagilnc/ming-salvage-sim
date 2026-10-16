@@ -122,18 +122,24 @@ def _close_offline(db, state, content, night_id):
     )
 
 
-def _player_month(db, state, content, monkeypatch, dossier_id, *, effects=None):
-    """Drive the player month entry with only model outputs supplied offline."""
+def _player_month(db, state, content, monkeypatch, dossier_id, *, effects=None, verdict=None):
+    """Drive the player month entry with only model outputs supplied offline.
+
+    Default verdict promulgates and advances past gazette. A non-promulgated
+    verdict (e.g. rejected) returns after the first resolve_turn so callers can
+    assert the pause / zero-effect shape without a parallel stub setup.
+    """
     from tests.month_chain_helpers import empty_rescript_response
     monkeypatch.setattr("ming_sim.rescript_draft.run_rescript_text", empty_rescript_response)
     import ming_sim.month_chain as month_chain
     from ming_sim.decree_forecast import decree_ref_for_dossier, stage_declaration
 
+    decided = verdict if verdict is not None else {"decision": "promulgated"}
     dossier = db.dossiers.get(dossier_id)
     stage_declaration(
         db, decree_ref=decree_ref_for_dossier(db, dossier),
         declaration={"effects": {}}, turn=int(state.turn),
-        verdict={"decision": "promulgated"}, forecast_text="",
+        verdict=decided, forecast_text="",
     )
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "世界段" if effects else "")
     monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", lambda *a, **k: {"effects": effects or {}})
@@ -142,12 +148,15 @@ def _player_month(db, state, content, monkeypatch, dossier_id, *, effects=None):
     before = int(state.turn)
     result = session.resolve_turn(allow_empty_decree=True)
     wait_for_background_jobs(db)
+    if decided.get("decision") != "promulgated":
+        return result
     assert result.stage == "gazette"
     # The same player entry resumes after the (offline) gazette is archived.
     db.save_turn_report(state, "月报", title="月报", public_body="月报")
     result = session.resolve_turn(allow_empty_decree=True)
     wait_for_background_jobs(db)
     assert result.advanced and int(state.turn) > before
+    return result
 
 
 @pytest.mark.parametrize("late", [False, True], ids=["open-night", "closed-night"])
