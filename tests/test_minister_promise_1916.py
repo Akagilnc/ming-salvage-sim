@@ -34,11 +34,15 @@ from ming_sim.materials import (
     prepare_scene_materials,
     release_material_tree,
 )
-from ming_sim.month_chain import _gazette_feed, prepare_gazette_author_materials
+from ming_sim.month_chain import _gazette_feed, prepare_gazette_author_materials, run_gazette_text
 from ming_sim.relations import summon_edge_origin
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement_payload import list_due_commitments
-from ming_sim.staged_commitment import ENTRY_KIND_STAGED, TODO_STATUS_PENDING
+from ming_sim.staged_commitment import (
+    ENTRY_KIND_STAGED,
+    TODO_STATUS_PENDING,
+    write_due_staged_commitment_todos,
+)
 from tests.conftest import (
     offline_empty_audience_translate,
     open_hall_turn,
@@ -46,7 +50,24 @@ from tests.conftest import (
     wait_for_background_jobs,
 )
 from tests.test_audience_translate_1837 import _scene_turn, _sess
+from tests.test_gazette_author_1862 import _llm as _gazette_llm
 from tests.test_month_chain_1843 import _prepare_player_month
+
+
+def _opening_commitment_ids(opening: str) -> list[int]:
+    """真实 opening 交付边界：JSON 事实按字段读 commitment_ref（禁正文哨兵）。"""
+    ids: list[int] = []
+    for line in str(opening or "").splitlines():
+        text = line.strip()
+        if not text.startswith("{"):
+            continue
+        try:
+            obj = json.loads(text)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict) and obj.get("commitment_ref") is not None:
+            ids.append(int(obj.get("commitment_ref") or 0))
+    return ids
 
 
 def _active_commitments_for(db, name: str):
@@ -278,21 +299,6 @@ def test_timed_minister_promise_due_appears_in_promisor_opening_materials(
         if int(s.get("commitment_ref") or 0) == issue_id
     ]
     assert len(scenes_after_skip) == 1
-
-    def _opening_commitment_ids(opening: str) -> list[int]:
-        # 真实 opening 交付边界：JSON 事实按字段读 commitment_ref（禁正文哨兵）。
-        ids: list[int] = []
-        for line in str(opening or "").splitlines():
-            text = line.strip()
-            if not text.startswith("{"):
-                continue
-            try:
-                obj = json.loads(text)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(obj, dict) and obj.get("commitment_ref") is not None:
-                ids.append(int(obj.get("commitment_ref") or 0))
-        return ids
 
     # #1916 C1：非知情在场时，私诺到期不得进共享开场；待办仍 pending。
     night2 = open_night(db, state, location="乾清宫", time_of_day="昼")
@@ -1053,66 +1059,119 @@ def test_c1_minister_promise_origin_not_public_visible(game, monkeypatch):
     finally:
         release_material_tree(prepared_public_link.root)
 
-    # 到期派生供料：origin 公开但名册受限的承诺，不得进公开作者 due 与非知情开场。
-    db.conn.execute(
-        "UPDATE issues SET end_turn=?, commitment_kind='until_stop', "
-        "stage_text=? WHERE id IN (?, ?)",
-        (int(state.turn), "到期正文", restricted_issue, public_issue),
+    # 到期派生供料：合法公开 dossier 来源 + settle_delta 名册受限/公开承诺；
+    # form③ 进作者消息，分段经 write_due 进召对开场。不 SQL 改承诺、不手工插待办。
+    import ming_sim.agents as agents
+    from agno.run.agent import RunOutput
+
+    public_origin_dossier = db.create_decree_dossier(
+        state, action_type="policy", decree_text="公开承诺来源锚",
+        target_kind="issue", target_id="due-roster-anchor",
     )
-    db.conn.commit()
-    due_ledger = {
-        int(i["issue_id"]) for i in list_due_commitments(db, state)
-    }
-    assert restricted_issue in due_ledger and public_issue in due_ledger
-    gazette_due = {
-        int(i["issue_id"]) for i in _gazette_feed(db, state).get("due_commitments") or []
-    }
-    assert public_issue in gazette_due
-    assert restricted_issue not in gazette_due
+    db.dossiers.record_dossier_decision(int(public_origin_dossier), "promulgated")
+    public_origin = f"dossier:{int(public_origin_dossier)}"
+    assert origin_visible_to(db, public_origin) is True
 
-    for iid, stage in ((restricted_issue, 0), (public_issue, 1)):
-        created = db.dossiers.insert_next_audience_todo(
-            commitment_ref=int(iid),
-            stage_idx=int(stage),
-            due_turn=int(state.turn),
-            criterion_text=f"复命{iid}",
-            origin_context=f"复命{iid}",
-            entry_kind=ENTRY_KIND_STAGED,
-            created_turn=int(state.turn),
-            payload_json={"origin_ref": ""},
-        )
-        assert int(created) > 0
+    def _due_item(title: str, roster, *, staged: bool):
+        item = {
+            "title": title,
+            "kind": "initiative",
+            "origin_kind": "decree",
+            "origin_ref": public_origin,
+            "stage_text": title,
+            "commitment_kind": "until_stop",
+            "ongoing_effects": {},
+            "participant_roster": roster,
+        }
+        if staged:
+            item["stages"] = [{
+                "stage_idx": 0,
+                "due_turn": int(state.turn),
+                "criterion_text": title,
+                "origin_context": title,
+            }]
+        else:
+            item["end_turn"] = int(state.turn)
+        return item
 
-    def _opening_commitment_ids(opening: str) -> set[int]:
-        ids: set[int] = set()
-        for line in str(opening or "").splitlines():
-            text = line.strip()
-            if not text.startswith("{"):
-                continue
-            try:
-                obj = json.loads(text)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(obj, dict) and obj.get("commitment_ref") is not None:
-                ids.add(int(obj.get("commitment_ref") or 0))
-        return ids
+    due_land = settle_delta(
+        state, db,
+        {"new_issues": [
+            _due_item("受限一次性到期", [{"character_id": promisor, "tier": "知情"}], staged=False),
+            _due_item("公开一次性到期", [], staged=False),
+            _due_item("受限分段到期", [{"character_id": promisor, "tier": "知情"}], staged=True),
+            _due_item("公开分段到期", [], staged=True),
+        ]},
+        SettlementContext(content=content),
+    )
+    assert due_land.issue.rejected == []
+    landed = due_land.issue.new_issues
+    assert len(landed) == 4
+    by_title = {str(row["title"]): int(row["issue_id"]) for row in landed}
+    form3_restricted = by_title["受限一次性到期"]
+    form3_public = by_title["公开一次性到期"]
+    staged_restricted = by_title["受限分段到期"]
+    staged_public = by_title["公开分段到期"]
+    assert origin_visible_to(db, public_origin) is True
+    public_knowledge_due = {
+        int(i["id"]) for i in build_character_knowledge(db, state, "").get("issues") or []
+    }
+    assert form3_public in public_knowledge_due and staged_public in public_knowledge_due
+    assert form3_restricted not in public_knowledge_due
+    assert staged_restricted not in public_knowledge_due
+
+    due_ledger = {int(i["issue_id"]) for i in list_due_commitments(db, state)}
+    assert form3_restricted in due_ledger and form3_public in due_ledger
+
+    author_seen: dict[str, object] = {}
+
+    def _author(_config, _prepared):
+        class _Model:
+            supports_stream = False
+
+            def run(self, message, **_kwargs):
+                author_seen["feed"] = json.loads(message)
+                return RunOutput(content=json.dumps(
+                    {"title": "测", "report": "测"}, ensure_ascii=False,
+                ))
+
+        return _Model()
+
+    monkeypatch.setattr(agents, "create_gazette_author_agent", _author)
+    run_gazette_text(db, state, _gazette_llm())
+    author_due = {
+        int(i["issue_id"])
+        for i in (author_seen.get("feed") or {}).get("due_commitments") or []
+    }
+    assert form3_public in author_due
+    assert form3_restricted not in author_due
+
+    written = write_due_staged_commitment_todos(db, state)
+    assert written >= 2
+    pending_todos = [
+        t for t in db.dossiers.list_next_audience_todos(status=TODO_STATUS_PENDING)
+        if int(t["commitment_ref"] or 0) in {staged_restricted, staged_public}
+    ]
+    assert {int(t["commitment_ref"]) for t in pending_todos} == {
+        staged_restricted, staged_public,
+    }
 
     close_night(db, state, content=content)
     night_empty = open_night(db, state, location="乾清宫", time_of_day="昼")
     prepared_empty = prepare_scene_materials(db, state)
     try:
-        empty_ids = _opening_commitment_ids(prepared_empty.opening)
-        assert public_issue in empty_ids
-        assert restricted_issue not in empty_ids
+        empty_ids = set(_opening_commitment_ids(prepared_empty.opening))
+        assert staged_public in empty_ids
+        assert staged_restricted not in empty_ids
     finally:
         release_material_tree(prepared_empty.root)
 
     ensure_summon_enter(db, int(night_empty["id"]), "杨嗣昌")
     prepared_uninf = prepare_scene_materials(db, state)
     try:
-        uninf_ids = _opening_commitment_ids(prepared_uninf.opening)
-        assert public_issue in uninf_ids
-        assert restricted_issue not in uninf_ids
+        uninf_ids = set(_opening_commitment_ids(prepared_uninf.opening))
+        assert staged_public in uninf_ids
+        assert staged_restricted not in uninf_ids
     finally:
         release_material_tree(prepared_uninf.root)
 
@@ -1121,11 +1180,19 @@ def test_c1_minister_promise_origin_not_public_visible(game, monkeypatch):
     ensure_summon_enter(db, int(night_p2["id"]), promisor)
     prepared_promisor = prepare_scene_materials(db, state)
     try:
-        p_ids = _opening_commitment_ids(prepared_promisor.opening)
-        assert restricted_issue in p_ids
-        assert public_issue in p_ids
+        p_ids = set(_opening_commitment_ids(prepared_promisor.opening))
+        assert staged_restricted in p_ids
+        assert staged_public in p_ids
     finally:
         release_material_tree(prepared_promisor.root)
+
+    # 待办未因材料过滤而消费。
+    still_pending = {
+        int(t["commitment_ref"])
+        for t in db.dossiers.list_next_audience_todos(status=TODO_STATUS_PENDING)
+        if int(t["commitment_ref"] or 0) in {staged_restricted, staged_public}
+    }
+    assert still_pending == {staged_restricted, staged_public}
 
 
 def test_c2_correction_ids_rejected_on_minister_promise(game):
