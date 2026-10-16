@@ -10,7 +10,6 @@ import json
 
 from ming_sim.db import GameDB
 from ming_sim.models import Character
-from ming_sim.supervision import character_tenure
 from tests.readback_helpers import active_character_name as _minister
 from tests.test_audience_translate_1837_reopen import (
     _close_offline,
@@ -73,6 +72,16 @@ def _close_current_night(db, state, content):
     ).fetchone()
     assert night is not None
     return _close_offline(db, state, content, int(night["id"]))
+
+
+def _office_tenure(db, name: str) -> str:
+    """Read persisted appointment_tenure; missing office row must fail (not 真除 fallback)."""
+    row = db.conn.execute(
+        "SELECT appointment_tenure FROM character_offices WHERE character_name=?",
+        (name,),
+    ).fetchone()
+    assert row is not None
+    return str(row["appointment_tenure"])
 
 
 def _active_privileges(db, state, holder: str) -> list[str]:
@@ -140,7 +149,7 @@ def test_acting_appointment_real_entry_lands_tenure_and_restore(game, monkeypatc
     assert json.loads(str(dossier["payload_json"] or "{}")).get("任别") == "署理"
 
     _player_month(db, state, content, monkeypatch, int(dossier["id"]))
-    assert character_tenure(db, appointee) == "署理"
+    assert _office_tenure(db, appointee) == "署理"
 
     # 同职改真除：须再成案，不得被无动作吞掉（ADR 0064）。
     _scene_declaration(
@@ -166,12 +175,12 @@ def test_acting_appointment_real_entry_lands_tenure_and_restore(game, monkeypatc
     _close_current_night(db, state, content)
     convert_dossier = _dossier_for_pending(db, convert_id)
     _player_month(db, state, content, monkeypatch, int(convert_dossier["id"]))
-    assert character_tenure(db, appointee) == "真除"
+    assert _office_tenure(db, appointee) == "真除"
 
     db_path = db.path
     db.conn.close()
     restored = GameDB(db_path, content)
-    assert character_tenure(restored, appointee) == "真除"
+    assert _office_tenure(restored, appointee) == "真除"
 
 
 def test_grant_revoke_authority_real_entry_and_region_scope(game, monkeypatch):
