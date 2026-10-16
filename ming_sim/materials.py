@@ -752,20 +752,38 @@ def _write_region_detail_files(tmp: Path, db: Any, knowledge: dict) -> list[str]
     return index
 
 
+def _yamen_current_fee_line(db: Any, yamen: Any) -> str:
+    """当前月费复用 flows.fixed_config_amount（base×rate）；实体列只是成立历史。"""
+    from ming_sim.assets import format_money
+    from ming_sim.flows import fixed_config_amount
+
+    key = str(getattr(yamen, "fiscal_key", "") or "").strip()
+    if not key:
+        return "月费：（无在册科目）"
+    cfg = db.fiscal_config.values()
+    if key not in cfg:
+        return "月费：（无在册科目）"
+    row = db.fiscal_config.row(key)
+    account = ""
+    if row is not None:
+        account = str(row["account"] or "").strip()
+    if not account:
+        account = str(getattr(yamen, "fee_account", "") or "")
+    return f"月费：{format_money(fixed_config_amount(cfg, key))}（{account}）"
+
+
 def _yamen_material_text(db: Any, yamen: Any, *, include_fact: Any = None) -> str:
-    """主官/推演可读的衙门账：名称、主官、月费与历月下落。
+    """主官/推演可读的衙门账：名称、主官、当前月费与历月下落。
 
     月度下落复用既有 ``_textual_facts_text``（保留 body 原样，P6），不另写投影循环。
-    月费单位＝账本万两（与 fiscal_config / MONEY_UNIT 同契约）。
+    当前月费复用 fixed_config_amount（与预算/扣款同一 base×rate 真源）。
     ``include_fact`` 与人物/军队/地区按月实况同一来源可见性接缝；世界推演默认不筛。
     """
-    from ming_sim.assets import format_money
-
     lines = [
         f"id：{int(yamen.id)}",
         f"名称：{yamen.name}",
         f"主官：{yamen.chief_name or '（未指定）'}",
-        f"月费：{format_money(int(yamen.monthly_fee))}（{yamen.fee_account}）",
+        _yamen_current_fee_line(db, yamen),
         "月度下落：",
         _textual_facts_text(
             db.textual_facts,
@@ -806,7 +824,7 @@ def _write_world_yamen_files(
     """过月推演/邸报材料：在职衙门及其月度下落。
 
     世界推演保留完整实体与事实；邸报 ``public_only`` 先按衙门 origin_ref 过滤整本
-    （名称/主官/月费不得泄漏），再对月度下落复用 ``include_fact``。
+    （名称/主官/当前月费不得泄漏），再对月度下落复用 ``include_fact``。
     """
     from ming_sim.knowledge import origin_visible_to
 
@@ -2635,12 +2653,9 @@ def inquiry_order_source_suffix(order_id: int) -> str:
     """查访见闻指向一条密令的结构化后缀。不用 secret_order: 前缀。"""
     return f":order:{int(order_id)}"
 
-def dossier_id_in_origin(origin: object) -> Optional[int]:
-    """从 origin 取出案卷 id；与读口同一形状（decree_dossier 别名、后缀）。
-
-    id 走 strict_sqlite_id：超界返回 None，由调用方 fail-closed，不抛 OverflowError。
-    """
-    match = re.match(r"(?:decree_)?dossier:(\d+)(?:[:/]|$)", str(origin or ""))
+def _strict_id_in_origin(origin: object, pattern: str) -> Optional[int]:
+    """Match ``pattern`` (group 1 = id), then strict_sqlite_id; fail-closed to None."""
+    match = re.match(pattern, str(origin or ""))
     if match is None:
         return None
     from ming_sim.strict_types import strict_sqlite_id
@@ -2649,22 +2664,16 @@ def dossier_id_in_origin(origin: object) -> Optional[int]:
         return strict_sqlite_id(match.group(1))
     except (TypeError, ValueError):
         return None
+
+
+def dossier_id_in_origin(origin: object) -> Optional[int]:
+    """从 origin 取出案卷 id；与读口同一形状（decree_dossier 别名、后缀）。"""
+    return _strict_id_in_origin(origin, r"(?:decree_)?dossier:(\d+)(?:[:/]|$)")
 
 
 def secret_order_id_in_origin(origin: object) -> Optional[int]:
-    """从 origin 取出密令 id；与 origin_visible_to 同一形状（brief 别名、后缀）。
-
-    id 走 strict_sqlite_id：超界返回 None，不抛 OverflowError。
-    """
-    match = re.match(r"secret_order(?:_brief)?:(\d+)(?:[:/]|$)", str(origin or ""))
-    if match is None:
-        return None
-    from ming_sim.strict_types import strict_sqlite_id
-
-    try:
-        return strict_sqlite_id(match.group(1))
-    except (TypeError, ValueError):
-        return None
+    """从 origin 取出密令 id；与 origin_visible_to 同一形状（brief 别名、后缀）。"""
+    return _strict_id_in_origin(origin, r"secret_order(?:_brief)?:(\d+)(?:[:/]|$)")
 
 
 def origin_claims_secret_or_dossier(origin: object) -> bool:
@@ -2677,19 +2686,8 @@ def origin_claims_secret_or_dossier(origin: object) -> bool:
 
 
 def yamen_id_in_origin(origin: object) -> Optional[int]:
-    """从 origin 取出衙门 id；与 secret/dossier 同形（后缀、strict id）。
-
-    id 走 strict_sqlite_id：超界或非十进制返回 None，由调用方 fail-closed。
-    """
-    match = re.match(r"yamen:(\d+)(?:[:/]|$)", str(origin or ""))
-    if match is None:
-        return None
-    from ming_sim.strict_types import strict_sqlite_id
-
-    try:
-        return strict_sqlite_id(match.group(1))
-    except (TypeError, ValueError):
-        return None
+    """从 origin 取出衙门 id；与 secret/dossier 同形（后缀、strict id）。"""
+    return _strict_id_in_origin(origin, r"yamen:(\d+)(?:[:/]|$)")
 
 
 def origin_claims_yamen(origin: object) -> bool:

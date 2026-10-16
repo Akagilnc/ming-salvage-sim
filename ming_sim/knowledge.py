@@ -152,14 +152,14 @@ def _secret_order_visible_to(db: Any, order_id: int, character_name: str) -> boo
 
 def origin_visible_to(
     db: Any, origin: object, character_name: str = "", *, linked_dossier_id: int = 0,
-    _seen: frozenset[str] | None = None,
 ) -> bool:
     """Secret provenance grants only handlers; office/publicity never grants truth.
 
     Empty reader denotes the public feed, not the all-seeing world simulator.
     Affairs are associations, not access boundaries for their individual facts.
     ``yamen:<id>`` chases the office's own origin_ref (#1915 F1), same shape as
-    dossier→secret_order; no separate permission model.
+    dossier→secret_order; no separate permission model. Write path already rejects
+    yamen→yamen founding origins, so the chase does not maintain a cycle set.
 
     Identity tokens reuse materials.secret_order_id_in_origin / dossier_id_in_origin
     (strict id). Claimed zero stays a claimed id (not undeclared). Unresolvable or
@@ -179,9 +179,6 @@ def origin_visible_to(
     from ming_sim.strict_types import strict_sqlite_id
 
     source = str(origin or "")
-    seen = _seen or frozenset()
-    if source and source in seen:
-        return False
     if origin_claims_yamen(source):
         yamen_id = yamen_id_in_origin(source)
         if yamen_id is None:
@@ -195,7 +192,6 @@ def origin_visible_to(
         if nested and nested != source:
             return origin_visible_to(
                 db, nested, character_name, linked_dossier_id=linked_dossier_id,
-                _seen=seen | {source},
             )
     registered = db.conn.execute(
         'SELECT kind, participant_roster, body FROM character_knowledge_sources '
