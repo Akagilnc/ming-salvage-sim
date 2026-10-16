@@ -459,6 +459,7 @@ def apply_person_changes(
                                 or item.get("辖区")
                                 or ""
                             ).strip(),
+                            action=action,
                             llm_config=llm_config,
                             source=source,
                         ),
@@ -540,6 +541,7 @@ def apply_person_changes(
                         or item.get("辖区")
                         or ""
                     ).strip(),
+                    action=action,
                     llm_config=llm_config,
                     source=source,
                 ),
