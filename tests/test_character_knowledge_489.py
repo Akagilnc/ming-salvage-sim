@@ -1,5 +1,4 @@
 from ming_sim.opening_seed import seed_opening_world
-from tests.material_helpers import prepare_identity_materials
 import json
 import pytest
 from tests.dossier_test_helpers import create_test_secret_order
@@ -695,24 +694,17 @@ def test_multi_lead_typed_archives_reach_only_each_office_successor(game, tmp_pa
     # 刑部 is a legal central yamen: successor shares archive identity with the lead.
     assert case_id in _referenceable_dossier_ids(db, case_successor.name, turn)
 
-def test_inner_court_knowledge_world_excludes_court_key(game, tmp_path):
-    """#1914：派系态势进材料目录合法；近侍 knowledge.world 仍无 court 键。
+def test_inner_court_attendant_knowledge_has_vacancy_province_without_court(game):
+    """#1914：近侍 knowledge 知情边界——personnel/regional 接通，world 无 court。
 
-    旧案曾禁止 get_faction_stance_summaries（材料入口一并禁死）。现票允许
-    大臣/推演读态势，故只保留 knowledge 隔离面，不再反向禁止合法供料。
+    只守角色知情面；公事档案/派系态势交付由召对消费接缝证明
+    （test_scene_chat_one_call_returns_multi_person_script），本案不冒充端到端。
     """
-    db, state, content = game
-
-    previous = content.characters["王承恩"]
-    messenger = content.characters["曹化淳"]
-    db.set_character_office(previous.name, "内廷随侍", "内廷")
-    db.set_character_office(messenger.name, "御前近臣", "内廷")
-    for person in (previous, messenger):
-        world = build_character_knowledge(db, state, person.name)["world"]
-        assert "court" not in world
-        prepare_identity_materials(
-            db, state, person, dest_root=tmp_path / person.name,
-        )
+    db, state, _content = game
+    world = build_character_knowledge(db, state, "王承恩")["world"]
+    assert str(world.get("personnel") or "").strip()
+    assert str(world.get("regional") or "").strip()
+    assert "court" not in world
 
 
 def test_public_directive_is_seen_without_granting_secret_order(game):
