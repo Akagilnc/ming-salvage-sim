@@ -116,7 +116,7 @@ class TextualFactStore(RowStore):
             "FROM textual_facts "
             "WHERE (subject_kind = ? AND subject_id = ?) OR (affair_id = ? AND affair_id > 0) "
             "ORDER BY year ASC, period ASC, id ASC",
-            (kind, target, int(target) if kind == "affair" and target.isdecimal() else 0),
+            (kind, target, _affair_fk_id(target) if kind == "affair" else 0),
         ).fetchall()
         return tuple(_row_to_fact(row) for row in rows)
 
@@ -142,12 +142,40 @@ def _row_to_fact(row: Any) -> TextualFact:
     )
 
 
+def _integer_subject_text(raw: str) -> bool:
+    """Python ``int`` decimal-string shape: optional sign, ASCII digits, underscores.
+
+    Shape only — conversion/range still go through strict_sqlite_id. Used so digit-limit
+    or range ValueError cannot be mistaken for a non-integer historical affair key.
+    """
+    body = raw[1:] if raw[:1] in "+-" else raw
+    if not body or body[0] == "_" or body[-1] == "_" or "__" in body:
+        return False
+    has_digit = False
+    for ch in body:
+        if ch in "0123456789":
+            has_digit = True
+        elif ch != "_":
+            return False
+    return has_digit
+
+
+def _affair_fk_id(target: str) -> int:
+    """Numeric affair subject → SQLite FK; non-integer / unstorable → 0 (match by text id)."""
+    from ming_sim.strict_types import strict_sqlite_id
+
+    try:
+        return strict_sqlite_id(target)
+    except (TypeError, ValueError):
+        return 0
+
+
 def parse_subject(subject_kind: object, subject_id: object) -> tuple[str, str]:
     """Kind + identity normalize for textual facts (sole numeric-id authority, #1915 S2).
 
-    Affair/yamen integer ids collapse via strict_int + strict_sqlite_id (Python int
-    semantics: '02'/'+2'/'2' share one row; out-of-range integers reject). Non-integer
-    affair keys stay as-is for historical materials; yamen must be in-range integer.
+    Integer-shaped affair/yamen ids collapse via strict_sqlite_id (Python int semantics:
+    '02'/'+2'/'2' share one row; range and conversion failures reject). Non-integer affair
+    keys stay as-is for historical materials; yamen must be in-range integer.
     """
     kind = str(subject_kind or "").strip()
     if kind not in TEXTUAL_FACT_SUBJECT_KINDS:
@@ -158,22 +186,18 @@ def parse_subject(subject_kind: object, subject_id: object) -> tuple[str, str]:
     if not target:
         raise DeclarationDataError("textual fact subject_id cannot be empty")
     if kind in {"affair", "yamen"}:
-        from ming_sim.strict_types import strict_int, strict_sqlite_id
+        from ming_sim.strict_types import strict_sqlite_id
 
-        try:
-            as_int = strict_int(target)
-        except (TypeError, ValueError) as exc:
-            if kind == "yamen":
-                raise DeclarationDataError(
-                    "textual fact yamen subject_id must be an integer id"
-                ) from exc
-            # affair: non-integer keys remain for historical direct-write materials
-        else:
-            # Integer form (incl. +N/0N): enforce SQLite range; do not keep as "historical".
+        if _integer_subject_text(target):
             try:
-                target = str(strict_sqlite_id(as_int))
-            except ValueError as exc:
+                target = str(strict_sqlite_id(target))
+            except (TypeError, ValueError) as exc:
                 raise DeclarationDataError(
                     f"textual fact {kind} subject_id must be an integer id"
                 ) from exc
+        elif kind == "yamen":
+            raise DeclarationDataError(
+                "textual fact yamen subject_id must be an integer id"
+            )
+        # else affair: non-integer keys remain for historical direct-write materials
     return kind, target
