@@ -99,8 +99,13 @@ def _seed_continuation(db, state, monkeypatch, row, declaration):
 
 
 def test_month_entry_stalled_then_imperial_push_promulgates_same_dossier(game, monkeypatch):
-    """贯通：生产 stalled 开案头两选 → 强推 backed+颁布；旧声明不回写，不另建案卷；不重开判官。"""
+    """贯通：生产 stalled 开案头两选 → 强推 backed+颁布；旧声明不回写，不另建案卷；不重开判官。
+
+    含已答未消费窗口：落答案后物化不得另开 :rN，原选择仍兑现。
+    """
     import ming_sim.decree as decree_mod
+    from ming_sim.month_chain import _load_chain, _materialize_rescript_desk
+    from ming_sim.rescript_actions import persist_answers
 
     db, state, content = game
     did, ref = _plant_proposed(db, state, title="强推原案")
@@ -137,6 +142,23 @@ def test_month_entry_stalled_then_imperial_push_promulgates_same_dossier(game, m
         "action": "imperial_push",
         "note": "朕独担此旨",
     }
+    # 只落答案、不消费——submit 释放写锁后、兄弟续推物化前的窗口。
+    persist_answers(db, state, [choice], content=content)
+    chain = _load_chain(db, int(state.turn))
+    assert choice["decision_key"] not in chain.get("rescript_consumed", [])
+    assert db.dossiers.get(did)["payload"].get("deliberation_state") == "stalled"
+    _materialize_rescript_desk(db, state, chain)
+    deliberation_rows = [
+        r for r in db.issues.list_pending_decisions(int(state.turn))
+        if str(r.get("event_id") or "").startswith(f"deliberation:{did}")
+    ]
+    assert len(deliberation_rows) == 1
+    assert deliberation_rows[0]["event_id"] == f"deliberation:{did}"
+    assert deliberation_rows[0]["status"] == "decided"
+    assert not any(
+        str(r.get("event_id") or "").startswith(f"deliberation:{did}:")
+        for r in deliberation_rows
+    )
     before_ids = {int(d["id"]) for d in db.dossiers.list_dossiers()}
     session.submit_hitl_choices([choice], write_gate=session._write_gate)
     pushed = db.dossiers.get(did)
@@ -149,6 +171,7 @@ def test_month_entry_stalled_then_imperial_push_promulgates_same_dossier(game, m
     assert len(endorsements) == 1
     assert endorsements[0]["form"] == "御笔手敕"
     assert endorsements[0]["decision_key"] == choice["decision_key"]
+    assert choice["decision_key"] in _load_chain(db, int(state.turn)).get("rescript_consumed", [])
     assert not db.conn.execute(
         "SELECT id FROM issues WHERE origin_ref=? AND status='active'",
         (f"dossier:{did}",),
@@ -184,54 +207,6 @@ def test_month_entry_stalled_then_hold_keeps_original(game, monkeypatch):
     answered = db.issues.get_rescript_desk_rows_by_keys([choice["decision_key"]])
     assert answered and answered[0]["choice"]
     assert result.awaiting is False or not result.decisions
-
-
-def test_decided_unconsumed_deliberation_does_not_reopen_entry(game, monkeypatch):
-    """已答未消费仍属本次待裁：物化不得另开 :rN；消费后原选择兑现，无重复入口。"""
-    from ming_sim.month_chain import _load_chain, _materialize_rescript_desk
-    from ming_sim.rescript_actions import persist_answers
-
-    db, state, content = game
-    did, ref = _plant_proposed(db, state, title="已答未消费", target_id="decided-unconsumed")
-    _stage_stalled(db, state, ref)
-    canned_full_settlement(monkeypatch)
-    session = make_light_session(db, state, content)
-    session.llm_config = object()
-    assert session.resolve_turn(allow_empty_decree=True).awaiting
-    row = _deliberation_desk_row(session, did)
-    choice = {
-        "decision_key": row["decision_key"],
-        "action": "imperial_push",
-        "note": "朕独担",
-    }
-    # 只落答案、不消费——同 submit 释放写锁后、兄弟续推物化前的窗口。
-    persist_answers(db, state, [choice], content=content)
-    chain = _load_chain(db, int(state.turn))
-    assert choice["decision_key"] not in chain.get("rescript_consumed", [])
-    assert db.dossiers.get(did)["payload"].get("deliberation_state") == "stalled"
-    _materialize_rescript_desk(db, state, chain)
-    deliberation_rows = [
-        r for r in db.issues.list_pending_decisions(int(state.turn))
-        if str(r.get("event_id") or "").startswith(f"deliberation:{did}")
-    ]
-    assert len(deliberation_rows) == 1
-    assert deliberation_rows[0]["event_id"] == f"deliberation:{did}"
-    assert deliberation_rows[0]["status"] == "decided"
-    assert not any(
-        str(r.get("event_id") or "").startswith(f"deliberation:{did}:")
-        for r in deliberation_rows
-    )
-    # 原答案仍由既有消费缝兑现，不得因物化旁路失效。
-    session.submit_hitl_choices([choice], write_gate=session._write_gate)
-    pushed = db.dossiers.get(did)
-    assert pushed["payload"].get("deliberation_state") == "backed"
-    assert pushed.get("promulgation_decision") == "promulgated"
-    assert choice["decision_key"] in _load_chain(db, int(state.turn)).get("rescript_consumed", [])
-    assert not any(
-        str(r.get("event_id") or "").startswith(f"deliberation:{did}")
-        and str(r.get("status") or "") == "pending"
-        for r in db.issues.list_pending_decisions(int(state.turn))
-    )
 
 
 def test_hold_then_restall_push_does_not_replay_old_hold(game, monkeypatch):
