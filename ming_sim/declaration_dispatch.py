@@ -949,17 +949,29 @@ _COMMISSION_EXCLUSIVE_OBJECT_KEYS = (
 
 
 def _declared_object_slot(value: object) -> object | None:
-    """Optional object slot: missing/empty mapping/blank = unused; else the declared value.
+    """Optional object slot: missing/empty mapping = unused; else the declared value.
 
-    Mirrors appointment/grant empty-slot unused semantics so stub ``{}`` / ``""``
-    do not seize a commission branch or trip mutual-exclusion against a sibling.
-    Non-empty bad payloads stay declared and are rejected downstream.
+    Mirrors appointment's empty-object unused semantics so stub ``{}`` does not
+    seize the commission branch or trip mutual-exclusion against a real sibling.
+    Non-empty bad payloads (including ``""``) stay declared and are rejected
+    downstream — blank string is not silently treated as unused here.
     """
-    if value is None or value == "":
+    if value is None:
         return None
     if isinstance(value, Mapping) and not value:
         return None
     return value
+
+
+def _declared_grant_appointment_slot(value: object) -> bool:
+    """grant/appointment declared when non-empty mapping or non-blank scalar.
+
+    Historical empty-slot: ``{}`` and ``""`` unused. Kept off object-slot path so
+    exclusive object keys still treat ``""`` as declared bad payload (invalid_shape).
+    """
+    if isinstance(value, Mapping):
+        return bool(value)
+    return value not in (None, "")
 
 
 def _declared_commission_kinds(item: Mapping[str, object]) -> frozenset[str]:
@@ -971,9 +983,9 @@ def _declared_commission_kinds(item: Mapping[str, object]) -> frozenset[str]:
     for key in _COMMISSION_EXCLUSIVE_OBJECT_KEYS:
         if _declared_object_slot(item.get(key)) is not None:
             kinds.add(key)
-    # grant/appointment 与对象槽同空槽语义；二者可合成一件事，故不在 exclusive 表。
+    # grant/appointment 可合成一件事，故不在 exclusive 表；空槽语义见专用判定。
     for key in ("grant", "appointment"):
-        if _declared_object_slot(item.get(key)) is not None:
+        if _declared_grant_appointment_slot(item.get(key)):
             kinds.add(key)
     if _is_prohibit_covert_levy_item(item):
         kinds.add("prohibit_covert_levy")
