@@ -773,9 +773,9 @@ def _preflight_declared_event_groups(
         if event_id not in candidates or db.issues.event_terminal_state(event_id) or event.auto_trigger:
             _reject(pending, f"战略事件当前不能触发：{event_id}")
             continue
+        # group 来自 sanitize 后的 clean；new_issues 项已为 dict，只判事件身份。
         if not any(
-            isinstance(issue, dict)
-            and str(issue.get("origin_kind") or "").lower() == "event_pool"
+            str(issue.get("origin_kind") or "").lower() == "event_pool"
             and str(issue.get("id") or issue.get("origin_ref") or "").strip() == event_id
             for item in group for issue in (item.get("new_issues") or [])
         ):
