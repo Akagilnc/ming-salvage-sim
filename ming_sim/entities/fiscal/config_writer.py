@@ -7,10 +7,21 @@ def _write_fiscal_config_change(
     db: Any, *, turn: int, key: str, old_value: int, new_value: int,
     origin_ref: str, reason: str, beyond_intent: object = 0,
 ) -> None:
-    """Canonical fiscal change writer shared by extraction and prohibition rollback."""
+    """Canonical fiscal change writer shared by extraction and prohibition rollback.
+
+    Adjustment provenance always goes to change history. Live catalogue origin is
+    left alone when the key is a yamen fee base (``yamens.fiscal_key``): subsequent
+    monthly charges must keep ``yamen:<id>`` attribution and source visibility
+    (#1915 F1). Unbound keys still take the change origin on the live row.
+    """
     db.validate_fiscal_config_value(key, new_value)
     db.set_fiscal_config(key, new_value, commit=False)
-    db.fiscal_config.set_origin(key, origin_ref)
+    yamen_bound = False
+    yamens = getattr(db, "yamens", None)
+    if yamens is not None and hasattr(yamens, "id_for_fiscal_key"):
+        yamen_bound = yamens.id_for_fiscal_key(key) is not None
+    if not yamen_bound:
+        db.fiscal_config.set_origin(key, origin_ref)
     db.fiscal_config.record_change(
         turn=turn, key=key, old_value=old_value, new_value=new_value,
         origin_ref=origin_ref, reason=reason, beyond_intent=beyond_intent,

@@ -175,7 +175,7 @@ def test_monthly_fee_present_value_follows_fiscal_not_entity_copy(game):
     assert moves, "月费须经公开 economy origin 读口可见，不得改查 SQL 兜底"
     assert any(int(m["delta"]) == -6 for m in moves), "rate 调整后扣款须跟 base×rate"
 
-    # base 12→8，rate 仍 50 → 现值 4；成立历史不变
+    # base 12→8，rate 仍 50 → 现值 4；成立历史不变；live origin 仍属 yamen（调额只进变更史）
     changed = settle_delta(
         state, db,
         {
@@ -193,6 +193,19 @@ def test_monthly_fee_present_value_follows_fiscal_not_entity_copy(game):
     assert db.fiscal_config.values().get(fiscal_key) == 8
     assert _live_fee_amount(db, fiscal_key) == 4
     assert int(db.yamens.get(yamen_id).monthly_fee) == MONTHLY_FEE_WAN
+    live_row = db.fiscal_config.row(fiscal_key)
+    assert live_row is not None
+    assert str(live_row["origin_ref"] or "") == origin
+    history = db.fiscal_config.changes_for(fiscal_key, "盘面自发")
+    assert history, "调额来源须在变更史留痕"
+
+    with atomic(db):
+        apply_fixed_period_flows(db, state)
+    base_moves = [
+        item for item in db.reign.list_economy_moves_for_origin(origin)
+        if int(item.get("delta") or 0) == -4
+    ]
+    assert base_moves, "base 调额后扣款仍须挂 yamen 回指，不得改属调额来源"
 
     removed = settle_delta(
         state, db,
@@ -371,8 +384,11 @@ def test_materials_paths_and_seeded_fact_filter_seam(game, tmp_path):
 
 
 def test_secret_yamen_hidden_from_public_materials_and_treasury(game, tmp_path):
-    """密旨来源的衙门：世界全量保留；邸报不进实体路径；月费 yamen 回指公开不可见。"""
-    db, state, _ = game
+    """密旨来源的衙门：世界全量保留；邸报不进实体路径；月费 yamen 回指公开不可见。
+
+    含 base 公开调额后：扣款仍挂 yamen 回指（来源边界不因调额断链）。
+    """
+    db, state, content = game
     order_id = create_test_secret_order(db, state, CHIEF, "密设查弊", "暗中查弊", [])
     origin = f"secret_order:{order_id}"
     created, _night_id, _ctid = _create_yamen_via_night(
@@ -381,7 +397,9 @@ def test_secret_yamen_hidden_from_public_materials_and_treasury(game, tmp_path):
     assert created.yamen_creates.rejected == []
     yamen_id = int(created.yamen_creates.applied[0]["id"])
     yamen_origin = f"yamen:{yamen_id}"
-    assert db.yamens.get(yamen_id).origin_ref == origin
+    yamen = db.yamens.get(yamen_id)
+    assert yamen.origin_ref == origin
+    fiscal_key = str(yamen.fiscal_key)
 
     world = prepare_world_materials(db, state, dest_root=tmp_path / "world")
     assert any("衙门" in line for line in world.index_lines)
@@ -394,6 +412,23 @@ def test_secret_yamen_hidden_from_public_materials_and_treasury(game, tmp_path):
     finally:
         release_material_tree(gazette.root)
 
+    # 公开来源调 base 后，live 归属与扣款仍走 yamen 回指（变更史另记调额来源）
+    changed = settle_delta(
+        state, db,
+        {
+            "fiscal_changes": [{
+                "key": fiscal_key,
+                "delta": 8 - 9,
+                "reason": "核减密衙门月费",
+                "origin_ref": "盘面自发",
+            }]
+        },
+        SettlementContext(content=content),
+    )
+    assert changed.fiscal is not None
+    assert changed.fiscal.changes.rejected == []
+    assert str(db.fiscal_config.row(fiscal_key)["origin_ref"] or "") == yamen_origin
+
     with atomic(db):
         apply_fixed_period_flows(db, state)
     fee_moves = [
@@ -401,10 +436,17 @@ def test_secret_yamen_hidden_from_public_materials_and_treasury(game, tmp_path):
         if int(item.get("delta") or 0) < 0
     ]
     assert fee_moves, "月费须能按 yamen 回指读到（世界/内部账）"
+    assert any(int(m["delta"]) == -8 for m in fee_moves)
     assert all(
         not origin_visible_to(db, str(item.get("origin_ref") or ""), "")
         for item in fee_moves
     )
+    # 公开调额不得把密衙门支出挂到公开 origin（结构化：公开 origin 下无本 fee 流水）
+    public_fee = [
+        item for item in db.reign.list_economy_moves_for_origin("盘面自发")
+        if int(item.get("delta") or 0) == -8
+    ]
+    assert public_fee == []
 
 
 def test_textual_fact_keeps_origin_and_affair_separate(game):

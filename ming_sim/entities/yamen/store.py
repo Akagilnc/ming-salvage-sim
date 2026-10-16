@@ -171,6 +171,22 @@ class YamenStore(RowStore):
         if owns:
             self._conn.commit()
 
+    def id_for_fiscal_key(self, fiscal_key: str) -> Optional[int]:
+        """Live base key → yamen id; empty/unbound → None."""
+        key = str(fiscal_key or "").strip()
+        if not key:
+            return None
+        row = self._conn.execute(
+            "SELECT id FROM yamens WHERE fiscal_key=? LIMIT 1",
+            (key,),
+        ).fetchone()
+        return int(row["id"]) if row is not None else None
+
+    def origin_for_fiscal_key(self, fiscal_key: str) -> str:
+        """Durable fee attribution origin ``yamen:<id>`` when key is bound."""
+        yamen_id = self.id_for_fiscal_key(fiscal_key)
+        return f"yamen:{yamen_id}" if yamen_id is not None else ""
+
 
 def _row_to_yamen(row: Any) -> Yamen:
     return Yamen(
