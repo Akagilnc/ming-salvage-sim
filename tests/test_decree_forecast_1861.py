@@ -27,7 +27,7 @@ from tests.conftest import (
     stub_scene_agent,
 )
 from tests.test_session_write_queue_1353 import wait_pending_writes
-from tests.month_chain_helpers import empty_rescript_response, make_light_session
+from tests.month_chain_helpers import InlineExecutor, empty_rescript_response, make_light_session
 
 # 两个时限各管一件事，量纲不同，不可合并：
 #
@@ -499,10 +499,11 @@ def test_restored_directive_forecast_uses_its_approved_night(game, monkeypatch):
         month_translate, "run_declaration_translate_prompt",
         lambda *_a, **_k: {"commissions": []},
     )
+    # 本案非并发契约：InlineExecutor 同步跑完真实 schedule 链，不依赖排空时限。
+    import ming_sim.audience_translation as audience_translation
+    monkeypatch.setattr(audience_translation, "_executor", InlineExecutor())
     session = _sess(db, state, content, monkeypatch, lambda *_a, **_k: {})
     forecast_mod.schedule_restored_decree_forecasts(session, [pending_id])
-    # 挂死探测用本文件 _DRAIN_TIMEOUT_S；通过条件＝批准夜身份与声明持久化，非五秒排空。
-    wait_pending_writes(session, timeout_s=_DRAIN_TIMEOUT_S)
 
     staged = db.staged_declarations.staged_for(
         pending_action_decree_ref(pending_id, 1),
