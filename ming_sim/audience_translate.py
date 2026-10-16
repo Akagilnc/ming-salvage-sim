@@ -207,6 +207,11 @@ def build_translation_target_grounding(db: Any, state: Any = None) -> str:
             f"secret_order\t{int(row['id'])}\t{str(row['status'] or '')}\t"
             f"{str(row['title'] or '')}"
         )
+    # #1916 C3：合法事务身份供料，供 commission.affair_declaration 回指。
+    for affair in db.affairs.list_open():
+        lines.append(
+            f"affair\t{int(affair.id)}\t{str(affair.name or '')}"
+        )
     # #1915：新设衙门 id↔名称，月末 textual_facts(subject_kind=yamen) 回指用。
     for yamen in db.yamens.list_active():
         lines.append(
@@ -348,6 +353,11 @@ def build_c0_declaration_shape() -> str:
         '"target_candidate": "续办所指候选 id（新案留空）", '
         '"commitment_kind": "承诺类别（无承诺填无）", '
         '"deadline_months": 0, "stop_condition": {}},\n'
+        '      "minister_promise": {"title": "承诺题名", "content": "承诺正文", '
+        '"promisor": "许诺大臣人名", "deadline_months": 0},\n'
+        '      "affair_declaration": {"attach": "existing|new", '
+        '"affair_id": "权威目标目录中的已有事务 id（existing）", '
+        '"name": "新事务名（new）", "origin": "起因（new）"},\n'
         '      "recommendation": {\n'
         '        "recommender": "荐者人名", "reason": "荐词原句（非空，逐字）"\n'
         "      },\n"
@@ -439,7 +449,12 @@ def build_audience_translate_prompt(
         "不要拆成拟旨 / 拨帑 / 交办三道。\n"
         "- 离殿后独立责成的事项逐件给 commission.assignment；title/target_id 是事项锚，"
         "assignee/participant_roster 来自已明确的承办人；续办只在能指向既有候选时填 target_candidate。"
-        "不从当场问答推造独立差事。\n"
+        "不从当场问答推造独立差事；但大臣主动作出的具体承诺走 commission.minister_promise"
+        "（有无明说期限都记；明说了填 deadline_months，没说则不编到期日；"
+        "promisor 为许诺大臣；不经皇帝应允、不成旨意）。"
+        "所属事务走同一条 commission.affair_declaration：已有事务用 attach=existing 与"
+        "【权威目标目录】中的 affair id；新事务用 attach=new 与 name/origin；"
+        "未点明所属则省略，不得猜造 id。\n"
         "- 皇帝从本场大臣陈策中点选方案时，交办正文由转译明确给出，"
         "commission.strategy_selection 指向【本场已说的话】中对应陈策轮 chat_turn_id，"
         "proposer 为陈策大臣人名；无该源轮不得猜造。\n"

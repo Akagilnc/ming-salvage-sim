@@ -952,7 +952,7 @@ _COMMISSION_EXCLUSIVE_OBJECT_KEYS = (
     "punishment", "pacification", "assignment", "revoke",
     "secret_order", "secret_order_progress", "secret_order_update",
     "secret_order_review", "strategy_selection",
-    "authorization", "revoke_authority",
+    "authorization", "revoke_authority", "minister_promise",
 )
 
 
@@ -1488,6 +1488,14 @@ def _dispatch_commissions(
         if ids and (night_id <= 0 or source_chat_turn_id <= 0):
             _reject(rejected, item, "拒收修正须来自召对轮", "missing_ref", source)
             continue
+        # #1916 C2：自诺直接入承诺账，不是 pending_actions；修正 id 不得挂其上。
+        # 对象槽语义与互斥/分派共用 _declared_object_slot：{} 空桩=未使用。
+        if ids and _declared_object_slot(item.get("minister_promise")) is not None:
+            _reject(
+                rejected, item,
+                "大臣自诺不经旨意修正链路", "invalid_shape", source,
+            )
+            continue
         # 明确修正是皇帝的新旨，不沿用召对实况的 system_simulation 来源。
         item_source = Provenance.player_decree if ids and source == Provenance.system_simulation else source
         result = _dispatch_commission_items(
@@ -1497,15 +1505,17 @@ def _dispatch_commissions(
         )
         if ids:
             for staged in result.applied:
+                # 自诺纠错已在上方拒收；此处只挂真实 pending 行，缺主键/缺行响亮失败。
+                pending_id = staged["id"]
                 row = db.conn.execute(
-                    "SELECT payload_json FROM pending_actions WHERE id=?", (staged["id"],),
+                    "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
                 ).fetchone()
                 payload = parse_engine_payload_json(row["payload_json"])
                 # 复用改草保留控制键的契约，任免改路径也不丢修正关联。
                 payload["_resolves_rejection_ids"] = list(dict.fromkeys(
                     payload.get("_resolves_rejection_ids", []) + ids,
                 ))
-                db.dossiers.set_pending_payload(staged["id"], json.dumps(payload, ensure_ascii=False))
+                db.dossiers.set_pending_payload(pending_id, json.dumps(payload, ensure_ascii=False))
                 if "payload" in staged:
                     staged["payload"] = payload
         applied.extend(result.applied)
@@ -1590,11 +1600,19 @@ def _dispatch_commission_items(
     items, rejected = _section_items(raw, label="交办声明", source=source)
     applied: List[Any] = []
     for item in items:
-        # 互斥唯一真源：任何前序分支（含禁摊派）均不得静默择一（#1912）。
-        if _exclusive_commission_conflict(_declared_commission_kinds(item)):
+        # 御笔强推只解析一次，复用既有种类收集与互斥闸（#1912 / #1916）。
+        from ming_sim.db import imperial_push_target_dossier_id
+        try:
+            push_id = imperial_push_target_dossier_id(item)
+        except ValueError as exc:
+            _reject(rejected, item, str(exc), "invalid_shape", source)
+            continue
+        kinds = _declared_commission_kinds(item)
+        if push_id is not None:
+            kinds = kinds | {"imperial_push"}
+        if _exclusive_commission_conflict(kinds):
             _reject(rejected, item, "交办载荷须为独立对象", "invalid_shape", source)
             continue
-
         # #1837 reopen：禁摊派交办——按场面事实绑定暴露案卷，不解析自由文本。
         if _is_prohibit_covert_levy_item(item):
             try:
@@ -1898,6 +1916,133 @@ def _dispatch_commission_items(
             applied.append({"id": row_id, "kind": "secret_order"})
             continue
 
+        minister_promise = _declared_object_slot(item.get("minister_promise"))
+        if minister_promise is not None:
+            # #1916：大臣当场自诺 → 直接入承诺账，不经应允/成案/颁布。
+            if not isinstance(minister_promise, Mapping):
+                _reject(rejected, item, "大臣自诺载荷须为独立对象", "invalid_shape", source)
+                continue
+            body = _declared_prose(item.get("text"))
+            title = _declared_prose(minister_promise.get("title")) or body
+            content = (
+                _declared_prose(minister_promise.get("content"))
+                or body
+                or title
+            )
+            promisor = (
+                _declared_prose(minister_promise.get("promisor"))
+                or str(minister_name or "").strip()
+            )
+            if not content or not title or not promisor:
+                _reject(
+                    rejected, item,
+                    "大臣自诺须有正文/题名与承诺人",
+                    "invalid_shape", source,
+                )
+                continue
+            try:
+                _assert_characters_exist(db, [promisor])
+            except DeclarationReferenceError as exc:
+                _reject(rejected, item, str(exc), "hallucinated_id", source)
+                continue
+            try:
+                end_turn = _assignment_absolute_end_turn(
+                    int(state.turn),
+                    end_turn=minister_promise.get("end_turn", 0),
+                    deadline_months=minister_promise.get("deadline_months", 0),
+                )
+            except DecreeMaterializationValidationError as exc:
+                _reject(
+                    rejected, item, str(exc),
+                    getattr(exc, "category", None) or "invalid_shape", source,
+                )
+                continue
+            # 有期走 form③（end_turn、无 stages）：到期后 close_issues acknowledged
+            # 可收尾；召对顶出由 write_due 扫 minister_promise 一次性承诺写入
+            # next_audience_todos（#1916 / ADR 0013 form③ + 0076 场面）。
+            # 不得用段派生 end_turn——那会堵住 acknowledged 收尾闸。
+            #
+            # 来源身份按承诺粒度唯一（#1916 C1-R1）：同轮多人自诺不得共享
+            # chat_turn:N 作为 character_knowledge_sources.source_id，否则
+            # INSERT OR REPLACE 后写覆盖前写知情人。先落 issue，再用 issue_id
+            # 钉终源，并保留真实源轮前缀。
+            ctid = int(source_chat_turn_id or 0)
+            provisional_origin = (
+                f"chat_turn:{ctid}"
+                if ctid > 0
+                else f"minister_promise:{int(state.turn)}:{promisor}"
+            )
+            # 事务关联：复用既有声明写口，保存模型明确声明（ADR 0154/0155）。
+            affair_payload: Dict[str, Any] = {}
+            if not _attach_commission_affair(
+                db, item, affair_payload, rejected=rejected, source=source,
+            ):
+                continue
+            issue_fields = dict(
+                kind="initiative",
+                title=title,
+                origin_kind="minister_promise",
+                origin_ref=provisional_origin,
+                bar_value=0,
+                inertia=0,
+                stage_text=content,
+                participants=[{
+                    "character_id": promisor,
+                    "tier": "主办",
+                }],
+                end_turn=int(end_turn),
+                commitment_kind="until_stop",
+                cancellable="never",
+                commit=False,
+            )
+            affair_decl = affair_payload.get("affair_declaration")
+            # 私诺新建 vs 挂入既有：peek 在 resolve 前区分来源（ADR 0154 单向关联）。
+            preexisting_affair_id = (
+                db.affairs.peek_declared_id(affair_decl)
+                if isinstance(affair_decl, Mapping) else None
+            )
+            if affair_decl is not None:
+                issue_id = db.insert_issue_with_affair_declaration(
+                    state,
+                    affair_declaration=affair_decl,
+                    **issue_fields,
+                )
+            else:
+                issue_id = db.insert_issue(state, **issue_fields)
+            origin_ref = (
+                f"chat_turn:{ctid}:minister_promise:{int(issue_id)}"
+                if ctid > 0
+                else f"minister_promise:{int(issue_id)}"
+            )
+            db.conn.execute(
+                "UPDATE issues SET origin_ref=? WHERE id=?",
+                (origin_ref, int(issue_id)),
+            )
+            roster = [{"character_id": promisor, "tier": "主办"}]
+            # #1916 C1：自诺来源登记为受限见闻，公开邸报/非当事人不得见。
+            db.register_character_knowledge_source(
+                state, roster, "minister_promise", title, content,
+                source_id=origin_ref, commit=False,
+            )
+            # 私诺 attach=new 新建的事务：事务自身来源亦受限。挂入既有事务
+            # 不改既有事务来源（关联载体 ≠ 事务来源）。
+            linked_affair_id = int(db.issues.affair_id_of(issue_id) or 0)
+            if linked_affair_id > 0 and preexisting_affair_id is None:
+                # 纯出生可见性标记（空正文）；自诺内容只在 origin_ref 那条来源。
+                db.register_character_knowledge_source(
+                    state, roster, "private_affair_birth", "", "",
+                    source_id=db.affairs.origin_ref(linked_affair_id),
+                    commit=False,
+                )
+            # 不写 pending 形 id 字段：issue 主键 ≠ pending_actions.id（#1916 C2）。
+            applied.append({
+                "issue_id": int(issue_id),
+                "kind": "minister_promise",
+                "promisor": promisor,
+                "end_turn": int(end_turn),
+            })
+            continue
+
         assignment = _declared_object_slot(item.get("assignment"))
         if assignment is not None:
             if not isinstance(assignment, Mapping):
@@ -2120,19 +2265,10 @@ def _dispatch_commission_items(
         if not isinstance(mode, str) or mode not in {"ordinary", "midzhi"}:
             _reject(rejected, item, "交办模式非法", "invalid_enum", source)
             continue
-        from ming_sim.db import imperial_push_target_dossier_id
-        try:
-            push_id = imperial_push_target_dossier_id(item)
-        except ValueError as exc:
-            _reject(rejected, item, str(exc), "invalid_shape", source)
+        # push_id 已在件首解析；与 grant/appointment 的互斥由统一互斥闸承接。
+        if push_id is not None and db.dossiers.get(push_id) is None:
+            _reject(rejected, item, "御笔强推目标案卷不存在", "missing_ref", source)
             continue
-        if push_id is not None:
-            if grant_raw or appointment_fields:
-                _reject(rejected, item, "御笔强推不可与普通拨帑或任免交办并存", "invalid_shape", source)
-                continue
-            if db.dossiers.get(push_id) is None:
-                _reject(rejected, item, "御笔强推目标案卷不存在", "missing_ref", source)
-                continue
         text = item.get("text")
         try:
             if grant_raw:
@@ -3309,12 +3445,20 @@ def _dispatch_textual_facts(
         except DeclarationDataError as exc:
             _reject(rejected, item, str(exc), "invalid_shape", source)
             continue
-        # origin_ref＝本条真实来源；affair_declaration＝所属事务。两槽独立（ADR 0154）。
+        # origin_ref = 声明自带真实来源；affair_declaration → affair_id 指针。
+        # 二者正交：不得把事务身份写进 origin_ref，也不得因无事务而清空来源。
         affair_id, error_category, reason = _peek_affair_id(db, item)
         if error_category is not None:
             _reject(rejected, item, reason, error_category, source)
             continue
-        origin_ref = str(item.get("origin_ref") or "").strip()
+        raw_origin = item.get("origin_ref")
+        if raw_origin is None:
+            origin_ref = ""
+        elif not isinstance(raw_origin, str):
+            _reject(rejected, item, "origin_ref 须为字符串", "invalid_shape", source)
+            continue
+        else:
+            origin_ref = raw_origin.strip()
         try:
             from ming_sim.knowledge import assert_origin_identity_exists
             origin_ref = assert_origin_identity_exists(db, origin_ref)

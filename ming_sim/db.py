@@ -864,6 +864,11 @@ class GameDB:
         )
         TextualFactStore.ensure_schema(self.conn)
         self.textual_facts = TextualFactStore(self.conn)
+        StagedDeclarationStore.ensure_schema(self.conn)
+        self.staged_declarations = StagedDeclarationStore(self.conn)
+        AffairStore.ensure_schema(self.conn)
+        self.affairs = AffairStore(self.conn)
+        # affairs 须入前像：夜内 attach=new 创建事务随撤回删除（ADR 0038 / #1916 R1）。
         YamenStore.ensure_schema(self.conn)
         self.yamens = YamenStore(self.conn)
         # fiscal_config 须先于 _rollback_stores：#1915 轮级撤回逆转新建月费科目。
@@ -881,13 +886,10 @@ class GameDB:
                 self.fiscal_config,
                 self.person_logs,
                 self.reign,
+                self.affairs,
             )
             for table in store.TABLES
         }
-        StagedDeclarationStore.ensure_schema(self.conn)
-        self.staged_declarations = StagedDeclarationStore(self.conn)
-        AffairStore.ensure_schema(self.conn)
-        self.affairs = AffairStore(self.conn)
         self.chat_messages = ChatMessageStore(self.conn)
         self.turn_reports = TurnReportStore(self.conn)
         self.resolve_contexts = ResolveContextStore(self.conn)
@@ -11137,6 +11139,9 @@ class GameDB:
                     continue
             elif str(character_name) not in names:
                 continue
+            # 出生可见性纯标记不进见闻正文（#883 / #1916）：只服务 origin_visible_to。
+            if str(row["kind"] or "") == "private_affair_birth":
+                continue
             item = {"turn": int(row["turn"]), "year": int(row["year"]), "period": int(row["period"]),
                     "kind": row["kind"], "title": row["title"], "body": row["body"], "source_id": row["source_id"]}
             result.append(item)
@@ -11486,6 +11491,12 @@ class GameDB:
             # #1896：开案 lane 只由下方 seed_investigation_fact_lanes 写一次并冻结
             # 难度；禁在此预写旧 progress/used 形状（缺 difficulty → 读口填 0 →
             # seed 见 seen 跳过，难度永久钉死为 0）。
+            # 密令 attach=new 新建事务：登记事务自身出生来源为受限（与私诺新建同缝）。
+            # attach=existing 不改既有事务来源。peek 须在成案 resolve 之前。
+            preexisting_affair_id = (
+                self.affairs.peek_declared_id(affair_declaration)
+                if isinstance(affair_declaration, Mapping) else None
+            )
             dossier_id = self.create_decree_dossier(
                 state,
                 action_type="secret_order",
@@ -11503,6 +11514,23 @@ class GameDB:
                 commit=False,
                 _issued_secret_order=True,
             )
+            linked_affair_id = int(
+                self.dossiers.affair_id_of(int(dossier_id)) or 0
+            )
+            if linked_affair_id > 0 and preexisting_affair_id is None:
+                # 纯出生可见性标记：空 title；body 只钉出生密令 id（非共享正文）。
+                # kind=private_affair_birth 仅供 origin_visible_to，知识投影跳过。
+                from ming_sim.materials import SECRET_ORDER_ORIGIN_PREFIX
+
+                self.register_character_knowledge_source(
+                    state,
+                    [{"character_id": minister_name, "tier": "主办"}],
+                    "private_affair_birth",
+                    "",
+                    f"{SECRET_ORDER_ORIGIN_PREFIX}{int(order_id)}",
+                    source_id=self.affairs.origin_ref(linked_affair_id),
+                    commit=False,
+                )
             self.conn.execute(
                 """
                 UPDATE decree_dossiers

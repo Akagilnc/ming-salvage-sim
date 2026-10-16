@@ -223,7 +223,12 @@ def test_player_rejection_lifecycle_through_translation_and_month(game, monkeypa
         nid = int(night["id"])
         ctid = db.create_chat_turn(state, minister, "s", 0, night_id=nid, status="active")
         db.persist_minister_reply(minister, state.turn, "奉旨修正", ctid)
-        commission = {"text": "修正该旨", "resolves_rejection_ids": ids}
+        # 空对象桩与缺键同语义（未使用），不得挡住合法纠错关联。
+        commission = {
+            "text": "修正该旨",
+            "resolves_rejection_ids": ids,
+            "minister_promise": {},
+        }
         if grant:
             commission["grant"] = grant
         result = apply_audience_round_translation(

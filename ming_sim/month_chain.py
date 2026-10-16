@@ -353,13 +353,14 @@ def _gazette_feed(db: Any, state: Any) -> Dict[str, Any]:
     from ming_sim.audience_night import list_waiting_audience_summons
     from ming_sim.decree import collect_new_arrival_waiting_audience
     from ming_sim.models import reign_period_label
-    from ming_sim.knowledge import origin_visible_to
+    from ming_sim.knowledge import issue_id_readable_to
     from ming_sim.settlement_payload import list_due_commitments
 
     turn = int(state.turn)
+    # Due rows are issue records: full issue gate, not origin_ref alone.
     due_commitments = [
         item for item in list_due_commitments(db, state)
-        if origin_visible_to(db, item["origin_ref"])
+        if issue_id_readable_to(db, item["issue_id"], "")
     ]
     return {
         "instruction": "据已落定的实况写本期邸报。title 由你写，report 是全文。",
