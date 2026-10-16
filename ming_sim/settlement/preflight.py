@@ -407,17 +407,16 @@ def _strategic_event_result_preflight_error(
                         (raw_field, str(region_id), field, _region_world_value(str(region_id), field), value)
                     )
 
-            region_payload = lift_identity_field_aliases(raw_changes)
-            region_payload = {k: v for k, v in region_payload.items() if k != "origin_ref"}
+            # sanitize 已升身份槽；此处只剥 origin_ref 再交写核。
+            region_payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
             landed, refused = db.apply_region_deltas(
                 preview_state, preflight_event, None, "档房", {region_id: region_payload}, commit=False,
             source=Provenance.system_simulation)
             for result in refused:
-                if isinstance(result, RejectedItem):
-                    return (
-                        f"战略/外敌事件「{event_title or event_id}」地区战果拒收："
-                        f"{result.reason or result.category}"
-                    )
+                return (
+                    f"战略/外敌事件「{event_title or event_id}」地区战果拒收："
+                    f"{result.reason or result.category}"
+                )
             err = _reject_landed_or_unchanged(
                 "region", str(region_id), landed, snapshots, _region_world_value,
             )
@@ -464,11 +463,10 @@ def _strategic_event_result_preflight_error(
                 db, preview_state, preflight_event, str(army_id), raw_changes,
             source=Provenance.system_simulation)
             for result in refused:
-                if isinstance(result, RejectedItem):
-                    return (
-                        f"战略/外敌事件「{event_title or event_id}」军队战果拒收："
-                        f"{result.reason or result.category}"
-                    )
+                return (
+                    f"战略/外敌事件「{event_title or event_id}」军队战果拒收："
+                    f"{result.reason or result.category}"
+                )
             err = _reject_landed_or_unchanged(
                 "army", str(army_id), landed, snapshots, _army_world_value,
             )
@@ -488,9 +486,8 @@ def _strategic_event_result_preflight_error(
         db.conn.execute("SAVEPOINT strategic_power_result_preflight")
         try:
             for power_id, raw_changes in power_items:
-                # 上环已逐项确认 dict；此处不再重复形状判断。
-                power_payload = lift_identity_field_aliases(raw_changes)
-                power_payload = {k: v for k, v in power_payload.items() if k != "origin_ref"}
+                # sanitize 已升身份槽；此处只剥 origin_ref 再交写核。
+                power_payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
                 landed, refused = db.apply_power_deltas(
                     state,
                     {power_id: power_payload},
@@ -502,11 +499,10 @@ def _strategic_event_result_preflight_error(
             db.conn.execute("ROLLBACK TO SAVEPOINT strategic_power_result_preflight")
             db.conn.execute("RELEASE SAVEPOINT strategic_power_result_preflight")
         for result in power_rejections:
-            if isinstance(result, RejectedItem):
-                return (
-                    f"战略/外敌事件「{event_title or event_id}」势力战果拒收："
-                    f"{result.reason or result.category}"
-                )
+            return (
+                f"战略/外敌事件「{event_title or event_id}」势力战果拒收："
+                f"{result.reason or result.category}"
+            )
         if not any(_strategic_result_item_has_material_world_state(result) for result in power_results):
             power_id, raw_changes = power_items[0]
             return _noop_error("power", str(power_id), "power_updates", raw_changes)
@@ -610,7 +606,8 @@ def _strategic_event_result_preflight_error(
         if blocked_by_person:
             return f"战略事件被同项人物变更阻断：{event_id}"
         for result in results_rejections:
-            if isinstance(result, RejectedItem) and result.category != "unauthorized_affair_origin":
+            # 写核拒收恒为 RejectedItem；只滤业务类别。
+            if result.category != "unauthorized_affair_origin":
                 return (
                     f"战略/外敌事件「{event_title or event_id}」人物战果拒收："
                     f"{result.item.get('name') or ''}{result.item.get('动作') or ''} {result.reason}"
@@ -636,11 +633,10 @@ def _strategic_event_result_preflight_error(
                         state, [item], actor="档房", commit=False, require_origin=False,
                     source=Provenance.system_simulation)
                     for result in refused:
-                        if isinstance(result, RejectedItem):
-                            return (
-                                f"战略/外敌事件「{event_title or event_id}」新军战果拒收："
-                                f"{result.reason or result.category}"
-                            )
+                        return (
+                            f"战略/外敌事件「{event_title or event_id}」新军战果拒收："
+                            f"{result.reason or result.category}"
+                        )
                     if not any(
                         _strategic_result_item_has_material_world_state(item)
                         for item in landed

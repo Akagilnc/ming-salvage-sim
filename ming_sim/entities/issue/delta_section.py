@@ -54,10 +54,10 @@ def apply(run) -> SectionResult:
     # 承诺月支载体：同批新建的承诺局势其 ongoing 月支被财政段用作 dedup 依据
     # （ADR 0027 承诺是主载体）。
     carriers: List[Dict[str, object]] = []
+    # applied_new 由 tracker 构造 dict；只筛承诺业务字段。
     for item in issue_summary.new_issues:
         if not (
-            isinstance(item, dict)
-            and str(item.get("commitment_kind") or "").strip()
+            str(item.get("commitment_kind") or "").strip()
             and item.get("issue_id") is not None
         ):
             continue
@@ -140,10 +140,9 @@ def _resolve_strategic_events(run, issue_summary) -> Dict[str, SectionResult]:
     reject_bucket = {name: [] for name in bucket}
     new_issues = issue_summary.new_issues
     seen = {str(row.get("id") or "").strip() for row in new_issues}
+    # RejectedItem.item 契约恒为 dict（applier 产生处保证）。
     for refusal in issue_summary.rejected:
         original = refusal.item
-        if not isinstance(original, dict):
-            continue
         event_id = str(original.get("id") or original.get("origin_ref") or "").strip()
         if event_id not in run.strategic_event_referenced_ids:
             continue
@@ -158,11 +157,9 @@ def _resolve_strategic_events(run, issue_summary) -> Dict[str, SectionResult]:
             run, event_id, ev.title if ev is not None else event_id,
         ))
 
+    # applied_new 项恒为 dict；只看 deferred_trigger 业务条件。
     for new_issue in list(new_issues):
-        if not (
-            isinstance(new_issue, dict)
-            and new_issue.get("deferred_trigger")
-        ):
+        if not new_issue.get("deferred_trigger"):
             continue
         event_id = str(new_issue.get("id") or "").strip()
         if event_id not in run.strategic_event_pool_ids:
