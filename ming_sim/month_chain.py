@@ -1066,7 +1066,6 @@ def _apply_stalled_deliberation_from_declaration(
         bind_decree_effect_sources,
         settle_staged_declarations_in_decree_order,
     )
-    from ming_sim.decree import _is_stalled_deliberation
 
     ref = str(decree_ref or "").strip()
     if not ref or db.staged_declarations.is_settled(ref):
@@ -1095,8 +1094,23 @@ def _apply_stalled_deliberation_from_declaration(
         return False
 
     def accept_stalled(settled_ref: str, result: Any) -> None:
-        row = db.dossiers.get(int(dossier_id))
-        if row is None or not _is_stalled_deliberation(row):
+        # 以本次声明的结构化落标为准，不以案卷既有 stalled 冒充成功
+        # （跨案先落标后，坏项+合法支出不得提前提交 settled）。
+        from ming_sim.settlement.views import view
+
+        applied_here = False
+        for outcome in getattr(getattr(result, "effects", None), "applied", ()) or ():
+            for item in view(outcome, "deliberation_outcomes"):
+                try:
+                    item_id = int(item.get("dossier_id"))
+                except (TypeError, ValueError, AttributeError):
+                    continue
+                if item_id == int(dossier_id) and str(item.get("outcome") or "") == "stalled":
+                    applied_here = True
+                    break
+            if applied_here:
+                break
+        if not applied_here:
             raise _StalledApplyMiss()
         if alongside is not None:
             alongside(settled_ref, result)

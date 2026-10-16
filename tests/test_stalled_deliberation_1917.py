@@ -527,13 +527,13 @@ def test_two_questions_first_lands_then_second_stalled_keeps_ledger(game, monkey
 
 @pytest.mark.parametrize(
     "own_stall",
-    [True, False],
-    ids=["leftover_stall", "leftover_plain"],
+    ["valid", "plain", "rejected"],
+    ids=["leftover_stall", "leftover_plain", "leftover_rejected_stall"],
 )
 def test_cross_case_stall_leftover_does_not_undo_imperial_push(
     game, monkeypatch, own_stall,
 ):
-    """跨案落标后本案遗留暂存须闭合消费：强推不被旧 stalled 撤销；无 stalled 的合法支出仍落。"""
+    """跨案落标后本案遗留暂存：合法 stalled 闭合且不撤销强推；拒收/无 stalled 保留颁布后入账。"""
     db, state, content = game
     did_a, ref_a = _plant_proposed(db, state, title="跨案先", target_id="cross-first")
     did_b, ref_b = _plant_proposed(db, state, title="跨案目标", target_id="cross-target")
@@ -545,9 +545,14 @@ def test_cross_case_stall_leftover_does_not_undo_imperial_push(
         "origin_ref": ref_b, "account": "国库", "delta": -3,
         "category": "跨案遗留支", "reason": "本旨支出",
     }]}
-    if own_stall:
+    if own_stall == "valid":
         effects["deliberation_outcomes"] = [{
             "dossier_id": ref_b, "outcome": "stalled", "note": "目标案原预推无人站台",
+        }]
+    elif own_stall == "rejected":
+        # 点名本案但 note 空 → 正式消费拒收，不得因既有 stalled 提前提交 settled。
+        effects["deliberation_outcomes"] = [{
+            "dossier_id": ref_b, "outcome": "stalled", "note": "",
         }]
     _stage(db, state, ref_b, {"effects": effects})
     canned_full_settlement(monkeypatch)
@@ -555,11 +560,11 @@ def test_cross_case_stall_leftover_does_not_undo_imperial_push(
     session.llm_config = object()
     assert session.resolve_turn(allow_empty_decree=True).awaiting
     assert db.dossiers.get(did_b)["payload"].get("deliberation_state") == "stalled"
-    if own_stall:
-        # 含本案 stalled 的遗留须在落标当轮闭合，不得拖到强推后再消费。
+    if own_stall == "valid":
+        # 合法 stalled 遗留须在落标当轮闭合，不得拖到强推后再消费。
         assert db.staged_declarations.is_settled(ref_b)
     else:
-        # 未点名本案 stalled 的合法声明留给颁布后 settle。
+        # plain / 拒收：不闭合，留给颁布后 settle（合法支出仍可入账）。
         assert not db.staged_declarations.is_settled(ref_b)
     row_b = _deliberation_desk_row(session, did_b)
     row_a = _deliberation_desk_row(session, did_a)
@@ -593,7 +598,7 @@ def test_cross_case_stall_leftover_does_not_undo_imperial_push(
             "SELECT delta FROM economy_ledger WHERE category='跨案遗留支'",
         )
     ]
-    if own_stall:
+    if own_stall == "valid":
         # 与单案 stalled 同声明支出一致：试消费时尚未颁布，支出不入账。
         assert moves == []
     else:
