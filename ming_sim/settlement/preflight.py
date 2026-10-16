@@ -22,7 +22,6 @@ from ming_sim.simulation import (
     IDENTITY_ITEM_FIELDS,
     ITEM_FIELD_ALIASES,
     lift_identity_field_aliases,
-    read_item_origin_ref,
 )
 from ming_sim.content import GameContent
 from ming_sim.db import (
@@ -590,11 +589,11 @@ def _strategic_event_result_preflight_error(
             from ming_sim.settlement.run import land_person_changes_isolated
             results_rejections = []
             for person_item in person_changes:
-                # clean 人物项已为 dict。
+                # clean 人物项已为 dict；身份槽已升，直接读 canonical origin_ref。
                 applied, refused = land_person_changes_isolated(
                     db, copy.deepcopy(state), [person_item], content=probe_content,
                     llm_config=llm_config,
-                    origin_ref=read_item_origin_ref(person_item),
+                    origin_ref=str(person_item.get("origin_ref") or "").strip(),
                     require_origin=True, source=Provenance.system_simulation,
                 )
                 results.extend(applied)
@@ -616,10 +615,10 @@ def _strategic_event_result_preflight_error(
     if new_armies:
         # Invisible origins are already itemwise. Do not field-probe them into
         # an envelope failure; the origin loop and the real write still own them.
-        # clean 新军列表项已为 dict。
+        # clean 新军列表项已为 dict；身份槽已升，直接读 canonical origin_ref。
         field_armies = [
             raw for raw in new_armies
-            if (db.effect_origin_rejection(read_item_origin_ref(raw)) or {}).get("category")
+            if (db.effect_origin_rejection(str(raw.get("origin_ref") or "").strip()) or {}).get("category")
             != "unauthorized_affair_origin"
         ]
         if field_armies:
@@ -661,8 +660,8 @@ def _strategic_event_result_preflight_error(
     admissible_origin = False
     saw_unauthorized = False
     for kind, item in origin_items:
-        # 嵌套子项与 clean 列表项均已为 dict。
-        origin_ref = read_item_origin_ref(item)
+        # 嵌套子项与 clean 列表项均已为 dict；身份槽已升，直接读 canonical。
+        origin_ref = str(item.get("origin_ref") or "").strip()
         origin_error = db.effect_origin_rejection(origin_ref)
         if not origin_error:
             admissible_origin = True
