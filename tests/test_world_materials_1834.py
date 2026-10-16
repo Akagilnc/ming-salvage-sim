@@ -49,6 +49,7 @@ def test_prepare_writes_typed_tree_with_board_affairs_and_gazette_index(game, tm
     assert "INDEX.txt" in names
     assert "盘面/全局.txt" in names
     assert "盘面/派系检举事实.txt" in names
+    assert "盘面/派系态势.txt" in names  # #1914：态势路径在册（人读正文不另立解析）
     assert "人物/朝臣名册.txt" in names
     assert any(p.startswith("人物/") and p.endswith("/经历.txt") for p in names)
     assert any(p.startswith(f"事务/affair-{affair.id}-") for p in names)
@@ -89,7 +90,8 @@ def test_read_material_stays_inside_directory(game, tmp_path):
 def test_all_characters_get_an_experience_file_not_just_current_court(game, tmp_path):
     """大理寺 bounce 2：经历目录曾只给当前在朝名册白名单里的人，已离朝/致仕/未在
     朝的人物经历整条消失（#1819 决定 1：各人物经历三层全可读，不按当前在朝状态
-    收窄）。挑一个真实不在当前朝臣名册里的人物，断言其经历文件仍存在于目录。"""
+    收窄）。#1914：行止同纪律——不限在朝资格，路径在册即可；人读正文不承担解析契约。
+    挑一个真实不在当前朝臣名册里的人物，断言其经历与行止文件仍存在于目录。"""
     db, state, content = game
     active_names = {row["name"] for row in db.characters.current_court_rows(int(state.year), int(state.period))}
     all_names = [
@@ -106,6 +108,8 @@ def test_all_characters_get_an_experience_file_not_just_current_court(game, tmp_
         None,
     )
     assert rel is not None, f"{name}（不在当前朝臣名册）应仍有经历文件"
+    where_rel = f"人物/{_safe_segment(name)}/行止.txt"
+    assert where_rel in names, f"{name}（不在当前朝臣名册）应仍有行止路径"
 
 
 def test_character_army_region_textual_facts_reach_world_directory(game, tmp_path):
