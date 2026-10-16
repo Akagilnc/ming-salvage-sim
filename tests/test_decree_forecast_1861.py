@@ -501,7 +501,8 @@ def test_restored_directive_forecast_uses_its_approved_night(game, monkeypatch):
     )
     session = _sess(db, state, content, monkeypatch, lambda *_a, **_k: {})
     forecast_mod.schedule_restored_decree_forecasts(session, [pending_id])
-    assert get_session_write_queue(session).wait_idle(timeout_s=5)
+    # 挂死探测用本文件 _DRAIN_TIMEOUT_S；通过条件＝批准夜身份与声明持久化，非五秒排空。
+    wait_pending_writes(session, timeout_s=_DRAIN_TIMEOUT_S)
 
     staged = db.staged_declarations.staged_for(
         pending_action_decree_ref(pending_id, 1),

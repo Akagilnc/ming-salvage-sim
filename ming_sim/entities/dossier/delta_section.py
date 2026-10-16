@@ -140,7 +140,14 @@ def apply_deliberation_outcomes(run):
         # 廷议局势身份＝origin_kind=deliberation + origin_ref；不与同 ref 国策/承诺混同。
         existing = run.db.issues.by_origin("deliberation", origin)
         if existing is None:
-            title = str(dossier.get("decree_text") or "").strip() or note.strip() or "无人站台原案"
+            # 判空可 strip；title/stage 落原文，不裁 decree_text 与 note（P6 / #1917 N1）。
+            decree_text = str(dossier.get("decree_text") or "")
+            if decree_text.strip():
+                title = decree_text
+            elif note.strip():
+                title = note
+            else:
+                title = "无人站台原案"
             run.db.insert_issue(
                 run.state,
                 kind="situation",
@@ -155,7 +162,7 @@ def apply_deliberation_outcomes(run):
             run.db.conn.execute(
                 "UPDATE issues SET status='active', stage_text=COALESCE(?, stage_text) "
                 "WHERE id=?",
-                (note.strip() or None, int(existing["id"])),
+                (note if note.strip() else None, int(existing["id"])),
             )
         applied.append({
             "dossier_id": dossier_id, "outcome": "stalled", "source_item": item,

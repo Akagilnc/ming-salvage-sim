@@ -1219,17 +1219,11 @@ def _settle_edicts(
                 and not (isinstance(verdict, dict) and verdict.get("decision"))
             ):
                 verdict = _persisted_staged_verdict(db, ref, int(state.turn))
-            # 已颁事实优先：跨月 stalled→强推只恢复办理，不重开判官、不重放物化。
-            resume_promulgated = (
-                backed_awaiting_promulgation
-                and db.dossiers.authorizes_effects(int(dossier["id"]))
-            )
             # 过月补跑：先 produce（可新产 stalled 声明），再消费 stalled，最后颁布（F7）。
-            # 已办理恢复跳过；次月普通留中（held）即便历史 backed 也走共享补跑（#1917 R1），
-            # 不得与已办理恢复混同为「只判不产」。produce 自身会续上部分预推。
+            # 次月普通留中（held）即便历史 backed 也走共享补跑（#1917 R1）。
+            # 合法主链不回拨 status，故无「proposed 且已有颁布事实」对齐分支（#1917 N2）。
             if (
-                not resume_promulgated
-                and (held or not backed_awaiting_promulgation)
+                (held or not backed_awaiting_promulgation)
                 and not product_complete
                 and session.llm_config is not None
             ):
@@ -1245,7 +1239,6 @@ def _settle_edicts(
                 verdict = product["verdict"]
             elif (
                 backed_awaiting_promulgation
-                and not resume_promulgated
                 and not held
                 and not (isinstance(verdict, dict) and verdict.get("decision"))
             ):
@@ -1272,14 +1265,7 @@ def _settle_edicts(
             ):
                 continue
             current = db.dossiers.get(int(dossier["id"])) or dossier
-            if resume_promulgated:
-                # 已有颁布事实：只对齐 status，不重放物化（无 _pre_stall 备份）。
-                if str(current.get("status") or "") == "proposed":
-                    with atomic(db):
-                        db.dossiers.transition(
-                            int(dossier["id"]), "promulgated", commit=False,
-                        )
-            elif (
+            if (
                 str(current.get("status") or "") == "proposed"
                 and isinstance(verdict, dict)
                 and verdict.get("decision")

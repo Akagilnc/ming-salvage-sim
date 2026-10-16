@@ -478,16 +478,14 @@ class DossierStore(RowStore):
             self._commit(commit, owns)
             return row
         payload["deliberation_state"] = "stalled"
-        cleaned = str(note or "").strip()
-        if cleaned and not str(payload.get("deliberation_note") or "").strip():
-            payload["deliberation_note"] = cleaned
-        # 历史回拨字段不再读写；残留键随 stall 清掉，避免编排层再依赖。
-        payload.pop("_pre_stall_status", None)
+        # 判空可 strip；落库原文零删改（P6 / #1917 N1）。
+        note_text = note if isinstance(note, str) else str(note or "")
+        if note_text.strip() and not str(payload.get("deliberation_note") or "").strip():
+            payload["deliberation_note"] = note_text
         self.update_payload(did, payload, commit=False)
         self._commit(commit, owns)
-        updated = self.get(did)
-        if updated is None:
-            raise KeyError(f"案卷不存在：{did}")
+        updated = dict(row)
+        updated["payload"] = payload
         return updated
 
     def mark_deliberation_backed(
@@ -504,12 +502,10 @@ class DossierStore(RowStore):
             raise ValueError("御笔强推只接无人站台原案")
         payload["deliberation_state"] = "backed"
         payload["imperial_push_note"] = note
-        payload.pop("_pre_stall_status", None)
         self.update_payload(did, payload, commit=False)
         self._commit(commit, owns)
-        updated = self.get(did)
-        if updated is None:
-            raise KeyError(f"案卷不存在：{did}")
+        updated = dict(row)
+        updated["payload"] = payload
         return updated
 
     def mark_deliberation_held(
@@ -526,15 +522,14 @@ class DossierStore(RowStore):
             self._commit(commit, owns)
             return row
         payload["deliberation_state"] = "held"
-        cleaned = str(note or "").strip()
-        if cleaned:
-            payload["deliberation_hold_note"] = cleaned
-        payload.pop("_pre_stall_status", None)
+        # 判空可 strip；落库原文零删改（P6 / #1917 N1）。
+        note_text = note if isinstance(note, str) else str(note or "")
+        if note_text.strip():
+            payload["deliberation_hold_note"] = note_text
         self.update_payload(did, payload, commit=False)
         self._commit(commit, owns)
-        updated = self.get(did)
-        if updated is None:
-            raise KeyError(f"案卷不存在：{did}")
+        updated = dict(row)
+        updated["payload"] = payload
         return updated
 
     # ── status chain ──────────────────────────────────────────────
