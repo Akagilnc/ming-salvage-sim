@@ -208,10 +208,11 @@ def _preflight(
     # 内部字段不进任何段的可见 delta。
     person_event_ids = (ordered_effect_event_ids or {}).get("人物变更", [])
     person_items = clean.get("人物变更")
+    # clean 列表项经 sanitize 已为 dict。
     if isinstance(person_items, list) and person_event_ids:
         clean["人物变更"] = [
             {**item, "_effect_event_id": person_event_ids[index]}
-            if isinstance(item, dict) and index < len(person_event_ids) else item
+            if index < len(person_event_ids) else item
             for index, item in enumerate(person_items)
         ]
 
@@ -221,9 +222,8 @@ def _preflight(
         """给同 identity 的兄弟项盖共享 birth_key；identity 冲突则逐项拒收。
 
         绝不抛出：ADR 0005 坏项逐项拒收，合法 sibling 照落，不带走整批。
+        clean 列表项经 sanitize 已为 dict。
         """
-        if not isinstance(item, dict):
-            return item, None
         try:
             parsed = declaration_from_payload(item, allowed=ATTACH_BIRTH)
         except (TypeError, ValueError) as exc:
@@ -260,10 +260,10 @@ def _preflight(
             for raw_item in raw_items:
                 stamped, conflict_reason = stamp_batch_new_declaration(raw_item)
                 if conflict_reason is not None:
-                    item_payload = (
-                        {k: v for k, v in raw_item.items() if k != "_effect_event_id"}
-                        if isinstance(raw_item, dict) else {"raw_value": raw_item}
-                    )
+                    # clean 列表项必为 dict；剥内部归属标记再记拒。
+                    item_payload = {
+                        k: v for k, v in raw_item.items() if k != "_effect_event_id"
+                    }
                     validate_rejections.append((
                         field_name,
                         RejectedItem(

@@ -154,9 +154,8 @@ def _event_pool_ids_for_strategic_foreign_nodes(
     content: GameContent,
 ) -> set[str]:
     ids: set[str] = set()
+    # 仅由 run._preflight 传入 sanitize 后的 clean；列表项已为 dict。
     for item in extracted.get("new_issues") or []:
-        if not isinstance(item, dict):
-            continue
         if str(item.get("origin_kind") or "").lower() != "event_pool":
             continue
         event_id = str(item.get("id") or item.get("origin_ref") or "").strip()
@@ -175,10 +174,10 @@ _ORDERED_DELTA_FIELDS = (
 def _derive_ordered_deltas(extracted: Dict[str, object]) -> Dict[str, list[tuple[str, object]]]:
     """缺省有序声明：按 extracted 字段原序派生，无声明归属。"""
     ordered: Dict[str, list[tuple[str, object]]] = {field: [] for field in _ORDERED_DELTA_FIELDS}
+    # 仅由 run._preflight 在 sanitize 后调用；嵌套容器已为 dict 或空。
     for field in _ORDERED_DELTA_FIELDS:
         raw = extracted.get(field) or {}
-        if isinstance(raw, dict):
-            ordered[field] = list(raw.items())
+        ordered[field] = list(raw.items())
     return ordered
 
 
@@ -315,7 +314,8 @@ def _strategic_event_result_preflight_error(
         if event_id != "jisi_lubian" or outcome_label not in {"挡于边墙", "入塞被遏"}:
             return ""
         for region_id, raw_changes in (ordered_region_items if ordered_region_items is not None else region_deltas.items()):
-            if region_id != "beizhili" or not isinstance(raw_changes, dict):
+            # 嵌套子项经 sanitize 已为 dict。
+            if region_id != "beizhili":
                 continue
             for raw_field, value in raw_changes.items():
                 field = REGION_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
@@ -388,9 +388,8 @@ def _strategic_event_result_preflight_error(
     db.conn.execute("SAVEPOINT strategic_entity_result_preflight")
     try:
         for region_id, raw_changes in region_items:
-            if not isinstance(raw_changes, dict):
-                return f"战略/外敌事件「{event_title or event_id}」地区战果须为对象：{region_id}"
-            # #1835 S2：领域字段/整数/势力准入交写核；此处只组 noop 快照并消费写核拒收。
+            # sanitize 嵌套子项已为 dict；此处只组 noop 快照并消费写核拒收。
+            # #1835 S2：领域字段/整数/势力准入交写核。
             snapshots: List[tuple[object, str, str, object, object]] = []
             seen_fields: set[str] = set()
             region_row = db.regions.row(region_id, fields="1")
@@ -426,8 +425,7 @@ def _strategic_event_result_preflight_error(
                 return err
 
         for army_id, raw_changes in army_items:
-            if not isinstance(raw_changes, dict):
-                return f"战略/外敌事件「{event_title or event_id}」军队战果须为对象：{army_id}"
+            # sanitize 嵌套子项已为 dict。
             # #1835 S2：炮转移/字段/整数准入复用 apply_army_delta_with_cannon_transfer。
             snapshots = []
             seen_fields = set()
@@ -484,9 +482,7 @@ def _strategic_event_result_preflight_error(
     # power：回旧跨势力聚合 any(material)；逐字段/快照拒属 a16d5804e 擅自新增口径。
     power_items = ordered_power_items if ordered_power_items is not None else list(power_updates.items())
     if power_items:
-        for power_id, raw_changes in power_items:
-            if not isinstance(raw_changes, dict):
-                return f"战略/外敌事件「{event_title or event_id}」势力战果须为对象：{power_id}"
+        # sanitize 嵌套子项已为 dict；上环不再逐项形状拒收。
         power_results: List[Dict[str, object]] = []
         power_rejections: List[RejectedItem] = []
         db.conn.execute("SAVEPOINT strategic_power_result_preflight")
@@ -598,10 +594,11 @@ def _strategic_event_result_preflight_error(
             from ming_sim.settlement.run import land_person_changes_isolated
             results_rejections = []
             for person_item in person_changes:
+                # clean 人物项已为 dict。
                 applied, refused = land_person_changes_isolated(
                     db, copy.deepcopy(state), [person_item], content=probe_content,
                     llm_config=llm_config,
-                    origin_ref=read_item_origin_ref(person_item) if isinstance(person_item, dict) else "",
+                    origin_ref=read_item_origin_ref(person_item),
                     require_origin=True, source=Provenance.system_simulation,
                 )
                 results.extend(applied)
@@ -622,13 +619,11 @@ def _strategic_event_result_preflight_error(
     if new_armies:
         # Invisible origins are already itemwise. Do not field-probe them into
         # an envelope failure; the origin loop and the real write still own them.
+        # clean 新军列表项已为 dict。
         field_armies = [
             raw for raw in new_armies
-            if not (
-                isinstance(raw, dict)
-                and (db.effect_origin_rejection(read_item_origin_ref(raw)) or {}).get("category")
-                == "unauthorized_affair_origin"
-            )
+            if (db.effect_origin_rejection(read_item_origin_ref(raw)) or {}).get("category")
+            != "unauthorized_affair_origin"
         ]
         if field_armies:
             db.conn.execute("SAVEPOINT strategic_new_army_result_preflight")
@@ -636,10 +631,7 @@ def _strategic_event_result_preflight_error(
                 from ming_sim.simulation import normalize_item_keys
 
                 for raw in field_armies:
-                    item = (
-                        normalize_item_keys(raw, domain_aliases=ARMY_FIELD_ALIASES)
-                        if isinstance(raw, dict) else raw
-                    )
+                    item = normalize_item_keys(raw, domain_aliases=ARMY_FIELD_ALIASES)
                     landed, refused = db.create_armies_from_extraction(
                         state, [item], actor="档房", commit=False, require_origin=False,
                     source=Provenance.system_simulation)
@@ -653,11 +645,7 @@ def _strategic_event_result_preflight_error(
                         _strategic_result_item_has_material_world_state(item)
                         for item in landed
                     ):
-                        army_label = (
-                            str(raw.get("id") or raw.get("name") or "new_army")
-                            if isinstance(raw, dict)
-                            else "new_army"
-                        )
+                        army_label = str(raw.get("id") or raw.get("name") or "new_army")
                         return _noop_error("army", army_label, "new_armies", raw)
             finally:
                 db.conn.execute("ROLLBACK TO SAVEPOINT strategic_new_army_result_preflight")
@@ -677,7 +665,8 @@ def _strategic_event_result_preflight_error(
     admissible_origin = False
     saw_unauthorized = False
     for kind, item in origin_items:
-        origin_ref = read_item_origin_ref(item) if isinstance(item, dict) else ""
+        # 嵌套子项与 clean 列表项均已为 dict。
+        origin_ref = read_item_origin_ref(item)
         origin_error = db.effect_origin_rejection(origin_ref)
         if not origin_error:
             admissible_origin = True

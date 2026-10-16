@@ -305,6 +305,8 @@ def apply_changes(run) -> SectionResult:
             continue
         run.db.set_fiscal_config_batch(final_values, commit=False)
         for change in pair_changes:
+            # item 来自本段 normalize_item_keys，必为 dict。
+            source_item = change["item"]
             run.db.fiscal_config.set_origin(
                 change["key"], change["origin_ref"]
             )
@@ -312,12 +314,10 @@ def apply_changes(run) -> SectionResult:
                 turn=run.state.turn, key=str(change["key"]),
                 old_value=int(change["old"]), new_value=int(change["new"]),
                 origin_ref=str(change["origin_ref"]), reason=str(change["reason"]),
-                beyond_intent=change["item"].get("beyond_intent")
-                if isinstance(change.get("item"), dict) else 0,
+                beyond_intent=source_item.get("beyond_intent"),
             )
-            source = change["item"] if isinstance(change.get("item"), dict) else {}
             applied.append(canonical_fiscal_result(
-                run.db, source, applied=change["new"] != change["old"],
+                run.db, source_item, applied=change["new"] != change["old"],
                 key=change["key"], old=change["old"], new=change["new"],
                 delta=change["delta"], reason=change["reason"],
             ))

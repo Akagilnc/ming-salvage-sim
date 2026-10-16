@@ -52,9 +52,7 @@ def apply_executions(run):
     source = run.ctx.source
 
     for item in run.current_extracted.get("dossier_executions") or []:
-        if not isinstance(item, dict):
-            reject_item(rejected, item, "执行格须为对象", "invalid_shape", source)
-            continue
+        # sanitize 已滤非 dict 列表项。
         try:
             dossier_id = _parse_sqlite_id(item.get("dossier_id"))
             outcome = str(item.get("outcome") or "").strip()
@@ -110,9 +108,7 @@ def apply_deliberation_outcomes(run):
     from ming_sim.simulation import _canonical_item_fields
 
     for raw_item in run.current_extracted.get("deliberation_outcomes") or []:
-        if not isinstance(raw_item, dict):
-            reject_item(rejected, raw_item, "廷议声明须为对象", "invalid_shape", source)
-            continue
+        # sanitize 已滤非 dict 列表项。
         item = _canonical_item_fields(raw_item)
         try:
             dossier_id = _parse_sqlite_id(item.get("dossier_id"))
