@@ -3057,20 +3057,25 @@ def _dispatch_promises(
 def _assert_textual_fact_subject_exists(db: Any, subject_kind: str, subject_id: str) -> str:
     """存在性拒收；数值身份规范化复用 textual_fact.store.parse_subject（#1915 S2）。
 
-    声明写路径对 affair 仍要求整数引用（非数字键只留给历史直写材料）。
+    声明写路径对 affair 仍要求整数引用（非整数键只留给历史直写材料）。
     """
     from ming_sim.entities.textual_fact.store import parse_subject
+    from ming_sim.strict_types import strict_sqlite_id
 
     kind, target = parse_subject(subject_kind, subject_id)
     if kind == "affair":
-        if not target.lstrip("-").isdecimal():
-            raise DeclarationDataError("事务引用须为整数")
-        db.affairs.get(int(target))
-        return target
+        # parse_subject already collapsed integer forms; non-integer historical keys reject here
+        try:
+            affair_id = strict_sqlite_id(target)
+        except (TypeError, ValueError) as exc:
+            raise DeclarationDataError("事务引用须为整数") from exc
+        db.affairs.get(affair_id)
+        return str(affair_id)
     if kind == "yamen":
-        if db.yamens.get(int(target)) is None:
+        yamen_id = strict_sqlite_id(target)
+        if db.yamens.get(yamen_id) is None:
             raise DeclarationReferenceError(f"yamen 不存在：{subject_id}")
-        return target
+        return str(yamen_id)
     store = {"character": db.characters, "army": db.armies, "region": db.regions}.get(kind)
     if store is None:
         return target

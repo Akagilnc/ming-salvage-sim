@@ -290,13 +290,10 @@ def compute_budget_lines(
     for item in db.iter_budget_items():
         base_key = str(item["key"])
         amount = fixed_config_amount(cfg, base_key)
-        # 衙门月费归属唯一接缝：fiscal_key→yamen:<id>；承接新记录与旧写路改写过的 live origin（#1915 S1）
-        origin = ""
-        yamens = getattr(db, "yamens", None)
-        if yamens is not None and hasattr(yamens, "origin_for_fiscal_key"):
-            origin = yamens.origin_for_fiscal_key(base_key)
-        if not origin:
-            origin = str(item.get("origin_ref") or "")
+        # 衙门月费归属唯一接缝：fiscal_key→yamen:<id>；未绑定科目保留 catalogue live origin（#1915 S1/N2）
+        origin = db.yamens.origin_for_fiscal_key(base_key) or str(
+            item.get("origin_ref") or ""
+        )
         budget[str(item["account"])][str(item["direction"])].append(
             {
                 "name": str(item["display"]), "amount": int(amount),

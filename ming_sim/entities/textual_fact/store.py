@@ -145,8 +145,9 @@ def _row_to_fact(row: Any) -> TextualFact:
 def parse_subject(subject_kind: object, subject_id: object) -> tuple[str, str]:
     """Kind + identity normalize for textual facts (sole numeric-id authority, #1915 S2).
 
-    Decimal affair/yamen ids collapse via strict_sqlite_id so '02'/'2' share one row.
-    Non-decimal affair keys stay as-is for historical materials; yamen must be integer.
+    Affair/yamen integer ids collapse via strict_sqlite_id alone (Python int semantics:
+    '02'/'+2'/'2' share one row). Non-integer affair keys stay as-is for historical
+    materials; yamen must be integer.
     """
     kind = str(subject_kind or "").strip()
     if kind not in TEXTUAL_FACT_SUBJECT_KINDS:
@@ -156,13 +157,15 @@ def parse_subject(subject_kind: object, subject_id: object) -> tuple[str, str]:
     target = str(subject_id or "").strip()
     if not target:
         raise DeclarationDataError("textual fact subject_id cannot be empty")
-    if kind in {"affair", "yamen"} and target.lstrip("-").isdecimal():
+    if kind in {"affair", "yamen"}:
         from ming_sim.strict_types import strict_sqlite_id
 
         try:
             target = str(strict_sqlite_id(target))
         except (TypeError, ValueError) as exc:
-            raise DeclarationDataError(f"textual fact {kind} subject_id must be an integer id") from exc
-    elif kind == "yamen":
-        raise DeclarationDataError("textual fact yamen subject_id must be an integer id")
+            if kind == "yamen":
+                raise DeclarationDataError(
+                    "textual fact yamen subject_id must be an integer id"
+                ) from exc
+            # affair: non-integer keys remain for historical direct-write materials
     return kind, target
