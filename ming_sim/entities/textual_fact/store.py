@@ -75,7 +75,7 @@ class TextualFactStore(RowStore):
         origin_ref: str = "",
         affair_id: int = 0,
     ) -> TextualFact:
-        kind, target = _parse_subject(subject_kind, subject_id)
+        kind, target = parse_subject(subject_kind, subject_id)
         if not isinstance(body, str) or not body.strip():
             raise DeclarationDataError("textual fact body cannot be empty")
         month = int(period)
@@ -110,7 +110,7 @@ class TextualFactStore(RowStore):
         self, *, subject_kind: str, subject_id: str
     ) -> tuple[TextualFact, ...]:
         """All textual facts on this object, oldest month first. No collapse, no expiry."""
-        kind, target = _parse_subject(subject_kind, subject_id)
+        kind, target = parse_subject(subject_kind, subject_id)
         rows = self._conn.execute(
             "SELECT id, subject_kind, subject_id, year, period, turn, body, origin_ref, affair_id "
             "FROM textual_facts "
@@ -142,7 +142,12 @@ def _row_to_fact(row: Any) -> TextualFact:
     )
 
 
-def _parse_subject(subject_kind: object, subject_id: object) -> tuple[str, str]:
+def parse_subject(subject_kind: object, subject_id: object) -> tuple[str, str]:
+    """Kind + identity normalize for textual facts (sole numeric-id authority, #1915 S2).
+
+    Decimal affair/yamen ids collapse via strict_sqlite_id so '02'/'2' share one row.
+    Non-decimal affair keys stay as-is for historical materials; yamen must be integer.
+    """
     kind = str(subject_kind or "").strip()
     if kind not in TEXTUAL_FACT_SUBJECT_KINDS:
         raise DeclarationDataError(
@@ -151,8 +156,6 @@ def _parse_subject(subject_kind: object, subject_id: object) -> tuple[str, str]:
     target = str(subject_id or "").strip()
     if not target:
         raise DeclarationDataError("textual fact subject_id cannot be empty")
-    # 数值主体身份规范化：纯数字（含前导零）收成十进制，避免 '02'/'2' 分裂（#1915 F3）。
-    # yamen 必须是整数 id；affair 历史测试/材料偶有非数字键，非数字原样保留。
     if kind in {"affair", "yamen"} and target.lstrip("-").isdecimal():
         from ming_sim.strict_types import strict_sqlite_id
 

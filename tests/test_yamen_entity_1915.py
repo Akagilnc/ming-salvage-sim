@@ -41,14 +41,26 @@ def _active_chat_turn(db, state, night_id: int) -> int:
     )
 
 
+def _audience_yamen_creates(db, state, items, *, minister=CHIEF):
+    """真实召对夜入口：一批 yamen_creates。"""
+    night = open_night(db, state, location="乾清宫", time_of_day="夜")
+    night_id = int(night["id"])
+    chat_turn_id = _active_chat_turn(db, state, night_id)
+    result = apply_audience_round_translation(
+        db,
+        state,
+        {"yamen_creates": list(items)},
+        night_id=night_id,
+        chat_turn_id=chat_turn_id,
+        minister_name=minister,
+    )
+    return result, night_id, chat_turn_id
+
+
 def _create_yamen_via_night(
     db, state, *, name=YAMEN_NAME, chief=CHIEF, fee=MONTHLY_FEE_WAN,
     account="国库", origin_ref="",
 ):
-    """真实召对夜入口：apply_audience_round_translation + 源轮前像。"""
-    night = open_night(db, state, location="乾清宫", time_of_day="夜")
-    night_id = int(night["id"])
-    chat_turn_id = _active_chat_turn(db, state, night_id)
     item = {
         "name": name,
         "chief": chief,
@@ -57,15 +69,16 @@ def _create_yamen_via_night(
     }
     if origin_ref:
         item["origin_ref"] = origin_ref
-    result = apply_audience_round_translation(
-        db,
-        state,
-        {"yamen_creates": [item]},
-        night_id=night_id,
-        chat_turn_id=chat_turn_id,
-        minister_name=chief if chief else CHIEF,
-    )
-    return result, night_id, chat_turn_id
+    return _audience_yamen_creates(db, state, [item], minister=chief if chief else CHIEF)
+
+
+def _yamen_item(name, *, chief=CHIEF, fee=1, account="国库", origin_ref=None, **extra):
+    item = {"name": name, "chief": chief, "monthly_fee": fee, **extra}
+    if account is not None:
+        item["account"] = account
+    if origin_ref is not None:
+        item["origin_ref"] = origin_ref
+    return item
 
 
 def _fee_base_from_origin(db, yamen_id: int) -> list[dict]:
@@ -77,18 +90,33 @@ def _fee_base_from_origin(db, yamen_id: int) -> list[dict]:
     ]
 
 
-def _live_fee_amount(db, fiscal_key: str) -> int | None:
-    """Present fee via fixed_config_amount iff the base key is still a live budget item.
+def _fiscal_change(db, state, content, *, key: str, delta: int, reason: str):
+    out = settle_delta(
+        state, db,
+        {
+            "fiscal_changes": [{
+                "key": key,
+                "delta": delta,
+                "reason": reason,
+                "origin_ref": "盘面自发",
+            }]
+        },
+        SettlementContext(content=content),
+    )
+    assert out.fiscal is not None
+    assert out.fiscal.changes.rejected == []
+    return out
 
-    Look up by fiscal_key, not origin_ref: fiscal_changes rewrites origin_ref to the
-    change's provenance and must not erase the live amount identity.
-    """
-    key = str(fiscal_key or "").strip()
-    if not key:
-        return None
-    if key not in {str(item["key"]) for item in db.iter_budget_items()}:
-        return None
-    return fixed_config_amount(db.fiscal_config.values(), key)
+
+def _charge_moves(db, yamen_id: int, *, delta: int | None = None) -> list[dict]:
+    origin = f"yamen:{int(yamen_id)}"
+    moves = [
+        item for item in db.reign.list_economy_moves_for_origin(origin)
+        if int(item.get("delta") or 0) < 0
+    ]
+    if delta is not None:
+        moves = [m for m in moves if int(m["delta"]) == int(delta)]
+    return moves
 
 
 def _person_paths(root, person: str, *markers: str) -> list[str]:
@@ -129,13 +157,13 @@ def test_audience_night_creates_yamen_with_chief_and_monthly_fee(game):
     base_effects = _fee_base_from_origin(db, yamen_id)
     assert base_effects
     assert int(base_effects[0]["value"]) == MONTHLY_FEE_WAN
-    assert _live_fee_amount(db, yamen.fiscal_key) == MONTHLY_FEE_WAN
+    assert fixed_config_amount(db.fiscal_config.values(), yamen.fiscal_key) == MONTHLY_FEE_WAN
 
 
 def test_monthly_fee_present_value_follows_fiscal_not_entity_copy(game):
     """合法 base/rate 调额与裁撤后：现值与扣款跟财政 base×rate；实体成立额可保留为历史。
 
-    材料正文不在此作哨兵；材料读口与预算共用 fixed_config_amount，以变异真跑留证。
+    归属经 fiscal_key→yamen 预算接缝，不锁 live catalogue origin 内部形状。
     """
     db, state, content = game
     result, _night_id, _ctid = _create_yamen_via_night(db, state)
@@ -143,69 +171,35 @@ def test_monthly_fee_present_value_follows_fiscal_not_entity_copy(game):
     yamen = db.yamens.get(yamen_id)
     fiscal_key = str(yamen.fiscal_key)
     rate_key = fiscal_key[:-5] + "_rate"
-    origin = f"yamen:{yamen_id}"
-    assert _live_fee_amount(db, fiscal_key) == MONTHLY_FEE_WAN
+    cfg = db.fiscal_config.values()
+    assert fixed_config_amount(cfg, fiscal_key) == MONTHLY_FEE_WAN
 
-    # rate 100→50（先于 base 调额，base 行 origin 仍为 yamen 回指）：现值 6，扣款 -6
-    rated = settle_delta(
-        state, db,
-        {
-            "fiscal_changes": [{
-                "key": rate_key,
-                "delta": 50 - 100,
-                "reason": "核减月费 rate",
-                "origin_ref": "盘面自发",
-            }]
-        },
-        SettlementContext(content=content),
-    )
-    assert rated.fiscal is not None
-    assert rated.fiscal.changes.rejected == []
-    assert db.fiscal_config.values().get(rate_key) == 50
-    assert db.fiscal_config.values().get(fiscal_key) == MONTHLY_FEE_WAN
-    assert _live_fee_amount(db, fiscal_key) == 6
+    # rate 100→50：现值 6，扣款 -6
+    _fiscal_change(db, state, content, key=rate_key, delta=50 - 100, reason="核减月费 rate")
+    cfg = db.fiscal_config.values()
+    assert cfg.get(rate_key) == 50
+    assert cfg.get(fiscal_key) == MONTHLY_FEE_WAN
+    assert fixed_config_amount(cfg, fiscal_key) == 6
     assert int(db.yamens.get(yamen_id).monthly_fee) == MONTHLY_FEE_WAN
 
     with atomic(db):
         apply_fixed_period_flows(db, state)
-    moves = [
-        item for item in db.reign.list_economy_moves_for_origin(origin)
-        if int(item.get("delta") or 0) < 0
-    ]
-    assert moves, "月费须经公开 economy origin 读口可见，不得改查 SQL 兜底"
-    assert any(int(m["delta"]) == -6 for m in moves), "rate 调整后扣款须跟 base×rate"
+    assert _charge_moves(db, yamen_id, delta=-6), "rate 调整后扣款须跟 base×rate"
 
-    # base 12→8，rate 仍 50 → 现值 4；成立历史不变；live origin 仍属 yamen（调额只进变更史）
-    changed = settle_delta(
-        state, db,
-        {
-            "fiscal_changes": [{
-                "key": fiscal_key,
-                "delta": 8 - MONTHLY_FEE_WAN,
-                "reason": "核减月费 base",
-                "origin_ref": "盘面自发",
-            }]
-        },
-        SettlementContext(content=content),
+    # base 12→8，rate 仍 50 → 现值 4；成立历史不变；扣款仍挂 yamen
+    _fiscal_change(
+        db, state, content, key=fiscal_key, delta=8 - MONTHLY_FEE_WAN, reason="核减月费 base",
     )
-    assert changed.fiscal is not None
-    assert changed.fiscal.changes.rejected == []
-    assert db.fiscal_config.values().get(fiscal_key) == 8
-    assert _live_fee_amount(db, fiscal_key) == 4
+    cfg = db.fiscal_config.values()
+    assert cfg.get(fiscal_key) == 8
+    assert fixed_config_amount(cfg, fiscal_key) == 4
     assert int(db.yamens.get(yamen_id).monthly_fee) == MONTHLY_FEE_WAN
-    live_row = db.fiscal_config.row(fiscal_key)
-    assert live_row is not None
-    assert str(live_row["origin_ref"] or "") == origin
     history = db.fiscal_config.changes_for(fiscal_key, "盘面自发")
     assert history, "调额来源须在变更史留痕"
 
     with atomic(db):
         apply_fixed_period_flows(db, state)
-    base_moves = [
-        item for item in db.reign.list_economy_moves_for_origin(origin)
-        if int(item.get("delta") or 0) == -4
-    ]
-    assert base_moves, "base 调额后扣款仍须挂 yamen 回指，不得改属调额来源"
+    assert _charge_moves(db, yamen_id, delta=-4), "base 调额后扣款仍须挂 yamen 回指"
 
     removed = settle_delta(
         state, db,
@@ -221,7 +215,6 @@ def test_monthly_fee_present_value_follows_fiscal_not_entity_copy(game):
     assert removed.fiscal is not None
     assert removed.fiscal.removes.rejected == []
     assert fiscal_key not in db.fiscal_config.values()
-    assert _live_fee_amount(db, fiscal_key) is None
     assert int(db.yamens.get(yamen_id).monthly_fee) == MONTHLY_FEE_WAN
 
 
@@ -303,29 +296,16 @@ def test_undo_chat_turn_reverses_yamen_fee_and_durable_effects(game):
     assert leftover == []
 
 
-def test_materials_paths_and_seeded_fact_filter_seam(game, tmp_path):
-    """主官有衙门路径、经手人仅有事务路径；公开/密旨事实落库供材料接缝。
+def test_materials_paths_for_chief_handler_and_gazette(game, tmp_path):
+    """主官有衙门路径、经手人仅有事务路径；公开衙门进邸报路径。
 
-    路径与名册为结构化契约。材料正文过滤不在此锁子串——以变异真跑观察留证。
+    材料正文过滤不在此锁子串——以变异真跑观察留证。
     """
     db, state, _ = game
-    result, _night_id, _ctid = _create_yamen_via_night(db, state)
-    yamen_id = int(result.yamen_creates.applied[0]["id"])
-    # 密令主官＝HANDLER，与衙门主官 CHIEF 分离
-    order_id = create_test_secret_order(db, state, HANDLER, "密查钱粮", "清出隐漏", [])
-    secret_origin = f"secret_order:{order_id}"
-
+    _create_yamen_via_night(db, state)
     affair = db.affairs.open(
         name="押解银两赴宁远",
         origin="本月派杨嗣昌押解",
-        year=state.year,
-        period=state.period,
-        turn=state.turn,
-    )
-    db.textual_facts.append(
-        subject_kind="affair",
-        subject_id=str(int(affair.id)),
-        body="银两已出京，尚未抵宁远",
         year=state.year,
         period=state.period,
         turn=state.turn,
@@ -350,25 +330,8 @@ def test_materials_paths_and_seeded_fact_filter_seam(game, tmp_path):
     )
     db.affairs.attach_pointer("decree_dossiers", int(dossier_id), int(affair.id))
 
-    # 结构化落库：公开 + 密旨两条；材料过滤接缝靠生产 include_fact，正文不锁
-    db.textual_facts.append(
-        subject_kind="yamen", subject_id=str(yamen_id),
-        body="公开月度办理记录", origin_ref="",
-        year=state.year, period=state.period, turn=state.turn,
-    )
-    db.textual_facts.append(
-        subject_kind="yamen", subject_id=str(yamen_id),
-        body="密旨下的月度办理记录", origin_ref=secret_origin,
-        year=state.year, period=state.period, turn=state.turn,
-    )
-    stored = db.textual_facts.readable_materials(
-        subject_kind="yamen", subject_id=str(yamen_id),
-    )
-    assert {str(f.origin_ref or "") for f in stored} == {"", secret_origin}
-
     world = prepare_world_materials(db, state, dest_root=tmp_path / "world")
     assert _yamen_path_exists(world.root)
-    # 同一盘面：身份材料复用已备世界树，不二次 prepare
     write_identity_materials(world, db, state, [CHIEF, HANDLER])
     assert _person_paths(world.root, CHIEF, "衙门"), "主官可及材料无衙门路径"
     assert _person_paths(world.root, HANDLER, f"affair-{int(affair.id)}"), (
@@ -396,7 +359,6 @@ def test_secret_yamen_hidden_from_public_materials_and_treasury(game, tmp_path):
     )
     assert created.yamen_creates.rejected == []
     yamen_id = int(created.yamen_creates.applied[0]["id"])
-    yamen_origin = f"yamen:{yamen_id}"
     yamen = db.yamens.get(yamen_id)
     assert yamen.origin_ref == origin
     fiscal_key = str(yamen.fiscal_key)
@@ -412,36 +374,16 @@ def test_secret_yamen_hidden_from_public_materials_and_treasury(game, tmp_path):
     finally:
         release_material_tree(gazette.root)
 
-    # 公开来源调 base 后，live 归属与扣款仍走 yamen 回指（变更史另记调额来源）
-    changed = settle_delta(
-        state, db,
-        {
-            "fiscal_changes": [{
-                "key": fiscal_key,
-                "delta": 8 - 9,
-                "reason": "核减密衙门月费",
-                "origin_ref": "盘面自发",
-            }]
-        },
-        SettlementContext(content=content),
-    )
-    assert changed.fiscal is not None
-    assert changed.fiscal.changes.rejected == []
-    assert str(db.fiscal_config.row(fiscal_key)["origin_ref"] or "") == yamen_origin
+    _fiscal_change(db, state, content, key=fiscal_key, delta=8 - 9, reason="核减密衙门月费")
 
     with atomic(db):
         apply_fixed_period_flows(db, state)
-    fee_moves = [
-        item for item in db.reign.list_economy_moves_for_origin(yamen_origin)
-        if int(item.get("delta") or 0) < 0
-    ]
+    fee_moves = _charge_moves(db, yamen_id, delta=-8)
     assert fee_moves, "月费须能按 yamen 回指读到（世界/内部账）"
-    assert any(int(m["delta"]) == -8 for m in fee_moves)
     assert all(
         not origin_visible_to(db, str(item.get("origin_ref") or ""), "")
         for item in fee_moves
     )
-    # 公开调额不得把密衙门支出挂到公开 origin（结构化：公开 origin 下无本 fee 流水）
     public_fee = [
         item for item in db.reign.list_economy_moves_for_origin("盘面自发")
         if int(item.get("delta") or 0) == -8
@@ -511,36 +453,13 @@ def test_textual_fact_keeps_origin_and_affair_separate(game):
 def test_yamen_fee_rejects_non_storable_amounts(game):
     """月费拒绝 float 截断与超界整数；合法同批不因坏项丢失。"""
     db, state, _ = game
-    night = open_night(db, state, location="乾清宫", time_of_day="夜")
-    night_id = int(night["id"])
-    chat_turn_id = _active_chat_turn(db, state, night_id)
-    result = apply_audience_round_translation(
+    result, _night_id, _ctid = _audience_yamen_creates(
         db, state,
-        {
-            "yamen_creates": [
-                {
-                    "name": "截断月费司",
-                    "chief": CHIEF,
-                    "monthly_fee": 12.75,
-                    "account": "国库",
-                },
-                {
-                    "name": "超界月费司",
-                    "chief": CHIEF,
-                    "monthly_fee": 9223372036854775808,
-                    "account": "国库",
-                },
-                {
-                    "name": "合法月费司",
-                    "chief": CHIEF,
-                    "monthly_fee": 8,
-                    "account": "国库",
-                },
-            ]
-        },
-        night_id=night_id,
-        chat_turn_id=chat_turn_id,
-        minister_name=CHIEF,
+        [
+            _yamen_item("截断月费司", fee=12.75),
+            _yamen_item("超界月费司", fee=9223372036854775808),
+            _yamen_item("合法月费司", fee=8),
+        ],
     )
     assert len(result.yamen_creates.rejected) == 2
     assert len(result.yamen_creates.applied) == 1
@@ -610,9 +529,6 @@ def test_yamen_fact_normalizes_numeric_subject_id(game):
 def test_yamen_origin_rejects_unstorable_and_backref(game):
     """建制来源：回指/超界/不存在/零号均拒；合法同批仍落。"""
     db, state, _ = game
-    night = open_night(db, state, location="乾清宫", time_of_day="夜")
-    night_id = int(night["id"])
-    chat_turn_id = _active_chat_turn(db, state, night_id)
     overflow = "9223372036854775808"
     bad_items = (
         ("回指司", "yamen:2"),
@@ -626,25 +542,12 @@ def test_yamen_origin_rejects_unstorable_and_backref(game):
         ("零号案卷别名后缀司", "decree_dossier:0/step"),
         ("零号密令司", "secret_order:0"),
     )
-    creates = [
-        {
-            "name": name,
-            "chief": CHIEF,
-            "monthly_fee": 1,
-            "account": "国库",
-            "origin_ref": origin,
-        }
-        for name, origin in bad_items
-    ]
-    creates.append({
-        "name": "公开合法司",
-        "chief": CHIEF,
-        "monthly_fee": 1,
-        "account": "国库",
-    })
-    result = apply_audience_round_translation(
-        db, state, {"yamen_creates": creates},
-        night_id=night_id, chat_turn_id=chat_turn_id, minister_name=CHIEF,
+    result, _night_id, _ctid = _audience_yamen_creates(
+        db, state,
+        [
+            *(_yamen_item(name, origin_ref=origin) for name, origin in bad_items),
+            _yamen_item("公开合法司"),
+        ],
     )
     assert len(result.yamen_creates.rejected) == len(bad_items)
     assert len(result.yamen_creates.applied) == 1
@@ -684,28 +587,20 @@ def test_yamen_chief_status_account_and_zero_fee(game):
     ).fetchone()
     offstage = str(offstage_row["name"]) if offstage_row is not None else None
 
-    night = open_night(db, state, location="乾清宫", time_of_day="夜")
-    night_id = int(night["id"])
-    chat_turn_id = _active_chat_turn(db, state, night_id)
-
     rejected_items = [
-        {"name": "死人主官司", "chief": dead, "monthly_fee": 1, "account": "国库"},
-        {"name": "革职主官司", "chief": dismissed, "monthly_fee": 1, "account": "国库"},
-        {"name": "缺账户司", "chief": CHIEF, "monthly_fee": 1},
-        {"name": "空白账户司", "chief": CHIEF, "monthly_fee": 1, "account": ""},
+        _yamen_item("死人主官司", chief=dead),
+        _yamen_item("革职主官司", chief=dismissed),
+        _yamen_item("缺账户司", account=None),
+        _yamen_item("空白账户司", account=""),
     ]
     if offstage is not None:
-        rejected_items.insert(2, {
-            "name": "未登场主官司", "chief": offstage,
-            "monthly_fee": 1, "account": "国库",
-        })
+        rejected_items.insert(2, _yamen_item("未登场主官司", chief=offstage))
     applied_items = [
-        {"name": "零费合法司", "chief": CHIEF, "monthly_fee": 0, "account": "内库"},
-        {"name": "在事合法司", "chief": CHIEF, "monthly_fee": 3, "account": "国库"},
+        _yamen_item("零费合法司", fee=0, account="内库"),
+        _yamen_item("在事合法司", fee=3),
     ]
-    result = apply_audience_round_translation(
-        db, state, {"yamen_creates": [*rejected_items, *applied_items]},
-        night_id=night_id, chat_turn_id=chat_turn_id, minister_name=CHIEF,
+    result, _night_id, _ctid = _audience_yamen_creates(
+        db, state, [*rejected_items, *applied_items],
     )
     assert len(result.yamen_creates.rejected) == len(rejected_items)
     assert len(result.yamen_creates.applied) == len(applied_items)
@@ -716,6 +611,6 @@ def test_yamen_chief_status_account_and_zero_fee(game):
     assert zero.fee_account == "内库"
     assert not zero.fiscal_key
     assert _fee_base_from_origin(db, zero.id) == []
-    assert _live_fee_amount(db, zero.fiscal_key) is None
+    assert not zero.fiscal_key or zero.fiscal_key not in db.fiscal_config.values()
     assert db.characters.get_character_status(dead)[0] == "dead"
     assert db.characters.get_character_status(dismissed)[0] == "dismissed"

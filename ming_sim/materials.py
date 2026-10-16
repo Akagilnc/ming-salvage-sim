@@ -2518,12 +2518,9 @@ def inquiry_order_source_suffix(order_id: int) -> str:
     """查访见闻指向一条密令的结构化后缀。不用 secret_order: 前缀。"""
     return f":order:{int(order_id)}"
 
-def dossier_id_in_origin(origin: object) -> Optional[int]:
-    """从 origin 取出案卷 id；与读口同一形状（decree_dossier 别名、后缀）。
-
-    id 走 strict_sqlite_id：超界返回 None，由调用方 fail-closed，不抛 OverflowError。
-    """
-    match = re.match(r"(?:decree_)?dossier:(\d+)(?:[:/]|$)", str(origin or ""))
+def _strict_id_in_origin(origin: object, pattern: str) -> Optional[int]:
+    """Match ``pattern`` (group 1 = id), then strict_sqlite_id; fail-closed to None."""
+    match = re.match(pattern, str(origin or ""))
     if match is None:
         return None
     from ming_sim.strict_types import strict_sqlite_id
@@ -2532,22 +2529,16 @@ def dossier_id_in_origin(origin: object) -> Optional[int]:
         return strict_sqlite_id(match.group(1))
     except (TypeError, ValueError):
         return None
+
+
+def dossier_id_in_origin(origin: object) -> Optional[int]:
+    """从 origin 取出案卷 id；与读口同一形状（decree_dossier 别名、后缀）。"""
+    return _strict_id_in_origin(origin, r"(?:decree_)?dossier:(\d+)(?:[:/]|$)")
 
 
 def secret_order_id_in_origin(origin: object) -> Optional[int]:
-    """从 origin 取出密令 id；与 origin_visible_to 同一形状（brief 别名、后缀）。
-
-    id 走 strict_sqlite_id：超界返回 None，不抛 OverflowError。
-    """
-    match = re.match(r"secret_order(?:_brief)?:(\d+)(?:[:/]|$)", str(origin or ""))
-    if match is None:
-        return None
-    from ming_sim.strict_types import strict_sqlite_id
-
-    try:
-        return strict_sqlite_id(match.group(1))
-    except (TypeError, ValueError):
-        return None
+    """从 origin 取出密令 id；与 origin_visible_to 同一形状（brief 别名、后缀）。"""
+    return _strict_id_in_origin(origin, r"secret_order(?:_brief)?:(\d+)(?:[:/]|$)")
 
 
 def origin_claims_secret_or_dossier(origin: object) -> bool:
@@ -2560,19 +2551,8 @@ def origin_claims_secret_or_dossier(origin: object) -> bool:
 
 
 def yamen_id_in_origin(origin: object) -> Optional[int]:
-    """从 origin 取出衙门 id；与 secret/dossier 同形（后缀、strict id）。
-
-    id 走 strict_sqlite_id：超界或非十进制返回 None，由调用方 fail-closed。
-    """
-    match = re.match(r"yamen:(\d+)(?:[:/]|$)", str(origin or ""))
-    if match is None:
-        return None
-    from ming_sim.strict_types import strict_sqlite_id
-
-    try:
-        return strict_sqlite_id(match.group(1))
-    except (TypeError, ValueError):
-        return None
+    """从 origin 取出衙门 id；与 secret/dossier 同形（后缀、strict id）。"""
+    return _strict_id_in_origin(origin, r"yamen:(\d+)(?:[:/]|$)")
 
 
 def origin_claims_yamen(origin: object) -> bool:

@@ -290,7 +290,7 @@ def compute_budget_lines(
     for item in db.iter_budget_items():
         base_key = str(item["key"])
         amount = fixed_config_amount(cfg, base_key)
-        # 衙门月费：归属走 fiscal_key→yamen:<id>，不因调额改写 live origin 而断链（#1915 F1）
+        # 衙门月费归属唯一接缝：fiscal_key→yamen:<id>；承接新记录与旧写路改写过的 live origin（#1915 S1）
         origin = ""
         yamens = getattr(db, "yamens", None)
         if yamens is not None and hasattr(yamens, "origin_for_fiscal_key"):
