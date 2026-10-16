@@ -91,6 +91,14 @@ def test_absent_minister_reads_saying_not_actual_status(game):
 
 def test_public_saying_may_annotate_person_affair_or_neither(game):
     db, state, _content = game
+    matter = db.affairs.open(
+        name="宁远兵变",
+        origin="盘面自发",
+        year=state.year,
+        period=state.period,
+        turn=state.turn,
+    )
+    affair_ref = db.affairs.origin_ref(int(matter.id))
 
     rumor_id = record_public_saying(db, state, "宫中有人夜见彗星")
     person_id = record_public_saying(
@@ -99,24 +107,24 @@ def test_public_saying_may_annotate_person_affair_or_neither(game):
         "袁崇焕已死于宁远",
         involved_characters=["袁崇焕"],
     )
-    affair_id = record_public_saying(
+    saying_id = record_public_saying(
         db,
         state,
         "宁远兵变已平",
         involved_characters=["袁崇焕"],
-        affair_ref="affair:ningyuan-mutiny",
+        affair_ref=affair_ref,
     )
 
     rumor = next(row for row in list_public_sayings(db) if row["id"] == rumor_id)
     person = next(row for row in list_public_sayings(db) if row["id"] == person_id)
-    affair = next(row for row in list_public_sayings(db) if row["id"] == affair_id)
+    affair = next(row for row in list_public_sayings(db) if row["id"] == saying_id)
 
     assert rumor["involved_characters"] == []
     assert rumor["affair_ref"] == ""
     assert person["involved_characters"] == ["袁崇焕"]
     assert person["affair_ref"] == ""
     assert affair["involved_characters"] == ["袁崇焕"]
-    assert affair["affair_ref"] == "affair:ningyuan-mutiny"
+    assert affair["affair_ref"] == affair_ref
     assert list_public_sayings(db, involved_character="袁崇焕") == [person, affair]
-    assert list_public_sayings(db, affair_ref="affair:ningyuan-mutiny") == [affair]
+    assert list_public_sayings(db, affair_ref=affair_ref) == [affair]
     assert list_public_sayings(db, affair_ref="") == [rumor, person]

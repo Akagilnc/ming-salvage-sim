@@ -42,6 +42,14 @@ def test_textual_facts_on_army_region_and_affair_are_object_materials(game):
     db, state, _ = game
     army_id = db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()["id"]
     region_id = db.conn.execute("SELECT id FROM regions LIMIT 1").fetchone()["id"]
+    affair = db.affairs.open(
+        name="宁远护送银两",
+        origin="盘面自发",
+        year=state.year,
+        period=state.period,
+        turn=state.turn,
+    )
+    affair_id = str(int(affair.id))
 
     db.textual_facts.append(
         subject_kind="army",
@@ -61,7 +69,7 @@ def test_textual_facts_on_army_region_and_affair_are_object_materials(game):
     )
     db.textual_facts.append(
         subject_kind="affair",
-        subject_id="ningyuan-escort",
+        subject_id=affair_id,
         body="护送银两已出京，尚未抵宁远",
         year=state.year,
         period=state.period,
@@ -75,7 +83,7 @@ def test_textual_facts_on_army_region_and_affair_are_object_materials(game):
     assert [f.body for f in db.textual_facts.readable_materials(subject_kind="region", subject_id=region_id)] == [
         "城中疫气未散",
     ]
-    assert [f.body for f in db.textual_facts.readable_materials(subject_kind="affair", subject_id="ningyuan-escort")] == [
+    assert [f.body for f in db.textual_facts.readable_materials(subject_kind="affair", subject_id=affair_id)] == [
         "护送银两已出京，尚未抵宁远",
     ]
     assert db.textual_facts.readable_materials(subject_kind="character", subject_id="孙传庭") == ()

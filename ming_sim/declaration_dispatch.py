@@ -3200,37 +3200,24 @@ def _dispatch_promises(
 
 
 def _assert_textual_fact_subject_exists(db: Any, subject_kind: str, subject_id: str) -> str:
-    """格式及缺失引用为类型化数据错误；持久读取异常不转译。
+    """存在性拒收；数值身份规范化复用 textual_fact.store.parse_subject（#1915）。"""
+    from ming_sim.entities.textual_fact.store import parse_subject
 
-    数值主体（affair/yamen）在同一接缝规范化为十进制身份字符串，贯穿验证与落库
-    （#1915 F3：'02' 不得与 '2' 分裂成不可达事实）。文字型主体原样返回。
-    """
-    from ming_sim.strict_types import strict_sqlite_id
-
-    if subject_kind == "affair":
-        try:
-            affair_id = strict_sqlite_id(subject_id)
-        except (TypeError, ValueError) as exc:
-            raise DeclarationDataError("事务引用须为整数") from exc
-        db.affairs.get(affair_id)
-        return str(affair_id)
-    if subject_kind == "yamen":
-        try:
-            yamen_id = strict_sqlite_id(subject_id)
-        except (TypeError, ValueError) as exc:
-            raise DeclarationDataError("衙门引用须为整数") from exc
-        if db.yamens.get(yamen_id) is None:
+    kind, target = parse_subject(subject_kind, subject_id)
+    if kind == "affair":
+        db.affairs.get(int(target))
+        return target
+    if kind == "yamen":
+        if db.yamens.get(int(target)) is None:
             raise DeclarationReferenceError(f"yamen 不存在：{subject_id}")
-        return str(yamen_id)
-    store = {"character": db.characters, "army": db.armies, "region": db.regions}.get(
-        subject_kind
-    )
+        return target
+    store = {"character": db.characters, "army": db.armies, "region": db.regions}.get(kind)
     if store is None:
-        return str(subject_id or "").strip()
-    row = store.row(subject_id)
+        return target
+    row = store.row(target)
     if row is None:
-        raise DeclarationReferenceError(f"{subject_kind} 不存在：{subject_id}")
-    return str(subject_id or "").strip()
+        raise DeclarationReferenceError(f"{kind} 不存在：{subject_id}")
+    return target
 
 
 def _xiexang_reject_category(exc: DecreeMaterializationValidationError) -> str:

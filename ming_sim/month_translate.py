@@ -28,18 +28,14 @@ def _visible_effect_refs(
     """Freeze the same reference rosters supplied to this segment's translation."""
     from ming_sim.materials import secret_order_dossier_ids
 
-    refs = {
+    # 衙门身份只在 build_translation_target_grounding（权威目标目录）；
+    # refs 只冻 effects 消费的 affairs/dossiers/secret_dossiers，不平行传 yamens。
+    return {
         "affairs": [int(row.id) for row in db.affairs.list_open()],
         "dossiers": [int(row["id"]) for row in db.dossiers.list_for_simulation(turn)],
         # 唯一判法：案卷.secret_order_id；供 declaration_dispatch → secret_dossier_participants
         "secret_dossiers": sorted(secret_order_dossier_ids(db)),
     }
-    # #1915：在职衙门 id+名称，供月末 textual_facts 回指；名称映射亦在权威目标目录。
-    refs["yamens"] = [
-        {"id": int(row.id), "name": row.name}
-        for row in db.yamens.list_active()
-    ]
-    return refs
 
 
 def petition_verdict_grounding(db: Any, state: Any) -> list[dict[str, object]]:

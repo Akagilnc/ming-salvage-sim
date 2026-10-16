@@ -75,7 +75,7 @@ class TextualFactStore(RowStore):
         origin_ref: str = "",
         affair_id: int = 0,
     ) -> TextualFact:
-        kind, target = _parse_subject(subject_kind, subject_id)
+        kind, target = parse_subject(subject_kind, subject_id)
         if not isinstance(body, str) or not body.strip():
             raise DeclarationDataError("textual fact body cannot be empty")
         month = int(period)
@@ -114,13 +114,13 @@ class TextualFactStore(RowStore):
         Affair queries also collect rows whose structured ``affair_id`` pointer
         targets this affair. Provenance stays on ``origin_ref``.
         """
-        kind, target = _parse_subject(subject_kind, subject_id)
+        kind, target = parse_subject(subject_kind, subject_id)
         rows = self._conn.execute(
             "SELECT id, subject_kind, subject_id, year, period, turn, body, origin_ref, affair_id "
             "FROM textual_facts "
             "WHERE (subject_kind = ? AND subject_id = ?) OR (affair_id = ? AND affair_id > 0) "
             "ORDER BY year ASC, period ASC, id ASC",
-            (kind, target, int(target) if kind == "affair" and target.isdecimal() else 0),
+            (kind, target, int(target) if kind == "affair" else 0),
         ).fetchall()
         return tuple(_row_to_fact(row) for row in rows)
 
@@ -146,7 +146,13 @@ def _row_to_fact(row: Any) -> TextualFact:
     )
 
 
-def _parse_subject(subject_kind: object, subject_id: object) -> tuple[str, str]:
+def parse_subject(subject_kind: object, subject_id: object) -> tuple[str, str]:
+    """Kind + identity normalize for textual facts (sole numeric-id authority, #1915).
+
+    Affair/yamen ids go through strict_sqlite_id alone (full Python int contract:
+    '02'/'+2'/'１'/'2' share one row; conversion/range/digit-limit failures reject).
+    Character/army/region keep real string identities.
+    """
     kind = str(subject_kind or "").strip()
     if kind not in TEXTUAL_FACT_SUBJECT_KINDS:
         raise DeclarationDataError(
@@ -155,15 +161,13 @@ def _parse_subject(subject_kind: object, subject_id: object) -> tuple[str, str]:
     target = str(subject_id or "").strip()
     if not target:
         raise DeclarationDataError("textual fact subject_id cannot be empty")
-    # 数值主体身份规范化：纯数字（含前导零）收成十进制，避免 '02'/'2' 分裂（#1915 F3）。
-    # yamen 必须是整数 id；affair 历史测试/材料偶有非数字键，非数字原样保留。
-    if kind in {"affair", "yamen"} and target.lstrip("-").isdecimal():
+    if kind in {"affair", "yamen"}:
         from ming_sim.strict_types import strict_sqlite_id
 
         try:
             target = str(strict_sqlite_id(target))
         except (TypeError, ValueError) as exc:
-            raise DeclarationDataError(f"textual fact {kind} subject_id must be an integer id") from exc
-    elif kind == "yamen":
-        raise DeclarationDataError("textual fact yamen subject_id must be an integer id")
+            raise DeclarationDataError(
+                f"textual fact {kind} subject_id must be an integer id"
+            ) from exc
     return kind, target

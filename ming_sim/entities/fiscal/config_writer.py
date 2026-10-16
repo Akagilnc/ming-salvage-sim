@@ -7,7 +7,13 @@ def _write_fiscal_config_change(
     db: Any, *, turn: int, key: str, old_value: int, new_value: int,
     origin_ref: str, reason: str, beyond_intent: object = 0,
 ) -> None:
-    """Canonical fiscal change writer shared by extraction and prohibition rollback."""
+    """Canonical fiscal change writer shared by extraction and prohibition rollback.
+
+    Live catalogue origin records the latest change provenance. Yamen monthly-fee
+    attribution for budget/charges is resolved separately via fiscal_key→yamen
+    (``flows.compute_budget_lines``), so adjustment must not maintain a second
+    live-origin freeze (#1915 S1).
+    """
     db.validate_fiscal_config_value(key, new_value)
     db.set_fiscal_config(key, new_value, commit=False)
     db.fiscal_config.set_origin(key, origin_ref)
