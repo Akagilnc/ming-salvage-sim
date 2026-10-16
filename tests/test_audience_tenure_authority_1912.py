@@ -46,16 +46,11 @@ def _dossier_for_pending(db, pending_id: int) -> dict:
     )
 
 
-def _latest_pending(db, *, kind: str | None = None) -> int:
-    sql = "SELECT id FROM pending_actions WHERE status='pending'"
-    params: list[object] = []
-    if kind:
-        sql += " AND kind=?"
-        params.append(kind)
-    sql += " ORDER BY id DESC LIMIT 1"
-    row = db.conn.execute(sql, params).fetchone()
-    assert row is not None
-    return int(row["id"])
+def _staged_commission_id(result) -> int:
+    """本次交办 id：入口 applied 已给出，不另查最新 pending。"""
+    assert result.commissions.rejected == []
+    assert len(result.commissions.applied) == 1
+    return int(result.commissions.applied[0]["id"])
 
 
 def _approve_pending(db, state, content, monkeypatch, pending_id: int, *, minister):
@@ -120,7 +115,7 @@ def test_acting_appointment_real_entry_lands_tenure_and_restore(game, monkeypatc
     appointee = "户部验收甲"
     _add_white_body(db, state, content, appointee)
 
-    _scene_declaration(
+    staged_result = _scene_declaration(
         db, state, content, monkeypatch,
         "着户部验收甲署理户部右侍郎。",
         {
@@ -136,7 +131,8 @@ def test_acting_appointment_real_entry_lands_tenure_and_restore(game, monkeypatc
         },
         minister_name=minister,
     )
-    pending_id = _latest_pending(db, kind="office")
+    pending_id = _staged_commission_id(staged_result)
+    assert staged_result.commissions.applied[0].get("kind") == "office"
     staged = _pending_payload(db, pending_id)
     assert staged.get("任别") == "署理"
     assert staged["_night_approved"] == 0
@@ -152,7 +148,7 @@ def test_acting_appointment_real_entry_lands_tenure_and_restore(game, monkeypatc
     assert _office_tenure(db, appointee) == "署理"
 
     # 同职改真除：须再成案，不得被无动作吞掉（ADR 0064）。
-    _scene_declaration(
+    convert_result = _scene_declaration(
         db, state, content, monkeypatch,
         "着户部验收甲实授户部右侍郎。",
         {
@@ -168,8 +164,9 @@ def test_acting_appointment_real_entry_lands_tenure_and_restore(game, monkeypatc
         },
         minister_name=minister,
     )
-    convert_id = _latest_pending(db, kind="office")
+    convert_id = _staged_commission_id(convert_result)
     assert convert_id != pending_id
+    assert convert_result.commissions.applied[0].get("kind") == "office"
     assert _pending_payload(db, convert_id).get("任别") == "真除"
     _approve_pending(db, state, content, monkeypatch, convert_id, minister=minister)
     _close_current_night(db, state, content)
@@ -189,7 +186,7 @@ def test_grant_revoke_authority_real_entry_and_region_scope(game, monkeypatch):
     holder = "持剑验收乙"
     _add_white_body(db, state, content, holder)
 
-    _scene_declaration(
+    grant_result = _scene_declaration(
         db, state, content, monkeypatch,
         "赐持剑验收乙尚方剑。",
         {
@@ -205,7 +202,8 @@ def test_grant_revoke_authority_real_entry_and_region_scope(game, monkeypatch):
         },
         minister_name=minister,
     )
-    grant_id = _latest_pending(db, kind="directive")
+    grant_id = _staged_commission_id(grant_result)
+    assert grant_result.commissions.applied[0].get("kind") == "directive"
     grant_payload = _pending_payload(db, grant_id)
     assert grant_payload.get("dossier_action_type") == "authorization"
     assert grant_payload.get("privilege") == "尚方剑密授"
@@ -219,7 +217,7 @@ def test_grant_revoke_authority_real_entry_and_region_scope(game, monkeypatch):
     assert [str(row["privilege"]) for row in held] == ["尚方剑密授"]
 
     # 省域专差：须带 locality_scope=single，收夜可成案。
-    _scene_declaration(
+    region_result = _scene_declaration(
         db, state, content, monkeypatch,
         "着持剑验收乙专差督办陕西军务。",
         {
@@ -235,7 +233,8 @@ def test_grant_revoke_authority_real_entry_and_region_scope(game, monkeypatch):
         },
         minister_name=minister,
     )
-    region_id = _latest_pending(db, kind="directive")
+    region_id = _staged_commission_id(region_result)
+    assert region_result.commissions.applied[0].get("kind") == "directive"
     region_payload = _pending_payload(db, region_id)
     assert region_payload.get("target_kind") == "region"
     assert region_payload.get("target_id") == "shaanxi"
@@ -248,7 +247,7 @@ def test_grant_revoke_authority_real_entry_and_region_scope(game, monkeypatch):
     _player_month(db, state, content, monkeypatch, int(region_dossier["id"]))
     assert set(_active_privileges(db, state, holder)) == {"尚方剑密授", "专差督办"}
 
-    _scene_declaration(
+    revoke_result = _scene_declaration(
         db, state, content, monkeypatch,
         "收回持剑验收乙尚方剑。",
         {
@@ -262,7 +261,8 @@ def test_grant_revoke_authority_real_entry_and_region_scope(game, monkeypatch):
         },
         minister_name=minister,
     )
-    revoke_id = _latest_pending(db, kind="directive")
+    revoke_id = _staged_commission_id(revoke_result)
+    assert revoke_result.commissions.applied[0].get("kind") == "directive"
     revoke_payload = _pending_payload(db, revoke_id)
     assert revoke_payload.get("dossier_action_type") == "revoke_authority"
     assert int(revoke_payload.get("authority_id") or 0) == int(held[0]["id"])
@@ -287,7 +287,7 @@ def test_rejected_authorization_does_not_land_held_privilege(game, monkeypatch):
     holder = "打回授权丙"
     _add_white_body(db, state, content, holder)
 
-    _scene_declaration(
+    staged_result = _scene_declaration(
         db, state, content, monkeypatch,
         "赐打回授权丙便宜行事。",
         {
@@ -303,7 +303,8 @@ def test_rejected_authorization_does_not_land_held_privilege(game, monkeypatch):
         },
         minister_name=minister,
     )
-    pending_id = _latest_pending(db, kind="directive")
+    pending_id = _staged_commission_id(staged_result)
+    assert staged_result.commissions.applied[0].get("kind") == "directive"
     _approve_pending(db, state, content, monkeypatch, pending_id, minister=minister)
     _close_current_night(db, state, content)
     dossier = _dossier_for_pending(db, pending_id)

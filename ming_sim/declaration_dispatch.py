@@ -1002,19 +1002,15 @@ def _exclusive_commission_conflict(kinds: frozenset[str]) -> bool:
     return kinds != frozenset({"grant", "appointment"})
 
 
-def _stage_authorization_commission(
+def _authorization_commission_payload(
     db: Any,
-    state: Any,
     item: Mapping[str, object],
     authorization: object,
     *,
-    minister_name: str,
     source: Provenance,
-    night_id: int,
-    source_chat_turn_id: int,
     rejected: List[RejectedItem],
 ) -> Optional[Dict[str, Any]]:
-    """#1912：召对授出权项 → authorization 旨意暂存。"""
+    """#1912：召对授出权项 → authorization 载荷；校验与拒收在此，暂存由共用尾承担。"""
     # 与兄弟交办的互斥由 _dispatch_commission_items 入口统一闸判定。
     if not isinstance(authorization, Mapping):
         _reject(rejected, item, "授权交办载荷须为独立对象", "invalid_shape", source)
@@ -1066,7 +1062,7 @@ def _stage_authorization_commission(
     mode = resolve_directive_mode(
         extracted=authorization.get("mode", item.get("mode")),
     )
-    payload: Dict[str, Any] = {
+    return {
         "text": body,
         "dossier_action_type": "authorization",
         "privilege": privilege,
@@ -1079,27 +1075,18 @@ def _stage_authorization_commission(
         "assignee_id": holder,
         "mode": mode,
     }
-    return _stage_attached_directive(
-        db, state, item, payload,
-        minister_name=minister_name, source=source,
-        night_id=night_id, source_chat_turn_id=source_chat_turn_id,
-        rejected=rejected,
-    )
 
 
-def _stage_revoke_authority_commission(
+def _revoke_authority_commission_payload(
     db: Any,
     state: Any,
     item: Mapping[str, object],
     revoke_authority: object,
     *,
-    minister_name: str,
     source: Provenance,
-    night_id: int,
-    source_chat_turn_id: int,
     rejected: List[RejectedItem],
 ) -> Optional[Dict[str, Any]]:
-    """#1912：召对收回权项 → revoke_authority 旨意暂存。"""
+    """#1912：召对收回权项 → revoke_authority 载荷；在持解析需 state，暂存由共用尾承担。"""
     # 与兄弟交办的互斥由 _dispatch_commission_items 入口统一闸判定。
     if not isinstance(revoke_authority, Mapping):
         _reject(rejected, item, "收权交办载荷须为独立对象", "invalid_shape", source)
@@ -1192,12 +1179,7 @@ def _stage_revoke_authority_commission(
         payload["target_id"] = holder
     if privilege in AUTHORITY_PRIVILEGE_SET:
         payload["privilege"] = privilege
-    return _stage_attached_directive(
-        db, state, item, payload,
-        minister_name=minister_name, source=source,
-        night_id=night_id, source_chat_turn_id=source_chat_turn_id,
-        rejected=rejected,
-    )
+    return payload
 
 
 def _stage_attached_directive(
@@ -2085,30 +2067,29 @@ def _dispatch_commission_items(
             applied.append({"id": row_id, "kind": "directive"})
             continue
 
+        # 授出/收回：分支只造载荷；事务关联与暂存只走一次共用尾。
         authorization = _declared_object_slot(item.get("authorization"))
-        if authorization is not None:
-            staged = _stage_authorization_commission(
-                db, state, item, authorization,
-                minister_name=minister_name, source=source,
-                night_id=int(night_id),
-                source_chat_turn_id=source_chat_turn_id,
-                rejected=rejected,
-            )
-            if staged is not None:
-                applied.append(staged)
-            continue
-
         revoke_authority = _declared_object_slot(item.get("revoke_authority"))
-        if revoke_authority is not None:
-            staged = _stage_revoke_authority_commission(
-                db, state, item, revoke_authority,
-                minister_name=minister_name, source=source,
-                night_id=int(night_id),
-                source_chat_turn_id=source_chat_turn_id,
-                rejected=rejected,
-            )
-            if staged is not None:
-                applied.append(staged)
+        if authorization is not None or revoke_authority is not None:
+            if authorization is not None:
+                payload = _authorization_commission_payload(
+                    db, item, authorization, source=source, rejected=rejected,
+                )
+            else:
+                payload = _revoke_authority_commission_payload(
+                    db, state, item, revoke_authority,
+                    source=source, rejected=rejected,
+                )
+            if payload is not None:
+                staged = _stage_attached_directive(
+                    db, state, item, payload,
+                    minister_name=minister_name, source=source,
+                    night_id=int(night_id),
+                    source_chat_turn_id=source_chat_turn_id,
+                    rejected=rejected,
+                )
+                if staged is not None:
+                    applied.append(staged)
             continue
 
         grant_raw = item.get("grant") or {}
