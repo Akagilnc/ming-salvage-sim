@@ -2186,6 +2186,18 @@ def _origin_readable_to_present(
     return any(origin_visible_to(db, origin_ref, name) for name in names)
 
 
+def _issue_readable_to_present(
+    db: Any, issue: Any, present_names: Sequence[str],
+) -> bool:
+    """Issue-derived opening facts reuse the full issue gate, not origin alone."""
+    from ming_sim.knowledge import issue_readable_to
+
+    names = [str(name) for name in present_names if str(name or "")]
+    if not names:
+        return issue_readable_to(db, issue, "")
+    return any(issue_readable_to(db, issue, name) for name in names)
+
+
 def _scene_pending_audience_facts(
     db: Any,
     state: Any,
@@ -2194,8 +2206,8 @@ def _scene_pending_audience_facts(
     """#1838 reopen：待裁场面原样事实（到期复命 / 暗渠摊派暴露与缺口重开 / 谏催）。
 
     原喂开夜旁白；现并入场景开场最小集。结构化事实原样，不加措辞模板。
-    #1916：受限来源按在场人物 origin_visible_to 裁切；待办本身不消费。
-    present_names=None 时取当前夜在场；显式空序列表示无人在场。
+    #1916：议题派生待裁走 issue_readable_to；其它来源仍按 origin_visible_to。
+    待办本身不消费。present_names=None 时取当前夜在场；显式空序列表示无人在场。
     """
     from ming_sim.audience_night import list_unsettled_summons
     from ming_sim.due_review import list_due_review_scenes
@@ -2215,7 +2227,12 @@ def _scene_pending_audience_facts(
             continue
         todo_id = int(scene.get("todo_id") or 0)
         origin = origin_by_todo.get(todo_id, str(scene.get("origin_ref") or ""))
-        if not _origin_readable_to_present(db, origin, readers):
+        commitment_ref = int(scene.get("commitment_ref") or 0)
+        if commitment_ref > 0:
+            issue = db.issues.row(commitment_ref)
+            if issue is None or not _issue_readable_to_present(db, issue, readers):
+                continue
+        elif not _origin_readable_to_present(db, origin, readers):
             continue
         lines.append(json.dumps(scene, ensure_ascii=False, sort_keys=True))
     for summon in list_unsettled_summons(db):

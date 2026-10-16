@@ -1053,6 +1053,80 @@ def test_c1_minister_promise_origin_not_public_visible(game, monkeypatch):
     finally:
         release_material_tree(prepared_public_link.root)
 
+    # 到期派生供料：origin 公开但名册受限的承诺，不得进公开作者 due 与非知情开场。
+    db.conn.execute(
+        "UPDATE issues SET end_turn=?, commitment_kind='until_stop', "
+        "stage_text=? WHERE id IN (?, ?)",
+        (int(state.turn), "到期正文", restricted_issue, public_issue),
+    )
+    db.conn.commit()
+    due_ledger = {
+        int(i["issue_id"]) for i in list_due_commitments(db, state)
+    }
+    assert restricted_issue in due_ledger and public_issue in due_ledger
+    gazette_due = {
+        int(i["issue_id"]) for i in _gazette_feed(db, state).get("due_commitments") or []
+    }
+    assert public_issue in gazette_due
+    assert restricted_issue not in gazette_due
+
+    for iid, stage in ((restricted_issue, 0), (public_issue, 1)):
+        created = db.dossiers.insert_next_audience_todo(
+            commitment_ref=int(iid),
+            stage_idx=int(stage),
+            due_turn=int(state.turn),
+            criterion_text=f"复命{iid}",
+            origin_context=f"复命{iid}",
+            entry_kind=ENTRY_KIND_STAGED,
+            created_turn=int(state.turn),
+            payload_json={"origin_ref": ""},
+        )
+        assert int(created) > 0
+
+    def _opening_commitment_ids(opening: str) -> set[int]:
+        ids: set[int] = set()
+        for line in str(opening or "").splitlines():
+            text = line.strip()
+            if not text.startswith("{"):
+                continue
+            try:
+                obj = json.loads(text)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(obj, dict) and obj.get("commitment_ref") is not None:
+                ids.add(int(obj.get("commitment_ref") or 0))
+        return ids
+
+    close_night(db, state, content=content)
+    night_empty = open_night(db, state, location="乾清宫", time_of_day="昼")
+    prepared_empty = prepare_scene_materials(db, state)
+    try:
+        empty_ids = _opening_commitment_ids(prepared_empty.opening)
+        assert public_issue in empty_ids
+        assert restricted_issue not in empty_ids
+    finally:
+        release_material_tree(prepared_empty.root)
+
+    ensure_summon_enter(db, int(night_empty["id"]), "杨嗣昌")
+    prepared_uninf = prepare_scene_materials(db, state)
+    try:
+        uninf_ids = _opening_commitment_ids(prepared_uninf.opening)
+        assert public_issue in uninf_ids
+        assert restricted_issue not in uninf_ids
+    finally:
+        release_material_tree(prepared_uninf.root)
+
+    close_night(db, state, content=content)
+    night_p2 = open_night(db, state, location="乾清宫", time_of_day="昼")
+    ensure_summon_enter(db, int(night_p2["id"]), promisor)
+    prepared_promisor = prepare_scene_materials(db, state)
+    try:
+        p_ids = _opening_commitment_ids(prepared_promisor.opening)
+        assert restricted_issue in p_ids
+        assert public_issue in p_ids
+    finally:
+        release_material_tree(prepared_promisor.root)
+
 
 def test_c2_correction_ids_rejected_on_minister_promise(game):
     """C2：自诺不得挂 resolves_rejection_ids；不崩批、不污染 pending_actions。"""
