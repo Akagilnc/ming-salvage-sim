@@ -527,23 +527,29 @@ def test_two_questions_first_lands_then_second_stalled_keeps_ledger(game, monkey
 
 @pytest.mark.parametrize(
     "own_stall",
-    ["valid", "plain", "rejected", "cross_other"],
+    ["valid", "plain", "rejected", "cross_other", "owner_live"],
     ids=[
-        "leftover_stall", "leftover_plain",
-        "leftover_rejected_stall", "leftover_cross_other",
+        "leftover_stall", "leftover_plain", "leftover_rejected_stall",
+        "leftover_cross_other", "leftover_owner_live",
     ],
 )
 def test_cross_case_stall_leftover_does_not_undo_imperial_push(
     game, monkeypatch, own_stall,
 ):
-    """跨案落标后遗留暂存：按落标目标当轮闭合；合法/跨案不撤销强推；拒收/无 stalled 颁布后入账。"""
+    """跨案遗留：所属旨已 stalled 则收口本旨；未 stalled 则照常颁布入账；不撤销强推。"""
     db, state, content = game
     did_a, ref_a = _plant_proposed(db, state, title="跨案先", target_id="cross-first")
     did_b, ref_b = _plant_proposed(db, state, title="跨案目标", target_id="cross-target")
-    _stage(db, state, ref_a, {"effects": {"deliberation_outcomes": [
-        {"dossier_id": did_a, "outcome": "stalled", "note": "先案无人站台"},
-        {"dossier_id": did_b, "outcome": "stalled", "note": "目标案被牵连"},
-    ]}})
+    if own_stall == "owner_live":
+        # 先案只自标 stalled；目标旨未 stalled，声明再标先案+自身支出 → 须照常颁布入账。
+        _stage(db, state, ref_a, {"effects": {"deliberation_outcomes": [
+            {"dossier_id": did_a, "outcome": "stalled", "note": "先案无人站台"},
+        ]}})
+    else:
+        _stage(db, state, ref_a, {"effects": {"deliberation_outcomes": [
+            {"dossier_id": did_a, "outcome": "stalled", "note": "先案无人站台"},
+            {"dossier_id": did_b, "outcome": "stalled", "note": "目标案被牵连"},
+        ]}})
     effects = {"economy_moves": [{
         "origin_ref": ref_b, "account": "国库", "delta": -3,
         "category": "跨案遗留支", "reason": "本旨支出",
@@ -557,8 +563,8 @@ def test_cross_case_stall_leftover_does_not_undo_imperial_push(
         effects["deliberation_outcomes"] = [{
             "dossier_id": ref_b, "outcome": "stalled", "note": "",
         }]
-    elif own_stall == "cross_other":
-        # 他旨声明只点名先案 stalled：须在落标目标侧当轮闭合，不得拖到强推后撤销御笔。
+    elif own_stall in {"cross_other", "owner_live"}:
+        # 本旨声明只点名先案 stalled（跨案）。
         effects["deliberation_outcomes"] = [{
             "dossier_id": did_a, "outcome": "stalled", "note": "他旨再标先案",
         }]
@@ -568,9 +574,28 @@ def test_cross_case_stall_leftover_does_not_undo_imperial_push(
     session.llm_config = object()
     assert session.resolve_turn(allow_empty_decree=True).awaiting
     assert db.dossiers.get(did_a)["payload"].get("deliberation_state") == "stalled"
+    if own_stall == "owner_live":
+        # 所属旨未 stalled：不得因点名他案而提前 settled；顺颁后支出入账。
+        assert db.dossiers.get(did_b)["payload"].get("deliberation_state") != "stalled"
+        assert db.dossiers.authorizes_effects(did_b)
+        assert db.staged_declarations.is_settled(ref_b)
+        session.submit_hitl_choices([
+            {
+                "decision_key": _deliberation_desk_row(session, did_a)["decision_key"],
+                "action": "hold", "note": "先案留中",
+            },
+        ], write_gate=session._write_gate)
+        assert db.dossiers.get(did_a)["payload"].get("deliberation_state") == "held"
+        assert db.dossiers.authorizes_effects(did_b)
+        assert [
+            int(r[0]) for r in db.conn.execute(
+                "SELECT delta FROM economy_ledger WHERE category='跨案遗留支'",
+            )
+        ] == [-3]
+        return
     assert db.dossiers.get(did_b)["payload"].get("deliberation_state") == "stalled"
     if own_stall in {"valid", "cross_other"}:
-        # 合法 stalled（自指或跨案点名已 stalled 案）须在落标当轮闭合。
+        # 所属旨已 stalled：自指或跨案点名均当轮闭合本旨遗留。
         assert db.staged_declarations.is_settled(ref_b)
     else:
         # plain / 拒收：不闭合，留给颁布后 settle（合法支出仍可入账）。
@@ -578,7 +603,7 @@ def test_cross_case_stall_leftover_does_not_undo_imperial_push(
     row_b = _deliberation_desk_row(session, did_b)
     row_a = _deliberation_desk_row(session, did_a)
     if own_stall == "cross_other":
-        # 两案均强推：旧跨案声明不得把任一案打回 stalled。
+        # 两案均强推：旧跨案本旨遗留不得把任一案打回 stalled。
         session.submit_hitl_choices([
             {"decision_key": row_a["decision_key"], "action": "imperial_push", "note": "朕独担先案"},
             {"decision_key": row_b["decision_key"], "action": "imperial_push", "note": "朕独担目标"},

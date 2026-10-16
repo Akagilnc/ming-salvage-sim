@@ -974,8 +974,10 @@ def _deliberation_dossier_id(event_id: object) -> Optional[int]:
     return int(head)
 
 
-def _declaration_targets_stalled(bound: Mapping[str, object], dossier_id: int) -> bool:
-    """Peek: bound declaration names stalled for this dossier (any shape)."""
+def _declaration_names_stalled(
+    bound: Mapping[str, object], dossier_id: int | None = None,
+) -> bool:
+    """Peek: bound declaration names stalled (for dossier_id, or any target if None)."""
     from ming_sim.strict_types import _parse_sqlite_id
     from ming_sim.simulation import _canonical_item_fields
 
@@ -999,60 +1001,11 @@ def _declaration_targets_stalled(bound: Mapping[str, object], dossier_id: int) -
             except (TypeError, ValueError):
                 # 坏编号留给正式写口逐项拒收；窥探不得 OverflowError 中止整月。
                 continue
-            if item_id != int(dossier_id):
+            if dossier_id is not None and item_id != int(dossier_id):
                 continue
             if str(canonical.get("outcome") or "").strip() == "stalled":
                 return True
     return False
-
-
-def _unsettled_decree_refs_targeting_stalled(db: Any, dossier_id: int) -> list[str]:
-    """未结算旨中，声明点名本案 stalled 的 decree_ref（含跨案归属）。"""
-    from ming_sim.declaration_dispatch import bind_decree_effect_sources
-
-    rows = db.conn.execute(
-        "SELECT DISTINCT decree_ref FROM staged_declarations "
-        "WHERE status='staged' ORDER BY id",
-    ).fetchall()
-    found: list[str] = []
-    for row in rows:
-        ref = str(row["decree_ref"] or "").strip()
-        if not ref or db.staged_declarations.is_settled(ref):
-            continue
-        staged = db.staged_declarations.staged_for(ref)
-        if not staged or not all(
-            item.declaration is None or isinstance(item.declaration, Mapping)
-            for item in staged
-        ):
-            continue
-        for item in staged:
-            if item.declaration is None:
-                continue
-            bound, _refs = bind_decree_effect_sources(
-                db, ref, item.declaration, item.visible_refs or {},
-            )
-            if _declaration_targets_stalled(bound, int(dossier_id)):
-                found.append(ref)
-                break
-    return found
-
-
-def _consume_declarations_targeting_stalled(
-    db: Any, state: Any, *, dossier_id: int, alongside: Optional[Any] = None,
-) -> bool:
-    """按落标目标收口一切点名本案 stalled 的未消费声明（本旨或跨案）。
-
-    复用 :func:`_apply_stalled_deliberation_from_declaration` 完整试消费；
-    任一旨成功落成 stalled 即返回 True（调用方据此跳过颁布）。
-    """
-    applied = False
-    for ref in _unsettled_decree_refs_targeting_stalled(db, int(dossier_id)):
-        if _apply_stalled_deliberation_from_declaration(
-            db, state, dossier_id=int(dossier_id), decree_ref=ref,
-            alongside=alongside,
-        ):
-            applied = True
-    return applied
 
 
 def _persisted_staged_verdict(db: Any, decree_ref: str, turn: int) -> Optional[Dict[str, Any]]:
@@ -1103,12 +1056,17 @@ class _StalledApplyMiss(Exception):
 def _apply_stalled_deliberation_from_declaration(
     db: Any, state: Any, *, dossier_id: int, decree_ref: str,
     alongside: Optional[Any] = None,
+    match_any_stalled: bool = False,
 ) -> bool:
-    """#1917：该旨全部暂存声明统一试消费；本案 stalled 落成则同事务 settled。
+    """#1917：该旨全部暂存声明统一试消费；stalled 落成则同事务 settled。
 
     复用 :func:`settle_staged_declarations_in_decree_order` 完整消费生命周期；
     仅在其 alongside 内保留颁布前 stalled 成功判定与结果承接。
     成功返回 True；未 stalled 则事务回滚并返回 False。
+
+    ``match_any_stalled``：所属旨已 stalled 时收口本旨遗留——声明点名任一案
+    stalled 即试消费，接受任一 stalled 落标（含跨案点名）；默认 False 只认本案，
+    供颁布前决定是否跳过顺颁。不扫描他旨，保全未 stalled 所属旨的颁布时序。
     """
     from ming_sim.applier import Provenance
     from ming_sim.declaration_dispatch import (
@@ -1129,6 +1087,7 @@ def _apply_stalled_deliberation_from_declaration(
         item.declaration is None or isinstance(item.declaration, Mapping) for item in staged
     ):
         return False
+    peek_id = None if match_any_stalled else int(dossier_id)
     targets = False
     for item in staged:
         if item.declaration is None:
@@ -1136,7 +1095,7 @@ def _apply_stalled_deliberation_from_declaration(
         bound, _refs = bind_decree_effect_sources(
             db, ref, item.declaration, item.visible_refs or {},
         )
-        if _declaration_targets_stalled(bound, int(dossier_id)):
+        if _declaration_names_stalled(bound, peek_id):
             targets = True
             break
     if not targets:
@@ -1148,12 +1107,21 @@ def _apply_stalled_deliberation_from_declaration(
         # DeclarationDispatchResult / SettlementOutcome 为内部 typed 契约，直接读。
         from ming_sim.settlement.views import view
 
-        applied_here = any(
-            int(item["dossier_id"]) == int(dossier_id)
-            and str(item.get("outcome") or "") == "stalled"
+        applied_items = (
+            item
             for outcome in result.effects.applied
             for item in view(outcome, "deliberation_outcomes")
         )
+        if match_any_stalled:
+            applied_here = any(
+                str(item.get("outcome") or "") == "stalled" for item in applied_items
+            )
+        else:
+            applied_here = any(
+                int(item["dossier_id"]) == int(dossier_id)
+                and str(item.get("outcome") or "") == "stalled"
+                for item in applied_items
+            )
         if not applied_here:
             raise _StalledApplyMiss()
         if alongside is not None:
@@ -1223,11 +1191,12 @@ def _settle_edicts(
         if dossier is None:
             continue
         if _is_stalled_deliberation(dossier):
-            # 按落标目标收口：本旨或他旨点名本案 stalled 的未消费声明均试消费，
-            # 避免跨案归属遗留到强推后再 settle 撤销御笔（#1917）。
-            # 未点名本案 stalled 的声明不消费，留给颁布后正常 settle。
-            _consume_declarations_targeting_stalled(
-                db, state, dossier_id=int(dossier["id"]), alongside=persist_result,
+            # 所属旨已 stalled：收口本旨遗留（含只点名他案的跨案 stalled），
+            # 避免强推后再 settle 撤销御笔。不扫描他旨，未 stalled 所属旨照常颁布。
+            ref = decree_ref_for_dossier(db, dossier)
+            _apply_stalled_deliberation_from_declaration(
+                db, state, dossier_id=int(dossier["id"]), decree_ref=ref,
+                alongside=persist_result, match_any_stalled=True,
             )
             continue
         status = str(dossier.get("status") or "")
@@ -1321,11 +1290,12 @@ def _settle_edicts(
                     db, state, chain, decree_text="", source=Provenance.player_decree,
                     step="edict_forecast", operation=_judge_and_persist, decree_ref=ref,
                 )
-            # 预存或本次补跑声明：颁布前按落标目标消费 stalled（本旨或跨案归属）。
+            # 预存或本次补跑声明：颁布前只认本案 stalled（本旨声明）。
             # #1917 runner 裁定（二）：请旨不挡颁布——效果跟判决走、逐问可落；
             # stalled 只改 deliberation_state，不拨 status、不回滚已落。
-            if _consume_declarations_targeting_stalled(
-                db, state, dossier_id=int(dossier["id"]), alongside=persist_result,
+            if _apply_stalled_deliberation_from_declaration(
+                db, state, dossier_id=int(dossier["id"]), decree_ref=ref,
+                alongside=persist_result,
             ):
                 continue
             current = db.dossiers.get(int(dossier["id"])) or dossier
