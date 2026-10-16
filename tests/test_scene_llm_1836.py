@@ -41,7 +41,11 @@ def _sess(db, state, content, *, llm_config=None):
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_scene_chat_one_call_returns_multi_person_script(game, monkeypatch):
-    """AC1：一轮戏文（可含多人）出自同一次场景调用。"""
+    """AC1：一轮戏文（可含多人）出自同一次场景调用。
+
+    #1914：同一入口实交 agent 的 PreparedMaterials 须含近侍公事档案与派系态势路径
+    （召对消费接缝；不另建无关材料树）。
+    """
     db, state, content = game
     open_night(db, state, location="乾清宫", time_of_day="夜")
     night_id = int(get_open_night(db)["id"])
@@ -55,6 +59,7 @@ def test_scene_chat_one_call_returns_multi_person_script(game, monkeypatch):
         "王承恩欠身低语：皇爷，此人可用。"
     )
     calls: list[str] = []
+    prepared_box: list = []
 
     class FakeAgent:
         tools = []
@@ -63,7 +68,11 @@ def test_scene_chat_one_call_returns_multi_person_script(game, monkeypatch):
             calls.append(message)
             return SimpleNamespace(content=script, tools=[])
 
-    monkeypatch.setattr("ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent())
+    def _factory(_llm_config, prepared, **_kwargs):
+        prepared_box.append(prepared)
+        return FakeAgent()
+
+    monkeypatch.setattr("ming_sim.session.create_scene_agent", _factory)
     # #1842：ctid=0 同步转译走 conftest 离线空声明缝，不另造平行 fixture。
     sess = _sess(db, state, content, llm_config=SimpleNamespace(channel=""))
     emperor = "洪承畴可堪大任？"
@@ -73,6 +82,13 @@ def test_scene_chat_one_call_returns_multi_person_script(game, monkeypatch):
     # #1842：opening 已在 create_scene_agent instructions；run 输入不得再拼一份。
     assert calls[0] == emperor
     assert result.court_action == ""
+
+    assert prepared_box, "scene_chat must hand prepared materials to the scene agent"
+    mats = list_materials(prepared_box[0].root)
+    assert "盘面/派系态势.txt" in mats
+    attendant = "王承恩"
+    assert attendant in present_names_at(db, night_id)
+    assert f"人物/{_safe_segment(attendant)}/公事档案.txt" in mats
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_xuan_lands_enter_then_present_on_next_prepare(game, monkeypatch, tmp_path):

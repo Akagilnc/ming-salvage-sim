@@ -695,10 +695,10 @@ def test_multi_lead_typed_archives_reach_only_each_office_successor(game, tmp_pa
     assert case_id in _referenceable_dossier_ids(db, case_successor.name, turn)
 
 def test_inner_court_attendant_knowledge_has_vacancy_province_without_court(game):
-    """#1914：近侍 knowledge 接通官缺/省况键；world 无 court 键。
+    """#1914：近侍 knowledge 知情边界——personnel/regional 接通，world 无 court。
 
-    派系态势进材料目录合法，不再反向禁止 get_faction_stance_summaries；
-    知情边界只钉 knowledge.world 隔离面。不另建材料树。
+    只守角色知情面；公事档案/派系态势交付由召对消费接缝证明
+    （test_scene_chat_one_call_returns_multi_person_script），本案不冒充端到端。
     """
     db, state, _content = game
     world = build_character_knowledge(db, state, "王承恩")["world"]
