@@ -93,22 +93,42 @@ def test_materials_dir_reaches_popen_cwd_and_readonly_argv(monkeypatch, tmp_path
     assert "dontAsk" in captured["cmd"]
     assert "--disallowedTools" not in captured["cmd"]
 
-def test_codex_materials_dir_reaches_popen_cwd_and_readonly_argv(monkeypatch, tmp_path):
-    """#1830 / #1827：Codex 材料模式 cwd + --ignore-user-config --sandbox read-only。"""
-    root = str((tmp_path / "materials").resolve())
-    tmp_path.joinpath("materials").mkdir()
+@pytest.mark.parametrize("with_materials", [False, True])
+def test_codex_popen_argv_env_and_materials_contract(monkeypatch, tmp_path, with_materials):
+    """#1830 / #1827 / #1932 v5：Codex 真实入口完整结构化 argv、env、cwd。
+
+    相对改动前只多出 -c skills.include_instructions=false；env 不改写。
+    材料路径保留 cwd 与只读旗；非材料路径 argv 不含材料专用旗。
+    """
     monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
+    materials_dir = None
+    root = None
+    if with_materials:
+        root = str((tmp_path / "materials").resolve())
+        tmp_path.joinpath("materials").mkdir()
+        materials_dir = root
+
     captured = _capture_run(monkeypatch, _P(stdout="ok"))
-    out = cb.CliChat(id="cli-test", backend="codex", materials_dir=root).invoke(
+    out = cb.CliChat(
+        id="cli-test", backend="codex", materials_dir=materials_dir,
+    ).invoke(
         [Message(role="user", content="p")], Message(role="assistant"),
     ).content
     assert out == "ok"
-    assert captured["kw"].get("cwd") == root
-    assert "--ignore-user-config" in captured["cmd"]
-    assert "--sandbox" in captured["cmd"]
-    assert "read-only" in captured["cmd"]
-    assert "--skip-git-repo-check" in captured["cmd"]
-    assert "--ephemeral" in captured["cmd"]
+
+    expected = [
+        "exec", "--model", "cli-test",
+        "-c", "skills.include_instructions=false",
+        "--ephemeral", "--skip-git-repo-check",
+    ]
+    if with_materials:
+        expected += ["--ignore-user-config", "--sandbox", "read-only"]
+    expected.append("-")
+    assert captured["cmd"][1:] == expected
+    assert captured["kw"].get("env") is None
+    if with_materials:
+        assert captured["kw"].get("cwd") == root
+
 
 def test_agy_materials_mode_uses_material_cwd_and_print_argument(monkeypatch, tmp_path):
     """Agy 1.2.0 材料调用用 --print=<prompt>，不再走失效 sandbox/stdin。"""

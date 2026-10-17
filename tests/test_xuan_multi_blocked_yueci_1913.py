@@ -86,7 +86,7 @@ def test_xuan_two_in_capital_both_enter_with_materials(game, monkeypatch):
     db, state, content = game
     open_night(db, state, location="乾清宫", time_of_day="夜")
     night_id = int(get_open_night(db)["id"])
-    a, b = "毕自严", "施凤来"
+    a, b = "王绍徽", "施凤来"
 
     prepared_box: list = []
     sess = _sess(db, state, content, monkeypatch, capture_prepared=prepared_box)
@@ -111,7 +111,7 @@ def test_xuan_capital_and_remote_splits_enter_and_summon(game, monkeypatch):
     db, state, content = game
     open_night(db, state, location="乾清宫", time_of_day="夜")
     night_id = int(get_open_night(db)["id"])
-    capital = "毕自严"
+    capital = "王绍徽"
     # 懋和 = 朱燮元别名（含「和」）；开局在贵州，走传召分流。
     remote_alias, remote_name = "懋和", "朱燮元"
 
@@ -219,7 +219,7 @@ def test_yueci_explicit_lands_method_and_survives_reopen(game, monkeypatch, tmp_
 
     # 已在场·先普通宣入再越次：保留宣入，另留越次账；同轮恢复复用。
     # 重复普通宣不叠加见 test_scene_llm_1836，不在此重复。
-    prior = "毕自严"
+    prior = "郭允厚"
     _scene(f"宣{prior}")
     assert METHOD_XUANRU in _enter_methods(db, night_id, prior)
     prior_yueci_ctid = _scene(f"越次点名{prior}")
