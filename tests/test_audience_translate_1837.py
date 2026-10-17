@@ -337,8 +337,14 @@ def test_summons_translation_does_not_apply_monthly_effects_at_night(game):
 def _appoint_grant_through_scene_chat(
     db, state, content, monkeypatch, *,
     person: str, office: str, edict: str, grant: dict, mode: str = "ordinary",
+    region_id: str = "",
 ):
-    """共用装夹：scene_chat 交办任免+拨帑 → 应允 → 收夜。返回 (pending_by_kind, appt, grant)。"""
+    """共用装夹：scene_chat 两条独立交办（任免+拨帑）→ 应允 → 收夜。
+
+    #1928：一道一声明，不再同条合挂；正向案从契约要求的两条声明进入。
+    属地任免由声明自带 region_id，不从拨帑抄。
+    返回 (pending_by_kind, appt, grant)。
+    """
 
     class FakeAgent:
         def run(self, message):
@@ -348,22 +354,31 @@ def _appoint_grant_through_scene_chat(
         "ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent(),
     )
     open_night(db, state, location="乾清宫", time_of_day="夜")
-    commission = {
-        "text": edict,
-        "mode": mode,
-        "appointment": {
-            "name": person, "office": office, "appoint_action": "任命",
-        },
-        "grant": grant,
+    appointment = {
+        "name": person, "office": office, "appoint_action": "任命",
     }
+    if region_id:
+        appointment["region_id"] = region_id
+    commissions = [
+        {
+            "text": edict,
+            "mode": mode,
+            "appointment": appointment,
+        },
+        {
+            "text": edict,
+            "mode": mode,
+            "grant": grant,
+        },
+    ]
     calls = {"n": 0}
 
-    def translate_fn(prompt, llm_config, _c=commission, _db=db):
+    def translate_fn(prompt, llm_config, _cs=commissions, _db=db):
         calls["n"] += 1
         if calls["n"] == 1:
             return {
                 **offline_empty_audience_translate(prompt, llm_config),
-                "commissions": [_c], "promises": [],
+                "commissions": list(_cs), "promises": [],
             }
         rows = _db.conn.execute(
             "SELECT id FROM pending_actions WHERE status='pending' ORDER BY id"
@@ -436,6 +451,7 @@ def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, m
             "label": "region_relief",
             "office": "陕西巡抚",
             "mode": "midzhi",
+            "region_id": region,
             "edict": f"任命{person}为陕西巡抚，调银三十万两赈灾",
             "grant": {
                 "grant_action": "赈灾",
@@ -455,6 +471,7 @@ def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, m
             # 第二案换中央职，避免首案落职后同职任命被 noop 吞掉。
             "office": "户部右侍郎",
             "mode": "ordinary",
+            "region_id": "",
             "edict": f"任命{person}为户部右侍郎，赏银二十万两",
             "grant": {
                 "grant_action": "赏赉",
@@ -475,6 +492,7 @@ def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, m
             db, state, content, monkeypatch,
             person=person, office=case["office"], edict=case["edict"],
             grant=case["grant"], mode=case["mode"],
+            region_id=case["region_id"],
         )
         office_payload = json.loads(by_kind["office"]["payload_json"])
         grant_payload = json.loads(by_kind["directive"]["payload_json"])
@@ -630,18 +648,25 @@ def test_scene_chat_cli_and_api_same_translation_shape(game, monkeypatch, messag
     region = _region_id(db)
     person = _hong_name(db, content)
     edict = f"任命{person}为陕西巡抚，调银三十万两赈灾"
+    # #1928：CLI/API 同形亦从两条独立声明进入，不保留同条合挂夹具。
     declaration = {
-        "commissions": [{
-            "text": edict,
-            "appointment": {
-                "name": person, "office": "陕西巡抚", "appoint_action": "任命",
+        "commissions": [
+            {
+                "text": edict,
+                "appointment": {
+                    "name": person, "office": "陕西巡抚", "appoint_action": "任命",
+                    "region_id": region,
+                },
             },
-            "grant": {
-                "grant_action": "赈灾", "amount": 30, "account": "国库",
-                "target_kind": "region", "target_id": region,
-                "execution_surface": "immediate",
+            {
+                "text": edict,
+                "grant": {
+                    "grant_action": "赈灾", "amount": 30, "account": "国库",
+                    "target_kind": "region", "target_id": region,
+                    "execution_surface": "immediate",
+                },
             },
-        }],
+        ],
         "promises": [],
     }
 

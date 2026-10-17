@@ -949,7 +949,7 @@ def _commission_appointment_fields(
     return payload, None
 
 
-# 交办互斥对象槽（不含 grant/appointment：可同条声明，分派时拆成两条 #1928）。
+# 交办互斥对象槽（grant/appointment 经 _declared_commission_kinds 一并入互斥种类）。
 # 禁摊派由 dossier_action_type 识别，见 _declared_commission_kinds。
 _COMMISSION_EXCLUSIVE_OBJECT_KEYS = (
     "punishment", "pacification", "assignment", "revoke",
@@ -989,12 +989,13 @@ def _declared_commission_kinds(item: Mapping[str, object]) -> frozenset[str]:
     """Non-empty commission kinds on one item (empty mapping = unused).
 
     唯一互斥真源的种类收集：对象槽 + grant/appointment + 禁摊派动作类型。
+    grant/appointment 与其它对象槽同属互斥种类（#1928 一道一声明）。
     """
     kinds: set[str] = set()
     for key in _COMMISSION_EXCLUSIVE_OBJECT_KEYS:
         if _declared_object_slot(item.get(key)) is not None:
             kinds.add(key)
-    # grant/appointment 可合成一件事，故不在 exclusive 表；空槽语义见专用判定。
+    # 空槽语义见专用判定；同条多类（含 grant+appointment）由互斥闸拒收。
     for key in ("grant", "appointment"):
         if _declared_grant_appointment_slot(item.get(key)):
             kinds.add(key)
@@ -1004,14 +1005,11 @@ def _declared_commission_kinds(item: Mapping[str, object]) -> frozenset[str]:
 
 
 def _exclusive_commission_conflict(kinds: frozenset[str]) -> bool:
-    """True when more than one exclusive kind is declared.
+    """True when more than one exclusive kind is declared on one item.
 
-    grant+appointment may co-occur on one LLM item; dispatch splits them
-    into independent pendings (#1928). Still not an exclusive conflict.
+    #1928：grant 与 appointment 亦互斥——一道旨意一条声明，不再同条合挂拆分。
     """
-    if len(kinds) <= 1:
-        return False
-    return kinds != frozenset({"grant", "appointment"})
+    return len(kinds) > 1
 
 
 def _authorization_commission_payload(
@@ -1263,7 +1261,6 @@ def _commission_grant_payload(
     from ming_sim.action_materialize import (
         GRANT_ACTIONS,
         require_grant_allocation_shape,
-        resolve_grant_account,
     )
     from ming_sim.execution_pressure import write_locality_scope_for_target_kind
 
@@ -1295,11 +1292,18 @@ def _commission_grant_payload(
         _attach_commission_escort(db, grant, payload)
         return payload
 
-    shaped = require_grant_allocation_shape(
-        grant_action=grant_action,
-        amount=grant.get("amount"),
-        account=grant.get("account"),
-    )
+    # 与 db._normalize_directive_dossier_payload 同形：shape 核 ValueError 接回
+    # typed 领域拒收，好项不被坏项牵连（ADR 0015）；不在分派器宽捕 ValueError。
+    try:
+        shaped = require_grant_allocation_shape(
+            grant_action=grant_action,
+            amount=grant.get("amount"),
+            account=grant.get("account"),
+        )
+    except ValueError as exc:
+        raise DecreeMaterializationValidationError(
+            str(exc), failed_fields=("grant_action", "amount", "account"),
+        ) from exc
     target_kind = str(grant.get("target_kind") or "").strip()
     target_id = str(grant.get("target_id") or "").strip()
     if not target_kind or not target_id:
@@ -1307,9 +1311,7 @@ def _commission_grant_payload(
             "拨帑声明缺 target_kind/target_id", failed_fields=("target_kind", "target_id"),
         )
     _assert_commission_grant_target_exists(db, target_kind, target_id)
-    account = str(shaped.get("account") or resolve_grant_account(
-        grant_action=grant_action, account=grant.get("account"),
-    ))
+    account = str(shaped.get("account") or "")
     cadence = str(grant.get("cadence") or "").strip() or "一次性"
     if cadence not in {"一次性", "每月"}:
         raise DecreeMaterializationValidationError(
@@ -1592,7 +1594,7 @@ def _dispatch_commission_items(
 
     一句话里的多道旨各自成条（#1928 修订 ADR 0028 合挂口径）：
     - 有拨帑 → kind=directive，typed grant 入独立 payload（同笔拨款不拆 #1777）
-    - 有任免 → kind=office 独立 pending（与拨帑分条，即便同条声明也拆）
+    - 有任免 → kind=office 独立 pending（须另条声明；同条合挂由互斥闸拒收）
     - 仅正文 → kind=directive 普通拟旨
 
     ``night_id``：本声明所属的召对夜，透传给每一条暂存（ADR 0038 后出注记的
@@ -2318,12 +2320,6 @@ def _dispatch_commission_items(
             except KeyError as exc:
                 _reject(rejected, item, str(exc), "hallucinated_id", source)
                 continue
-            if not str(appointment_fields.get("region_id") or "").strip() and (
-                grant_raw
-                and str(grant_raw.get("target_kind") or "").strip() == "region"
-                and str(grant_raw.get("target_id") or "").strip()
-            ):
-                appointment_fields["region_id"] = str(grant_raw["target_id"]).strip()
             office_carrier = dict(appointment_fields)
 
         # #1783/#1778：承办人、名单、期限为既有 staging 字段（stage_grant 同款），
@@ -3090,19 +3086,21 @@ def _dispatch_promises(
         kind = str(row["kind"] or "")
         action = str(row["action"] or "")
         declared_mode = item.get("mode")
+        # #1928：任免与拟旨同属可应允/可留中/可改模式的逐旨候选（C0 promises）。
+        _promise_mode_kinds = frozenset({"directive", "office"})
         if declared_mode is not None and (
-            kind != "directive" or decision != "应允"
+            kind not in _promise_mode_kinds or decision != "应允"
             or not isinstance(declared_mode, str)
             or declared_mode not in {"ordinary", "midzhi"}
         ):
-            _reject(rejected, item, "应允模式仅可指定普通/中旨拟旨", "invalid_shape", source)
+            _reject(rejected, item, "应允模式仅可指定普通/中旨", "invalid_shape", source)
             continue
         applied_row: Dict[str, Any] = {
             "action_id": action_id, "decision": decision, "kind": kind, "action": action,
         }
         if decision == "留中":
-            if kind != "directive":
-                _reject(rejected, item, "仅拟旨候选可留中", "invalid_shape", source)
+            if kind not in _promise_mode_kinds:
+                _reject(rejected, item, "仅拟旨或任免候选可留中", "invalid_shape", source)
                 continue
             db.dossiers.hold_over_pending_actions(
                 int(state.turn), str(row["minister_name"]), [action_id],
@@ -3174,12 +3172,13 @@ def _dispatch_promises(
                         applied_row["secret_order_id"] = order_id
             else:
                 changed = False
-                if kind == "directive" and declared_mode is not None:
+                if kind in _promise_mode_kinds and declared_mode is not None:
                     from ming_sim.db import _load_durable_json
                     payload = _load_durable_json(row["payload_json"])
                     if payload.get("mode", "ordinary") != declared_mode:
                         payload["mode"] = declared_mode
                         if int(row["night_approved"] or 0):
+                            # 与改草同纪律：作废旧预推、版本+1（directive/office 共用）。
                             db._discard_pending_decree_forecast(action_id)
                             db.conn.execute(
                                 'UPDATE pending_actions SET payload_json=?, '
