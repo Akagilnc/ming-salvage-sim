@@ -9636,74 +9636,17 @@ class GameDB:
                     self.dossiers.inherit_payload_endorsements(
                         int(dossier_id), payload, commit=False,
                     )
-                # 旧档组合载荷（拨帑+任免同 pending）遗留路径：新路径已在分派时拆条（#1928）。
-                # 任免字段只进 appointment 案卷，禁把 grant 的 execution_surface 带过去。
-                if not self._materialize_combined_appointment_from_directive(
-                    state, pa, payload, content=content,
-                ):
-                    return False
             return True
         # 未知 kind/action 是内部 schema 故障，不得标 failed+业务 invalid_state（#1897 E1）。
         raise ValueError(
             f"未知内部动作 {pa.get('kind')}/{pa.get('action')}"
         )
 
-    @staticmethod
-    def _appointment_slice_from_combined_payload(
-        payload: Dict[str, object],
-    ) -> Optional[Dict[str, object]]:
-        """从组合 directive 载荷抽出任免字段；无任免声明返 None。
-
-        只保留任免成案所需键，剥离 grant 的 execution_surface / amount 等，
-        避免 appointment 案卷撞「execution_surface 与案卷动作策略不符」。
-        """
-        action = str(payload.get("appoint_action") or "").strip()
-        name = str(payload.get("name") or "").strip()
-        if action not in {"任命", "罢免"} or not name:
-            return None
-        office = str(payload.get("office") or "").strip()
-        if action == "任命" and not office:
-            return None
-        sliced: Dict[str, object] = {
-            "name": name, "office": office, "appoint_action": action,
-        }
-        for key in (
-            "appointment_tenure", "任别", "faction",
-            "text", "affair_id", "region_id", "endorsements", "reason", "recommendation",
-        ):
-            value = payload.get(key)
-            if value not in (None, ""):
-                sliced[key] = value
-        return sliced
-
-    def _materialize_combined_appointment_from_directive(
-        self, state: GameState, pa: Dict[str, object], payload: Dict[str, object],
-        *, content=None,
-    ) -> bool:
-        """旧组合 directive 上的任免 → office 成案核（#1928 后新件不再合挂）；无任免则 no-op。"""
-        sliced = self._appointment_slice_from_combined_payload(payload)
-        if sliced is None:
-            return True
-        office_pa = {
-            "id": pa["id"],
-            "kind": "office",
-            "action": str(sliced["appoint_action"]),
-            "minister_name": str(
-                pa.get("minister_name") or payload.get("actor") or ""
-            ),
-        }
-        decree_text = str(payload.get("text") or sliced.get("text") or "")
-        # #1897：声明正文原样；仅真正空串才视作缺省，禁 strip 判空改 None。
-        return self._materialize_office_appointment_dossier(
-            state, office_pa, sliced, content=content,
-            decree_text=decree_text if decree_text else None,
-        )
-
     def _materialize_office_appointment_dossier(
         self, state: GameState, pa: Dict[str, object], payload: Dict[str, object],
         *, content=None, decree_text: Optional[str] = None,
     ) -> bool:
-        """任免案卷唯一成案核：kind=office 与旧组合 directive 遗留路径共用。"""
+        """任免案卷唯一成案核（kind=office）。"""
         name = str(payload.get("name") or "").strip()
         office = str(payload.get("office") or "").strip()
         action = str(pa.get("action") or payload.get("appoint_action") or "").strip()
@@ -9749,7 +9692,7 @@ class GameDB:
         staged_payload["name"] = name
         staged_payload["_office_action"] = action
         staged_payload["_minister_name"] = str(pa.get("minister_name") or "")
-        # 纯 office 与组合路径同核：优先声明/payload 原样 text（P7）。
+        # 优先声明/payload 原样 text（P7）。
         # 缺少唯一原文真源时拒绝物化；不得替 LLM 拼玩家可感正文。
         text = str(decree_text or staged_payload.get("text") or "")
         if not text.strip():

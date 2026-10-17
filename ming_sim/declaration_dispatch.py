@@ -2268,6 +2268,10 @@ def _dispatch_commission_items(
         if not isinstance(mode, str) or mode not in {"ordinary", "midzhi"}:
             _reject(rejected, item, "交办模式非法", "invalid_enum", source)
             continue
+        # #1928 J1：顶层已校验 mode 是 canonical 真源；任免子对象未自带 mode 时承接同一值。
+        # 既有候选更新（extracted_mode）与新建 office 载荷共用此字段，不得默认 ordinary。
+        if appointment_fields is not None and "mode" not in appointment_fields:
+            appointment_fields["mode"] = mode
         # push_id 已在件首解析；与 grant/appointment 的互斥由统一互斥闸承接。
         if push_id is not None and db.dossiers.get(push_id) is None:
             _reject(rejected, item, "御笔强推目标案卷不存在", "missing_ref", source)

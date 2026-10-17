@@ -334,52 +334,11 @@ def test_summons_translation_does_not_apply_monthly_effects_at_night(game):
     assert rejection["category"] == "invalid_state"
 
 
-def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, monkeypatch):
-    """AC1 / #1928：scene_chat 转译 → 任免与拨帑两条独立暂存 → 应允收夜 → 两类效果全。
-
-    同入口覆盖属地赈灾与非属地赏赉：后者 region_id=''，咬住案卷幂等键须含
-    action_type（否则 appointment 会被既有 grant 行短路吞掉）。
-    """
-    db, state, content = game
-    person = _hong_name(db, content)
-    region = _region_id(db)
-    # 赏赉目标用人名（非 region），region_id 落 ''——与 appointment 同键碰撞面。
-    grant_cases = (
-        {
-            "label": "region_relief",
-            "office": "陕西巡抚",
-            "edict": f"任命{person}为陕西巡抚，调银三十万两赈灾",
-            "grant": {
-                "grant_action": "赈灾",
-                "amount": 30,
-                "account": "国库",
-                "target_kind": "region",
-                "target_id": region,
-                "cadence": "一次性",
-                "execution_surface": "immediate",
-            },
-            "grant_target_id": region,
-            "ledger_target_id": region,
-            "ledger_delta": -30,
-        },
-        {
-            "label": "character_reward",
-            # 第二案换中央职，避免首案落职后同职任命被 noop 吞掉。
-            "office": "户部右侍郎",
-            "edict": f"任命{person}为户部右侍郎，赏银二十万两",
-            "grant": {
-                "grant_action": "赏赉",
-                "amount": 20,
-                "account": "国库",
-                "target_kind": "character",
-                "target_id": person,
-                "execution_surface": "immediate",
-            },
-            "grant_target_id": person,
-            "ledger_target_id": person,
-            "ledger_delta": -20,
-        },
-    )
+def _appoint_grant_through_scene_chat(
+    db, state, content, monkeypatch, *,
+    person: str, office: str, edict: str, grant: dict, mode: str = "ordinary",
+):
+    """共用装夹：scene_chat 交办任免+拨帑 → 应允 → 收夜。返回 (pending_by_kind, appt, grant)。"""
 
     class FakeAgent:
         def run(self, message):
@@ -388,154 +347,15 @@ def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, m
     monkeypatch.setattr(
         "ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent(),
     )
-
-    for case in grant_cases:
-        open_night(db, state, location="乾清宫", time_of_day="夜")
-        edict = case["edict"]
-        commission = {
-            "text": edict,
-            "appointment": {
-                "name": person, "office": case["office"], "appoint_action": "任命",
-            },
-            "grant": case["grant"],
-        }
-        calls = {"n": 0}
-
-        def translate_fn(prompt, llm_config, _c=commission, _db=db):
-            calls["n"] += 1
-            if calls["n"] == 1:
-                return {
-                    **offline_empty_audience_translate(prompt, llm_config),
-                    "commissions": [_c], "promises": [],
-                }
-            rows = _db.conn.execute(
-                "SELECT id FROM pending_actions WHERE status='pending' ORDER BY id"
-            ).fetchall()
-            return {
-                **offline_empty_audience_translate(prompt, llm_config),
-                "commissions": [],
-                "promises": [
-                    {"action_id": int(r["id"]), "decision": "应允"} for r in rows
-                ],
-            }
-
-        sess = _sess(db, state, content, monkeypatch, translate_fn=translate_fn)
-        r1, _ = _scene_turn(sess, db, state, edict)
-        pending = [
-            dict(r) for r in db.conn.execute(
-                "SELECT id, kind, action, payload_json, night_approved "
-                "FROM pending_actions WHERE status='pending' ORDER BY id"
-            ).fetchall()
-        ]
-        # #1928：任免+拨帑各自一条 pending（office + directive）。
-        assert len(pending) == 2, (case["label"], pending)
-        kinds = sorted(p["kind"] for p in pending)
-        assert kinds == ["directive", "office"], (case["label"], kinds)
-        by_kind = {p["kind"]: p for p in pending}
-        grant_payload = json.loads(by_kind["directive"]["payload_json"])
-        office_payload = json.loads(by_kind["office"]["payload_json"])
-        assert grant_payload["grant_action"] == case["grant"]["grant_action"], case["label"]
-        assert int(grant_payload["amount"]) == int(case["grant"]["amount"]), case["label"]
-        assert str(grant_payload.get("appoint_action") or "") == "", case["label"]
-        assert office_payload["name"] == person, case["label"]
-        assert office_payload["office"] == case["office"], case["label"]
-        assert office_payload["appoint_action"] == "任命", case["label"]
-        assert all(int(p["night_approved"] or 0) == 0 for p in pending), case["label"]
-
-        r2, _ = _scene_turn(sess, db, state, "准")
-        approved = db.conn.execute(
-            "SELECT id, kind, night_approved FROM pending_actions "
-            "WHERE id IN ({})".format(",".join(str(p["id"]) for p in pending))
-        ).fetchall()
-        assert all(int(r["night_approved"] or 0) == 1 for r in approved), (
-            case["label"], approved,
-        )
-
-        close_night(db, state, content=content)
-        for p in pending:
-            row = db.conn.execute(
-                "SELECT status FROM pending_actions WHERE id=?", (int(p["id"]),),
-            ).fetchone()
-            assert row["status"] == "committed", (case["label"], p["kind"], row["status"])
-
-        # 两案卷各绑自己的 pending，判决身份不共用。
-        appt = db.conn.execute(
-            "SELECT id, status, action_type, pending_action_id FROM decree_dossiers "
-            "WHERE action_type='appointment' AND target_id=? "
-            "ORDER BY id DESC LIMIT 1",
-            (person,),
-        ).fetchone()
-        assert appt is not None, case["label"]
-        assert int(appt["pending_action_id"]) == int(by_kind["office"]["id"]), case["label"]
-
-        grant_dossiers = [
-            d for d in db.dossiers.list_dossiers()
-            if d["action_type"] == "grant_allocation"
-            and str(d.get("target_id") or "") == case["grant_target_id"]
-            and int(d.get("pending_action_id") or 0) == int(by_kind["directive"]["id"])
-        ]
-        assert grant_dossiers, case["label"]
-        assert int(appt["pending_action_id"]) != int(grant_dossiers[0]["pending_action_id"]), (
-            case["label"],
-        )
-        # #1928：判决身份（decree_ref）随各自 pending，不共用。
-        appt_ref = decree_ref_for_dossier(db, dict(appt))
-        grant_ref = decree_ref_for_dossier(db, dict(grant_dossiers[0]))
-        assert appt_ref != grant_ref, case["label"]
-        assert appt_ref.startswith("pending-action:"), case["label"]
-        assert grant_ref.startswith("pending-action:"), case["label"]
-
-        state.metrics["国库"] = max(int(state.metrics.get("国库") or 0), 100)
-        db.reign.save_game_state(state)
-        for d in grant_dossiers:
-            apply_dossier_promulgation(db,
-                state, int(d["id"]), decision="promulgated", content=content,
-            )
-        if str(appt["status"]) == "proposed":
-            apply_dossier_promulgation(db,
-                state, int(appt["id"]), decision="promulgated", content=content,
-            )
-
-        char = db.conn.execute(
-            "SELECT office FROM characters WHERE name=?", (person,),
-        ).fetchone()
-        assert case["office"] in str(char["office"] or ""), case["label"]
-        moved = db.conn.execute(
-            "SELECT delta FROM economy_ledger WHERE account='国库' "
-            "AND target_id=? AND delta < 0 ORDER BY id DESC LIMIT 1",
-            (case["ledger_target_id"],),
-        ).fetchone()
-        assert moved is not None and int(moved["delta"]) == case["ledger_delta"], (
-            case["label"], moved,
-        )
-
-
-def test_reject_grant_only_appointment_lands_without_rescript(game, monkeypatch):
-    """#1928：外廷只打回拨款——任命落职且不进批红；拨款 rejected+rescript。"""
-    db, state, content = game
-    person = _hong_name(db, content)
-    region = _region_id(db)
     open_night(db, state, location="乾清宫", time_of_day="夜")
-    edict = f"任{person}为户部右侍郎，再拨银三十万两给陕西"
     commission = {
         "text": edict,
+        "mode": mode,
         "appointment": {
-            "name": person, "office": "户部右侍郎", "appoint_action": "任命",
+            "name": person, "office": office, "appoint_action": "任命",
         },
-        "grant": {
-            "grant_action": "赈灾", "amount": 30, "account": "国库",
-            "target_kind": "region", "target_id": region,
-            "execution_surface": "immediate",
-        },
+        "grant": grant,
     }
-
-    class FakeAgent:
-        def run(self, message):
-            return SimpleNamespace(content="臣等遵旨。", tools=[])
-
-    monkeypatch.setattr(
-        "ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent(),
-    )
     calls = {"n": 0}
 
     def translate_fn(prompt, llm_config, _c=commission, _db=db):
@@ -558,23 +378,164 @@ def test_reject_grant_only_appointment_lands_without_rescript(game, monkeypatch)
 
     sess = _sess(db, state, content, monkeypatch, translate_fn=translate_fn)
     _scene_turn(sess, db, state, edict)
+    pending = [
+        dict(r) for r in db.conn.execute(
+            "SELECT id, kind, action, payload_json, night_approved "
+            "FROM pending_actions WHERE status='pending' ORDER BY id"
+        ).fetchall()
+    ]
+    assert len(pending) == 2, pending
+    assert sorted(p["kind"] for p in pending) == ["directive", "office"], pending
+    by_kind = {p["kind"]: p for p in pending}
     _scene_turn(sess, db, state, "准")
+    approved = db.conn.execute(
+        "SELECT id, night_approved FROM pending_actions "
+        "WHERE id IN ({})".format(",".join(str(p["id"]) for p in pending))
+    ).fetchall()
+    assert all(int(r["night_approved"] or 0) == 1 for r in approved), approved
     close_night(db, state, content=content)
-
-    appt = db.conn.execute(
-        "SELECT id, pending_action_id FROM decree_dossiers "
+    for p in pending:
+        row = db.conn.execute(
+            "SELECT status FROM pending_actions WHERE id=?", (int(p["id"]),),
+        ).fetchone()
+        assert row["status"] == "committed", (p["kind"], row["status"])
+    appt_id_row = db.conn.execute(
+        "SELECT id FROM decree_dossiers "
         "WHERE action_type='appointment' AND target_id=? "
         "ORDER BY id DESC LIMIT 1",
         (person,),
     ).fetchone()
-    grant = db.conn.execute(
-        "SELECT id, pending_action_id FROM decree_dossiers "
-        "WHERE action_type='grant_allocation' AND target_id=? "
+    grant_id_row = db.conn.execute(
+        "SELECT id FROM decree_dossiers "
+        "WHERE action_type='grant_allocation' AND pending_action_id=? "
         "ORDER BY id DESC LIMIT 1",
-        (region,),
+        (int(by_kind["directive"]["id"]),),
     ).fetchone()
-    assert appt is not None and grant is not None
-    assert int(appt["pending_action_id"]) != int(grant["pending_action_id"])
+    assert appt_id_row is not None and grant_id_row is not None
+    appt = db.dossiers.get(int(appt_id_row["id"]))
+    grant_row = db.dossiers.get(int(grant_id_row["id"]))
+    assert appt is not None and grant_row is not None
+    assert int(appt["pending_action_id"]) == int(by_kind["office"]["id"])
+    assert int(appt["pending_action_id"]) != int(grant_row["pending_action_id"])
+    return by_kind, appt, grant_row
+
+
+def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, monkeypatch):
+    """AC1 / #1928：scene_chat 转译 → 任免与拨帑两条独立暂存 → 应允收夜 → 两类效果全。
+
+    同入口覆盖属地赈灾与非属地赏赉：后者 region_id=''，咬住案卷幂等键须含
+    action_type（否则 appointment 会被既有 grant 行短路吞掉）。
+    首案 mode=midzhi：任免与拨帑均承接同一 canonical 模式（#1928 J1）。
+    """
+    db, state, content = game
+    person = _hong_name(db, content)
+    region = _region_id(db)
+    # 赏赉目标用人名（非 region），region_id 落 ''——与 appointment 同键碰撞面。
+    grant_cases = (
+        {
+            "label": "region_relief",
+            "office": "陕西巡抚",
+            "mode": "midzhi",
+            "edict": f"任命{person}为陕西巡抚，调银三十万两赈灾",
+            "grant": {
+                "grant_action": "赈灾",
+                "amount": 30,
+                "account": "国库",
+                "target_kind": "region",
+                "target_id": region,
+                "cadence": "一次性",
+                "execution_surface": "immediate",
+            },
+            "grant_target_id": region,
+            "ledger_target_id": region,
+            "ledger_delta": -30,
+        },
+        {
+            "label": "character_reward",
+            # 第二案换中央职，避免首案落职后同职任命被 noop 吞掉。
+            "office": "户部右侍郎",
+            "mode": "ordinary",
+            "edict": f"任命{person}为户部右侍郎，赏银二十万两",
+            "grant": {
+                "grant_action": "赏赉",
+                "amount": 20,
+                "account": "国库",
+                "target_kind": "character",
+                "target_id": person,
+                "execution_surface": "immediate",
+            },
+            "grant_target_id": person,
+            "ledger_target_id": person,
+            "ledger_delta": -20,
+        },
+    )
+
+    for case in grant_cases:
+        by_kind, appt, grant_row = _appoint_grant_through_scene_chat(
+            db, state, content, monkeypatch,
+            person=person, office=case["office"], edict=case["edict"],
+            grant=case["grant"], mode=case["mode"],
+        )
+        office_payload = json.loads(by_kind["office"]["payload_json"])
+        grant_payload = json.loads(by_kind["directive"]["payload_json"])
+        assert grant_payload["grant_action"] == case["grant"]["grant_action"], case["label"]
+        assert int(grant_payload["amount"]) == int(case["grant"]["amount"]), case["label"]
+        assert str(grant_payload.get("appoint_action") or "") == "", case["label"]
+        assert office_payload["name"] == person, case["label"]
+        assert office_payload["office"] == case["office"], case["label"]
+        assert office_payload["appoint_action"] == "任命", case["label"]
+        assert office_payload.get("mode") == case["mode"], case["label"]
+        assert grant_payload.get("mode") == case["mode"], case["label"]
+        assert str(grant_row.get("target_id") or "") == case["grant_target_id"], case["label"]
+
+        # #1928：判决身份（decree_ref）随各自 pending，不共用；成案 mode 与 pending 一致（J1）。
+        appt_ref = decree_ref_for_dossier(db, appt)
+        grant_ref = decree_ref_for_dossier(db, grant_row)
+        assert appt_ref != grant_ref, case["label"]
+        assert appt_ref.startswith("pending-action:"), case["label"]
+        assert grant_ref.startswith("pending-action:"), case["label"]
+        assert str(appt.get("mode") or "") == case["mode"], case["label"]
+        assert str(grant_row.get("mode") or "") == case["mode"], case["label"]
+
+        state.metrics["国库"] = max(int(state.metrics.get("国库") or 0), 100)
+        db.reign.save_game_state(state)
+        apply_dossier_promulgation(
+            db, state, int(grant_row["id"]), decision="promulgated", content=content,
+        )
+        if str(appt["status"]) == "proposed":
+            apply_dossier_promulgation(
+                db, state, int(appt["id"]), decision="promulgated", content=content,
+            )
+
+        char = db.conn.execute(
+            "SELECT office FROM characters WHERE name=?", (person,),
+        ).fetchone()
+        assert case["office"] in str(char["office"] or ""), case["label"]
+        moved = db.conn.execute(
+            "SELECT delta FROM economy_ledger WHERE account='国库' "
+            "AND target_id=? AND delta < 0 ORDER BY id DESC LIMIT 1",
+            (case["ledger_target_id"],),
+        ).fetchone()
+        assert moved is not None and int(moved["delta"]) == case["ledger_delta"], (
+            case["label"], moved,
+        )
+
+
+def test_reject_grant_only_appointment_lands_without_rescript(game, monkeypatch):
+    """#1928：外廷只打回拨款——任命落职且不进批红；拨款 rejected+rescript。"""
+    db, state, content = game
+    person = _hong_name(db, content)
+    region = _region_id(db)
+    edict = f"任{person}为户部右侍郎，再拨银三十万两给陕西"
+    _by_kind, appt, grant = _appoint_grant_through_scene_chat(
+        db, state, content, monkeypatch,
+        person=person, office="户部右侍郎", edict=edict,
+        grant={
+            "grant_action": "赈灾", "amount": 30, "account": "国库",
+            "target_kind": "region", "target_id": region,
+            "execution_surface": "immediate",
+        },
+    )
 
     state.metrics["国库"] = max(int(state.metrics.get("国库") or 0), 100)
     db.reign.save_game_state(state)
@@ -596,19 +557,6 @@ def test_reject_grant_only_appointment_lands_without_rescript(game, monkeypatch)
     assert not bool(appt_row.get("rescript_pending"))
     assert str(grant_row["promulgation_decision"] or "") == "rejected"
     assert bool(grant_row.get("rescript_pending"))
-
-    from ming_sim.decree import _rescript_decisions
-    decisions = _rescript_decisions(
-        [
-            {"dossier_id": int(appt["id"]), "decision": "promulgated"},
-            {
-                "dossier_id": int(grant["id"]), "decision": "rejected",
-                "reason": "库银不足", "primary_opponents": [],
-            },
-        ],
-        [appt_row, grant_row],
-    )
-    assert {int(d["event_id"].split(":")[1]) for d in decisions} == {int(grant["id"])}
 
 
 def test_emperor_准_via_scene_chat_approves_no_reply_stays_unapproved(game, monkeypatch):

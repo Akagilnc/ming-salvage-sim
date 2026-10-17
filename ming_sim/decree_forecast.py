@@ -67,8 +67,17 @@ def _rate_limited(exc: BaseException) -> bool:
         return False
 
 
+def _forecastable_pending(kind: object, action: object) -> bool:
+    """应允后可预推的暂存：拟旨 directive，或任免 office（#1928 逐旨身份）。"""
+    k, a = str(kind or ""), str(action or "")
+    return (
+        (k == "directive" and a == "拟旨")
+        or (k == "office" and a in {"任命", "罢免"})
+    )
+
+
 def _current_forecast_ref(session: Any, key: tuple) -> Optional[str]:
-    """Resolve the queue's existing identity against the saved directive."""
+    """Resolve the queue's existing identity against the saved pending decree."""
     if key[0] == "decree_forecast":
         _, action_id, version, night_id = key
         row = session.db.conn.execute(
@@ -76,8 +85,9 @@ def _current_forecast_ref(session: Any, key: tuple) -> Optional[str]:
             (action_id,),
         ).fetchone()
         if row is not None and (
-            row["status"] == "pending" and row["kind"] == "directive"
-            and row["action"] == "拟旨" and int(row["night_approved"] or 0) == 1
+            row["status"] == "pending"
+            and _forecastable_pending(row["kind"], row["action"])
+            and int(row["night_approved"] or 0) == 1
             and int(row["night_id"] or 0) == night_id
             and int(row["version"] or 0) == version
         ):
@@ -217,21 +227,47 @@ def _pending_snapshot(session: Any, pending_action_id: int, night_id: int) -> Op
     )
     if decree_ref is None:
         return None
-    prepared_directive = db._prepare_pending_directive(
-        state, pending, content=getattr(session, "content", None),
-    )
-    if prepared_directive.get("classification") != "valid":
+    kind = str(pending.get("kind") or "")
+    if kind == "directive":
+        prepared_directive = db._prepare_pending_directive(
+            state, pending, content=getattr(session, "content", None),
+        )
+        if prepared_directive.get("classification") != "valid":
+            return None
+        payload = dict(prepared_directive["payload"])
+        action_type = db._directive_dossier_action_type(payload)
+        executor_kind, executor_id = db._directive_executor(action_type, payload)
+        decree_text = str(prepared_directive["text"])
+        target_kind = str(payload.get("target_kind") or "")
+        target_id = payload.get("target_id", pending.get("target_id"))
+    elif kind == "office":
+        # 与 _materialize_office_appointment_dossier 成案核同形：任免预推复用同一载荷投影。
+        from ming_sim.applier import parse_engine_payload_json
+        payload = dict(parse_engine_payload_json(pending.get("payload_json")))
+        action = str(pending.get("action") or payload.get("appoint_action") or "").strip()
+        name = str(payload.get("name") or "").strip()
+        office = str(payload.get("office") or "").strip()
+        if action not in {"任命", "罢免"} or not name:
+            return None
+        if action == "任命" and not office:
+            return None
+        decree_text = str(payload.get("text") or "")
+        if not decree_text.strip():
+            return None
+        action_type = (
+            "dismiss_assignment" if action == "罢免" else "appointment"
+        )
+        executor_kind, executor_id = "character", name
+        target_kind, target_id = "character", name
+    else:
         return None
-    payload = dict(prepared_directive["payload"])
-    action_type = db._directive_dossier_action_type(payload)
-    executor_kind, executor_id = db._directive_executor(action_type, payload)
     candidate: Dict[str, object] = {
         "id": int(pending_action_id),
         "pending_action_id": int(pending_action_id),
         "action_type": action_type,
-        "decree_text": str(prepared_directive["text"]),
-        "target_kind": str(payload.get("target_kind") or ""),
-        "target_id": payload.get("target_id", pending.get("target_id")),
+        "decree_text": decree_text,
+        "target_kind": target_kind,
+        "target_id": target_id,
         "executor_kind": str(executor_kind or ""),
         "executor_id": str(executor_id or ""),
         "mode": str(payload.get("mode") or "ordinary"),
@@ -253,7 +289,7 @@ def _pending_snapshot(session: Any, pending_action_id: int, night_id: int) -> Op
     }
     snapshot = forecast_snapshot(
         session, candidate, decree_ref=decree_ref,
-        decree_text=str(prepared_directive["text"]),
+        decree_text=decree_text,
     )
     snapshot["pending_action_id"] = int(pending_action_id)
     snapshot["version"] = version
@@ -590,7 +626,7 @@ def schedule_restored_decree_forecasts(owner_or_db: Any, pending_action_ids: lis
 
 
 def schedule_approved_from_dispatch(db: Any, result: Any, night_id: int) -> None:
-    """应允落账后为拟旨起预推。无登记会话则不动（测试直调分派不烧模型）。"""
+    """应允落账后为可预推暂存起预推（拟旨与任免）。无登记会话则不动（测试直调分派不烧模型）。"""
     owner = _owner_for(db)
     if owner is None:
         return
@@ -601,9 +637,7 @@ def schedule_approved_from_dispatch(db: Any, result: Any, night_id: int) -> None
             continue
         if str(item.get("decision") or "") != "应允":
             continue
-        if str(item.get("kind") or "") != "directive":
-            continue
-        if str(item.get("action") or "") != "拟旨":
+        if not _forecastable_pending(item.get("kind"), item.get("action")):
             continue
         action_id = int(item.get("action_id") or 0)
         if action_id > 0:

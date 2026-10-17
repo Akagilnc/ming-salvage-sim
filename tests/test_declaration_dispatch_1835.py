@@ -128,69 +128,6 @@ def test_commission_with_draft_and_grant_for_same_money_is_one_payload_one_row(g
     assert payload["target_id"] == army_id
 
 
-def test_commission_with_appointment_and_grant_splits_into_two_pendings(game):
-    """#1928：任免+拨帑各自独立 pending（office + directive），不再合挂一份。"""
-    db, state, content = game
-    minister = _minister(db)
-    person = "洪承畴" if "洪承畴" in getattr(content, "characters", {}) else minister
-    if person != minister:
-        row = db.conn.execute(
-            "SELECT name FROM characters WHERE name=? LIMIT 1", (person,),
-        ).fetchone()
-        if row is None:
-            person = minister
-    region = db.conn.execute("SELECT id FROM regions LIMIT 1").fetchone()
-    assert region is not None
-    region_id = str(region["id"])
-    before = db.conn.execute("SELECT COUNT(*) c FROM pending_actions").fetchone()["c"]
-    text = f"任命{person}为陕西巡抚，调银三十万两赈灾"
-    result = dispatch_declaration(
-        db, state,
-        {"commissions": [{
-            "text": text,
-            "appointment": {
-                "name": person, "office": "陕西巡抚", "appoint_action": "任命",
-            },
-            "grant": {
-                "grant_action": "赈灾", "amount": 30, "account": "国库",
-                "target_kind": "region", "target_id": region_id,
-                "execution_surface": "immediate",
-            },
-        }]},
-        minister_name=minister,
-    )
-    assert result.commissions.rejected == []
-    assert len(result.commissions.applied) == 2
-    after = db.conn.execute("SELECT COUNT(*) c FROM pending_actions").fetchone()["c"]
-    assert after - before == 2
-    kinds = sorted(
-        r["kind"] for r in db.conn.execute(
-            "SELECT kind FROM pending_actions WHERE status='pending' ORDER BY id"
-        ).fetchall()
-    )
-    assert kinds == ["directive", "office"], kinds
-    by_kind = {
-        a["kind"]: a for a in result.commissions.applied
-    }
-    office_payload = json.loads(
-        db.conn.execute(
-            "SELECT payload_json FROM pending_actions WHERE id=?",
-            (by_kind["office"]["id"],),
-        ).fetchone()["payload_json"]
-    )
-    grant_payload = json.loads(
-        db.conn.execute(
-            "SELECT payload_json FROM pending_actions WHERE id=?",
-            (by_kind["directive"]["id"],),
-        ).fetchone()["payload_json"]
-    )
-    assert office_payload["name"] == person
-    assert office_payload["office"] == "陕西巡抚"
-    assert office_payload["appoint_action"] == "任命"
-    assert grant_payload["grant_action"] == "赈灾"
-    assert str(grant_payload.get("appoint_action") or "") == ""
-
-
 def test_reference_to_nonexistent_entity_is_rejected_without_killing_sibling_item(game, monkeypatch):
     """AC3：单项拒收不牵连同批合法项；J1：拒收落进既有 rejection_reports 单一
     真源（DB 行），不只活在本次调用的返回值里；直接分派的 section 写入与拒收
