@@ -110,6 +110,52 @@ def test_codex_materials_dir_reaches_popen_cwd_and_readonly_argv(monkeypatch, tm
     assert "--skip-git-repo-check" in captured["cmd"]
     assert "--ephemeral" in captured["cmd"]
 
+
+def test_codex_game_call_uses_isolated_codex_home_without_user_agents_or_skills(
+    monkeypatch, tmp_path,
+):
+    """#1932：游戏 codex 调用走官方 CODEX_HOME 隔离 + skills.include_instructions=false。
+
+    真实入口 CliChat.invoke → 子进程 env/argv；不改用户全局配置文件。
+    """
+    import os
+    from pathlib import Path
+
+    user_home = tmp_path / "user_codex"
+    user_home.mkdir()
+    (user_home / "AGENTS.md").write_text("# user global agents\n", encoding="utf-8")
+    (user_home / "auth.json").write_text("{}", encoding="utf-8")
+    (user_home / "skills").mkdir()
+    monkeypatch.setenv("CODEX_HOME", str(user_home))
+    monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
+
+    game_home = tmp_path / "game_codex_home"
+    monkeypatch.setattr(cb, "_CODEX_GAME_HOME", str(game_home))
+
+    agents_before = (user_home / "AGENTS.md").read_text(encoding="utf-8")
+    captured = _capture_run(monkeypatch, _P(stdout="ok"))
+    out = cb.CliChat(id="cli-test", backend="codex").invoke(
+        [Message(role="user", content="p")], Message(role="assistant"),
+    ).content
+    assert out == "ok"
+
+    env = captured["kw"].get("env") or {}
+    isolated = env.get("CODEX_HOME", "")
+    assert isolated
+    assert Path(isolated).resolve() == game_home.resolve()
+    assert Path(isolated).resolve() != user_home.resolve()
+    assert not (Path(isolated) / "AGENTS.md").exists()
+    assert not (Path(isolated) / "AGENTS.override.md").exists()
+    # auth bridged so host login still works; user files untouched
+    assert (Path(isolated) / "auth.json").exists()
+    assert (user_home / "AGENTS.md").read_text(encoding="utf-8") == agents_before
+
+    cmd = captured["cmd"]
+    joined = " ".join(cmd)
+    assert "skills.include_instructions=false" in joined
+    assert "project_doc_max_bytes=0" in joined
+    assert "--ephemeral" in cmd and "--skip-git-repo-check" in cmd
+
 def test_agy_materials_mode_uses_material_cwd_and_print_argument(monkeypatch, tmp_path):
     """Agy 1.2.0 材料调用用 --print=<prompt>，不再走失效 sandbox/stdin。"""
     root = str((tmp_path / "materials").resolve())

@@ -53,6 +53,10 @@ from ming_sim.models import CLI_DEFAULT_RUNNER, CODEX_DEFAULT_MODEL, CLAUDE_DEFA
 _AGY_CWD = os.path.join(tempfile.gettempdir(), "ming_agy_sandbox")
 os.makedirs(_AGY_CWD, exist_ok=True)
 
+# #1932：游戏 codex 调用的官方隔离 profile（CODEX_HOME）。只桥接 auth，不放
+# 用户 AGENTS.md / skills；不改用户自己的 ~/.codex。可测入口 monkeypatch 此常量。
+_CODEX_GAME_HOME = os.path.join(tempfile.gettempdir(), "ming_codex_game_home")
+
 _AGY_BIN = os.environ.get("MING_SIM_AGY_BIN", "agy")
 # CODEX_DEFAULT_MODEL / CLAUDE_DEFAULT_MODEL 现 import 自 models（见上，#60）。
 _CODEX_BIN = os.environ.get("MING_SIM_CODEX_BIN", "codex")
@@ -584,6 +588,76 @@ def _codex_reasoning_effort(reasoning_strength: Optional[str]) -> str:
     return _CODEX_REASONING_BY_STRENGTH.get(str(reasoning_strength or "").strip().lower(), "")
 
 
+def _codex_auth_source_home() -> str:
+    """用户真 CODEX_HOME（供 auth 桥接）。若当前 env 已是游戏隔离 home，回落 ~/.codex。"""
+    game = os.path.abspath(_CODEX_GAME_HOME)
+    env_home = (os.environ.get("CODEX_HOME") or "").strip()
+    if env_home:
+        resolved = os.path.abspath(os.path.expanduser(env_home))
+        if resolved != game:
+            return resolved
+    return os.path.abspath(os.path.expanduser("~/.codex"))
+
+
+def _ensure_codex_game_home() -> str:
+    """准备游戏专用 CODEX_HOME：有 auth、无用户 AGENTS.md/skills（#1932）。
+
+    官方隔离入口＝CODEX_HOME profile（docs: automation user / different profile），
+    不改用户全局配置文件。
+    """
+    root = os.path.abspath(_CODEX_GAME_HOME)
+    os.makedirs(root, exist_ok=True)
+    for name in ("AGENTS.md", "AGENTS.override.md"):
+        path = os.path.join(root, name)
+        if os.path.lexists(path):
+            try:
+                os.unlink(path)
+            except OSError:
+                logger.warning("codex game home: failed to remove %s", path)
+    # 不保留用户 skills 树；系统若自建 skills/.system 可再生成。
+    skills_root = os.path.join(root, "skills")
+    if os.path.isdir(skills_root):
+        for entry in os.listdir(skills_root):
+            if entry == ".system":
+                continue
+            path = os.path.join(skills_root, entry)
+            try:
+                if os.path.isdir(path) and not os.path.islink(path):
+                    shutil.rmtree(path)
+                else:
+                    os.unlink(path)
+            except OSError:
+                logger.warning("codex game home: failed to clear skill entry %s", path)
+    auth_dst = os.path.join(root, "auth.json")
+    auth_src = os.path.join(_codex_auth_source_home(), "auth.json")
+    if os.path.lexists(auth_dst):
+        try:
+            if os.path.islink(auth_dst) or os.path.isfile(auth_dst):
+                # 已指向可用 auth 则保留；断链/错链再修。
+                if os.path.isfile(auth_dst):
+                    return root
+            os.unlink(auth_dst)
+        except OSError:
+            logger.warning("codex game home: failed to refresh auth link")
+            return root
+    if os.path.isfile(auth_src):
+        try:
+            os.symlink(auth_src, auth_dst)
+        except OSError:
+            try:
+                shutil.copy2(auth_src, auth_dst)
+            except OSError:
+                logger.warning("codex game home: failed to bridge auth.json from %s", auth_src)
+    return root
+
+
+def _codex_game_env() -> Dict[str, str]:
+    """游戏 codex 子进程 env：CODEX_HOME 指隔离 profile，其余继承当前进程。"""
+    env = dict(os.environ)
+    env["CODEX_HOME"] = _ensure_codex_game_home()
+    return env
+
+
 def _codex_cmd(
     model: Optional[str] = None,
     *,
@@ -595,6 +669,11 @@ def _codex_cmd(
     reasoning = _codex_reasoning_effort(reasoning_strength)
     if reasoning:
         cmd += ["-c", f'model_reasoning_effort="{reasoning}"']
+    # #1932：官方 -c 关掉 skills 清单注入，并禁止装载项目/全局 AGENTS 文档字节。
+    cmd += [
+        "-c", "skills.include_instructions=false",
+        "-c", "project_doc_max_bytes=0",
+    ]
     if json_events:
         cmd.append("--json")
     cmd += ["--ephemeral", "--skip-git-repo-check"]
@@ -688,7 +767,8 @@ def _cli_runner_command(
             model, json_events=json_events, reasoning_strength=reasoning_strength,
             materials_dir=materials_dir,
         )
-        return cmd, prompt, None
+        # #1932：每次游戏 codex 调用都用隔离 CODEX_HOME（官方 profile），不改用户全局文件。
+        return cmd, prompt, _codex_game_env()
     if runner == "claude":
         cmd = [
             _resolve_cli_bin("claude", _CLAUDE_BIN), "-p",
