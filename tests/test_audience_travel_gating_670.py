@@ -6,6 +6,8 @@ import pytest
 from ming_sim.db import GameDB
 from ming_sim.session import AudienceAdmission, GameSession
 from ming_sim import audience_night as an
+from tests.test_due_review_621 import _settle_empty_month
+from tests.test_transit_countdown_668 import MATRIX, _oracle_n
 """#670 召对 travel-gating 的公开 admission 与 fresh seed 契约。"""
 
 
@@ -214,23 +216,27 @@ def test_fresh_summon_origin_is_idempotent_and_projects_kind(game):
 
 
 
-def test_fresh_summon_departs_via_canonical_applier_only_when_night_closes(game):
+def test_fresh_summon_departs_via_canonical_applier_only_when_night_closes(game, monkeypatch):
+    """#670 收夜启程不重置；#1929 毕自严开局南直隶按权威路程抵京可入对。"""
     db, state, content = game
-    person = _set_place(game, "洪承畴", location="shaanxi")
-    night_id = int(an.open_night(db, state)["id"])
-    an.record_summon_fresh(db, night_id, person.name, origin_id="command:close-1")
+    person = content.characters["毕自严"]
+    sess = _session(game)
+    assert sess.consume_audience_admission(
+        person, origin_id="command:close-1", state=state,
+    ).result is AudienceAdmission.SUMMON_FRESH
+    night_id = int(an.list_unsettled_summons(db)[0]["night_id"])
 
     before = db.conn.execute(
         "SELECT location, transit_to FROM characters WHERE name=?", (person.name,)
     ).fetchone()
-    assert (before["location"], before["transit_to"]) == ("shaanxi", "")
+    assert (before["location"], before["transit_to"]) == ("nanzhili", "")
 
     an.close_night(db, state, night_id=night_id, content=content)
 
     after = db.conn.execute(
         "SELECT location, transit_to FROM characters WHERE name=?", (person.name,)
     ).fetchone()
-    assert (after["location"], after["transit_to"]) == ("shaanxi", "beizhili")
+    assert (after["location"], after["transit_to"]) == ("nanzhili", "beizhili")
     # 启程成功不结清：origin 保持未结，kind 投影为在途（候见关联 durable）。
     unsettled = an.list_unsettled_summons(db)
     assert len(unsettled) == 1
@@ -247,6 +253,25 @@ def test_fresh_summon_departs_via_canonical_applier_only_when_night_closes(game)
         "SELECT transit_start_turn FROM characters WHERE name=?", (person.name,)
     ).fetchone()["transit_start_turn"] == started
     assert an.list_unsettled_summons(db) == unsettled
+
+    # 权威路程独立基准：过早在途，到期抵京后方可入对。
+    distance = MATRIX.travel_time("nanzhili", "beizhili")
+    assert db.characters.row(person.name)["transit_distance_remaining"] == pytest.approx(
+        distance,
+    )
+    for _ in range(_oracle_n(distance, 1.0)):
+        _settle_empty_month(db, state, content, monkeypatch)
+        assert (
+            _travel_row(db, person.name)["location"],
+            _travel_row(db, person.name)["transit_to"],
+        ) == ("nanzhili", "beizhili")
+    _settle_empty_month(db, state, content, monkeypatch)
+    arrived = db.characters.row(person.name)
+    assert (
+        arrived["location"], arrived["transit_to"], arrived["transit_distance_remaining"],
+    ) == ("beizhili", "", None)
+    decision = sess.admit_audience(content.characters[person.name])
+    assert decision.result is AudienceAdmission.IN_CAPITAL and decision.allowed is True
 
 
 def test_fresh_summon_applier_failure_rolls_back_and_close_retry_is_safe(game, monkeypatch):

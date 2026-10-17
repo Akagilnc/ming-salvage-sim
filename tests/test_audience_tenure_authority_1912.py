@@ -8,14 +8,20 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
+from ming_sim import audience_night as an
 from ming_sim.db import GameDB
 from ming_sim.models import Character
+from ming_sim.session import AudienceAdmission
 from tests.readback_helpers import active_character_name as _minister
 from tests.test_audience_translate_1837_reopen import (
     _close_offline,
     _player_month,
     _scene_declaration,
 )
+from tests.test_audience_travel_gating_670 import _session
+from tests.test_transit_countdown_668 import MATRIX
 
 
 def _add_white_body(db, state, content, name: str) -> None:
@@ -110,14 +116,17 @@ def _rejected_verdict(db, *, minister: str) -> dict:
 
 
 def test_acting_appointment_real_entry_lands_tenure_and_restore(game, monkeypatch):
+    """#1912 署理→真除；#1929 开局徐光启起复后仍在南直隶，宣召按权威路程启程。"""
     db, state, content = game
     minister = _minister(db)
-    appointee = "户部验收甲"
-    _add_white_body(db, state, content, appointee)
+    appointee = "徐光启"
+    sess = _session(game)
+    assert db.characters.row(appointee)["status"] != "active"
+    assert not sess.admit_audience(content.characters[appointee]).allowed
 
     staged_result = _scene_declaration(
         db, state, content, monkeypatch,
-        "着户部验收甲署理户部右侍郎。",
+        "着徐光启署理户部右侍郎。",
         {
             "commissions": [{
                 "text": "着署理户部右侍郎",
@@ -144,13 +153,27 @@ def test_acting_appointment_real_entry_lands_tenure_and_restore(game, monkeypatc
     dossier = _dossier_for_pending(db, pending_id)
     assert json.loads(str(dossier["payload_json"] or "{}")).get("任别") == "署理"
 
+    # 收夜成案后、月链颁布前：仍 offstage，不可宣。
+    assert db.characters.row(appointee)["status"] != "active"
+    assert not sess.admit_audience(content.characters[appointee]).allowed
     _player_month(db, state, content, monkeypatch, int(dossier["id"]))
     assert _office_tenure(db, appointee) == "署理"
+    assert db.characters.row(appointee)["status"] == "active"
+    assert sess.consume_audience_admission(
+        content.characters[appointee], origin_id="web:1929:xu", state=state,
+    ).result is AudienceAdmission.SUMMON_FRESH
+    night_id = int(an.list_unsettled_summons(db)[0]["night_id"])
+    an.close_night(db, state, night_id=night_id, content=content)
+    departed = db.characters.row(appointee)
+    assert (departed["location"], departed["transit_to"]) == ("nanzhili", "beizhili")
+    assert departed["transit_distance_remaining"] == pytest.approx(
+        MATRIX.travel_time("nanzhili", "beizhili"),
+    )
 
     # 同职改真除：须再成案，不得被无动作吞掉（ADR 0064）。
     convert_result = _scene_declaration(
         db, state, content, monkeypatch,
-        "着户部验收甲实授户部右侍郎。",
+        "着徐光启实授户部右侍郎。",
         {
             "commissions": [{
                 "text": "着实授户部右侍郎",
