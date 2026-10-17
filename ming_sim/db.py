@@ -5577,7 +5577,10 @@ class GameDB:
                 self._delete_row_in_tx(table, target_id)
             elif strategy in {"restore_row", "restore_deleted_row"}:
                 before_row = _load_durable_json(item["before_json"])
-                if table == "pending_actions" and before_row.get("kind") == "directive":
+                # #1928：拟旨与任免同属逐旨预推身份；恢复时作废旧版并递增版本。
+                if table == "pending_actions" and before_row.get("kind") in {
+                    "directive", "office",
+                }:
                     pending_id = int(before_row["id"])
                     restored_directive_ids.add(pending_id)
                     before_version = int(before_row.get("version") or 1)
@@ -8855,6 +8858,7 @@ class GameDB:
 
         与 directive 改草同纪律——未持源夜时归属迁到当前开夜并清 night_approved；
         声明路径传入源夜则盖源夜。合并保留下划线控制键。
+        #1928 / #1861：改旨递增版本、作废旧版预推，与 update_directive_candidate 同形。
         ``source_chat_turn_id``：迟到转译源轮，放行收夜持闸窗口。
         返回该行 id（不存在/非 pending office 则 0）。
         """
@@ -8864,7 +8868,8 @@ class GameDB:
         )
         owns = connection_owns_transaction(self.conn)
         row = self.conn.execute(
-            "SELECT id,payload_json,status FROM pending_actions WHERE id=? AND kind='office'",
+            "SELECT id,payload_json,status,version FROM pending_actions "
+            "WHERE id=? AND kind='office'",
             (int(candidate_id),),
         ).fetchone()
         if row is None:
@@ -8872,8 +8877,12 @@ class GameDB:
         if row["status"] != "pending":
             raise ValueError("已成案任免不得改路径")
         merged = self._merge_underscore_control_keys(row["payload_json"], payload)
+        self._discard_pending_decree_forecast(
+            int(row["id"]), int(row["version"] or 1),
+        )
         self.conn.execute(
-            'UPDATE pending_actions SET payload_json=?, night_id=?, night_approved=0 WHERE id=?',
+            'UPDATE pending_actions SET payload_json=?, night_id=?, night_approved=0,'
+            ' version=version+1 WHERE id=?',
             (json.dumps(merged, ensure_ascii=False), stamp, int(candidate_id)),
         )
         if owns:
@@ -9039,12 +9048,13 @@ class GameDB:
         )
 
     def _discard_deleted_directive_forecast(self, target_id: object) -> None:
+        """删行前作废该暂存当前版预推（拟旨 / 任免，#1928）。"""
         pending_id = int(target_id)
         row = self.conn.execute(
             'SELECT kind, version FROM pending_actions WHERE id=?',
             (pending_id,),
         ).fetchone()
-        if row is None or str(row["kind"] or "") != "directive":
+        if row is None or str(row["kind"] or "") not in {"directive", "office"}:
             return
         self._discard_pending_decree_forecast(pending_id, int(row["version"] or 1))
 
@@ -9802,9 +9812,9 @@ class GameDB:
         voided: List[int] = []
         for row in rows:
             action_id = int(row["id"])
-            if str(row["kind"] or "") == "directive":
-                # 该道拟旨的夜里预推产物随交办一起作废（预推生命周期归 #1816，
-                # 但它挂在这一道交办的身份下，不作废就会在过月时复活）。
+            if str(row["kind"] or "") in {"directive", "office"}:
+                # 该道旨的夜里预推产物随交办一起作废（拟旨 / 任免，#1928）；
+                # 不作废就会在过月时复活。
                 self._discard_pending_decree_forecast(
                     action_id, int(row["version"] or 1),
                 )
@@ -9827,7 +9837,7 @@ class GameDB:
         ).fetchone()
         if row is None:
             return False
-        if str(row["kind"] or "") == "directive":
+        if str(row["kind"] or "") in {"directive", "office"}:
             self._discard_pending_decree_forecast(
                 int(action_id), int(row["version"] or 1),
             )

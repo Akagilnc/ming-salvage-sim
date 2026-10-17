@@ -607,7 +607,7 @@ def schedule_pending_decree_forecast(
 
 
 def schedule_restored_decree_forecasts(owner_or_db: Any, pending_action_ids: list[int]) -> None:
-    """Requeue forecasts for approved directives restored by chat rollback."""
+    """Requeue forecasts for approved 拟旨/任免 restored by chat rollback (#1928)."""
     if not pending_action_ids:
         return
     session = owner_or_db if hasattr(owner_or_db, "db") else _owner_for(owner_or_db)

@@ -2250,20 +2250,26 @@ class DossierStore(RowStore):
         )
 
     def directive_version(self, id: object) -> Any:
+        """读可预推暂存（拟旨 / 任免）的当前版本号（#1928）。"""
         return self._conn.execute(
-            "SELECT version FROM pending_actions WHERE id=? AND kind='directive'",
+            "SELECT version FROM pending_actions WHERE id=? "
+            "AND kind IN ('directive', 'office')",
             (id,),
         ).fetchone()
 
     def night_approved_directive_ids(self, action_ids: Iterable[int]) -> list[int]:
+        """恢复后可重排预推的已应允暂存 id（拟旨 / 任免，#1928）。"""
         ids = sorted({int(i) for i in action_ids})
         if not ids:
             return []
         placeholders = ",".join("?" for _ in ids)
         rows = self._conn.execute(
             "SELECT id FROM pending_actions WHERE id IN (" + placeholders + ") "
-            "AND kind='directive' AND action='拟旨' AND status='pending' "
-            "AND night_approved=1 AND night_id>0",
+            "AND status='pending' AND night_approved=1 AND night_id>0 "
+            "AND ("
+            "  (kind='directive' AND action='拟旨') "
+            "  OR (kind='office' AND action IN ('任命', '罢免'))"
+            ")",
             ids,
         ).fetchall()
         return [int(row["id"]) for row in rows]
