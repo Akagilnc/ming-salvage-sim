@@ -119,6 +119,7 @@ def test_codex_game_call_uses_isolated_codex_home_without_user_agents_or_skills(
     真实入口 CliChat.invoke → 子进程 env/argv；凭证随当前源；目录用毕释放；
     不改用户全局文件。
     """
+    import os
     from pathlib import Path
 
     profile_a = tmp_path / "profile_a"
@@ -139,6 +140,8 @@ def test_codex_game_call_uses_isolated_codex_home_without_user_agents_or_skills(
     agents_before = (profile_a / "AGENTS.md").read_text(encoding="utf-8")
     seen_auth: list[str] = []
     seen_homes: list[Path] = []
+    # 子进程仍存活时的隔离快照（目录尚未被 TemporaryDirectory 释放）
+    call_isolation: list[dict] = []
     captured: dict = {}
 
     def fake_popen(cmd, **kw):
@@ -150,7 +153,19 @@ def test_codex_game_call_uses_isolated_codex_home_without_user_agents_or_skills(
         iso = Path(env.get("CODEX_HOME") or "")
         seen_homes.append(iso)
         auth = iso / "auth.json"
-        seen_auth.append(auth.read_text(encoding="utf-8") if auth.exists() else "")
+        auth_text = auth.read_text(encoding="utf-8") if auth.exists() else ""
+        seen_auth.append(auth_text)
+        # #1932：在 Popen 边界、目录仍在时核隔离——用户 AGENTS 不得在场。
+        call_isolation.append({
+            "iso": iso,
+            "iso_is_dir": iso.is_dir(),
+            "iso_ne_user": iso.resolve() != Path(os.environ.get("CODEX_HOME", "")).resolve()
+                if os.environ.get("CODEX_HOME") else True,
+            "has_agents": (iso / "AGENTS.md").exists(),
+            "has_agents_override": (iso / "AGENTS.override.md").exists(),
+            "auth": auth_text,
+            "cmd": list(cmd),
+        })
         return FakeCliProcess(stdout_script=("ok",), returncode=0)
 
     monkeypatch.setattr(cb.subprocess, "Popen", fake_popen)
@@ -161,27 +176,27 @@ def test_codex_game_call_uses_isolated_codex_home_without_user_agents_or_skills(
     ).content
     assert out == "ok"
 
-    env = captured["kw"].get("env") or {}
-    isolated = Path(env.get("CODEX_HOME") or "")
-    assert isolated.resolve() != profile_a.resolve()
-    assert not (isolated / "AGENTS.md").exists()
-    assert not (isolated / "AGENTS.override.md").exists()
-    assert seen_auth[-1] == "fixture-A"
-    assert (profile_a / "AGENTS.md").read_text(encoding="utf-8") == agents_before
-    # TemporaryDirectory 用毕释放
-    assert not isolated.exists()
-
-    cmd = captured["cmd"]
-    joined = " ".join(cmd)
+    snap = call_isolation[-1]
+    assert snap["iso_is_dir"] is True
+    assert snap["iso_ne_user"] is True
+    assert snap["has_agents"] is False
+    assert snap["has_agents_override"] is False
+    assert snap["auth"] == "fixture-A"
+    joined = " ".join(snap["cmd"])
     assert "skills.include_instructions=false" in joined
     assert "project_doc_max_bytes=0" in joined
-    assert "--ephemeral" in cmd and "--skip-git-repo-check" in cmd
+    assert "--ephemeral" in snap["cmd"] and "--skip-git-repo-check" in snap["cmd"]
+    assert (profile_a / "AGENTS.md").read_text(encoding="utf-8") == agents_before
+    # 调用结束后 TemporaryDirectory 已释放
+    assert not seen_homes[-1].exists()
 
     # 切换用户 CODEX_HOME 后，下一次调用必须桥接新凭证。
     monkeypatch.setenv("CODEX_HOME", str(profile_b))
     cb.CliChat(id="cli-test", backend="codex").invoke(
         [Message(role="user", content="p")], Message(role="assistant"),
     )
+    assert call_isolation[-1]["auth"] == "fixture-B"
+    assert call_isolation[-1]["has_agents"] is False
     assert seen_auth[-2:] == ["fixture-A", "fixture-B"]
     assert not seen_homes[-1].exists()
 
@@ -190,7 +205,8 @@ def test_codex_game_call_uses_isolated_codex_home_without_user_agents_or_skills(
     cb.CliChat(id="cli-test", backend="codex").invoke(
         [Message(role="user", content="p")], Message(role="assistant"),
     )
-    assert seen_auth[-1] == "custom-fixture"
+    assert call_isolation[-1]["auth"] == "custom-fixture"
+    assert call_isolation[-1]["has_agents"] is False
     assert not seen_homes[-1].exists()
 
     # 桥接失败不得放行调用宿主；失败路径隔离目录亦释放。
