@@ -9654,7 +9654,7 @@ class GameDB:
 
     def _materialize_office_appointment_dossier(
         self, state: GameState, pa: Dict[str, object], payload: Dict[str, object],
-        *, content=None, decree_text: Optional[str] = None,
+        *, content=None,
     ) -> bool:
         """任免案卷唯一成案核（kind=office）。"""
         name = str(payload.get("name") or "").strip()
@@ -9702,9 +9702,8 @@ class GameDB:
         staged_payload["name"] = name
         staged_payload["_office_action"] = action
         staged_payload["_minister_name"] = str(pa.get("minister_name") or "")
-        # 优先声明/payload 原样 text（P7）。
-        # 缺少唯一原文真源时拒绝物化；不得替 LLM 拼玩家可感正文。
-        text = str(decree_text or staged_payload.get("text") or "")
+        # 正文唯一真源＝任免载荷 text（P7）；缺则拒绝物化，不另接受覆盖参数。
+        text = str(staged_payload.get("text") or "")
         if not text.strip():
             return False
         dossier_id = self.create_decree_dossier(
