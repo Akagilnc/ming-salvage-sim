@@ -2311,10 +2311,11 @@ def _dispatch_commission_items(
                 continue
             office_payload: Dict[str, Any] = dict(appointment_fields)
             office_payload["text"] = body
-            # 名单/期限/承办人：与 directive 共用权威 staging 校验（S2-R）。
+            # 名单/期限：共用权威校验只验形；写入一次性 scratch，不进 office 持久载荷
+            # （删并前合法附件受校验但不运输，S2-R 禁扩大任免语义）。
             try:
                 _attach_commission_staging_fields(
-                    office_payload, item, turn=int(state.turn), db=db,
+                    {}, item, turn=int(state.turn), db=db,
                 )
             except DecreeMaterializationValidationError as exc:
                 _reject(
