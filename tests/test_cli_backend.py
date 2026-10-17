@@ -111,138 +111,44 @@ def test_codex_materials_dir_reaches_popen_cwd_and_readonly_argv(monkeypatch, tm
     assert "--ephemeral" in captured["cmd"]
 
 
-def test_codex_game_call_uses_isolated_codex_home_without_user_agents_or_skills(
-    monkeypatch, tmp_path,
-):
-    """#1932：游戏 codex 调用走官方 CODEX_HOME 隔离 + skills.include_instructions=false。
+def test_codex_game_call_only_adds_skills_include_instructions_false(monkeypatch, tmp_path):
+    """#1932 v5：真实入口只多 -c skills.include_instructions=false；env/CODEX_HOME 不变。
 
-    真实入口 CliChat.invoke → 子进程 env/argv；凭证随当前源；目录用毕释放；
-    不改用户全局文件。
+    不换目录、不桥接 auth、不加 project_doc_max_bytes；材料 cwd 仍可达。
     """
-    import os
-    from pathlib import Path
-
-    profile_a = tmp_path / "profile_a"
-    profile_b = tmp_path / "profile_b"
-    # 合法用户 home 即使名带 ming_codex_game_ 前缀，也必须被尊重（不得回落默认）。
-    profile_custom = tmp_path / "ming_codex_game_customer"
-    for home, token in (
-        (profile_a, "fixture-A"),
-        (profile_b, "fixture-B"),
-        (profile_custom, "custom-fixture"),
-    ):
-        home.mkdir()
-        (home / "AGENTS.md").write_text("# user global agents\n", encoding="utf-8")
-        (home / "auth.json").write_text(token, encoding="utf-8")
-        (home / "skills").mkdir()
-
     monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
-    agents_before = (profile_a / "AGENTS.md").read_text(encoding="utf-8")
-    seen_auth: list[str] = []
-    seen_homes: list[Path] = []
-    # 子进程仍存活时的隔离快照（目录尚未被 TemporaryDirectory 释放）
-    call_isolation: list[dict] = []
-    captured: dict = {}
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "user-codex-home"))
+    (tmp_path / "user-codex-home").mkdir()
 
-    def fake_popen(cmd, **kw):
-        from tests.cli_process_doubles import FakeCliProcess
-
-        captured["cmd"] = list(cmd)
-        captured["kw"] = kw
-        env = kw.get("env") or {}
-        iso = Path(env.get("CODEX_HOME") or "")
-        seen_homes.append(iso)
-        auth = iso / "auth.json"
-        auth_text = auth.read_text(encoding="utf-8") if auth.exists() else ""
-        seen_auth.append(auth_text)
-        # #1932：在 Popen 边界、目录仍在时核隔离——用户 AGENTS 不得在场。
-        call_isolation.append({
-            "iso": iso,
-            "iso_is_dir": iso.is_dir(),
-            "iso_ne_user": iso.resolve() != Path(os.environ.get("CODEX_HOME", "")).resolve()
-                if os.environ.get("CODEX_HOME") else True,
-            "has_agents": (iso / "AGENTS.md").exists(),
-            "has_agents_override": (iso / "AGENTS.override.md").exists(),
-            "auth": auth_text,
-            "cmd": list(cmd),
-        })
-        return FakeCliProcess(stdout_script=("ok",), returncode=0)
-
-    monkeypatch.setattr(cb.subprocess, "Popen", fake_popen)
-
-    monkeypatch.setenv("CODEX_HOME", str(profile_a))
+    # 非材料路径
+    captured = _capture_run(monkeypatch, _P(stdout="ok"))
     out = cb.CliChat(id="cli-test", backend="codex").invoke(
         [Message(role="user", content="p")], Message(role="assistant"),
     ).content
     assert out == "ok"
-
-    snap = call_isolation[-1]
-    assert snap["iso_is_dir"] is True
-    assert snap["iso_ne_user"] is True
-    assert snap["has_agents"] is False
-    assert snap["has_agents_override"] is False
-    assert snap["auth"] == "fixture-A"
-    joined = " ".join(snap["cmd"])
+    cmd = captured["cmd"]
+    joined = " ".join(cmd)
     assert "skills.include_instructions=false" in joined
-    assert "project_doc_max_bytes=0" in joined
-    assert "--ephemeral" in snap["cmd"] and "--skip-git-repo-check" in snap["cmd"]
-    assert (profile_a / "AGENTS.md").read_text(encoding="utf-8") == agents_before
-    # 调用结束后 TemporaryDirectory 已释放
-    assert not seen_homes[-1].exists()
+    assert "project_doc_max_bytes" not in joined
+    assert captured["kw"].get("env") is None
+    assert "--ephemeral" in cmd and "--skip-git-repo-check" in cmd
 
-    # 切换用户 CODEX_HOME 后，下一次调用必须桥接新凭证。
-    monkeypatch.setenv("CODEX_HOME", str(profile_b))
-    cb.CliChat(id="cli-test", backend="codex").invoke(
+    # 材料路径：cwd 保留 + 既有只读旗 + 同一 skills 参数；仍不改 env
+    root = str((tmp_path / "materials").resolve())
+    tmp_path.joinpath("materials").mkdir()
+    captured_m = _capture_run(monkeypatch, _P(stdout="material-ok"))
+    out_m = cb.CliChat(id="cli-test", backend="codex", materials_dir=root).invoke(
         [Message(role="user", content="p")], Message(role="assistant"),
-    )
-    assert call_isolation[-1]["auth"] == "fixture-B"
-    assert call_isolation[-1]["has_agents"] is False
-    assert seen_auth[-2:] == ["fixture-A", "fixture-B"]
-    assert not seen_homes[-1].exists()
+    ).content
+    assert out_m == "material-ok"
+    assert captured_m["kw"].get("cwd") == root
+    assert captured_m["kw"].get("env") is None
+    joined_m = " ".join(captured_m["cmd"])
+    assert "skills.include_instructions=false" in joined_m
+    assert "project_doc_max_bytes" not in joined_m
+    assert "--ignore-user-config" in captured_m["cmd"]
+    assert "read-only" in captured_m["cmd"]
 
-    # 目录名带 ming_codex_game_ 的合法用户 home 仍是认证源。
-    monkeypatch.setenv("CODEX_HOME", str(profile_custom))
-    cb.CliChat(id="cli-test", backend="codex").invoke(
-        [Message(role="user", content="p")], Message(role="assistant"),
-    )
-    assert call_isolation[-1]["auth"] == "custom-fixture"
-    assert call_isolation[-1]["has_agents"] is False
-    assert not seen_homes[-1].exists()
-
-    # 桥接失败不得放行调用宿主；失败路径隔离目录亦释放。
-    import ming_sim.cli_backend as backend
-
-    failed_homes: list[Path] = []
-
-    real_td = backend.tempfile.TemporaryDirectory
-
-    class TrackingTD(real_td):
-        def __enter__(self):
-            root = super().__enter__()
-            failed_homes.append(Path(root))
-            return root
-
-    monkeypatch.setattr(backend.tempfile, "TemporaryDirectory", TrackingTD)
-
-    def boom_symlink(src, dst):
-        raise OSError("symlink denied")
-
-    def boom_copy(src, dst):
-        raise OSError("copy denied")
-
-    monkeypatch.setattr(backend.os, "symlink", boom_symlink)
-    monkeypatch.setattr(backend.shutil, "copy2", boom_copy)
-    captured.clear()
-    try:
-        cb.CliChat(id="cli-test", backend="codex").invoke(
-            [Message(role="user", content="p")], Message(role="assistant"),
-        )
-        raised = False
-    except OSError:
-        raised = True
-    assert raised
-    assert "cmd" not in captured  # Popen 未启动
-    assert failed_homes and all(not p.exists() for p in failed_homes)
 
 def test_agy_materials_mode_uses_material_cwd_and_print_argument(monkeypatch, tmp_path):
     """Agy 1.2.0 材料调用用 --print=<prompt>，不再走失效 sandbox/stdin。"""

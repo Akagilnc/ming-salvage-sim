@@ -29,7 +29,6 @@ import subprocess
 import tempfile
 import threading
 import time
-from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -585,35 +584,6 @@ def _codex_reasoning_effort(reasoning_strength: Optional[str]) -> str:
     return _CODEX_REASONING_BY_STRENGTH.get(str(reasoning_strength or "").strip().lower(), "")
 
 
-def _codex_auth_source_home() -> str:
-    """用户真 CODEX_HOME（供 auth 桥接）。
-
-    尊重当前进程明确指定的 CODEX_HOME；未设则 ``~/.codex``。
-    隔离目录只写在子进程 env，不改写父进程，故无须按目录名猜测身份。
-    """
-    env_home = (os.environ.get("CODEX_HOME") or "").strip()
-    if env_home:
-        return os.path.abspath(os.path.expanduser(env_home))
-    return os.path.abspath(os.path.expanduser("~/.codex"))
-
-
-def _codex_game_env(root: str) -> Dict[str, str]:
-    """游戏 codex 子进程 env：CODEX_HOME=调用方提供的空目录，只桥接当前 auth（#1932）。
-
-    root 由 TemporaryDirectory 管理完整生命周期。桥接失败原样上抛。
-    """
-    env = dict(os.environ)
-    auth_src = os.path.join(_codex_auth_source_home(), "auth.json")
-    auth_dst = os.path.join(root, "auth.json")
-    if os.path.isfile(auth_src):
-        try:
-            os.symlink(auth_src, auth_dst)
-        except OSError:
-            shutil.copy2(auth_src, auth_dst)
-    env["CODEX_HOME"] = root
-    return env
-
-
 def _codex_cmd(
     model: Optional[str] = None,
     *,
@@ -625,11 +595,8 @@ def _codex_cmd(
     reasoning = _codex_reasoning_effort(reasoning_strength)
     if reasoning:
         cmd += ["-c", f'model_reasoning_effort="{reasoning}"']
-    # #1932：官方 -c 关掉 skills 清单注入，并禁止装载项目/全局 AGENTS 文档字节。
-    cmd += [
-        "-c", "skills.include_instructions=false",
-        "-c", "project_doc_max_bytes=0",
-    ]
+    # #1932 v5：只加官方 -c 关掉 skills 清单；不换 CODEX_HOME、不动认证/配置。
+    cmd += ["-c", "skills.include_instructions=false"]
     if json_events:
         cmd.append("--json")
     cmd += ["--ephemeral", "--skip-git-repo-check"]
@@ -702,7 +669,6 @@ def _cli_runner_command(
     json_events: bool = False,
     materials_dir: Optional[str] = None,
     kimi_agent_file: Optional[str] = None,
-    codex_home: Optional[str] = None,
 ) -> Tuple[List[str], Optional[str], Optional[Dict[str, str]]]:
     """runner → (argv, stdin 文本, env)。各 runner 调用约定单真源；执行读法共用 helper。
 
@@ -724,10 +690,7 @@ def _cli_runner_command(
             model, json_events=json_events, reasoning_strength=reasoning_strength,
             materials_dir=materials_dir,
         )
-        # #1932：隔离 CODEX_HOME 由调用方 TemporaryDirectory 提供；不改用户全局文件。
-        if not codex_home:
-            raise RuntimeError("codex 隔离 home 未提供")
-        return cmd, prompt, _codex_game_env(codex_home)
+        return cmd, prompt, None
     if runner == "claude":
         cmd = [
             _resolve_cli_bin("claude", _CLAUDE_BIN), "-p",
@@ -850,67 +813,58 @@ def _iter_cli_runner_text(
         finally:
             handle.close()
         kimi_agent_path = handle.name
-    # #1932：codex 隔离 home 用标准库 TemporaryDirectory 覆盖子进程全生命周期
-    # （含桥接失败路径）；非 codex 为 nullcontext。
-    home_cm = (
-        tempfile.TemporaryDirectory(prefix="ming_codex_game_")
-        if runner == "codex"
-        else nullcontext(None)
-    )
     try:
-        with home_cm as codex_home:
-            cmd, stdin_text, env = _cli_runner_command(
-                runner, prompt, model=model, reasoning_strength=reasoning_strength,
-                json_events=json_events, materials_dir=materials_dir,
-                kimi_agent_file=kimi_agent_path,
-                codex_home=codex_home,
-            )
-            outcome = _CliProcessOutcome()
-            pieces: List[str] = []
-            final_text = ""
-            for line in _iter_cli_process_lines(
-                    cmd, stdin_text=stdin_text, env=env,
-                    cwd=(str(Path(materials_dir).resolve()) if materials_dir else None),
-                    clock=clock, outcome=outcome,
-                ):
-                if json_events:
-                    stripped = line.strip()
-                    if not stripped:
-                        continue
-                    obj = json.loads(stripped)
-                    delta = _codex_event_text(obj)
-                    if delta:
-                        pieces.append(delta)
-                        # 已确认 stdin 写失败则不再放产出；半流不回卷、不另造缓冲。
-                        if outcome.stdin_error is None:
-                            yield delta
-                        continue
-                    maybe_final = _codex_final_text(obj)
-                    if maybe_final:
-                        final_text = maybe_final
+        cmd, stdin_text, env = _cli_runner_command(
+            runner, prompt, model=model, reasoning_strength=reasoning_strength,
+            json_events=json_events, materials_dir=materials_dir,
+            kimi_agent_file=kimi_agent_path,
+        )
+        outcome = _CliProcessOutcome()
+        pieces: List[str] = []
+        final_text = ""
+        for line in _iter_cli_process_lines(
+                cmd, stdin_text=stdin_text, env=env,
+                cwd=(str(Path(materials_dir).resolve()) if materials_dir else None),
+                clock=clock, outcome=outcome,
+            ):
+            if json_events:
+                stripped = line.strip()
+                if not stripped:
                     continue
-                # 纯文本 runner：只入缓冲刷新活动，判活前不外抛（见 docstring）。
-                pieces.append(line)
-            returncode = int(outcome.returncode or 0)
-            stderr = outcome.stderr or ""
-            stdout_text = "".join(pieces)
-            # stream_error / stdin_error 均已在 _iter_cli_process_lines 于 idle 前即时升格；
-            # 本生成器完整消费该泵，不另加延后同因兜底（#1902 CLI-RECORDED-THREAD-FAULTS）。
-            # #1902 T2 / 锚定宪法：交付保留宿主原正文，不以 strip 改写呈现；
-            # 空产出只以「去空白后是否为空」作判定，不把裁剪结果当交付物。
-            primary = stdout_text if stdout_text.strip() else final_text
-            # 已确证非零退出 → 原始确定性失败（#1780 / ADR 0142）；禁从 stderr 词面分类。
-            if returncode != 0:
-                raise subprocess.CalledProcessError(returncode, cmd, output=stdout_text, stderr=stderr)
-            if not primary.strip():
-                raise transport_failure_unavailable(
-                    empty_output_failure(), attempts=1, exhausted=False,
-                )
-            # 判活之后才交文本：json 事件流已边到边出过，只补终包兜底；纯文本一次交全。
-            if not json_events:
-                yield primary
-            elif not pieces and final_text.strip():
-                yield final_text
+                obj = json.loads(stripped)
+                delta = _codex_event_text(obj)
+                if delta:
+                    pieces.append(delta)
+                    # 已确认 stdin 写失败则不再放产出；半流不回卷、不另造缓冲。
+                    if outcome.stdin_error is None:
+                        yield delta
+                    continue
+                maybe_final = _codex_final_text(obj)
+                if maybe_final:
+                    final_text = maybe_final
+                continue
+            # 纯文本 runner：只入缓冲刷新活动，判活前不外抛（见 docstring）。
+            pieces.append(line)
+        returncode = int(outcome.returncode or 0)
+        stderr = outcome.stderr or ""
+        stdout_text = "".join(pieces)
+        # stream_error / stdin_error 均已在 _iter_cli_process_lines 于 idle 前即时升格；
+        # 本生成器完整消费该泵，不另加延后同因兜底（#1902 CLI-RECORDED-THREAD-FAULTS）。
+        # #1902 T2 / 锚定宪法：交付保留宿主原正文，不以 strip 改写呈现；
+        # 空产出只以「去空白后是否为空」作判定，不把裁剪结果当交付物。
+        primary = stdout_text if stdout_text.strip() else final_text
+        # 已确证非零退出 → 原始确定性失败（#1780 / ADR 0142）；禁从 stderr 词面分类。
+        if returncode != 0:
+            raise subprocess.CalledProcessError(returncode, cmd, output=stdout_text, stderr=stderr)
+        if not primary.strip():
+            raise transport_failure_unavailable(
+                empty_output_failure(), attempts=1, exhausted=False,
+            )
+        # 判活之后才交文本：json 事件流已边到边出过，只补终包兜底；纯文本一次交全。
+        if not json_events:
+            yield primary
+        elif not pieces and final_text.strip():
+            yield final_text
     finally:
         if kimi_agent_path:
             try:
