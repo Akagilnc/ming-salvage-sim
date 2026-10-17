@@ -757,6 +757,11 @@ def test_office_appointment_forecast_facts_match_formal_via_scene_chat(
     monkeypatch.setattr(
         forecast_mod.agents, "run_agent_text", lambda *_a, **_k: "预推",
     )
+    # 与本文件既有预推案同形：过月段转译出口一并替身，预推链不得触网。
+    monkeypatch.setattr(
+        month_translate, "run_declaration_translate_prompt",
+        lambda *_a, **_k: {"commissions": []},
+    )
     sess = _sess(db, state, content, monkeypatch, translate_fn)
     ctid = db.create_chat_turn(
         state, "殿上", "scene", 0, night_id=night_id,
@@ -769,7 +774,7 @@ def test_office_appointment_forecast_facts_match_formal_via_scene_chat(
     wait_pending_writes(sess, timeout_s=_DRAIN_TIMEOUT_S)
     pending = [
         dict(r) for r in db.conn.execute(
-            "SELECT id, action, payload_json FROM pending_actions "
+            "SELECT id, action, payload_json, version FROM pending_actions "
             "WHERE status='pending' AND kind='office' ORDER BY id"
         ).fetchall()
     ]
@@ -785,6 +790,16 @@ def test_office_appointment_forecast_facts_match_formal_via_scene_chat(
     assert set(judge_by_pending) == {int(p["id"]) for p in pending}, (
         judge_by_pending.keys(), [p["id"] for p in pending],
     )
+    # 排空完成且每条预推链走完（判官→叙事→过月转译均落 staged），
+    # 不是判官已写、后台转译腿失败后仍静默绿。
+    for p in pending:
+        staged = db.staged_declarations.staged_for(
+            pending_action_decree_ref(int(p["id"]), int(p["version"] or 1)),
+        )
+        assert staged and staged[0].status == "staged", p
+        assert staged[0].verdict and staged[0].verdict.get("decision") == "promulgated", p
+        assert staged[0].forecast_text is not None, p
+        assert staged[0].declaration is not None, p
 
     close_night(db, state, content=content)
     dossiers = {
