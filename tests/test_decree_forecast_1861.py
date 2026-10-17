@@ -683,13 +683,16 @@ def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monke
 def test_office_appointment_forecast_facts_match_formal_via_scene_chat(
     game, monkeypatch,
 ):
-    """#1928：真实 scene_chat→应允预推判官输入 与 收夜成案 任命事实一致。
+    """#1928：一次 scene_chat→应允预推→收夜，读者断言任别/破格/罢免。
 
-    复用本文件既有召对/应允/预推入口：缺省真除、英文别名署理、罢免对照。
-    不经私有 _pending_snapshot 或手工 create_decree_dossier 并列对照。
+    转译协议复用 1837 make_commissions_then_approve_translate；
+    预推替身复用本文件既有接缝；三道 office 同场，不为每读者另搭场景。
     """
     from ming_sim.audience_night import close_night
     from ming_sim.models import Character
+    from tests.test_audience_translate_1837 import (
+        make_commissions_then_approve_translate,
+    )
 
     db, state, content = game
     night = open_night(db, state, location="乾清宫", time_of_day="夜")
@@ -700,48 +703,50 @@ def test_office_appointment_forecast_facts_match_formal_via_scene_chat(
         aliases=[], personal_skills=[], loyalty=50, ability=50, integrity=50,
         courage=50, style="", power_id="ming",
     ))
-    default_text = f"任命{name}为兵部尚书"
-    alias_text = f"署理{name}为户部尚书"
-    dismiss_text = f"罢免{name}"
-    commissions = [
+    # 同场三道：缺省真除、署理别名、罢免；读者按 action/序读取。
+    readers = (
         {
-            "text": default_text,
+            "key": "default",
+            "text": f"任命{name}为兵部尚书",
             "appointment": {
                 "name": name, "office": "兵部尚书", "appoint_action": "任命",
             },
+            "expect": {
+                "action": "任命",
+                "tenure": "真除",
+                "break": True,
+                "action_type": "appointment",
+            },
         },
         {
-            "text": alias_text,
+            "key": "alias",
+            "text": f"署理{name}为户部尚书",
             "appointment": {
                 "name": name, "office": "户部尚书", "appoint_action": "任命",
                 "appointment_tenure": "署理",
             },
+            "expect": {
+                "action": "任命",
+                "tenure": "署理",
+                "break": None,  # 只核任别与成案一致
+                "action_type": "appointment",
+            },
         },
         {
-            "text": dismiss_text,
+            "key": "dismiss",
+            "text": f"罢免{name}",
             "appointment": {"name": name, "appoint_action": "罢免"},
+            "expect": {
+                "action": "罢免",
+                "tenure": "",
+                "break": False,
+                "action_type": "dismiss_assignment",
+            },
         },
+    )
+    commissions = [
+        {"text": row["text"], "appointment": row["appointment"]} for row in readers
     ]
-    calls = {"n": 0}
-
-    def translate_fn(prompt, llm_config, _cs=commissions, _db=db):
-        calls["n"] += 1
-        if calls["n"] == 1:
-            return {
-                **offline_empty_audience_translate(prompt, llm_config),
-                "commissions": list(_cs), "promises": [],
-            }
-        rows = _db.conn.execute(
-            "SELECT id FROM pending_actions WHERE status='pending' ORDER BY id"
-        ).fetchall()
-        return {
-            **offline_empty_audience_translate(prompt, llm_config),
-            "commissions": [],
-            "promises": [
-                {"action_id": int(r["id"]), "decision": "应允"} for r in rows
-            ],
-        }
-
     judge_by_pending: dict[int, dict] = {}
 
     def judge(_agent, prompt, **kwargs):
@@ -757,18 +762,18 @@ def test_office_appointment_forecast_facts_match_formal_via_scene_chat(
     monkeypatch.setattr(
         forecast_mod.agents, "run_agent_text", lambda *_a, **_k: "预推",
     )
-    # 与本文件既有预推案同形：过月段转译出口一并替身，预推链不得触网。
     monkeypatch.setattr(
         month_translate, "run_declaration_translate_prompt",
         lambda *_a, **_k: {"commissions": []},
     )
+    translate_fn = make_commissions_then_approve_translate(db, commissions)
     sess = _sess(db, state, content, monkeypatch, translate_fn)
+    edict = "；".join(row["text"] for row in readers)
     ctid = db.create_chat_turn(
         state, "殿上", "scene", 0, night_id=night_id,
     )
     result = sess.scene_chat(
-        f"{default_text}；{alias_text}；{dismiss_text}",
-        chat_turn_id=ctid, write_gate=sess._write_gate,
+        edict, chat_turn_id=ctid, write_gate=sess._write_gate,
     )
     persist_and_schedule_scene(sess, db, result)
     wait_pending_writes(sess, timeout_s=_DRAIN_TIMEOUT_S)
@@ -778,7 +783,7 @@ def test_office_appointment_forecast_facts_match_formal_via_scene_chat(
             "WHERE status='pending' AND kind='office' ORDER BY id"
         ).fetchall()
     ]
-    assert len(pending) == 3, pending
+    assert len(pending) == len(readers), pending
     approve_ctid = db.create_chat_turn(
         state, "殿上", "scene", 0, night_id=night_id,
     )
@@ -790,8 +795,6 @@ def test_office_appointment_forecast_facts_match_formal_via_scene_chat(
     assert set(judge_by_pending) == {int(p["id"]) for p in pending}, (
         judge_by_pending.keys(), [p["id"] for p in pending],
     )
-    # 排空完成且每条预推链走完（判官→叙事→过月转译均落 staged），
-    # 不是判官已写、后台转译腿失败后仍静默绿。
     for p in pending:
         staged = db.staged_declarations.staged_for(
             pending_action_decree_ref(int(p["id"]), int(p["version"] or 1)),
@@ -813,32 +816,23 @@ def test_office_appointment_forecast_facts_match_formal_via_scene_chat(
     }
     assert set(dossiers) == {int(p["id"]) for p in pending}
 
-    by_action = {str(p["action"]): int(p["id"]) for p in pending}
-    # 两道「任命」按 id 序：先缺省、后署理。
-    appoint_ids = [int(p["id"]) for p in pending if str(p["action"]) == "任命"]
-    assert len(appoint_ids) == 2
-    default_id, alias_id = appoint_ids[0], appoint_ids[1]
-    dismiss_id = by_action["罢免"]
-
-    default_judge = judge_by_pending[default_id]
-    default_formal = json.loads(dossiers[default_id]["payload_json"])
-    assert default_judge.get("appointment_tenure") == "真除"
-    assert default_formal.get("任别") == "真除"
-    assert default_judge.get("break_rank") == default_formal.get("break_rank")
-    assert default_formal["break_rank"].get("is_break_rank") is True
-
-    alias_judge = judge_by_pending[alias_id]
-    alias_formal = json.loads(dossiers[alias_id]["payload_json"])
-    assert alias_judge.get("appointment_tenure") == "署理"
-    assert alias_formal.get("任别") == "署理"
-    assert "appointment_tenure" not in alias_formal
-    assert alias_judge.get("break_rank") == alias_formal.get("break_rank")
-
-    dismiss_judge = judge_by_pending[dismiss_id]
-    dismiss_row = dossiers[dismiss_id]
-    dismiss_formal = json.loads(dismiss_row["payload_json"])
-    assert str(dismiss_row["action_type"] or "") == "dismiss_assignment"
-    assert dismiss_judge.get("appointment_tenure") in (None, "")
-    assert dismiss_judge.get("break_rank") in (None, {})
-    assert dismiss_formal.get("任别") in (None, "")
-    assert "break_rank" not in dismiss_formal
+    # 按 pending 序对齐 readers（同场声明序 = 落库 id 序）。
+    for p, row in zip(pending, readers):
+        pid = int(p["id"])
+        expect = row["expect"]
+        assert str(p["action"]) == expect["action"], row["key"]
+        judge_row = judge_by_pending[pid]
+        formal = json.loads(dossiers[pid]["payload_json"])
+        assert str(dossiers[pid]["action_type"] or "") == expect["action_type"], row["key"]
+        if expect["action"] == "罢免":
+            assert judge_row.get("appointment_tenure") in (None, ""), row["key"]
+            assert judge_row.get("break_rank") in (None, {}), row["key"]
+            assert formal.get("任别") in (None, ""), row["key"]
+            assert "break_rank" not in formal, row["key"]
+            continue
+        assert judge_row.get("appointment_tenure") == expect["tenure"], row["key"]
+        assert formal.get("任别") == expect["tenure"], row["key"]
+        assert "appointment_tenure" not in formal, row["key"]
+        assert judge_row.get("break_rank") == formal.get("break_rank"), row["key"]
+        if expect["break"] is True:
+            assert formal["break_rank"].get("is_break_rank") is True, row["key"]

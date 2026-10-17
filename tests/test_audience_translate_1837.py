@@ -334,6 +334,34 @@ def test_summons_translation_does_not_apply_monthly_effects_at_night(game):
     assert rejection["category"] == "invalid_state"
 
 
+def make_commissions_then_approve_translate(db, commissions):
+    """共享转译协议：首轮落 commissions，次轮批量应允本夜 pending。
+
+    1837 分条装夹与 1861 任免预推共用，禁各案另写一份同形协议。
+    """
+    calls = {"n": 0}
+
+    def translate_fn(prompt, llm_config, _cs=list(commissions), _db=db):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {
+                **offline_empty_audience_translate(prompt, llm_config),
+                "commissions": list(_cs), "promises": [],
+            }
+        rows = _db.conn.execute(
+            "SELECT id FROM pending_actions WHERE status='pending' ORDER BY id"
+        ).fetchall()
+        return {
+            **offline_empty_audience_translate(prompt, llm_config),
+            "commissions": [],
+            "promises": [
+                {"action_id": int(r["id"]), "decision": "应允"} for r in rows
+            ],
+        }
+
+    return translate_fn
+
+
 def _appoint_grant_through_scene_chat(
     db, state, content, monkeypatch, *,
     person: str, office: str, edict: str, grant: dict, mode: str = "ordinary",
@@ -384,27 +412,10 @@ def _appoint_grant_through_scene_chat(
         appt_item["affair_declaration"] = dict(affair_declaration)
         grant_item["affair_declaration"] = dict(affair_declaration)
     commissions = [appt_item, grant_item]
-    calls = {"n": 0}
-
-    def translate_fn(prompt, llm_config, _cs=commissions, _db=db):
-        calls["n"] += 1
-        if calls["n"] == 1:
-            return {
-                **offline_empty_audience_translate(prompt, llm_config),
-                "commissions": list(_cs), "promises": [],
-            }
-        rows = _db.conn.execute(
-            "SELECT id FROM pending_actions WHERE status='pending' ORDER BY id"
-        ).fetchall()
-        return {
-            **offline_empty_audience_translate(prompt, llm_config),
-            "commissions": [],
-            "promises": [
-                {"action_id": int(r["id"]), "decision": "应允"} for r in rows
-            ],
-        }
-
-    sess = _sess(db, state, content, monkeypatch, translate_fn=translate_fn)
+    sess = _sess(
+        db, state, content, monkeypatch,
+        translate_fn=make_commissions_then_approve_translate(db, commissions),
+    )
     _scene_turn(sess, db, state, edict)
     pending = [
         dict(r) for r in db.conn.execute(
@@ -445,67 +456,81 @@ def _appoint_grant_through_scene_chat(
     assert appt is not None and grant_row is not None
     assert int(appt["pending_action_id"]) == int(by_kind["office"]["id"])
     assert int(appt["pending_action_id"]) != int(grant_row["pending_action_id"])
-    return by_kind, appt, grant_row
+    return by_kind, appt, grant_row, appt_body, grant_body
 
 
-def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, monkeypatch):
-    """AC1 / #1928：scene_chat 转译 → 任免与拨帑两条独立暂存 → 应允收夜 → 两类效果全。
+def test_split_appoint_grant_scene_readers(game, monkeypatch):
+    """#1928 分条任免+拨帑：最小输入表，每行场景一次，读者集中断言。
 
-    同入口覆盖属地赈灾与非属地赏赉：后者 region_id=''，咬住案卷幂等键须含
-    action_type（否则 appointment 会被既有 grant 行短路吞掉）。
-    首案 mode=midzhi：任免与拨帑均承接同一 canonical 模式（#1928 J1）。
+    覆盖：独立身份/模式、共享与不共享事务、本道正文、落账；
+    不同输入行各执行一次全链，不为每组断言另搭平行场景。
     """
     db, state, content = game
     person = _hong_name(db, content)
     region = _region_id(db)
-    # 赏赉目标用人名（非 region），region_id 落 ''——与 appointment 同键碰撞面。
-    grant_cases = (
+    cases = (
         {
-            "label": "region_relief",
+            "label": "shared_midzhi_relief",
             "office": "陕西巡抚",
             "mode": "midzhi",
             "region_id": region,
-            "edict": f"任命{person}为陕西巡抚，调银三十万两赈灾",
+            "appt_text": f"任命{person}为陕西巡抚",
+            "grant_text": "调银三十万两赈灾",
+            "affair": {
+                "attach": "new",
+                "identity": "one-undertaking",
+                "name": "陕西巡抚兼赈灾",
+                "origin": "召对分条",
+            },
             "grant": {
-                "grant_action": "赈灾",
-                "amount": 30,
-                "account": "国库",
-                "target_kind": "region",
-                "target_id": region,
-                "cadence": "一次性",
-                "execution_surface": "immediate",
+                "grant_action": "赈灾", "amount": 30, "account": "国库",
+                "target_kind": "region", "target_id": region,
+                "cadence": "一次性", "execution_surface": "immediate",
             },
             "grant_target_id": region,
             "ledger_target_id": region,
             "ledger_delta": -30,
+            "same_affair": True,
+            "promulgate": True,
         },
         {
-            "label": "character_reward",
-            # 第二案换中央职，避免首案落职后同职任命被 noop 吞掉。
+            "label": "separate_ordinary_reward",
+            # 换中央职，避免首案落职后同职任命被 noop 吞掉；region_id='' 咬幂等键。
             "office": "户部右侍郎",
             "mode": "ordinary",
             "region_id": "",
-            "edict": f"任命{person}为户部右侍郎，赏银二十万两",
+            "appt_text": f"任命{person}为户部右侍郎",
+            "grant_text": "赏银二十万两",
+            "affair": {
+                "attach": "new",
+                "name": "各自新事务",
+                "origin": "无共享 identity",
+            },
             "grant": {
-                "grant_action": "赏赉",
-                "amount": 20,
-                "account": "国库",
-                "target_kind": "character",
-                "target_id": person,
+                "grant_action": "赏赉", "amount": 20, "account": "国库",
+                "target_kind": "character", "target_id": person,
                 "execution_surface": "immediate",
             },
             "grant_target_id": person,
             "ledger_target_id": person,
             "ledger_delta": -20,
+            "same_affair": False,
+            "promulgate": True,
         },
     )
 
-    for case in grant_cases:
-        by_kind, appt, grant_row = _appoint_grant_through_scene_chat(
-            db, state, content, monkeypatch,
-            person=person, office=case["office"], edict=case["edict"],
-            grant=case["grant"], mode=case["mode"],
-            region_id=case["region_id"],
+    for case in cases:
+        edict = f"{case['appt_text']}，{case['grant_text']}"
+        by_kind, appt, grant_row, appt_body, grant_body = (
+            _appoint_grant_through_scene_chat(
+                db, state, content, monkeypatch,
+                person=person, office=case["office"], edict=edict,
+                grant=case["grant"], mode=case["mode"],
+                region_id=case["region_id"],
+                appointment_text=case["appt_text"],
+                grant_text=case["grant_text"],
+                affair_declaration=case["affair"],
+            )
         )
         office_payload = json.loads(by_kind["office"]["payload_json"])
         grant_payload = json.loads(by_kind["directive"]["payload_json"])
@@ -517,9 +542,10 @@ def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, m
         assert office_payload["appoint_action"] == "任命", case["label"]
         assert office_payload.get("mode") == case["mode"], case["label"]
         assert grant_payload.get("mode") == case["mode"], case["label"]
-        assert str(grant_row.get("target_id") or "") == case["grant_target_id"], case["label"]
+        assert str(grant_row.get("target_id") or "") == case["grant_target_id"], case[
+            "label"
+        ]
 
-        # #1928：判决身份（decree_ref）随各自 pending，不共用；成案 mode 与 pending 一致（J1）。
         appt_ref = decree_ref_for_dossier(db, appt)
         grant_ref = decree_ref_for_dossier(db, grant_row)
         assert appt_ref != grant_ref, case["label"]
@@ -528,6 +554,24 @@ def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, m
         assert str(appt.get("mode") or "") == case["mode"], case["label"]
         assert str(grant_row.get("mode") or "") == case["mode"], case["label"]
 
+        # 本道正文运输
+        assert str(appt["decree_text"] or "") == appt_body, case["label"]
+        assert str(grant_row["decree_text"] or "") == grant_body, case["label"]
+        appt_payload = json.loads(str(appt.get("payload_json") or "{}"))
+        grant_dossier_payload = json.loads(str(grant_row.get("payload_json") or "{}"))
+        assert str(appt_payload.get("text") or "") == appt_body, case["label"]
+        assert str(grant_dossier_payload.get("text") or "") == grant_body, case["label"]
+
+        # 事务共享 / 不归并
+        assert int(appt["affair_id"] or 0) > 0, case["label"]
+        assert int(grant_row["affair_id"] or 0) > 0, case["label"]
+        if case["same_affair"]:
+            assert int(appt["affair_id"]) == int(grant_row["affair_id"]), case["label"]
+        else:
+            assert int(appt["affair_id"]) != int(grant_row["affair_id"]), case["label"]
+
+        if not case["promulgate"]:
+            continue
         state.metrics["国库"] = max(int(state.metrics.get("国库") or 0), 100)
         db.reign.save_game_state(state)
         apply_dossier_promulgation(
@@ -553,12 +597,15 @@ def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, m
 
 
 def test_reject_grant_only_appointment_lands_without_rescript(game, monkeypatch):
-    """#1928：外廷只打回拨款——任命落职且不进批红；拨款 rejected+rescript。"""
+    """#1928：外廷只打回拨款——任命落职且不进批红；拨款 rejected+rescript。
+
+    与落账正向不同判向，必要单独场景；不重复事务/正文读者。
+    """
     db, state, content = game
     person = _hong_name(db, content)
     region = _region_id(db)
     edict = f"任{person}为户部右侍郎，再拨银三十万两给陕西"
-    _by_kind, appt, grant = _appoint_grant_through_scene_chat(
+    _by_kind, appt, grant, _appt_body, _grant_body = _appoint_grant_through_scene_chat(
         db, state, content, monkeypatch,
         person=person, office="户部右侍郎", edict=edict,
         grant={
@@ -588,72 +635,6 @@ def test_reject_grant_only_appointment_lands_without_rescript(game, monkeypatch)
     assert not bool(appt_row.get("rescript_pending"))
     assert str(grant_row["promulgation_decision"] or "") == "rejected"
     assert bool(grant_row.get("rescript_pending"))
-
-
-def test_split_commissions_shared_identity_same_affair_and_per_decree_text(
-    game, monkeypatch,
-):
-    """#1928：同 identity 的合法分条共享一事务；各道 text 各自进案卷。"""
-    db, state, content = game
-    person = _hong_name(db, content)
-    region = _region_id(db)
-    appt_text = f"任命{person}为户部右侍郎"
-    grant_text = "再拨银三十万两给陕西"
-    edict = f"{appt_text}，{grant_text}"
-    shared = {
-        "attach": "new",
-        "identity": "one-undertaking",
-        "name": "户部右侍郎兼陕西赈银",
-        "origin": "召对分条",
-    }
-    _by_kind, appt, grant = _appoint_grant_through_scene_chat(
-        db, state, content, monkeypatch,
-        person=person, office="户部右侍郎", edict=edict,
-        appointment_text=appt_text, grant_text=grant_text,
-        affair_declaration=shared,
-        grant={
-            "grant_action": "赈灾", "amount": 30, "account": "国库",
-            "target_kind": "region", "target_id": region,
-            "execution_surface": "immediate",
-        },
-    )
-    assert int(appt["affair_id"] or 0) > 0
-    assert int(appt["affair_id"]) == int(grant["affair_id"])
-    assert str(appt["decree_text"] or "") == appt_text
-    assert str(grant["decree_text"] or "") == grant_text
-    appt_payload = json.loads(str(appt.get("payload_json") or "{}"))
-    grant_payload = json.loads(str(grant.get("payload_json") or "{}"))
-    assert str(appt_payload.get("text") or "") == appt_text
-    assert str(grant_payload.get("text") or "") == grant_text
-
-
-def test_split_commissions_without_shared_identity_open_separate_affairs(
-    game, monkeypatch,
-):
-    """#1928：未声明共享 identity 的两道 new 不自动归并。"""
-    db, state, content = game
-    person = _hong_name(db, content)
-    region = _region_id(db)
-    edict = f"任{person}为户部右侍郎，再拨银二十万两给陕西"
-    _by_kind, appt, grant = _appoint_grant_through_scene_chat(
-        db, state, content, monkeypatch,
-        person=person, office="户部右侍郎", edict=edict,
-        appointment_text=f"任{person}为户部右侍郎",
-        grant_text="再拨银二十万两给陕西",
-        affair_declaration={
-            "attach": "new",
-            "name": "各自新事务",
-            "origin": "无共享 identity",
-        },
-        grant={
-            "grant_action": "赈灾", "amount": 20, "account": "国库",
-            "target_kind": "region", "target_id": region,
-            "execution_surface": "immediate",
-        },
-    )
-    assert int(appt["affair_id"] or 0) > 0
-    assert int(grant["affair_id"] or 0) > 0
-    assert int(appt["affair_id"]) != int(grant["affair_id"])
 
 
 def test_emperor_准_via_scene_chat_approves_no_reply_stays_unapproved(game, monkeypatch):

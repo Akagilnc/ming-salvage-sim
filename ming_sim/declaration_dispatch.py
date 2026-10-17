@@ -2294,29 +2294,132 @@ def _dispatch_commission_items(
             _reject(rejected, item, "御笔强推目标案卷不存在", "missing_ref", source)
             continue
         text = item.get("text")
+
+        # #1928：互斥后任免只造 office 权威载荷，不经 special_decree 中转/副本搬运。
+        if appointment_fields is not None:
+            body = _declared_prose(text)
+            if body is None:
+                _reject(
+                    rejected, item, "交办声明缺正文或正文须为字符串",
+                    "invalid_shape", source,
+                )
+                continue
+            try:
+                _assert_characters_exist(db, [str(appointment_fields["name"])])
+            except KeyError as exc:
+                _reject(rejected, item, str(exc), "hallucinated_id", source)
+                continue
+            office_payload: Dict[str, Any] = dict(appointment_fields)
+            office_payload["text"] = body
+            if not _attach_commission_affair(
+                db, item, office_payload, rejected=rejected, source=source,
+            ):
+                continue
+            reco_err = _attach_recommendation_fields(
+                db, state, item, office_payload,
+                default_recommender=minister_name,
+            )
+            if reco_err is not None:
+                _reject(rejected, item, reco_err[0], reco_err[1], source)
+                continue
+
+            from ming_sim.action_materialize import (
+                _apply_existing_appointment_hit, _same_direction_office_hits,
+            )
+            from types import SimpleNamespace
+            hits = _same_direction_office_hits(
+                db, int(state.turn),
+                name=str(office_payload["name"]),
+                office=str(office_payload.get("office") or ""),
+                action=str(office_payload["appoint_action"]),
+                region_id=str(office_payload.get("region_id") or ""),
+            )
+            if len(hits) > 1:
+                _reject(rejected, item, "同向任免候选不唯一", "invalid_state", source)
+                continue
+            if hits:
+                tenure_mark = str(
+                    office_payload.get("任别") or ""
+                ).strip() or None
+                oid = _apply_existing_appointment_hit(
+                    SimpleNamespace(db=db), hits[0],
+                    extracted_mode=office_payload.get("mode"),
+                    tenure_mark=tenure_mark,
+                    region_id=str(office_payload.get("region_id") or ""),
+                    minister_name=minister_name,
+                    annotate=True,
+                    recommendation_fields={
+                        key: office_payload[key]
+                        for key in ("reason", "recommendation", "faction")
+                        if office_payload.get("recommendation") and key in office_payload
+                    },
+                    # ADR 0038：既有候选更新也按源夜承接，夜已收时不退回开夜（=0）。
+                    night_id=int(night_id),
+                    origin_chat_turn_id=int(source_chat_turn_id or 0),
+                )
+                applied.append({"id": oid, "kind": "office"})
+                continue
+            if office_payload["appoint_action"] == "任命":
+                from ming_sim.session import _appointment_intent_is_current_office_noop
+                declared_tenure = (
+                    office_payload["任别"]
+                    if "任别" in office_payload
+                    else None
+                )
+                if _appointment_intent_is_current_office_noop(
+                    db, office_payload["name"], office_payload["office"],
+                    content=db.content,
+                    tenure=declared_tenure,
+                    region_id=str(office_payload.get("region_id") or ""),
+                    office_type=str(office_payload.get("office_type") or ""),
+                ):
+                    continue
+            oid = db.stage_pending_action(
+                int(state.turn),
+                "office",
+                str(office_payload["appoint_action"]),
+                minister_name,
+                office_payload,
+                night_id=int(night_id),
+                source_chat_turn_id=source_chat_turn_id,
+            )
+            applied.append(
+                {"id": oid, "payload": office_payload, "kind": "office"},
+            )
+            continue
+
+        # 拨帑或纯正文拟旨：独立 directive。同笔拨款不拆（#1777）。
         try:
             if grant_raw:
-                # 拨帑 → 独立 directive 载荷（同笔不拆 #1777；任免另条 #1928）。
                 payload = _commission_grant_payload(
                     db, text=text, grant=grant_raw,  # type: ignore[arg-type]
                 )
+                payload["mode"] = mode
             else:
                 body = _declared_prose(text)
                 # P7：正文必须由声明给出；缺正文不猜、不拼「任命X为Y」模板。
                 if body is None:
-                    _reject(rejected, item, "交办声明缺正文或正文须为字符串", "invalid_shape", source)
+                    _reject(
+                        rejected, item, "交办声明缺正文或正文须为字符串",
+                        "invalid_shape", source,
+                    )
                     continue
                 # 收夜成案需要 ordinary triad；纯正文走 special_decree 最小结构
                 # （与 _ensure_directive_dossier 无结构回退同形，声明侧一次给齐）。
                 # target_id 按本批已落条数区分，避免同回合多条纯正文互撞。
                 if push_id is not None:
-                    payload = {"text": body, "target_dossier_id": push_id, "mode": mode}
+                    payload = {
+                        "text": body, "target_dossier_id": push_id, "mode": mode,
+                    }
                 else:
                     payload = {
                         "text": body,
                         "dossier_action_type": "special_decree",
                         "target_kind": "policy",
-                        "target_id": f"commission-text:{int(state.turn)}:{item_offset + len(applied)}",
+                        "target_id": (
+                            f"commission-text:{int(state.turn)}"
+                            f":{item_offset + len(applied)}"
+                        ),
                         "locality_scope": "none",
                         "mode": mode,
                     }
@@ -2326,30 +2429,13 @@ def _dispatch_commission_items(
         except DecreeMaterializationValidationError as exc:
             _reject(rejected, item, str(exc), _xiexang_reject_category(exc), source)
             continue
-        # 事务附件只在下方 _attach_commission_affair 解析一次（#1897 K2）。
-        # #1928：任免不并入拨帑载荷；属地拨帑的 region 只补到任免字段本身。
-        office_carrier: Dict[str, Any] = {}
-        if appointment_fields:
-            try:
-                _assert_characters_exist(db, [str(appointment_fields["name"])])
-            except KeyError as exc:
-                _reject(rejected, item, str(exc), "hallucinated_id", source)
-                continue
-            office_carrier = dict(appointment_fields)
 
-        # #1783/#1778：承办人、名单、期限为既有 staging 字段（stage_grant 同款），
-        if grant_raw:
-            payload["mode"] = mode
-        # 非 #1815 新形；声明给出则透传到 directive payload，代码不猜当前大臣。
-        # 期限换算走 _assignment_absolute_end_turn：脏数字领域拒收（#1897 C1）。
-        # 名单 normalize/merge 的 ValueError（如非法机械档）走逐项 invalid_shape，
-        # 与同函数 declaration_from_payload 接缝一致（#1900 J19-R1）；不整份中止。
+        # #1783/#1778：承办人、名单、期限透传 directive；脏数字领域拒收（#1897 C1）。
         try:
             _attach_commission_staging_fields(
                 payload, item, turn=int(state.turn), db=db,
             )
         except DecreeMaterializationValidationError as exc:
-            # 只捕既有 typed 领域合同；禁扩 ValueError 把内部故障洗成拒收（#1897 E1）。
             _reject(
                 rejected, item, str(exc),
                 getattr(exc, "category", None) or "invalid_shape", source,
@@ -2361,95 +2447,6 @@ def _dispatch_commission_items(
         ):
             continue
 
-        # #1837 reopen：荐人信息挂任命载荷；受理口径与原 recommend_person 工具相同。
-        reco_err = _attach_recommendation_fields(
-            db, state, item, office_carrier if appointment_fields else None,
-            default_recommender=minister_name,
-        )
-        if reco_err is not None:
-            _reject(rejected, item, reco_err[0], reco_err[1], source)
-            continue
-
-        def _stage_office(shared_text: str) -> Dict[str, Any]:
-            from ming_sim.action_materialize import (
-                _apply_existing_appointment_hit, _same_direction_office_hits,
-            )
-            from types import SimpleNamespace
-            hits = _same_direction_office_hits(
-                db, int(state.turn), name=str(appointment_fields["name"]),
-                office=str(appointment_fields["office"]),
-                action=str(appointment_fields["appoint_action"]),
-                region_id=str(appointment_fields.get("region_id") or ""),
-            )
-            if len(hits) > 1:
-                _reject(rejected, item, "同向任免候选不唯一", "invalid_state", source)
-                return None
-            if hits:
-                tenure_mark = str(
-                    appointment_fields.get("任别")
-                    or appointment_fields.get("appointment_tenure")
-                    or ""
-                ).strip() or None
-                oid = _apply_existing_appointment_hit(
-                    SimpleNamespace(db=db), hits[0],
-                    extracted_mode=appointment_fields.get("mode"),
-                    tenure_mark=tenure_mark,
-                    region_id=str(appointment_fields.get("region_id") or ""),
-                    minister_name=minister_name,
-                    annotate=True,
-                    recommendation_fields={
-                        key: office_carrier[key]
-                        for key in ("reason", "recommendation", "faction")
-                        if office_carrier.get("recommendation") and key in office_carrier
-                    },
-                    # ADR 0038：既有候选更新也按源夜承接，夜已收时不退回开夜（=0）。
-                    night_id=int(night_id),
-                    origin_chat_turn_id=int(source_chat_turn_id or 0),
-                )
-                return {"id": oid, "kind": "office"}
-            if appointment_fields["appoint_action"] == "任命":
-                from ming_sim.session import _appointment_intent_is_current_office_noop
-                declared_tenure = (
-                    appointment_fields["任别"]
-                    if "任别" in appointment_fields
-                    else None
-                )
-                if _appointment_intent_is_current_office_noop(
-                    db, appointment_fields["name"], appointment_fields["office"],
-                    content=db.content,
-                    tenure=declared_tenure,
-                    region_id=str(appointment_fields.get("region_id") or ""),
-                    office_type=str(appointment_fields.get("office_type") or ""),
-                ):
-                    return None
-            # office 成案链只吃任免字段；禁把 grant 的 execution_surface 等带进
-            # appointment 案卷（会撞「execution_surface 与案卷动作策略不符」）。
-            office_payload = dict(appointment_fields or {})
-            office_payload["text"] = shared_text
-            if "affair_declaration" in payload:
-                office_payload["affair_declaration"] = payload["affair_declaration"]
-            for key in ("reason", "recommendation", "faction", "replaces"):
-                if key in office_carrier:
-                    office_payload[key] = office_carrier[key]
-            oid = db.stage_pending_action(
-                int(state.turn),
-                "office",
-                str(office_payload["appoint_action"]),
-                minister_name,
-                office_payload,
-                night_id=int(night_id),
-                source_chat_turn_id=source_chat_turn_id,
-            )
-            return {"id": oid, "payload": office_payload, "kind": "office"}
-
-        # #1928：任免独立 office pending；同条合挂已由互斥闸拒收，此处必无 grant。
-        if appointment_fields:
-            staged = _stage_office(str(payload.get("text") or ""))
-            if staged is not None:
-                applied.append(staged)
-            continue
-
-        # 拨帑或纯正文拟旨：独立 directive。同笔拨款不拆（#1777）。
         actor = str(minister_name or payload.get("actor") or "").strip()
         if not actor:
             actor = _commission_fallback_actor(db)
