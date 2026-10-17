@@ -27,3 +27,28 @@ def normalize_appointment_tenure(value: object) -> str:
     if text in APPOINTMENT_TENURES:
         return text
     return DEFAULT_APPOINTMENT_TENURE
+
+
+def project_appointment_facts(
+    db: object,
+    payload: dict[str, object],
+    *,
+    target_id: object = "",
+) -> dict[str, object]:
+    """任命案卷/预推共用的任别默认与 break_rank 事实投影（#562 / ADR 0064 / #1928）。
+
+    唯一权威实现：正式成案与 office 预推候选均调此函数，禁平行第二套。
+    调用方仅对 action_type=appointment 使用；罢免不经此投影。
+    """
+    from ming_sim.office_rank import appointment_break_rank
+
+    out = dict(payload)
+    out["任别"] = appointment_tenure_from(out)
+    out.pop("appointment_tenure", None)
+    out["break_rank"] = appointment_break_rank(
+        db,
+        out.get("name") or target_id,
+        out.get("office") or out.get("new_office"),
+        out.get("office_type") or out.get("new_office_type"),
+    )
+    return out

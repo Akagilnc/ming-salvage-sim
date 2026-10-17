@@ -32,7 +32,6 @@ from ming_sim.entities.person_log import ensure_schema as ensure_person_log_sche
 from ming_sim.entities.person_log.store import PersonLogStore
 from ming_sim.entities.reign_state import ensure_schema as ensure_reign_schema
 from ming_sim.entities.reign_state.store import POPULATION_UNIT_PERSONS as POPULATION_UNIT_PERSONS
-from ming_sim.appointment_tenure import appointment_tenure_from
 from ming_sim.assets import format_money, format_money_delta, format_wanliang_amount
 from ming_sim.constants import (
     ARMY_FIELD_ALIASES, ARMY_FIELD_LABELS, ARMY_QUANTITY_FIELDS, ARMY_SCORE_FIELDS, ARMY_TEXT_FIELDS,
@@ -7662,15 +7661,9 @@ class GameDB:
             normalized_payload["mode"] if "mode" in normalized_payload else "ordinary"
         )
         if action == "appointment":
-            from ming_sim.office_rank import appointment_break_rank
-            normalized_payload["任别"] = appointment_tenure_from(normalized_payload)
-            normalized_payload.pop("appointment_tenure", None)
-            normalized_payload["break_rank"] = appointment_break_rank(
-                self,
-                normalized_payload.get("name") or target_id,
-                normalized_payload.get("office") or normalized_payload.get("new_office"),
-                normalized_payload.get("office_type")
-                or normalized_payload.get("new_office_type"),
+            from ming_sim.appointment_tenure import project_appointment_facts
+            normalized_payload = project_appointment_facts(
+                self, normalized_payload, target_id=target_id,
             )
         if not action or not text:
             raise DeclarationDataError("案卷 action_type/decree_text 不能为空")

@@ -1482,10 +1482,25 @@ def _dispatch_commissions(
     db: Any, state: Any, raw: object, *, minister_name: str, source: Provenance,
     source_chat_turn_id: int = 0, night_id: int = 0,
 ) -> SectionResult:
-    """Retain LLM-declared correction links on the existing pending action payload."""
+    """Retain LLM-declared correction links on the existing pending action payload.
+
+    同批 commission 的 new 事务 identity → 共享 birth_key（与过月 settlement 同核）。
+    """
+    from ming_sim.entities.affair import stamp_batch_new_affair_declaration
+
     items, rejected = _section_items(raw, label="交办声明", source=source)
+    batch_new_identities: Dict[str, Tuple[str, str, str]] = {}
+    stamped_items: List[Mapping[str, object]] = []
+    for raw_item in items:
+        stamped, conflict = stamp_batch_new_affair_declaration(
+            raw_item, batch_new_identities,
+        )
+        if conflict is not None:
+            _reject(rejected, raw_item, conflict, "invalid_shape", source)
+            continue
+        stamped_items.append(stamped)
     applied = []
-    for item in items:
+    for item in stamped_items:
         ids = _require_rejection_ids_or_reject(
             db, item.get("resolves_rejection_ids", []), rejected, item, source,
         )

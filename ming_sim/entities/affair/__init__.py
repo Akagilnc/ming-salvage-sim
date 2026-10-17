@@ -10,6 +10,7 @@ from ming_sim.entities.affair.store import (
     parse_affair_declaration,
     parse_origin_ref,
     parse_positive_affair_id,
+    stamp_batch_new_affair_declaration,
 )
 
 __all__ = (
@@ -22,4 +23,5 @@ __all__ = (
     "parse_affair_declaration",
     "parse_origin_ref",
     "parse_positive_affair_id",
+    "stamp_batch_new_affair_declaration",
 )

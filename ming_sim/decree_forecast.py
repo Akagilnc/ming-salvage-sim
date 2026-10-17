@@ -241,7 +241,7 @@ def _pending_snapshot(session: Any, pending_action_id: int, night_id: int) -> Op
         target_kind = str(payload.get("target_kind") or "")
         target_id = payload.get("target_id", pending.get("target_id"))
     elif kind == "office":
-        # 与 _materialize_office_appointment_dossier 成案核同形：任免预推复用同一载荷投影。
+        # 与正式成案同形：任免预推复用同一载荷投影；任命另经 project_appointment_facts。
         from ming_sim.applier import parse_engine_payload_json
         payload = dict(parse_engine_payload_json(pending.get("payload_json")))
         action = str(pending.get("action") or payload.get("appoint_action") or "").strip()
@@ -257,6 +257,9 @@ def _pending_snapshot(session: Any, pending_action_id: int, night_id: int) -> Op
         action_type = (
             "dismiss_assignment" if action == "罢免" else "appointment"
         )
+        if action_type == "appointment":
+            from ming_sim.appointment_tenure import project_appointment_facts
+            payload = project_appointment_facts(db, payload, target_id=name)
         executor_kind, executor_id = "character", name
         target_kind, target_id = "character", name
     else:

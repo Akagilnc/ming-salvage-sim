@@ -678,3 +678,108 @@ def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monke
         for sess, *_rest in armed:
             get_session_write_queue(sess).wait_idle(timeout_s=_DRAIN_TIMEOUT_S)
         other.conn.close()
+
+
+def test_office_appointment_forecast_facts_match_formal_dossier(game):
+    """#1928：任免预推与正式成案共用任命事实投影（任别默认／break_rank）。
+
+    经真实 pending → _pending_snapshot 与 create_decree_dossier 对照；
+    罢免不经任命投影。
+    """
+    from ming_sim.models import Character
+
+    db, state, content = game
+    night = open_night(db, state, location="乾清宫", time_of_day="夜")
+    night_id = int(night["id"])
+    name = "预推任别甲"
+    db.add_character(state, Character(
+        name=name, office="翰林院编修", office_type="翰林院", faction="中立",
+        aliases=[], personal_skills=[], loyalty=50, ability=50, integrity=50,
+        courage=50, style="", power_id="ming",
+    ))
+    raw_payload = {
+        "name": name,
+        "office": "兵部尚书",
+        "appoint_action": "任命",
+        "text": f"任命{name}为兵部尚书",
+    }
+    pending_id = db.stage_pending_action(
+        state.turn, kind="office", action="任命", minister_name="",
+        payload=dict(raw_payload), night_id=night_id,
+    )
+    mark_actions_night_approved(db, [pending_id], night_id=night_id)
+    from ming_sim.materials import release_material_tree
+
+    sess = make_light_session(db, state, content)
+    snap = forecast_mod._pending_snapshot(sess, pending_id, night_id)
+    assert snap is not None
+    try:
+        forecast_payload = snap["candidate"]["payload"]
+        judge_row = snap["context"]["dossiers"][0]
+        assert forecast_payload.get("任别") == "真除"
+        assert isinstance(forecast_payload.get("break_rank"), dict)
+        assert forecast_payload["break_rank"].get("is_break_rank") is True
+        assert judge_row.get("appointment_tenure") == "真除"
+        assert judge_row.get("break_rank") == forecast_payload["break_rank"]
+
+        dossier_id = db.create_decree_dossier(
+            state,
+            action_type="appointment",
+            decree_text=str(raw_payload["text"]),
+            target_kind="character",
+            target_id=name,
+            payload=dict(raw_payload),
+        )
+        formal = json.loads(
+            db.conn.execute(
+                "SELECT payload_json FROM decree_dossiers WHERE id=?",
+                (dossier_id,),
+            ).fetchone()["payload_json"]
+        )
+        assert forecast_payload["任别"] == formal["任别"]
+        assert forecast_payload["break_rank"] == formal["break_rank"]
+    finally:
+        release_material_tree(snap["prepared"].root)
+
+    # 英文别名在预推侧亦归一为公开任别。
+    alias_payload = {
+        **raw_payload,
+        "appointment_tenure": "署理",
+        "text": f"署理任命{name}为兵部尚书",
+    }
+    alias_id = db.stage_pending_action(
+        state.turn, kind="office", action="任命", minister_name="",
+        payload=dict(alias_payload), night_id=night_id,
+    )
+    mark_actions_night_approved(db, [alias_id], night_id=night_id)
+    alias_snap = forecast_mod._pending_snapshot(sess, alias_id, night_id)
+    assert alias_snap is not None
+    try:
+        alias_payload_out = alias_snap["candidate"]["payload"]
+        assert alias_payload_out.get("任别") == "署理"
+        assert "appointment_tenure" not in alias_payload_out
+        assert alias_snap["context"]["dossiers"][0].get("appointment_tenure") == "署理"
+    finally:
+        release_material_tree(alias_snap["prepared"].root)
+
+    # 罢免不新增任别／破格字段。
+    dismiss_payload = {
+        "name": name,
+        "appoint_action": "罢免",
+        "text": f"罢免{name}",
+    }
+    dismiss_id = db.stage_pending_action(
+        state.turn, kind="office", action="罢免", minister_name="",
+        payload=dict(dismiss_payload), night_id=night_id,
+    )
+    mark_actions_night_approved(db, [dismiss_id], night_id=night_id)
+    dismiss_snap = forecast_mod._pending_snapshot(sess, dismiss_id, night_id)
+    assert dismiss_snap is not None
+    try:
+        dismiss_candidate = dismiss_snap["candidate"]
+        assert dismiss_candidate["action_type"] == "dismiss_assignment"
+        assert "break_rank" not in dismiss_candidate["payload"]
+        assert dismiss_candidate["payload"].get("任别") in (None, "")
+        assert dismiss_snap["context"]["dossiers"][0].get("break_rank") in (None, {})
+    finally:
+        release_material_tree(dismiss_snap["prepared"].root)

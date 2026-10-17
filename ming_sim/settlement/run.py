@@ -182,9 +182,7 @@ def _preflight(
     这些是**框架**职责而非段落格职责——它们改写 delta 本体（盖章 / 挂归属 id /
     规范化人物名 / 算战略事件门闩），必须在任何段看到 delta 之前一次做完。
     """
-    from uuid import uuid4
-
-    from ming_sim.entities.affair import ATTACH_BIRTH, declaration_from_payload
+    from ming_sim.entities.affair import ATTACH_BIRTH
     from ming_sim.entities.character.names import _canonicalize_person_change_names
     from ming_sim.issues import _ctx as content_context, gather_candidate_events
     from ming_sim.entities.character.normalize import normalize_person_changes
@@ -222,30 +220,15 @@ def _preflight(
         """给同 identity 的兄弟项盖共享 birth_key；identity 冲突则逐项拒收。
 
         绝不抛出：ADR 0005 坏项逐项拒收，合法 sibling 照落，不带走整批。
-        clean 列表项经 sanitize 已为 dict。
+        clean 列表项经 sanitize 已为 dict。权威实现见 stamp_batch_new_affair_declaration。
         """
-        try:
-            parsed = declaration_from_payload(item, allowed=ATTACH_BIRTH)
-        except (TypeError, ValueError) as exc:
-            return item, str(exc)
-        if parsed is None or parsed.get("attach") != "new":
-            return item, None
-        identity = str(parsed.get("identity") or "").strip()
-        name = str(parsed["name"])
-        origin = str(parsed["origin"])
-        if identity:
-            prior = batch_new_identities.get(identity)
-            if prior is None:
-                key = f"result:{uuid4().hex}"
-                batch_new_identities[identity] = (key, name, origin)
-            else:
-                key, prior_name, prior_origin = prior
-                if prior_name != name or prior_origin != origin:
-                    return item, f"同批事务 identity「{identity}」声明冲突"
-        else:
-            key = f"result:{uuid4().hex}"
-        stamped = {"attach": "new", "name": name, "origin": origin, "birth_key": key}
-        return {**item, "affair_declaration": stamped}, None
+        from ming_sim.entities.affair import stamp_batch_new_affair_declaration
+
+        if not isinstance(item, Mapping):
+            return item, "事务声明宿主须为对象"
+        return stamp_batch_new_affair_declaration(
+            item, batch_new_identities, allowed=ATTACH_BIRTH,
+        )
 
     stamp_fields = ("economy_moves", "new_issues", "人物变更")
     # step 对象与合并后的列表共享同一批对象，唯人物变更因挂 _effect_event_id
