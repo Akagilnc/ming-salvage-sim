@@ -252,7 +252,8 @@ def test_commission_failure_does_not_erase_prior_staged_item(game):
 
 
 
-def test_recommendation_outside_slice_is_rejected(game):
+def test_recommendation_outside_former_slice_is_accepted(game):
+    """#1931：跨派／见闻外人物照常受理，不再因资格闸拒收。"""
     db, state, content = game
     night = open_night(db, state)
     recommender = _active_minister(db, content, office_type="兵部")
@@ -279,9 +280,8 @@ def test_recommendation_outside_slice_is_rejected(game):
         db, state, decl,
         minister_name=recommender.name, night_id=int(night["id"]),
     )
-    assert result.commissions.applied == []
-    assert result.commissions.rejected
-    assert result.commissions.rejected[0].category in {"invalid_state", "hallucinated_id"}
+    assert result.commissions.rejected == []
+    assert len(result.commissions.applied) == 1
 
 
 def test_inquiry_declaration_preserves_assignment_in_attendant_materials(game, monkeypatch):

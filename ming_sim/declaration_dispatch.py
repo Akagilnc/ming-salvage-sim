@@ -60,7 +60,7 @@ import json
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
-from ming_sim.recommendations import list_recommendation_candidates
+from ming_sim.recommendations import lookup_recommendation_candidate
 from ming_sim.action_materialize import (
     DecreeMaterializationValidationError,
     _assignment_absolute_end_turn,
@@ -2749,17 +2749,13 @@ def _attach_recommendation_fields(
     office = str(payload.get("office") or "").strip()
     if not target or not office:
         return ("荐人任命缺 name/office", "invalid_shape")
-    row = next(
-        (
-            candidate
-            for candidate in list_recommendation_candidates(db, state, recommender)
-            if candidate["name"] == target
-        ),
-        None,
+    # #1931：只按账上事实取被荐者，不再以派系／见闻资格拒收。
+    row = lookup_recommendation_candidate(
+        db, state, target, recommender=recommender,
     )
     if row is None:
         return (
-            f"被荐者不在荐者派系/见闻可及范围内：{target}",
+            f"被荐者账上不可用：{target}",
             "invalid_state",
         )
     # 荐词原句逐字落库；strip 仅作判空谓词（ADR 0082 / #635 Y2）。

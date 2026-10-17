@@ -1,28 +1,29 @@
 from ming_sim.recommendations import list_recommendation_candidates
+from ming_sim.recommendations import lookup_recommendation_candidate
 from ming_sim.recommendations import validate_recommendation_snapshot
-"""#493 大臣荐人：网络/见闻裁切与采纳后的可恢复荐人事件。"""
+"""#493 大臣荐人：账上事实可荐池与采纳后的可恢复荐人事件（#1931 去派系／见闻闸）。"""
 
 
-
-
-
-def test_recommendation_candidates_are_limited_to_faction_or_character_knowledge(game):
+def test_recommendation_candidates_include_cross_faction_by_facts(game):
     db, state, content = game
     recommender = next(c for c in content.characters.values() if c.office_type == "兵部")
     same_faction = next(c for c in content.characters.values()
                         if c.name != recommender.name and c.faction == recommender.faction
                         and c.office_type not in ("后宫", "宗藩"))
-    hidden = next(c for c in content.characters.values()
+    cross = next(c for c in content.characters.values()
                   if c.name not in {recommender.name, same_faction.name}
                   and c.faction != recommender.faction
                   and c.office_type not in ("后宫", "宗藩"))
     db.conn.execute("UPDATE characters SET status='offstage', office='', reason_code='罢居' WHERE name=?", (same_faction.name,))
-    db.conn.execute("UPDATE characters SET status='active', office='翰林院编修' WHERE name=?", (hidden.name,))
+    db.conn.execute("UPDATE characters SET status='active', office='翰林院编修' WHERE name=?", (cross.name,))
     db.conn.commit()
     candidates = list_recommendation_candidates(db, state, recommender.name)
     names = {row["name"] for row in candidates}
     assert same_faction.name in names
-    assert hidden.name not in names
+    assert cross.name in names
+    assert lookup_recommendation_candidate(
+        db, state, cross.name, recommender=recommender.name,
+    ) is not None
 
 
 def test_low_identity_recommender_can_see_high_identity_same_faction_candidate(game):
@@ -44,50 +45,6 @@ def test_low_identity_recommender_can_see_high_identity_same_faction_candidate(g
     assert candidate.name in names
 
 
-def test_private_and_public_structured_hearing_exposes_cross_faction_candidate(game):
-    db, state, content = game
-    recommender = next(c for c in content.characters.values() if c.office_type == "兵部")
-    candidates = [c for c in content.characters.values()
-                  if c.name != recommender.name
-                  and c.faction != recommender.faction
-                  and c.office_type not in ("后宫", "宗藩")][:2]
-    private_candidate, public_candidate = candidates
-    db.conn.execute(
-        "UPDATE characters SET status='offstage', office='', reason_code='罢居' "
-        "WHERE name IN (?, ?)",
-        (private_candidate.name, public_candidate.name),
-    )
-    db.conn.commit()
-
-    db.register_character_knowledge_source(
-        state,
-        [{"character_id": recommender.name}, {"character_id": private_candidate.name}],
-        "audience",
-        "私下议事",
-        "大臣亲历",
-        source_id="test:private-hearing",
-    )
-    db.register_character_knowledge_source(
-        state,
-        [{"character_id": public_candidate.name}],
-        "public",
-        "公开议事",
-        "邸报所载",
-        source_id="test:public-hearing",
-    )
-
-    names = {row["name"] for row in list_recommendation_candidates(db, state, recommender.name)}
-
-    assert private_candidate.name in names
-    assert public_candidate.name in names
-
-
-
-
-
-
-
-
 def test_same_faction_future_debut_is_not_recommendable(game):
     db, state, content = game
     recommender = next(c for c in content.characters.values() if c.office_type == "兵部")
@@ -104,10 +61,9 @@ def test_same_faction_future_debut_is_not_recommendable(game):
     names = {row["name"] for row in list_recommendation_candidates(db, state, recommender.name)}
 
     assert future.name not in names
-
-
-
-
+    assert lookup_recommendation_candidate(
+        db, state, future.name, recommender=recommender.name,
+    ) is None
 
 
 def test_listed_heard_for_selection_candidate_stays_recovery_type_through_context_and_restore(game):
