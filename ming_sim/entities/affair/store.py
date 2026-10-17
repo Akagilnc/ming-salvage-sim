@@ -410,10 +410,11 @@ def stamp_batch_new_affair_declaration(
     allowed: frozenset[str] = ATTACH_BIRTH,
     birth_key_prefix: str = "result",
 ) -> tuple[Mapping[str, object], str | None]:
-    """同批 new 事务：非空 identity 共享 birth_key；冲突则返回原因。
+    """同批 new 事务：非空 identity 共享引擎铸的 birth_key；冲突则返回原因。
 
-    召对交办与过月结算共用（#1831 / ADR 0154 / #1928）。已带 birth_key 的
-    声明仍经 identity 批内对齐；未给 identity 则每项各铸一键，不按 name/origin 猜并。
+    召对交办与过月结算共用（#1831 / ADR 0154 / #1928）。出生键只由本批
+    identity 映射或引擎新铸，不采信声明里自带的 birth_key（避免不同 identity
+    因上游回声键被错误归并）。未给 identity 则每项各铸一键，不按 name/origin 猜并。
     绝不抛出：坏项逐项拒收，合法 sibling 照落。
     """
     from uuid import uuid4
@@ -427,18 +428,17 @@ def stamp_batch_new_affair_declaration(
     identity = str(parsed.get("identity") or "").strip()
     name = str(parsed["name"])
     origin = str(parsed["origin"])
-    existing_key = str(parsed.get("birth_key") or "").strip()
     if identity:
         prior = batch_new_identities.get(identity)
         if prior is None:
-            key = existing_key or f"{birth_key_prefix}:{uuid4().hex}"
+            key = f"{birth_key_prefix}:{uuid4().hex}"
             batch_new_identities[identity] = (key, name, origin)
         else:
             key, prior_name, prior_origin = prior
             if prior_name != name or prior_origin != origin:
                 return item, f"同批事务 identity「{identity}」声明冲突"
     else:
-        key = existing_key or f"{birth_key_prefix}:{uuid4().hex}"
+        key = f"{birth_key_prefix}:{uuid4().hex}"
     stamped = {"attach": _ATTACH_NEW, "name": name, "origin": origin, "birth_key": key}
     if identity:
         stamped["identity"] = identity
