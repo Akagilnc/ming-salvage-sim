@@ -1613,7 +1613,7 @@ _XUAN_PERSON_TAILS = ("入殿", "上殿", "面圣", "见我", "来", "到")
 # 多人分隔只用标点；禁「和/与/及」等可侵入在册别名（如朱燮元「懋和」）的字。
 _XUAN_NAME_SPLIT_RE = re.compile(r"[,，、;；/|]")
 # #1937：口令句末标点（。！？!? 等）不进人名片段；rstrip 集合处理，不另造解析器。
-_XUAN_TRAILING_SENTENCE_PUNCT = "。！？!?．…"
+_XUAN_TRAILING_SENTENCE_PUNCT = "。．.！？!?…"
 
 # 场景对话轮挂名：整场戏文不绑单人；归档 involved_people 投影会滤非人（#1331）。
 SCENE_CHAT_SPEAKER = "殿上"
