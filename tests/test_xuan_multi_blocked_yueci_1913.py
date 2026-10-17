@@ -107,7 +107,10 @@ def test_xuan_two_in_capital_both_enter_with_materials(game, monkeypatch):
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_xuan_capital_and_remote_splits_enter_and_summon(game, monkeypatch):
-    """「宣甲、乙」乙为合法别名且在京外：甲入殿，别名主体记传召不入殿。"""
+    """「宣甲、乙。」乙为合法别名且在京外：甲入殿，别名主体记传召不入殿。
+
+    #1937：句末标点不改变多人分流落账。
+    """
     db, state, content = game
     open_night(db, state, location="乾清宫", time_of_day="夜")
     night_id = int(get_open_night(db)["id"])
@@ -116,7 +119,7 @@ def test_xuan_capital_and_remote_splits_enter_and_summon(game, monkeypatch):
     remote_alias, remote_name = "懋和", "朱燮元"
 
     sess = _sess(db, state, content, monkeypatch)
-    sess.scene_chat(f"宣{capital}、{remote_alias}", write_gate=sess._write_gate)
+    sess.scene_chat(f"宣{capital}、{remote_alias}.", write_gate=sess._write_gate)
 
     assert capital in present_names_at(db, night_id)
     assert remote_name not in present_names_at(db, night_id)
@@ -128,8 +131,12 @@ def test_xuan_capital_and_remote_splits_enter_and_summon(game, monkeypatch):
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_xuan_blocked_offstage_feeds_materials_not_enter(game, monkeypatch):
-    """宣尚未起复者：供料接缝收到结构化拒召事实（含真实 reason）；未记入殿。"""
+@pytest.mark.parametrize("message", ["宣徐光启", "宣徐光启！", "宣徐光启."])
+def test_xuan_blocked_offstage_feeds_materials_not_enter(game, monkeypatch, message):
+    """宣尚未起复者：供料接缝收到结构化拒召事实（含真实 reason）；未记入殿。
+
+    #1937：带／不带句末标点结果相同。
+    """
     db, state, content = game
     open_night(db, state, location="乾清宫", time_of_day="夜")
     night_id = int(get_open_night(db)["id"])
@@ -155,7 +162,7 @@ def test_xuan_blocked_offstage_feeds_materials_not_enter(game, monkeypatch):
     expected_reason = str(decision.reason or "").strip()
     assert expected_reason, "fixture person must be blocked with a concrete reason"
 
-    sess.scene_chat(f"宣{person}", write_gate=sess._write_gate)
+    sess.scene_chat(message, write_gate=sess._write_gate)
 
     assert person not in present_names_at(db, night_id)
     assert not _enter_methods(db, night_id, person)

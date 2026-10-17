@@ -143,7 +143,9 @@ def test_xuan_lands_enter_then_present_on_next_prepare(game, monkeypatch, tmp_pa
         )
 
     # 语气尾与无尾同形；不得整串预剥把合法名截坏（#1913 身份与尾缀统一解析）。
-    _xuan(f"宣{target}来")
+    # #1937：中文句号须作用在尚未入殿者上——已在场后再宣会掩盖漏认。
+    # 半角「.」由 1913 混合分流／拒召案承担，不放在已在场重复宣上。
+    _xuan(f"宣{target}来。")
 
     # 本次宣入必须新落一条 TAG_ENTER（非常在员额开夜账）。
     enters = _non_roster_enters(db, night_id, target)

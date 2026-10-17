@@ -291,25 +291,31 @@ def run_turn_translation_job(
     try:
         # LLM 在 write_gate 外；声明到手后再短持锁落账。
         from ming_sim.audience_translate import (
+            build_engine_summon_landings,
             build_night_said_so_far,
             build_pending_summaries,
+            build_translation_target_grounding,
             translate_audience_turn,
         )
         # 读上下文：有 gate 则短持（共享 conn）；无 gate 直接读。
         # said-so-far 按本源轮截止，不读后续轮、不重复本轮（ADR 0155）。
+        # #1938：本轮引擎已落宣召口令事实一并供入，供转译分辨口令 vs 交办。
         with _gate_cm():
             night_said = build_night_said_so_far(
                 db, nid, until_chat_turn_id=ctid,
             )
             pending = build_pending_summaries(db, int(state.turn), night_id=nid)
-            from ming_sim.audience_translate import build_translation_target_grounding
             target_grounding = build_translation_target_grounding(db, state)
+            engine_summon_landings = build_engine_summon_landings(
+                db, nid, chat_turn_id=ctid,
+            )
         declaration = translate_audience_turn(
             emperor_message=emperor_message,
             reply=reply,
             night_said=night_said,
             pending_summaries=pending,
             target_grounding=target_grounding,
+            engine_summon_landings=engine_summon_landings,
             llm_config=llm_config,
         )
         # 分段是整轮回话的结构化覆盖声明；不完整或改字不得入账并置 done。
