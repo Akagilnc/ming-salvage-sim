@@ -93,61 +93,59 @@ def test_materials_dir_reaches_popen_cwd_and_readonly_argv(monkeypatch, tmp_path
     assert "dontAsk" in captured["cmd"]
     assert "--disallowedTools" not in captured["cmd"]
 
-def test_codex_materials_dir_reaches_popen_cwd_and_readonly_argv(monkeypatch, tmp_path):
-    """#1830 / #1827：Codex 材料模式 cwd + --ignore-user-config --sandbox read-only。"""
-    root = str((tmp_path / "materials").resolve())
-    tmp_path.joinpath("materials").mkdir()
-    monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
-    captured = _capture_run(monkeypatch, _P(stdout="ok"))
-    out = cb.CliChat(id="cli-test", backend="codex", materials_dir=root).invoke(
-        [Message(role="user", content="p")], Message(role="assistant"),
-    ).content
-    assert out == "ok"
-    assert captured["kw"].get("cwd") == root
-    assert "--ignore-user-config" in captured["cmd"]
-    assert "--sandbox" in captured["cmd"]
-    assert "read-only" in captured["cmd"]
-    assert "--skip-git-repo-check" in captured["cmd"]
-    assert "--ephemeral" in captured["cmd"]
+@pytest.mark.parametrize("with_materials", [False, True])
+def test_codex_popen_argv_env_and_materials_contract(monkeypatch, tmp_path, with_materials):
+    """#1830 / #1827 / #1932 v5：Codex 真实入口结构化 argv、env、cwd。
 
-
-def test_codex_game_call_only_adds_skills_include_instructions_false(monkeypatch, tmp_path):
-    """#1932 v5：真实入口只多 -c skills.include_instructions=false；env/CODEX_HOME 不变。
-
-    不换目录、不桥接 auth、不加 project_doc_max_bytes；材料 cwd 仍可达。
+    无推理档时 -c 参数对有且仅有 skills.include_instructions=false；env 不改写。
+    材料路径保留 cwd 与只读旗；非材料路径不加材料专用旗。
     """
     monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
-    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "user-codex-home"))
-    (tmp_path / "user-codex-home").mkdir()
+    materials_dir = None
+    root = None
+    if with_materials:
+        root = str((tmp_path / "materials").resolve())
+        tmp_path.joinpath("materials").mkdir()
+        materials_dir = root
 
-    # 非材料路径
     captured = _capture_run(monkeypatch, _P(stdout="ok"))
-    out = cb.CliChat(id="cli-test", backend="codex").invoke(
+    out = cb.CliChat(
+        id="cli-test", backend="codex", materials_dir=materials_dir,
+    ).invoke(
         [Message(role="user", content="p")], Message(role="assistant"),
     ).content
     assert out == "ok"
-    cmd = captured["cmd"]
-    joined = " ".join(cmd)
-    assert "skills.include_instructions=false" in joined
-    assert "project_doc_max_bytes" not in joined
-    assert captured["kw"].get("env") is None
-    assert "--ephemeral" in cmd and "--skip-git-repo-check" in cmd
 
-    # 材料路径：cwd 保留 + 既有只读旗 + 同一 skills 参数；仍不改 env
-    root = str((tmp_path / "materials").resolve())
-    tmp_path.joinpath("materials").mkdir()
-    captured_m = _capture_run(monkeypatch, _P(stdout="material-ok"))
-    out_m = cb.CliChat(id="cli-test", backend="codex", materials_dir=root).invoke(
-        [Message(role="user", content="p")], Message(role="assistant"),
-    ).content
-    assert out_m == "material-ok"
-    assert captured_m["kw"].get("cwd") == root
-    assert captured_m["kw"].get("env") is None
-    joined_m = " ".join(captured_m["cmd"])
-    assert "skills.include_instructions=false" in joined_m
-    assert "project_doc_max_bytes" not in joined_m
-    assert "--ignore-user-config" in captured_m["cmd"]
-    assert "read-only" in captured_m["cmd"]
+    cmd = captured["cmd"]
+    # 结构化收集 -c 参数对（值必须紧跟 -c；禁止裸值或错误配对）
+    c_values = []
+    i = 0
+    while i < len(cmd):
+        if cmd[i] == "-c":
+            assert i + 1 < len(cmd), "-c missing value"
+            c_values.append(cmd[i + 1])
+            i += 2
+            continue
+        i += 1
+    assert c_values == ["skills.include_instructions=false"]
+    # 该值不得以非 -c 邻接形式出现
+    for idx, tok in enumerate(cmd):
+        if tok == "skills.include_instructions=false":
+            assert idx > 0 and cmd[idx - 1] == "-c"
+
+    assert captured["kw"].get("env") is None
+    assert "--ephemeral" in cmd
+    assert "--skip-git-repo-check" in cmd
+
+    if with_materials:
+        assert captured["kw"].get("cwd") == root
+        assert "--ignore-user-config" in cmd
+        assert "--sandbox" in cmd
+        assert "read-only" in cmd
+    else:
+        # plain 路径 cwd 回落既有空沙箱（_AGY_CWD），与 #1932 无关；只禁材料专用旗。
+        assert "--ignore-user-config" not in cmd
+        assert "read-only" not in cmd
 
 
 def test_agy_materials_mode_uses_material_cwd_and_print_argument(monkeypatch, tmp_path):
