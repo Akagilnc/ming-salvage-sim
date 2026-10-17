@@ -3,7 +3,8 @@ from __future__ import annotations
 
 受控声明桩（模拟转译 LLM 一次产出）直接喂 ``dispatch_declaration``，验证：
 真实分派链落到既有暂存（pending_actions）与 R1-R3 新记录，无漏项（AC1）；
-一句话同时含拟旨 + 拨帑时只成一份载荷、只落一条 pending_actions（AC2）；
+同一道拨款（拟旨+拨帑）只成一份载荷、只落一条 pending_actions（AC2 / #1777）；
+任免+拨帑各自成条（#1928）；
 声明里引用不存在实体的项逐项拒收留痕，不带走同批其余合法项（AC3）；
 召对与过月两处调用同一个 dispatch_declaration，没有第二份同构逻辑（AC4）。
 """
@@ -125,61 +126,6 @@ def test_commission_with_draft_and_grant_for_same_money_is_one_payload_one_row(g
     assert payload["amount"] == 150000
     assert payload["account"] == "国库"
     assert payload["target_id"] == army_id
-
-
-def test_commission_with_appointment_and_grant_is_one_combined_payload_one_row(game):
-    """ADR 0028 / #1837：任免+拨帑一件事一份载荷、一条 pending，不拆 office 第二道。"""
-    db, state, content = game
-    minister = _minister(db)
-    person = "洪承畴" if "洪承畴" in getattr(content, "characters", {}) else minister
-    if person != minister:
-        row = db.conn.execute(
-            "SELECT name FROM characters WHERE name=? LIMIT 1", (person,),
-        ).fetchone()
-        if row is None:
-            person = minister
-    region = db.conn.execute("SELECT id FROM regions LIMIT 1").fetchone()
-    assert region is not None
-    region_id = str(region["id"])
-    before = db.conn.execute("SELECT COUNT(*) c FROM pending_actions").fetchone()["c"]
-    text = f"任命{person}为陕西巡抚，调银三十万两赈灾"
-    result = dispatch_declaration(
-        db, state,
-        {"commissions": [{
-            "text": text,
-            "appointment": {
-                "name": person, "office": "陕西巡抚", "appoint_action": "任命",
-            },
-            "grant": {
-                "grant_action": "赈灾", "amount": 30, "account": "国库",
-                "target_kind": "region", "target_id": region_id,
-                "execution_surface": "immediate",
-            },
-        }]},
-        minister_name=minister,
-    )
-    assert result.commissions.rejected == []
-    assert len(result.commissions.applied) == 1
-    assert result.commissions.applied[0]["kind"] == "directive"
-    after = db.conn.execute("SELECT COUNT(*) c FROM pending_actions").fetchone()["c"]
-    assert after - before == 1
-    kinds = [
-        r["kind"] for r in db.conn.execute(
-            "SELECT kind FROM pending_actions WHERE status='pending' ORDER BY id"
-        ).fetchall()
-    ]
-    assert kinds == ["directive"], kinds
-    payload = json.loads(
-        db.conn.execute(
-            "SELECT payload_json FROM pending_actions WHERE id=?",
-            (result.commissions.applied[0]["id"],),
-        ).fetchone()["payload_json"]
-    )
-    assert payload["text"] == text
-    assert payload["grant_action"] == "赈灾"
-    assert payload["name"] == person
-    assert payload["office"] == "陕西巡抚"
-    assert payload["appoint_action"] == "任命"
 
 
 def test_reference_to_nonexistent_entity_is_rejected_without_killing_sibling_item(game, monkeypatch):

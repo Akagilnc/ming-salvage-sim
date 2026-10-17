@@ -338,7 +338,7 @@ def build_c0_declaration_shape() -> str:
         "{\n"
         '  "commissions": [\n'
         "    {\n"
-        '      "text": "交办正文（原样，不删改）", "mode": "ordinary|midzhi（中旨明示才填 midzhi）",\n'
+        '      "text": "本道旨意正文（按道声明；多旨原句不得整句复用为每道正文；原样不删改）", "mode": "ordinary|midzhi（中旨明示才填 midzhi）",\n'
         '      "resolves_rejection_ids": [正整数 rejection_id（本旨明确修正的未了结拒收；无则省略）],\n'
         '      "target_dossier_id": "御笔强推已有案卷 id（不与 grant/appointment 同填）",\n'
         '      "appointment": {\n'
@@ -400,6 +400,7 @@ def build_c0_declaration_shape() -> str:
         '"promisor": "许诺大臣人名", "deadline_months": 0},\n'
         '      "affair_declaration": {"attach": "existing|new", '
         '"affair_id": "权威目标目录中的已有事务 id（existing）", '
+        '"identity": "同批新事务共享标识（new；同 identity 共享一件）", '
         '"name": "新事务名（new）", "origin": "起因（new）"},\n'
         '      "recommendation": {\n'
         '        "recommender": "荐者人名", "reason": "荐词原句（非空，逐字）"\n'
@@ -494,16 +495,22 @@ def build_audience_translate_prompt(
         "- scene_facts 按原顺序完整分段覆盖本轮回话；各 body 直接拼接须与回话逐字相同（含空白、标点与 Markdown），不得概括、补字或漏字；role 是该段的说话人类别，大臣/近臣的 person_names 首位是说话人（user/scene 可为空）。\n"
         "- 【本轮引擎已落账的宣召】中的入殿／传召／越次已由引擎按口令记账，不是旨意交办；"
         "不得写入 commissions。合法行止、关系、见闻由账本承接；真正的交办与戏文照常声明。\n"
-        "- 一句话同时含拟旨 + 拨帑 + 任免时，只出一条 commission，载荷挂在同一条上；"
-        "不要拆成拟旨 / 拨帑 / 交办三道。\n"
+        "- 一句话里有几道旨意时，每道各自一条 commission：任命是一道、拨款是一道，"
+        "不得把任免与拨帑合挂同一条。"
+        "每条 commission.text 只写本道旨意正文（同一次转译结合原话与上下文按道声明），"
+        "不得把完整多旨原句原样填进每一道。"
+        "同一道拨款（含「拨银…卿即拟旨」）只出一条 commission，"
+        "不要把同一笔银拆成拟旨 / 拨帑 / 交办三道。\n"
         "- 离殿后独立责成的事项逐件给 commission.assignment；title/target_id 是事项锚，"
         "assignee/participant_roster 来自已明确的承办人；续办只在能指向既有候选时填 target_candidate。"
         "不从当场问答推造独立差事；但大臣主动作出的具体承诺走 commission.minister_promise"
         "（有无明说期限都记；明说了填 deadline_months，没说则不编到期日；"
         "promisor 为许诺大臣；不经皇帝应允、不成旨意）。"
-        "所属事务走同一条 commission.affair_declaration：已有事务用 attach=existing 与"
-        "【权威目标目录】中的 affair id；新事务用 attach=new 与 name/origin；"
-        "未点明所属则省略，不得猜造 id。\n"
+        "所属事务走 commission.affair_declaration：已有事务用 attach=existing 与"
+        "【权威目标目录】中的 affair id；新事务用 attach=new、name、origin；"
+        "同批多道旨属同一件新事务时，各条 new 声明给相同 identity 与相同 name/origin，"
+        "引擎按 identity 共享出生身份；未给 identity 则每道各开一件，即使 name/origin 相同也不自动合并；"
+        "birth_key 由引擎生成。未点明所属则省略，不得猜造 id。\n"
         "- 皇帝从本场大臣陈策中点选方案时，交办正文由转译明确给出，"
         "commission.strategy_selection 指向【本场已说的话】中对应陈策轮 chat_turn_id，"
         "proposer 为陈策大臣人名；无该源轮不得猜造。\n"

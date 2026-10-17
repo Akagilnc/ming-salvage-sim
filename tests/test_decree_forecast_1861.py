@@ -678,3 +678,161 @@ def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monke
         for sess, *_rest in armed:
             get_session_write_queue(sess).wait_idle(timeout_s=_DRAIN_TIMEOUT_S)
         other.conn.close()
+
+
+def test_office_appointment_forecast_facts_match_formal_via_scene_chat(
+    game, monkeypatch,
+):
+    """#1928：一次 scene_chat→应允预推→收夜，读者断言任别/破格/罢免。
+
+    转译协议复用 1837 make_commissions_then_approve_translate；
+    预推替身复用本文件既有接缝；三道 office 同场，不为每读者另搭场景。
+    """
+    from ming_sim.audience_night import close_night
+    from ming_sim.models import Character
+    from tests.test_audience_translate_1837 import (
+        make_commissions_then_approve_translate,
+    )
+
+    db, state, content = game
+    night = open_night(db, state, location="乾清宫", time_of_day="夜")
+    night_id = int(night["id"])
+    name = "预推任别甲"
+    db.add_character(state, Character(
+        name=name, office="翰林院编修", office_type="翰林院", faction="中立",
+        aliases=[], personal_skills=[], loyalty=50, ability=50, integrity=50,
+        courage=50, style="", power_id="ming",
+    ))
+    # 同场三道：缺省真除、署理别名、罢免；读者按 action/序读取。
+    readers = (
+        {
+            "key": "default",
+            "text": f"任命{name}为兵部尚书",
+            "appointment": {
+                "name": name, "office": "兵部尚书", "appoint_action": "任命",
+            },
+            "expect": {
+                "action": "任命",
+                "tenure": "真除",
+                "break": True,
+                "action_type": "appointment",
+            },
+        },
+        {
+            "key": "alias",
+            "text": f"署理{name}为户部尚书",
+            "appointment": {
+                "name": name, "office": "户部尚书", "appoint_action": "任命",
+                "appointment_tenure": "署理",
+            },
+            "expect": {
+                "action": "任命",
+                "tenure": "署理",
+                "break": None,  # 只核任别与成案一致
+                "action_type": "appointment",
+            },
+        },
+        {
+            "key": "dismiss",
+            "text": f"罢免{name}",
+            "appointment": {"name": name, "appoint_action": "罢免"},
+            "expect": {
+                "action": "罢免",
+                "tenure": "",
+                "break": False,
+                "action_type": "dismiss_assignment",
+            },
+        },
+    )
+    commissions = [
+        {"text": row["text"], "appointment": row["appointment"]} for row in readers
+    ]
+    judge_by_pending: dict[int, dict] = {}
+
+    def judge(_agent, prompt, **kwargs):
+        dossier = json.loads(prompt)["dossiers"][0]
+        judge_by_pending[int(dossier["id"])] = dossier
+        return json.dumps({
+            "verdicts": [{
+                "dossier_id": dossier["id"], "decision": "promulgated",
+            }],
+        })
+
+    monkeypatch.setattr(decree_mod, "run_agent_text", judge)
+    monkeypatch.setattr(
+        forecast_mod.agents, "run_agent_text", lambda *_a, **_k: "预推",
+    )
+    monkeypatch.setattr(
+        month_translate, "run_declaration_translate_prompt",
+        lambda *_a, **_k: {"commissions": []},
+    )
+    translate_fn = make_commissions_then_approve_translate(db, commissions)
+    sess = _sess(db, state, content, monkeypatch, translate_fn)
+    edict = "；".join(row["text"] for row in readers)
+    ctid = db.create_chat_turn(
+        state, "殿上", "scene", 0, night_id=night_id,
+    )
+    result = sess.scene_chat(
+        edict, chat_turn_id=ctid, write_gate=sess._write_gate,
+    )
+    persist_and_schedule_scene(sess, db, result)
+    wait_pending_writes(sess, timeout_s=_DRAIN_TIMEOUT_S)
+    pending = [
+        dict(r) for r in db.conn.execute(
+            "SELECT id, action, payload_json, version FROM pending_actions "
+            "WHERE status='pending' AND kind='office' ORDER BY id"
+        ).fetchall()
+    ]
+    assert len(pending) == len(readers), pending
+    approve_ctid = db.create_chat_turn(
+        state, "殿上", "scene", 0, night_id=night_id,
+    )
+    approve_result = sess.scene_chat(
+        "准", chat_turn_id=approve_ctid, write_gate=sess._write_gate,
+    )
+    persist_and_schedule_scene(sess, db, approve_result)
+    wait_pending_writes(sess, timeout_s=_DRAIN_TIMEOUT_S)
+    assert set(judge_by_pending) == {int(p["id"]) for p in pending}, (
+        judge_by_pending.keys(), [p["id"] for p in pending],
+    )
+    for p in pending:
+        staged = db.staged_declarations.staged_for(
+            pending_action_decree_ref(int(p["id"]), int(p["version"] or 1)),
+        )
+        assert staged and staged[0].status == "staged", p
+        assert staged[0].verdict and staged[0].verdict.get("decision") == "promulgated", p
+        assert staged[0].forecast_text is not None, p
+        assert staged[0].declaration is not None, p
+
+    close_night(db, state, content=content)
+    dossiers = {
+        int(row["pending_action_id"]): row
+        for row in db.conn.execute(
+            "SELECT id, pending_action_id, action_type, payload_json "
+            "FROM decree_dossiers WHERE pending_action_id IN ({})".format(
+                ",".join(str(p["id"]) for p in pending),
+            )
+        ).fetchall()
+    }
+    assert set(dossiers) == {int(p["id"]) for p in pending}
+
+    # 按 pending 序对齐 readers（同场声明序 = 落库 id 序）。
+    for p, row in zip(pending, readers):
+        pid = int(p["id"])
+        expect = row["expect"]
+        assert str(p["action"]) == expect["action"], row["key"]
+        judge_row = judge_by_pending[pid]
+        formal = json.loads(dossiers[pid]["payload_json"])
+        assert str(dossiers[pid]["action_type"] or "") == expect["action_type"], row["key"]
+        if expect["action"] == "罢免":
+            assert judge_row.get("appointment_tenure") in (None, ""), row["key"]
+            assert judge_row.get("break_rank") in (None, {}), row["key"]
+            assert formal.get("任别") in (None, ""), row["key"]
+            assert "break_rank" not in formal, row["key"]
+            continue
+        assert judge_row.get("appointment_tenure") == expect["tenure"], row["key"]
+        assert formal.get("任别") == expect["tenure"], row["key"]
+        assert "appointment_tenure" not in formal, row["key"]
+        assert judge_row.get("break_rank") == formal.get("break_rank"), row["key"]
+        if expect["break"] is True:
+            assert formal["break_rank"].get("is_break_rank") is True, row["key"]

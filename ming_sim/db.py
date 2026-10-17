@@ -32,7 +32,6 @@ from ming_sim.entities.person_log import ensure_schema as ensure_person_log_sche
 from ming_sim.entities.person_log.store import PersonLogStore
 from ming_sim.entities.reign_state import ensure_schema as ensure_reign_schema
 from ming_sim.entities.reign_state.store import POPULATION_UNIT_PERSONS as POPULATION_UNIT_PERSONS
-from ming_sim.appointment_tenure import appointment_tenure_from
 from ming_sim.assets import format_money, format_money_delta, format_wanliang_amount
 from ming_sim.constants import (
     ARMY_FIELD_ALIASES, ARMY_FIELD_LABELS, ARMY_QUANTITY_FIELDS, ARMY_SCORE_FIELDS, ARMY_TEXT_FIELDS,
@@ -5577,7 +5576,10 @@ class GameDB:
                 self._delete_row_in_tx(table, target_id)
             elif strategy in {"restore_row", "restore_deleted_row"}:
                 before_row = _load_durable_json(item["before_json"])
-                if table == "pending_actions" and before_row.get("kind") == "directive":
+                # #1928：拟旨与任免同属逐旨预推身份；恢复时作废旧版并递增版本。
+                if table == "pending_actions" and before_row.get("kind") in {
+                    "directive", "office",
+                }:
                     pending_id = int(before_row["id"])
                     restored_directive_ids.add(pending_id)
                     before_version = int(before_row.get("version") or 1)
@@ -7659,15 +7661,9 @@ class GameDB:
             normalized_payload["mode"] if "mode" in normalized_payload else "ordinary"
         )
         if action == "appointment":
-            from ming_sim.office_rank import appointment_break_rank
-            normalized_payload["任别"] = appointment_tenure_from(normalized_payload)
-            normalized_payload.pop("appointment_tenure", None)
-            normalized_payload["break_rank"] = appointment_break_rank(
-                self,
-                normalized_payload.get("name") or target_id,
-                normalized_payload.get("office") or normalized_payload.get("new_office"),
-                normalized_payload.get("office_type")
-                or normalized_payload.get("new_office_type"),
+            from ming_sim.appointment_tenure import project_appointment_facts
+            normalized_payload = project_appointment_facts(
+                self, normalized_payload, target_id=target_id,
             )
         if not action or not text:
             raise DeclarationDataError("案卷 action_type/decree_text 不能为空")
@@ -8855,6 +8851,7 @@ class GameDB:
 
         与 directive 改草同纪律——未持源夜时归属迁到当前开夜并清 night_approved；
         声明路径传入源夜则盖源夜。合并保留下划线控制键。
+        #1928 / #1861：改旨递增版本、作废旧版预推，与 update_directive_candidate 同形。
         ``source_chat_turn_id``：迟到转译源轮，放行收夜持闸窗口。
         返回该行 id（不存在/非 pending office 则 0）。
         """
@@ -8864,7 +8861,8 @@ class GameDB:
         )
         owns = connection_owns_transaction(self.conn)
         row = self.conn.execute(
-            "SELECT id,payload_json,status FROM pending_actions WHERE id=? AND kind='office'",
+            "SELECT id,payload_json,status,version FROM pending_actions "
+            "WHERE id=? AND kind='office'",
             (int(candidate_id),),
         ).fetchone()
         if row is None:
@@ -8872,8 +8870,12 @@ class GameDB:
         if row["status"] != "pending":
             raise ValueError("已成案任免不得改路径")
         merged = self._merge_underscore_control_keys(row["payload_json"], payload)
+        self._discard_pending_decree_forecast(
+            int(row["id"]), int(row["version"] or 1),
+        )
         self.conn.execute(
-            'UPDATE pending_actions SET payload_json=?, night_id=?, night_approved=0 WHERE id=?',
+            'UPDATE pending_actions SET payload_json=?, night_id=?, night_approved=0,'
+            ' version=version+1 WHERE id=?',
             (json.dumps(merged, ensure_ascii=False), stamp, int(candidate_id)),
         )
         if owns:
@@ -9039,12 +9041,13 @@ class GameDB:
         )
 
     def _discard_deleted_directive_forecast(self, target_id: object) -> None:
+        """删行前作废该暂存当前版预推（拟旨 / 任免，#1928）。"""
         pending_id = int(target_id)
         row = self.conn.execute(
             'SELECT kind, version FROM pending_actions WHERE id=?',
             (pending_id,),
         ).fetchone()
-        if row is None or str(row["kind"] or "") != "directive":
+        if row is None or str(row["kind"] or "") not in {"directive", "office"}:
             return
         self._discard_pending_decree_forecast(pending_id, int(row["version"] or 1))
 
@@ -9636,74 +9639,17 @@ class GameDB:
                     self.dossiers.inherit_payload_endorsements(
                         int(dossier_id), payload, commit=False,
                     )
-                # ADR 0028 / #1837：组合载荷（拨帑±任免）同一份 pending 同时产任免案卷；
-                # 任免字段只进 appointment 案卷，禁把 grant 的 execution_surface 带过去。
-                if not self._materialize_combined_appointment_from_directive(
-                    state, pa, payload, content=content,
-                ):
-                    return False
             return True
         # 未知 kind/action 是内部 schema 故障，不得标 failed+业务 invalid_state（#1897 E1）。
         raise ValueError(
             f"未知内部动作 {pa.get('kind')}/{pa.get('action')}"
         )
 
-    @staticmethod
-    def _appointment_slice_from_combined_payload(
-        payload: Dict[str, object],
-    ) -> Optional[Dict[str, object]]:
-        """从组合 directive 载荷抽出任免字段；无任免声明返 None。
-
-        只保留任免成案所需键，剥离 grant 的 execution_surface / amount 等，
-        避免 appointment 案卷撞「execution_surface 与案卷动作策略不符」。
-        """
-        action = str(payload.get("appoint_action") or "").strip()
-        name = str(payload.get("name") or "").strip()
-        if action not in {"任命", "罢免"} or not name:
-            return None
-        office = str(payload.get("office") or "").strip()
-        if action == "任命" and not office:
-            return None
-        sliced: Dict[str, object] = {
-            "name": name, "office": office, "appoint_action": action,
-        }
-        for key in (
-            "appointment_tenure", "任别", "faction",
-            "text", "affair_id", "region_id", "endorsements", "reason", "recommendation",
-        ):
-            value = payload.get(key)
-            if value not in (None, ""):
-                sliced[key] = value
-        return sliced
-
-    def _materialize_combined_appointment_from_directive(
+    def _materialize_office_appointment_dossier(
         self, state: GameState, pa: Dict[str, object], payload: Dict[str, object],
         *, content=None,
     ) -> bool:
-        """组合 directive 载荷上的任免 → 既有 office 成案核；无任免字段则 no-op 成功。"""
-        sliced = self._appointment_slice_from_combined_payload(payload)
-        if sliced is None:
-            return True
-        office_pa = {
-            "id": pa["id"],
-            "kind": "office",
-            "action": str(sliced["appoint_action"]),
-            "minister_name": str(
-                pa.get("minister_name") or payload.get("actor") or ""
-            ),
-        }
-        decree_text = str(payload.get("text") or sliced.get("text") or "")
-        # #1897：声明正文原样；仅真正空串才视作缺省，禁 strip 判空改 None。
-        return self._materialize_office_appointment_dossier(
-            state, office_pa, sliced, content=content,
-            decree_text=decree_text if decree_text else None,
-        )
-
-    def _materialize_office_appointment_dossier(
-        self, state: GameState, pa: Dict[str, object], payload: Dict[str, object],
-        *, content=None, decree_text: Optional[str] = None,
-    ) -> bool:
-        """任免案卷唯一成案核：kind=office 与组合 directive 同伴共用，不平行第二套。"""
+        """任免案卷唯一成案核（kind=office）。"""
         name = str(payload.get("name") or "").strip()
         office = str(payload.get("office") or "").strip()
         action = str(pa.get("action") or payload.get("appoint_action") or "").strip()
@@ -9749,9 +9695,8 @@ class GameDB:
         staged_payload["name"] = name
         staged_payload["_office_action"] = action
         staged_payload["_minister_name"] = str(pa.get("minister_name") or "")
-        # 纯 office 与组合路径同核：优先声明/payload 原样 text（P7）。
-        # 缺少唯一原文真源时拒绝物化；不得替 LLM 拼玩家可感正文。
-        text = str(decree_text or staged_payload.get("text") or "")
+        # 正文唯一真源＝任免载荷 text（P7）；缺则拒绝物化，不另接受覆盖参数。
+        text = str(staged_payload.get("text") or "")
         if not text.strip():
             return False
         dossier_id = self.create_decree_dossier(
@@ -9859,9 +9804,9 @@ class GameDB:
         voided: List[int] = []
         for row in rows:
             action_id = int(row["id"])
-            if str(row["kind"] or "") == "directive":
-                # 该道拟旨的夜里预推产物随交办一起作废（预推生命周期归 #1816，
-                # 但它挂在这一道交办的身份下，不作废就会在过月时复活）。
+            if str(row["kind"] or "") in {"directive", "office"}:
+                # 该道旨的夜里预推产物随交办一起作废（拟旨 / 任免，#1928）；
+                # 不作废就会在过月时复活。
                 self._discard_pending_decree_forecast(
                     action_id, int(row["version"] or 1),
                 )
@@ -9884,7 +9829,7 @@ class GameDB:
         ).fetchone()
         if row is None:
             return False
-        if str(row["kind"] or "") == "directive":
+        if str(row["kind"] or "") in {"directive", "office"}:
             self._discard_pending_decree_forecast(
                 int(action_id), int(row["version"] or 1),
             )
