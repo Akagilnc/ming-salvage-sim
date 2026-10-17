@@ -595,6 +595,8 @@ def _codex_cmd(
     reasoning = _codex_reasoning_effort(reasoning_strength)
     if reasoning:
         cmd += ["-c", f'model_reasoning_effort="{reasoning}"']
+    # #1932 v5：只加官方 -c 关掉 skills 清单；不换 CODEX_HOME、不动认证/配置。
+    cmd += ["-c", "skills.include_instructions=false"]
     if json_events:
         cmd.append("--json")
     cmd += ["--ephemeral", "--skip-git-repo-check"]
