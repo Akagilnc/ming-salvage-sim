@@ -12,7 +12,12 @@ Seams:
 - scene_chat 交办/应允 → close_night → 月链颁布（起复真实入口）
 """
 
+from pathlib import Path
+
+import pytest
+
 from ming_sim import audience_night as an
+from ming_sim.distance import DistanceMatrix
 from ming_sim.session import AudienceAdmission
 from tests.readback_helpers import active_character_name as _minister
 from tests.test_audience_tenure_authority_1912 import (
@@ -28,6 +33,11 @@ from tests.test_audience_translate_1837_reopen import (
 from tests.test_audience_travel_gating_670 import _session
 from tests.test_due_review_621 import _settle_empty_month
 from tests.test_transit_countdown_668 import _oracle_n
+
+ROOT = Path(__file__).resolve().parents[1]
+# ADR 0094：内容矩阵是运行时唯一读面；行为预期从此独立取值，不锁具体常数。
+MATRIX = DistanceMatrix.from_file(ROOT / "content/distance_matrix.json")
+NANZHILI_TO_CAPITAL = MATRIX.travel_time("nanzhili", "beizhili")
 
 
 def _ledger(db, name: str) -> dict:
@@ -61,9 +71,9 @@ def test_bi_ziyan_summon_travels_nanzhili_distance_then_admits(game, monkeypatch
     after_depart = _ledger(db, "毕自严")
     assert after_depart["location"] == "nanzhili"
     assert after_depart["transit_to"] == "beizhili"
-    assert after_depart["remaining"] is not None
-    # 权威路程来自启程写缝；扣程月数按 0095 F2，不锁矩阵常数。
-    n = _oracle_n(float(after_depart["remaining"]), 1.0)
+    # 启程落账必须等于内容矩阵权威路程（独立基准，非被测 remaining 自证）。
+    assert after_depart["remaining"] == pytest.approx(NANZHILI_TO_CAPITAL)
+    n = _oracle_n(NANZHILI_TO_CAPITAL, 1.0)
     assert n >= 1
 
     # 启程当月不扣 + 其后 N-1 次扣程：均未到期，不得抵京。
@@ -140,5 +150,4 @@ def test_xu_guangqi_reinstated_via_audience_then_summon_travels(game, monkeypatc
     departed = _ledger(db, name)
     assert departed["location"] == "nanzhili"
     assert departed["transit_to"] == "beizhili"
-    assert departed["remaining"] is not None
-    assert float(departed["remaining"]) > 0
+    assert departed["remaining"] == pytest.approx(NANZHILI_TO_CAPITAL)
