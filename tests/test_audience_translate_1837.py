@@ -12,6 +12,7 @@ from ming_sim.audience_night import (
     open_night,
 )
 from ming_sim.declaration_dispatch import dispatch_declaration
+from ming_sim.decree_forecast import decree_ref_for_dossier
 from tests.conftest import (
     offline_empty_audience_translate,
     persist_and_schedule_scene,
@@ -477,6 +478,12 @@ def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, m
         assert int(appt["pending_action_id"]) != int(grant_dossiers[0]["pending_action_id"]), (
             case["label"],
         )
+        # #1928：判决身份（decree_ref）随各自 pending，不共用。
+        appt_ref = decree_ref_for_dossier(db, dict(appt))
+        grant_ref = decree_ref_for_dossier(db, dict(grant_dossiers[0]))
+        assert appt_ref != grant_ref, case["label"]
+        assert appt_ref.startswith("pending-action:"), case["label"]
+        assert grant_ref.startswith("pending-action:"), case["label"]
 
         state.metrics["国库"] = max(int(state.metrics.get("国库") or 0), 100)
         db.reign.save_game_state(state)
@@ -501,6 +508,107 @@ def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, m
         assert moved is not None and int(moved["delta"]) == case["ledger_delta"], (
             case["label"], moved,
         )
+
+
+def test_reject_grant_only_appointment_lands_without_rescript(game, monkeypatch):
+    """#1928：外廷只打回拨款——任命落职且不进批红；拨款 rejected+rescript。"""
+    db, state, content = game
+    person = _hong_name(db, content)
+    region = _region_id(db)
+    open_night(db, state, location="乾清宫", time_of_day="夜")
+    edict = f"任{person}为户部右侍郎，再拨银三十万两给陕西"
+    commission = {
+        "text": edict,
+        "appointment": {
+            "name": person, "office": "户部右侍郎", "appoint_action": "任命",
+        },
+        "grant": {
+            "grant_action": "赈灾", "amount": 30, "account": "国库",
+            "target_kind": "region", "target_id": region,
+            "execution_surface": "immediate",
+        },
+    }
+
+    class FakeAgent:
+        def run(self, message):
+            return SimpleNamespace(content="臣等遵旨。", tools=[])
+
+    monkeypatch.setattr(
+        "ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent(),
+    )
+    calls = {"n": 0}
+
+    def translate_fn(prompt, llm_config, _c=commission, _db=db):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {
+                **offline_empty_audience_translate(prompt, llm_config),
+                "commissions": [_c], "promises": [],
+            }
+        rows = _db.conn.execute(
+            "SELECT id FROM pending_actions WHERE status='pending' ORDER BY id"
+        ).fetchall()
+        return {
+            **offline_empty_audience_translate(prompt, llm_config),
+            "commissions": [],
+            "promises": [
+                {"action_id": int(r["id"]), "decision": "应允"} for r in rows
+            ],
+        }
+
+    sess = _sess(db, state, content, monkeypatch, translate_fn=translate_fn)
+    _scene_turn(sess, db, state, edict)
+    _scene_turn(sess, db, state, "准")
+    close_night(db, state, content=content)
+
+    appt = db.conn.execute(
+        "SELECT id, pending_action_id FROM decree_dossiers "
+        "WHERE action_type='appointment' AND target_id=? "
+        "ORDER BY id DESC LIMIT 1",
+        (person,),
+    ).fetchone()
+    grant = db.conn.execute(
+        "SELECT id, pending_action_id FROM decree_dossiers "
+        "WHERE action_type='grant_allocation' AND target_id=? "
+        "ORDER BY id DESC LIMIT 1",
+        (region,),
+    ).fetchone()
+    assert appt is not None and grant is not None
+    assert int(appt["pending_action_id"]) != int(grant["pending_action_id"])
+
+    state.metrics["国库"] = max(int(state.metrics.get("国库") or 0), 100)
+    db.reign.save_game_state(state)
+    apply_dossier_promulgation(
+        db, state, int(appt["id"]), decision="promulgated", content=content,
+    )
+    apply_dossier_promulgation(
+        db, state, int(grant["id"]), decision="rejected",
+        blocked_layer="six_offices", reason="库银不足", content=content,
+    )
+
+    char = db.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (person,),
+    ).fetchone()
+    assert "户部右侍郎" in str(char["office"] or "")
+    appt_row = db.dossiers.get(int(appt["id"]))
+    grant_row = db.dossiers.get(int(grant["id"]))
+    assert str(appt_row["promulgation_decision"] or "") == "promulgated"
+    assert not bool(appt_row.get("rescript_pending"))
+    assert str(grant_row["promulgation_decision"] or "") == "rejected"
+    assert bool(grant_row.get("rescript_pending"))
+
+    from ming_sim.decree import _rescript_decisions
+    decisions = _rescript_decisions(
+        [
+            {"dossier_id": int(appt["id"]), "decision": "promulgated"},
+            {
+                "dossier_id": int(grant["id"]), "decision": "rejected",
+                "reason": "库银不足", "primary_opponents": [],
+            },
+        ],
+        [appt_row, grant_row],
+    )
+    assert {int(d["event_id"].split(":")[1]) for d in decisions} == {int(grant["id"])}
 
 
 def test_emperor_准_via_scene_chat_approves_no_reply_stays_unapproved(game, monkeypatch):
