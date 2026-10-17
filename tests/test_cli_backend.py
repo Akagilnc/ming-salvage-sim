@@ -95,10 +95,10 @@ def test_materials_dir_reaches_popen_cwd_and_readonly_argv(monkeypatch, tmp_path
 
 @pytest.mark.parametrize("with_materials", [False, True])
 def test_codex_popen_argv_env_and_materials_contract(monkeypatch, tmp_path, with_materials):
-    """#1830 / #1827 / #1932 v5：Codex 真实入口结构化 argv、env、cwd。
+    """#1830 / #1827 / #1932 v5：Codex 真实入口完整结构化 argv、env、cwd。
 
-    无推理档时 -c 参数对有且仅有 skills.include_instructions=false；env 不改写。
-    材料路径保留 cwd 与只读旗；非材料路径不加材料专用旗。
+    相对改动前只多出 -c skills.include_instructions=false；env 不改写。
+    材料路径保留 cwd 与只读旗；非材料路径 argv 不含材料专用旗。
     """
     monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
     materials_dir = None
@@ -116,36 +116,18 @@ def test_codex_popen_argv_env_and_materials_contract(monkeypatch, tmp_path, with
     ).content
     assert out == "ok"
 
-    cmd = captured["cmd"]
-    # 结构化收集 -c 参数对（值必须紧跟 -c；禁止裸值或错误配对）
-    c_values = []
-    i = 0
-    while i < len(cmd):
-        if cmd[i] == "-c":
-            assert i + 1 < len(cmd), "-c missing value"
-            c_values.append(cmd[i + 1])
-            i += 2
-            continue
-        i += 1
-    assert c_values == ["skills.include_instructions=false"]
-    # 该值不得以非 -c 邻接形式出现
-    for idx, tok in enumerate(cmd):
-        if tok == "skills.include_instructions=false":
-            assert idx > 0 and cmd[idx - 1] == "-c"
-
+    expected = [
+        "exec", "--model", "cli-test",
+        "-c", "skills.include_instructions=false",
+        "--ephemeral", "--skip-git-repo-check",
+    ]
+    if with_materials:
+        expected += ["--ignore-user-config", "--sandbox", "read-only"]
+    expected.append("-")
+    assert captured["cmd"][1:] == expected
     assert captured["kw"].get("env") is None
-    assert "--ephemeral" in cmd
-    assert "--skip-git-repo-check" in cmd
-
     if with_materials:
         assert captured["kw"].get("cwd") == root
-        assert "--ignore-user-config" in cmd
-        assert "--sandbox" in cmd
-        assert "read-only" in cmd
-    else:
-        # plain 路径 cwd 回落既有空沙箱（_AGY_CWD），与 #1932 无关；只禁材料专用旗。
-        assert "--ignore-user-config" not in cmd
-        assert "read-only" not in cmd
 
 
 def test_agy_materials_mode_uses_material_cwd_and_print_argument(monkeypatch, tmp_path):
