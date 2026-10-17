@@ -2427,15 +2427,14 @@ def _dispatch_commission_items(
             )
             return {"id": oid, "payload": office_payload, "kind": "office"}
 
-        # #1928：任免始终走独立 office pending；与拨帑分条，各自判决身份。
+        # #1928：任免独立 office pending；同条合挂已由互斥闸拒收，此处必无 grant。
         if appointment_fields:
             staged = _stage_office(str(payload.get("text") or ""))
             if staged is not None:
                 applied.append(staged)
-            if not grant_raw:
-                continue
+            continue
 
-        # 拨帑或纯正文拟旨：独立 directive。同笔拨款不拆（#1777）；不附带任免。
+        # 拨帑或纯正文拟旨：独立 directive。同笔拨款不拆（#1777）。
         actor = str(minister_name or payload.get("actor") or "").strip()
         if not actor:
             actor = _commission_fallback_actor(db)
