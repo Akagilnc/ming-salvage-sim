@@ -2311,6 +2311,17 @@ def _dispatch_commission_items(
                 continue
             office_payload: Dict[str, Any] = dict(appointment_fields)
             office_payload["text"] = body
+            # 名单/期限/承办人：与 directive 共用权威 staging 校验（S2-R）。
+            try:
+                _attach_commission_staging_fields(
+                    office_payload, item, turn=int(state.turn), db=db,
+                )
+            except DecreeMaterializationValidationError as exc:
+                _reject(
+                    rejected, item, str(exc),
+                    getattr(exc, "category", None) or "invalid_shape", source,
+                )
+                continue
             if not _attach_commission_affair(
                 db, item, office_payload, rejected=rejected, source=source,
             ):
