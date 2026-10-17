@@ -32,7 +32,9 @@ def _fact_candidate_row(row: Any) -> Dict[str, object]:
 
 
 _FACT_CANDIDATE_WHERE = (
-    "power_id='ming' AND faction != '流寇' AND "
+    # #1931 J2：归明以 power_id='ming' 为准；faction 可仍为「流寇」（招抚保留标签），
+    # 不得再以派系标签否决可荐事实。
+    "power_id='ming' AND "
     "office_type NOT IN ('后宫','宗藩','未仕') AND "
     "status IN ('active','offstage','retired','dismissed') AND "
     "NOT (debut_year > 0 AND (debut_year > ? OR (debut_year = ? AND debut_month > ?)))"
