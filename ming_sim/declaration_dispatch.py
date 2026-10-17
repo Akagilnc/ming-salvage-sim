@@ -2447,6 +2447,14 @@ def _dispatch_commission_items(
         ):
             continue
 
+        # 荐人须附任命：directive 路径传 None，复用权威校验拒收（S2 删中转后仍可达）。
+        reco_err = _attach_recommendation_fields(
+            db, state, item, None, default_recommender=minister_name,
+        )
+        if reco_err is not None:
+            _reject(rejected, item, reco_err[0], reco_err[1], source)
+            continue
+
         actor = str(minister_name or payload.get("actor") or "").strip()
         if not actor:
             actor = _commission_fallback_actor(db)
