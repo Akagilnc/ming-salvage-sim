@@ -53,10 +53,6 @@ from ming_sim.models import CLI_DEFAULT_RUNNER, CODEX_DEFAULT_MODEL, CLAUDE_DEFA
 _AGY_CWD = os.path.join(tempfile.gettempdir(), "ming_agy_sandbox")
 os.makedirs(_AGY_CWD, exist_ok=True)
 
-# #1932：游戏 codex 调用的官方隔离 profile（CODEX_HOME）。只桥接 auth，不放
-# 用户 AGENTS.md / skills；不改用户自己的 ~/.codex。可测入口 monkeypatch 此常量。
-_CODEX_GAME_HOME = os.path.join(tempfile.gettempdir(), "ming_codex_game_home")
-
 _AGY_BIN = os.environ.get("MING_SIM_AGY_BIN", "agy")
 # CODEX_DEFAULT_MODEL / CLAUDE_DEFAULT_MODEL 现 import 自 models（见上，#60）。
 _CODEX_BIN = os.environ.get("MING_SIM_CODEX_BIN", "codex")
@@ -589,72 +585,36 @@ def _codex_reasoning_effort(reasoning_strength: Optional[str]) -> str:
 
 
 def _codex_auth_source_home() -> str:
-    """用户真 CODEX_HOME（供 auth 桥接）。若当前 env 已是游戏隔离 home，回落 ~/.codex。"""
-    game = os.path.abspath(_CODEX_GAME_HOME)
+    """用户真 CODEX_HOME（供 auth 桥接）。
+
+    读当前进程 env 的 CODEX_HOME；若空或已是本游戏临时隔离目录（前缀
+    ``ming_codex_game_``），回落 ``~/.codex``，避免把隔离 home 当凭证源。
+    """
     env_home = (os.environ.get("CODEX_HOME") or "").strip()
     if env_home:
         resolved = os.path.abspath(os.path.expanduser(env_home))
-        if resolved != game:
+        base = os.path.basename(resolved.rstrip(os.sep))
+        if not base.startswith("ming_codex_game_"):
             return resolved
     return os.path.abspath(os.path.expanduser("~/.codex"))
 
 
-def _ensure_codex_game_home() -> str:
-    """准备游戏专用 CODEX_HOME：有 auth、无用户 AGENTS.md/skills（#1932）。
+def _codex_game_env() -> Dict[str, str]:
+    """游戏 codex 子进程 env：每次调用新建空 CODEX_HOME，只桥接当前 auth（#1932）。
 
-    官方隔离入口＝CODEX_HOME profile（docs: automation user / different profile），
-    不改用户全局配置文件。
+    官方隔离＝CODEX_HOME profile。新目录天然无 AGENTS.md/skills，无持久清扫、
+    无陈旧凭证复用。桥接失败原样上抛，不在隔离未成立时继续调宿主。
     """
-    root = os.path.abspath(_CODEX_GAME_HOME)
-    os.makedirs(root, exist_ok=True)
-    for name in ("AGENTS.md", "AGENTS.override.md"):
-        path = os.path.join(root, name)
-        if os.path.lexists(path):
-            try:
-                os.unlink(path)
-            except OSError:
-                logger.warning("codex game home: failed to remove %s", path)
-    # 不保留用户 skills 树；系统若自建 skills/.system 可再生成。
-    skills_root = os.path.join(root, "skills")
-    if os.path.isdir(skills_root):
-        for entry in os.listdir(skills_root):
-            if entry == ".system":
-                continue
-            path = os.path.join(skills_root, entry)
-            try:
-                if os.path.isdir(path) and not os.path.islink(path):
-                    shutil.rmtree(path)
-                else:
-                    os.unlink(path)
-            except OSError:
-                logger.warning("codex game home: failed to clear skill entry %s", path)
-    auth_dst = os.path.join(root, "auth.json")
+    env = dict(os.environ)
+    root = tempfile.mkdtemp(prefix="ming_codex_game_")
     auth_src = os.path.join(_codex_auth_source_home(), "auth.json")
-    if os.path.lexists(auth_dst):
-        try:
-            if os.path.islink(auth_dst) or os.path.isfile(auth_dst):
-                # 已指向可用 auth 则保留；断链/错链再修。
-                if os.path.isfile(auth_dst):
-                    return root
-            os.unlink(auth_dst)
-        except OSError:
-            logger.warning("codex game home: failed to refresh auth link")
-            return root
+    auth_dst = os.path.join(root, "auth.json")
     if os.path.isfile(auth_src):
         try:
             os.symlink(auth_src, auth_dst)
         except OSError:
-            try:
-                shutil.copy2(auth_src, auth_dst)
-            except OSError:
-                logger.warning("codex game home: failed to bridge auth.json from %s", auth_src)
-    return root
-
-
-def _codex_game_env() -> Dict[str, str]:
-    """游戏 codex 子进程 env：CODEX_HOME 指隔离 profile，其余继承当前进程。"""
-    env = dict(os.environ)
-    env["CODEX_HOME"] = _ensure_codex_game_home()
+            shutil.copy2(auth_src, auth_dst)
+    env["CODEX_HOME"] = root
     return env
 
 

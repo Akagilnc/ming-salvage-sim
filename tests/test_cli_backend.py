@@ -116,45 +116,86 @@ def test_codex_game_call_uses_isolated_codex_home_without_user_agents_or_skills(
 ):
     """#1932：游戏 codex 调用走官方 CODEX_HOME 隔离 + skills.include_instructions=false。
 
-    真实入口 CliChat.invoke → 子进程 env/argv；不改用户全局配置文件。
+    真实入口 CliChat.invoke → 子进程 env/argv；凭证随当前源；不改用户全局文件。
     """
-    import os
     from pathlib import Path
 
-    user_home = tmp_path / "user_codex"
-    user_home.mkdir()
-    (user_home / "AGENTS.md").write_text("# user global agents\n", encoding="utf-8")
-    (user_home / "auth.json").write_text("{}", encoding="utf-8")
-    (user_home / "skills").mkdir()
-    monkeypatch.setenv("CODEX_HOME", str(user_home))
+    profile_a = tmp_path / "profile_a"
+    profile_b = tmp_path / "profile_b"
+    for home, token in ((profile_a, "fixture-A"), (profile_b, "fixture-B")):
+        home.mkdir()
+        (home / "AGENTS.md").write_text("# user global agents\n", encoding="utf-8")
+        (home / "auth.json").write_text(token, encoding="utf-8")
+        (home / "skills").mkdir()
+
     monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
+    agents_before = (profile_a / "AGENTS.md").read_text(encoding="utf-8")
+    seen_auth: list[str] = []
+    captured: dict = {}
 
-    game_home = tmp_path / "game_codex_home"
-    monkeypatch.setattr(cb, "_CODEX_GAME_HOME", str(game_home))
+    def fake_popen(cmd, **kw):
+        from tests.cli_process_doubles import FakeCliProcess
 
-    agents_before = (user_home / "AGENTS.md").read_text(encoding="utf-8")
-    captured = _capture_run(monkeypatch, _P(stdout="ok"))
+        captured["cmd"] = list(cmd)
+        captured["kw"] = kw
+        env = kw.get("env") or {}
+        iso = Path(env.get("CODEX_HOME") or "")
+        auth = iso / "auth.json"
+        seen_auth.append(auth.read_text(encoding="utf-8") if auth.exists() else "")
+        return FakeCliProcess(stdout_script=("ok",), returncode=0)
+
+    monkeypatch.setattr(cb.subprocess, "Popen", fake_popen)
+
+    monkeypatch.setenv("CODEX_HOME", str(profile_a))
     out = cb.CliChat(id="cli-test", backend="codex").invoke(
         [Message(role="user", content="p")], Message(role="assistant"),
     ).content
     assert out == "ok"
 
     env = captured["kw"].get("env") or {}
-    isolated = env.get("CODEX_HOME", "")
-    assert isolated
-    assert Path(isolated).resolve() == game_home.resolve()
-    assert Path(isolated).resolve() != user_home.resolve()
-    assert not (Path(isolated) / "AGENTS.md").exists()
-    assert not (Path(isolated) / "AGENTS.override.md").exists()
-    # auth bridged so host login still works; user files untouched
-    assert (Path(isolated) / "auth.json").exists()
-    assert (user_home / "AGENTS.md").read_text(encoding="utf-8") == agents_before
+    isolated = Path(env.get("CODEX_HOME") or "")
+    assert isolated.is_dir()
+    assert isolated.resolve() != profile_a.resolve()
+    assert not (isolated / "AGENTS.md").exists()
+    assert not (isolated / "AGENTS.override.md").exists()
+    assert (isolated / "auth.json").read_text(encoding="utf-8") == "fixture-A"
+    assert (profile_a / "AGENTS.md").read_text(encoding="utf-8") == agents_before
 
     cmd = captured["cmd"]
     joined = " ".join(cmd)
     assert "skills.include_instructions=false" in joined
     assert "project_doc_max_bytes=0" in joined
     assert "--ephemeral" in cmd and "--skip-git-repo-check" in cmd
+
+    # 切换用户 CODEX_HOME 后，下一次调用必须桥接新凭证（无共享陈旧 auth）。
+    monkeypatch.setenv("CODEX_HOME", str(profile_b))
+    cb.CliChat(id="cli-test", backend="codex").invoke(
+        [Message(role="user", content="p")], Message(role="assistant"),
+    )
+    assert seen_auth == ["fixture-A", "fixture-B"]
+
+    # 桥接失败不得放行调用宿主。
+    import ming_sim.cli_backend as backend
+
+    def boom_symlink(src, dst):
+        raise OSError("symlink denied")
+
+    def boom_copy(src, dst):
+        raise OSError("copy denied")
+
+    monkeypatch.setattr(backend.os, "symlink", boom_symlink)
+    monkeypatch.setattr(backend.shutil, "copy2", boom_copy)
+    captured.clear()
+    seen_auth.clear()
+    try:
+        cb.CliChat(id="cli-test", backend="codex").invoke(
+            [Message(role="user", content="p")], Message(role="assistant"),
+        )
+        raised = False
+    except OSError:
+        raised = True
+    assert raised
+    assert "cmd" not in captured  # Popen 未启动
 
 def test_agy_materials_mode_uses_material_cwd_and_print_argument(monkeypatch, tmp_path):
     """Agy 1.2.0 材料调用用 --print=<prompt>，不再走失效 sandbox/stdin。"""
