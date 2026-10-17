@@ -334,7 +334,7 @@ def test_summons_translation_does_not_apply_monthly_effects_at_night(game):
 
 
 def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, monkeypatch):
-    """AC1：scene_chat 转译 → 一条组合暂存 → 应允收夜 → 任免与拨帑两类效果全。
+    """AC1 / #1928：scene_chat 转译 → 任免与拨帑两条独立暂存 → 应允收夜 → 两类效果全。
 
     同入口覆盖属地赈灾与非属地赏赉：后者 region_id=''，咬住案卷幂等键须含
     action_type（否则 appointment 会被既有 grant 行短路吞掉）。
@@ -346,6 +346,7 @@ def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, m
     grant_cases = (
         {
             "label": "region_relief",
+            "office": "陕西巡抚",
             "edict": f"任命{person}为陕西巡抚，调银三十万两赈灾",
             "grant": {
                 "grant_action": "赈灾",
@@ -362,7 +363,9 @@ def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, m
         },
         {
             "label": "character_reward",
-            "edict": f"任命{person}为陕西巡抚，赏银二十万两",
+            # 第二案换中央职，避免首案落职后同职任命被 noop 吞掉。
+            "office": "户部右侍郎",
+            "edict": f"任命{person}为户部右侍郎，赏银二十万两",
             "grant": {
                 "grant_action": "赏赉",
                 "amount": 20,
@@ -391,7 +394,7 @@ def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, m
         commission = {
             "text": edict,
             "appointment": {
-                "name": person, "office": "陕西巡抚", "appoint_action": "任命",
+                "name": person, "office": case["office"], "appoint_action": "任命",
             },
             "grant": case["grant"],
         }
@@ -423,16 +426,20 @@ def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, m
                 "FROM pending_actions WHERE status='pending' ORDER BY id"
             ).fetchall()
         ]
-        # ADR 0028 / #1837：任免+拨帑只落一条组合 directive，不拆 office 第二条。
-        assert len(pending) == 1, (case["label"], pending)
-        assert pending[0]["kind"] == "directive", case["label"]
-        payload = json.loads(pending[0]["payload_json"])
-        assert payload["grant_action"] == case["grant"]["grant_action"], case["label"]
-        assert int(payload["amount"]) == int(case["grant"]["amount"]), case["label"]
-        assert payload["name"] == person, case["label"]
-        assert payload["office"] == "陕西巡抚", case["label"]
-        assert payload["appoint_action"] == "任命", case["label"]
-        assert int(pending[0]["night_approved"] or 0) == 0, case["label"]
+        # #1928：任免+拨帑各自一条 pending（office + directive）。
+        assert len(pending) == 2, (case["label"], pending)
+        kinds = sorted(p["kind"] for p in pending)
+        assert kinds == ["directive", "office"], (case["label"], kinds)
+        by_kind = {p["kind"]: p for p in pending}
+        grant_payload = json.loads(by_kind["directive"]["payload_json"])
+        office_payload = json.loads(by_kind["office"]["payload_json"])
+        assert grant_payload["grant_action"] == case["grant"]["grant_action"], case["label"]
+        assert int(grant_payload["amount"]) == int(case["grant"]["amount"]), case["label"]
+        assert str(grant_payload.get("appoint_action") or "") == "", case["label"]
+        assert office_payload["name"] == person, case["label"]
+        assert office_payload["office"] == case["office"], case["label"]
+        assert office_payload["appoint_action"] == "任命", case["label"]
+        assert all(int(p["night_approved"] or 0) == 0 for p in pending), case["label"]
 
         r2, _ = _scene_turn(sess, db, state, "准")
         approved = db.conn.execute(
@@ -450,32 +457,26 @@ def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, m
             ).fetchone()
             assert row["status"] == "committed", (case["label"], p["kind"], row["status"])
 
-        # 同一 pending 必须同时产 appointment 与 grant_allocation（非靠 region_id 碰巧分键）。
-        paired = db.conn.execute(
-            "SELECT action_type FROM decree_dossiers WHERE pending_action_id=? "
-            "ORDER BY action_type",
-            (int(pending[0]["id"]),),
-        ).fetchall()
-        paired_types = {str(r["action_type"]) for r in paired}
-        assert "appointment" in paired_types and "grant_allocation" in paired_types, (
-            case["label"], paired_types,
-        )
-
+        # 两案卷各绑自己的 pending，判决身份不共用。
         appt = db.conn.execute(
-            "SELECT id, status, action_type FROM decree_dossiers "
+            "SELECT id, status, action_type, pending_action_id FROM decree_dossiers "
             "WHERE action_type='appointment' AND target_id=? "
             "ORDER BY id DESC LIMIT 1",
             (person,),
         ).fetchone()
         assert appt is not None, case["label"]
+        assert int(appt["pending_action_id"]) == int(by_kind["office"]["id"]), case["label"]
 
         grant_dossiers = [
             d for d in db.dossiers.list_dossiers()
             if d["action_type"] == "grant_allocation"
             and str(d.get("target_id") or "") == case["grant_target_id"]
-            and int(d.get("pending_action_id") or 0) == int(pending[0]["id"])
+            and int(d.get("pending_action_id") or 0) == int(by_kind["directive"]["id"])
         ]
         assert grant_dossiers, case["label"]
+        assert int(appt["pending_action_id"]) != int(grant_dossiers[0]["pending_action_id"]), (
+            case["label"],
+        )
 
         state.metrics["国库"] = max(int(state.metrics.get("国库") or 0), 100)
         db.reign.save_game_state(state)
@@ -491,7 +492,7 @@ def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, m
         char = db.conn.execute(
             "SELECT office FROM characters WHERE name=?", (person,),
         ).fetchone()
-        assert "陕西巡抚" in str(char["office"] or ""), case["label"]
+        assert case["office"] in str(char["office"] or ""), case["label"]
         moved = db.conn.execute(
             "SELECT delta FROM economy_ledger WHERE account='国库' "
             "AND target_id=? AND delta < 0 ORDER BY id DESC LIMIT 1",
@@ -597,6 +598,10 @@ def test_scene_chat_cli_and_api_same_translation_shape(game, monkeypatch, messag
     )
     payloads = []
     for channel in ("api", "cli"):
+        # 通道间清 pending，避免同向任免撞上上一通道候选而改写既有行。
+        db.conn.execute("DELETE FROM pending_actions WHERE status='pending'")
+        db.conn.commit()
+
         def translate_fn(prompt, llm_config, _decl=declaration):
             return {**offline_empty_audience_translate(prompt, llm_config), **_decl}
 
@@ -615,15 +620,17 @@ def test_scene_chat_cli_and_api_same_translation_shape(game, monkeypatch, messag
         after = db.conn.execute(
             "SELECT COUNT(*) c FROM pending_actions WHERE status='pending'"
         ).fetchone()["c"]
-        assert after > before
-        payloads.append([
-            row["payload_json"]
+        assert after - before == 2, (channel, before, after)
+        rows = [
+            dict(row)
             for row in db.conn.execute(
-                "SELECT payload_json FROM pending_actions "
-                "WHERE status='pending' AND id > ? ORDER BY id",
+                "SELECT kind, payload_json FROM pending_actions "
+                "WHERE status='pending' AND id > ? ORDER BY kind, id",
                 (before_id,),
             ).fetchall()
-        ])
+        ]
+        assert [r["kind"] for r in rows] == ["directive", "office"], channel
+        payloads.append([r["payload_json"] for r in rows])
 
     assert len(payloads) == 2
     assert payloads[0] == payloads[1]

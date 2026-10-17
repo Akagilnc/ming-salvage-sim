@@ -9636,7 +9636,7 @@ class GameDB:
                     self.dossiers.inherit_payload_endorsements(
                         int(dossier_id), payload, commit=False,
                     )
-                # ADR 0028 / #1837：组合载荷（拨帑±任免）同一份 pending 同时产任免案卷；
+                # 旧档组合载荷（拨帑+任免同 pending）遗留路径：新路径已在分派时拆条（#1928）。
                 # 任免字段只进 appointment 案卷，禁把 grant 的 execution_surface 带过去。
                 if not self._materialize_combined_appointment_from_directive(
                     state, pa, payload, content=content,
@@ -9680,7 +9680,7 @@ class GameDB:
         self, state: GameState, pa: Dict[str, object], payload: Dict[str, object],
         *, content=None,
     ) -> bool:
-        """组合 directive 载荷上的任免 → 既有 office 成案核；无任免字段则 no-op 成功。"""
+        """旧组合 directive 上的任免 → office 成案核（#1928 后新件不再合挂）；无任免则 no-op。"""
         sliced = self._appointment_slice_from_combined_payload(payload)
         if sliced is None:
             return True
@@ -9703,7 +9703,7 @@ class GameDB:
         self, state: GameState, pa: Dict[str, object], payload: Dict[str, object],
         *, content=None, decree_text: Optional[str] = None,
     ) -> bool:
-        """任免案卷唯一成案核：kind=office 与组合 directive 同伴共用，不平行第二套。"""
+        """任免案卷唯一成案核：kind=office 与旧组合 directive 遗留路径共用。"""
         name = str(payload.get("name") or "").strip()
         office = str(payload.get("office") or "").strip()
         action = str(pa.get("action") or payload.get("appoint_action") or "").strip()

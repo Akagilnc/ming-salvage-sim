@@ -1,8 +1,8 @@
 """转译输出契约与分派器（C0，#1835；铺路）。
 
 一份「声明」是转译 LLM 每轮 / 每段一次的产出：新交办及其载荷（沿 #1503 typed
-契约与拨款单轨——一句话同时含拟旨 + 拨帑时由声明本身合成一件事一份载荷,
-ADR 0028 后出注记）、既有暂存的应允 / 拒绝、当场实况（人物生死 / 下狱 / 革职、
+契约与拨款单轨——同一道拨款（含拟旨要求）只成一份拨帑载荷（#1777）；
+一句话里的多道旨各自一条（#1928 修订 ADR 0028 合挂口径））、既有暂存的应允 / 拒绝、当场实况（人物生死 / 下狱 / 革职、
 在场进出、说话人分段与可闻性、边事件、入册、本轮御前主角）、各自所属事务、
 以及新记录（R1 事务 / R2 文字事实 / R3 公开说法）。声明还可作为旨意夜里预推
 的暂存产物存放、作废、按下旨先后幂等落账（ADR 0157 步骤 1-2，见
@@ -949,7 +949,7 @@ def _commission_appointment_fields(
     return payload, None
 
 
-# 交办互斥对象槽（不含 grant/appointment：二者可合成一件事）。
+# 交办互斥对象槽（不含 grant/appointment：可同条声明，分派时拆成两条 #1928）。
 # 禁摊派由 dossier_action_type 识别，见 _declared_commission_kinds。
 _COMMISSION_EXCLUSIVE_OBJECT_KEYS = (
     "punishment", "pacification", "assignment", "revoke",
@@ -1006,7 +1006,8 @@ def _declared_commission_kinds(item: Mapping[str, object]) -> frozenset[str]:
 def _exclusive_commission_conflict(kinds: frozenset[str]) -> bool:
     """True when more than one exclusive kind is declared.
 
-    Sole legal multi-kind pair: grant + appointment (一件事一份载荷).
+    grant+appointment may co-occur on one LLM item; dispatch splits them
+    into independent pendings (#1928). Still not an exclusive conflict.
     """
     if len(kinds) <= 1:
         return False
@@ -1589,10 +1590,9 @@ def _dispatch_commission_items(
 ) -> SectionResult:
     """交办声明 → 既有 pending 暂存。
 
-    一句话同时含拟旨 + 拨帑 + 任免时由声明本身合成**一件事一份载荷**
-    （ADR 0028 后出注记 / C0 AC2 / C1a AC1）：
-    - 有拨帑 → kind=directive，typed grant 入同一 payload；任免字段若有亦挂同一份
-    - 仅任免 → kind=office（收夜成 appointment 案卷）
+    一句话里的多道旨各自成条（#1928 修订 ADR 0028 合挂口径）：
+    - 有拨帑 → kind=directive，typed grant 入独立 payload（同笔拨款不拆 #1777）
+    - 有任免 → kind=office 独立 pending（与拨帑分条，即便同条声明也拆）
     - 仅正文 → kind=directive 普通拟旨
 
     ``night_id``：本声明所属的召对夜，透传给每一条暂存（ADR 0038 后出注记的
@@ -2275,7 +2275,7 @@ def _dispatch_commission_items(
         text = item.get("text")
         try:
             if grant_raw:
-                # 拟旨 + 拨帑（±任免）→ 一份 directive 载荷。
+                # 拨帑 → 独立 directive 载荷（同笔不拆 #1777；任免另条 #1928）。
                 payload = _commission_grant_payload(
                     db, text=text, grant=grant_raw,  # type: ignore[arg-type]
                 )
@@ -2306,21 +2306,21 @@ def _dispatch_commission_items(
             _reject(rejected, item, str(exc), _xiexang_reject_category(exc), source)
             continue
         # 事务附件只在下方 _attach_commission_affair 解析一次（#1897 K2）。
+        # #1928：任免不并入拨帑载荷；属地拨帑的 region 只补到任免字段本身。
+        office_carrier: Dict[str, Any] = {}
         if appointment_fields:
             try:
                 _assert_characters_exist(db, [str(appointment_fields["name"])])
             except KeyError as exc:
                 _reject(rejected, item, str(exc), "hallucinated_id", source)
                 continue
-            payload.update(appointment_fields)
-            # 组合声明中，属地拨帑的 typed region 同时给出了地方任命的任所；
-            # 原样挂到同一载荷，避免后续成案从官名或叙事正文猜辖区。
-            if (
+            if not str(appointment_fields.get("region_id") or "").strip() and (
                 grant_raw
                 and str(grant_raw.get("target_kind") or "").strip() == "region"
                 and str(grant_raw.get("target_id") or "").strip()
             ):
-                payload["region_id"] = str(grant_raw["target_id"]).strip()
+                appointment_fields["region_id"] = str(grant_raw["target_id"]).strip()
+            office_carrier = dict(appointment_fields)
 
         # #1783/#1778：承办人、名单、期限为既有 staging 字段（stage_grant 同款），
         if grant_raw:
@@ -2348,7 +2348,7 @@ def _dispatch_commission_items(
 
         # #1837 reopen：荐人信息挂任命载荷；受理口径与原 recommend_person 工具相同。
         reco_err = _attach_recommendation_fields(
-            db, state, item, payload if appointment_fields else None,
+            db, state, item, office_carrier if appointment_fields else None,
             default_recommender=minister_name,
         )
         if reco_err is not None:
@@ -2383,9 +2383,9 @@ def _dispatch_commission_items(
                     minister_name=minister_name,
                     annotate=True,
                     recommendation_fields={
-                        key: payload[key]
+                        key: office_carrier[key]
                         for key in ("reason", "recommendation", "faction")
-                        if payload.get("recommendation") and key in payload
+                        if office_carrier.get("recommendation") and key in office_carrier
                     },
                     # ADR 0038：既有候选更新也按源夜承接，夜已收时不退回开夜（=0）。
                     night_id=int(night_id),
@@ -2414,8 +2414,8 @@ def _dispatch_commission_items(
             if "affair_declaration" in payload:
                 office_payload["affair_declaration"] = payload["affair_declaration"]
             for key in ("reason", "recommendation", "faction", "replaces"):
-                if key in payload:
-                    office_payload[key] = payload[key]
+                if key in office_carrier:
+                    office_payload[key] = office_carrier[key]
             oid = db.stage_pending_action(
                 int(state.turn),
                 "office",
@@ -2427,16 +2427,15 @@ def _dispatch_commission_items(
             )
             return {"id": oid, "payload": office_payload, "kind": "office"}
 
-        # 仅任免 → office 成案链（收夜 → appointment 案卷 → 过月落职）。
-        if appointment_fields and not grant_raw:
+        # #1928：任免始终走独立 office pending；与拨帑分条，各自判决身份。
+        if appointment_fields:
             staged = _stage_office(str(payload.get("text") or ""))
             if staged is not None:
                 applied.append(staged)
-            continue
+            if not grant_raw:
+                continue
 
-        # 有拨帑（±任免）或纯正文拟旨：一份 directive 载荷。任免字段已挂同一 payload
-        # （ADR 0028 一份载荷）；收夜物化缝从这份同时产出拨帑案卷与任免案卷，
-        # 不再另 stage 第二条 office pending（半准半驳病）。
+        # 拨帑或纯正文拟旨：独立 directive。同笔拨款不拆（#1777）；不附带任免。
         actor = str(minister_name or payload.get("actor") or "").strip()
         if not actor:
             actor = _commission_fallback_actor(db)
