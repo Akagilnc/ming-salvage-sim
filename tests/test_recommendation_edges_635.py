@@ -1,6 +1,3 @@
-from ming_sim.recommendations import lookup_recommendation_candidate
-import pytest
-from tests.dossier_test_helpers import promulgate_proposed_appointments
 """#635 [479·S4] 荐人口：荐人事件消费·原子双边（庭裁 r1-r3）。
 
 真入口验收（F3）：stage→commit_pending_actions（proposed 案卷）→apply_dossier_verdicts
@@ -9,45 +6,31 @@ from tests.dossier_test_helpers import promulgate_proposed_appointments
 r3：reason 非空逐字必填，缺失则任命与双边同事务 fail-loud 回滚。
 """
 
+from __future__ import annotations
+
+import pytest
+
+from ming_sim.recommendations import lookup_recommendation_candidate
+from tests.dossier_test_helpers import promulgate_proposed_appointments
+
 
 def _pick_recommender(content):
     return next(c for c in content.characters.values()
                 if c.office_type not in ("后宫", "宗藩"))
 
 
-def _candidate_row(db, state, content, recommender_name, *, candidate_kind=None,
-                   status_ne=None):
-    """经生产 lookup 取一名可荐快照；#1931 后不再依赖退役整池接口。"""
-    for c in content.characters.values():
-        if c.name == recommender_name or c.office_type in ("后宫", "宗藩", "未仕"):
+def _first_candidate(db, state, content, recommender_name, *, match=None):
+    """开局池内取一名生产 lookup 快照；不另写改库／整池适配层。"""
+    want = match or (lambda _row: True)
+    for char in content.characters.values():
+        if char.name == recommender_name:
             continue
-        if candidate_kind == "荐起复":
-            db.conn.execute(
-                "UPDATE characters SET status='offstage', office='', reason_code='罢居' "
-                "WHERE name=?",
-                (c.name,),
-            )
-            db.conn.commit()
-        elif candidate_kind == "荐在职":
-            db.conn.execute(
-                "UPDATE characters SET status='active', office=COALESCE(NULLIF(office,''), '翰林院编修'), "
-                "reason_code='' WHERE name=?",
-                (c.name,),
-            )
-            db.conn.commit()
         row = lookup_recommendation_candidate(
-            db, state, c.name, recommender=recommender_name,
+            db, state, char.name, recommender=recommender_name,
         )
-        if row is None:
-            continue
-        if candidate_kind is not None and row["candidate_kind"] != candidate_kind:
-            continue
-        if status_ne is not None and row["status"] == status_ne:
-            continue
-        return row
-    raise AssertionError(
-        f"no candidate for recommender={recommender_name} kind={candidate_kind}"
-    )
+        if row is not None and want(row):
+            return row
+    raise AssertionError(f"no candidate for recommender={recommender_name}")
 
 
 def _stage_recommendation(db, state, recommender_name, row, office, reason):
@@ -87,13 +70,17 @@ def test_replay_same_event_with_changed_reason_stays_two_rows(game, candidate_ki
 
     db, state, content = game
     recommender = _pick_recommender(content)
-    row = _candidate_row(
-        db, state, content, recommender.name, candidate_kind=candidate_kind,
+    row = _first_candidate(
+        db, state, content, recommender.name,
+        match=lambda r: r["candidate_kind"] == candidate_kind,
     )
     reason = "  旧任有实绩，罢居后仍可起复。\r\n "
     action_id = _stage_recommendation(db, state, recommender.name, row, "巡盐御史", reason)
     _commit_and_promulgate(db, state, content, action_id)
-    event = db.conn.execute("SELECT * FROM recommendation_events WHERE recommender=?", (recommender.name,)).fetchone()
+    event = db.conn.execute(
+        "SELECT * FROM recommendation_events WHERE recommender=?",
+        (recommender.name,),
+    ).fetchone()
     assert (event["candidate"], event["candidate_kind"], event["reason"]) == (
         row["name"], {"荐起复": "起复", "荐在职": "在职"}[candidate_kind], reason,
     )
@@ -108,7 +95,9 @@ def test_replay_same_event_with_changed_reason_stays_two_rows(game, candidate_ki
     state.turn += 3
     record_recommendation_edges(db, state, recommender.name, row["name"], event["id"], "改口")
     db.load_state()
-    assert tuple(db.conn.execute("SELECT * FROM recommendation_events WHERE id=?", (event["id"],)).fetchone()) == tuple(event)
+    assert tuple(db.conn.execute(
+        "SELECT * FROM recommendation_events WHERE id=?", (event["id"],),
+    ).fetchone()) == tuple(event)
     assert _recommendation_origins(db) == legs
     assert content.characters[row["name"]].office == "巡盐御史"
 
@@ -117,14 +106,15 @@ def test_appointment_without_recommendation_writes_no_edges(game):
     """生成侧缺席时接口幂等待命：无 recommendation 载荷不落边、不阻塞其他写端。"""
     db, state, content = game
     recommender = _pick_recommender(content)
-    row = _candidate_row(db, state, content, recommender.name)
+    row = _first_candidate(db, state, content, recommender.name)
     action_id = db.stage_pending_action(
         state.turn,
         kind="office",
         action="任命",
         minister_name=recommender.name,
         target_id=None,
-        payload={"text": "测试任免原文",
+        payload={
+            "text": "测试任免原文",
             "name": row["name"], "office": "巡盐御史",
             "faction": row["faction"], "reason": "",
         },
@@ -138,8 +128,9 @@ def test_appointment_without_recommendation_writes_no_edges(game):
 def test_unapproved_appointment_writes_zero_edges(game):
     db, state, content = game
     recommender = _pick_recommender(content)
-    row = _candidate_row(
-        db, state, content, recommender.name, status_ne="dismissed",
+    row = _first_candidate(
+        db, state, content, recommender.name,
+        match=lambda r: r["status"] != "dismissed",
     )
     action_id = _stage_recommendation(db, state, recommender.name, row, "巡盐御史", "边才可用")
     # 快照失效 → 任命未获准。
@@ -149,7 +140,10 @@ def test_unapproved_appointment_writes_zero_edges(game):
     with pytest.raises(ValueError):
         _commit_and_promulgate(db, state, content, action_id)
 
-    assert db.conn.execute("SELECT COUNT(*) AS n FROM recommendation_events WHERE recommender=?", (recommender.name,)).fetchone()["n"] == 0
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM recommendation_events WHERE recommender=?",
+        (recommender.name,),
+    ).fetchone()["n"] == 0
     assert _recommendation_origins(db) == []
 
 
@@ -160,7 +154,7 @@ def test_off_ledger_recommender_appointment_rejects_with_zero_edges(game):
     """
     db, state, content = game
     minister = _pick_recommender(content)
-    row = _candidate_row(db, state, content, minister.name)
+    row = _first_candidate(db, state, content, minister.name)
     phantom = "账外荐者"
     action_id = db.stage_pending_action(
         state.turn,
@@ -196,23 +190,27 @@ def test_empty_reason_fails_loud_and_rolls_back_everything(game):
     """r3：reason 缺失/空 → 任命与双边同事务 fail-loud 回滚，不落任命、不落边。"""
     db, state, content = game
     recommender = _pick_recommender(content)
-    row = _candidate_row(db, state, content, recommender.name)
+    row = _first_candidate(db, state, content, recommender.name)
     action_id = _stage_recommendation(db, state, recommender.name, row, "巡盐御史", "   ")
 
     with pytest.raises(ValueError):
         _commit_and_promulgate(db, state, content, action_id)
 
-    assert db.conn.execute("SELECT COUNT(*) AS n FROM recommendation_events WHERE recommender=?", (recommender.name,)).fetchone()["n"] == 0
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM recommendation_events WHERE recommender=?",
+        (recommender.name,),
+    ).fetchone()["n"] == 0
     assert _recommendation_origins(db) == []
     char_row = db.conn.execute(
-        "SELECT office FROM characters WHERE name=?", (row["name"],)).fetchone()
+        "SELECT office FROM characters WHERE name=?", (row["name"],),
+    ).fetchone()
     assert char_row["office"] != "巡盐御史"
 
 
 def test_second_leg_failure_rolls_back_everything(game, monkeypatch):
     db, state, content = game
     recommender = _pick_recommender(content)
-    row = _candidate_row(db, state, content, recommender.name)
+    row = _first_candidate(db, state, content, recommender.name)
     original = db.record_relation_edge_event
 
     def flaky_second_leg(*, source, target, event_kind, context, origin, **kwargs):
@@ -228,8 +226,12 @@ def test_second_leg_failure_rolls_back_everything(game, monkeypatch):
         _commit_and_promulgate(db, state, content, action_id)
 
     # 全回滚零残留：不落任命、不落荐人事件、零边。
-    assert db.conn.execute("SELECT COUNT(*) AS n FROM recommendation_events WHERE recommender=?", (recommender.name,)).fetchone()["n"] == 0
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM recommendation_events WHERE recommender=?",
+        (recommender.name,),
+    ).fetchone()["n"] == 0
     assert db.person_logs.get_relation_edge_events() == []
     char_row = db.conn.execute(
-        "SELECT office FROM characters WHERE name=?", (row["name"],)).fetchone()
+        "SELECT office FROM characters WHERE name=?", (row["name"],),
+    ).fetchone()
     assert char_row["office"] != "巡盐御史"
