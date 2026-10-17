@@ -1,4 +1,4 @@
-from ming_sim.recommendations import list_recommendation_candidates
+from ming_sim.recommendations import lookup_recommendation_candidate
 import pytest
 from tests.dossier_test_helpers import promulgate_proposed_appointments
 """#635 [479·S4] 荐人口：荐人事件消费·原子双边（庭裁 r1-r3）。
@@ -10,11 +10,44 @@ r3：reason 非空逐字必填，缺失则任命与双边同事务 fail-loud 回
 """
 
 
-
-
 def _pick_recommender(content):
     return next(c for c in content.characters.values()
                 if c.office_type not in ("后宫", "宗藩"))
+
+
+def _candidate_row(db, state, content, recommender_name, *, candidate_kind=None,
+                   status_ne=None):
+    """经生产 lookup 取一名可荐快照；#1931 后不再依赖退役整池接口。"""
+    for c in content.characters.values():
+        if c.name == recommender_name or c.office_type in ("后宫", "宗藩", "未仕"):
+            continue
+        if candidate_kind == "荐起复":
+            db.conn.execute(
+                "UPDATE characters SET status='offstage', office='', reason_code='罢居' "
+                "WHERE name=?",
+                (c.name,),
+            )
+            db.conn.commit()
+        elif candidate_kind == "荐在职":
+            db.conn.execute(
+                "UPDATE characters SET status='active', office=COALESCE(NULLIF(office,''), '翰林院编修'), "
+                "reason_code='' WHERE name=?",
+                (c.name,),
+            )
+            db.conn.commit()
+        row = lookup_recommendation_candidate(
+            db, state, c.name, recommender=recommender_name,
+        )
+        if row is None:
+            continue
+        if candidate_kind is not None and row["candidate_kind"] != candidate_kind:
+            continue
+        if status_ne is not None and row["status"] == status_ne:
+            continue
+        return row
+    raise AssertionError(
+        f"no candidate for recommender={recommender_name} kind={candidate_kind}"
+    )
 
 
 def _stage_recommendation(db, state, recommender_name, row, office, reason):
@@ -46,16 +79,6 @@ def _recommendation_origins(db):
             if str(e["origin"]).startswith("recommendation:")]
 
 
-
-
-
-
-
-
-
-
-
-
 @pytest.mark.parametrize("candidate_kind", ["荐起复", "荐在职"])
 def test_replay_same_event_with_changed_reason_stays_two_rows(game, candidate_kind):
     """r1 F2：幂等身份只锚稳定 origin（recommendation:{id}:{腿别}+|round 口径），
@@ -64,8 +87,9 @@ def test_replay_same_event_with_changed_reason_stays_two_rows(game, candidate_ki
 
     db, state, content = game
     recommender = _pick_recommender(content)
-    row = next(r for r in list_recommendation_candidates(db, state, recommender.name)
-               if r["candidate_kind"] == candidate_kind)
+    row = _candidate_row(
+        db, state, content, recommender.name, candidate_kind=candidate_kind,
+    )
     reason = "  旧任有实绩，罢居后仍可起复。\r\n "
     action_id = _stage_recommendation(db, state, recommender.name, row, "巡盐御史", reason)
     _commit_and_promulgate(db, state, content, action_id)
@@ -93,7 +117,7 @@ def test_appointment_without_recommendation_writes_no_edges(game):
     """生成侧缺席时接口幂等待命：无 recommendation 载荷不落边、不阻塞其他写端。"""
     db, state, content = game
     recommender = _pick_recommender(content)
-    row = list_recommendation_candidates(db, state, recommender.name)[0]
+    row = _candidate_row(db, state, content, recommender.name)
     action_id = db.stage_pending_action(
         state.turn,
         kind="office",
@@ -111,15 +135,12 @@ def test_appointment_without_recommendation_writes_no_edges(game):
     assert _recommendation_origins(db) == []
 
 
-# ---------------------------------------------------------------------------
-# PR #1519 庭裁 Y1/Y2/Y3：工具受理点唯一准入 + 生产链逐字透传真入口回归。
-
-
 def test_unapproved_appointment_writes_zero_edges(game):
     db, state, content = game
     recommender = _pick_recommender(content)
-    row = next(r for r in list_recommendation_candidates(db, state, recommender.name)
-               if r["status"] != "dismissed")
+    row = _candidate_row(
+        db, state, content, recommender.name, status_ne="dismissed",
+    )
     action_id = _stage_recommendation(db, state, recommender.name, row, "巡盐御史", "边才可用")
     # 快照失效 → 任命未获准。
     db.conn.execute("UPDATE characters SET status='dismissed' WHERE name=?", (row["name"],))
@@ -136,7 +157,7 @@ def test_empty_reason_fails_loud_and_rolls_back_everything(game):
     """r3：reason 缺失/空 → 任命与双边同事务 fail-loud 回滚，不落任命、不落边。"""
     db, state, content = game
     recommender = _pick_recommender(content)
-    row = list_recommendation_candidates(db, state, recommender.name)[0]
+    row = _candidate_row(db, state, content, recommender.name)
     action_id = _stage_recommendation(db, state, recommender.name, row, "巡盐御史", "   ")
 
     with pytest.raises(ValueError):
@@ -152,7 +173,7 @@ def test_empty_reason_fails_loud_and_rolls_back_everything(game):
 def test_second_leg_failure_rolls_back_everything(game, monkeypatch):
     db, state, content = game
     recommender = _pick_recommender(content)
-    row = list_recommendation_candidates(db, state, recommender.name)[0]
+    row = _candidate_row(db, state, content, recommender.name)
     original = db.record_relation_edge_event
 
     def flaky_second_leg(*, source, target, event_kind, context, origin, **kwargs):

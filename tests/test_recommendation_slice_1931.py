@@ -49,7 +49,10 @@ def test_single_and_scene_materials_have_no_recommendation_slice(game, tmp_path)
         release_material_tree(scene.root)
 
 
-def test_yang_recommending_qiao_is_accepted_cross_faction(game):
+def test_cross_faction_recommendation_accepts_and_lands_office_via_month_chain(
+    game, monkeypatch,
+):
+    """一条贯穿：跨派受理 → 应允收夜 → 月链颁布 → 官职落账。"""
     db, state, content = game
     yang = content.characters["杨嗣昌"]
     qiao = content.characters["乔允升"]
@@ -73,39 +76,13 @@ def test_yang_recommending_qiao_is_accepted_cross_faction(game):
     )
     assert result.commissions.rejected == []
     assert len(result.commissions.applied) == 1
-    row = db.conn.execute(
-        "SELECT payload_json FROM pending_actions WHERE id=?",
-        (result.commissions.applied[0]["id"],),
-    ).fetchone()
-    payload = json.loads(row["payload_json"])
+    staged_id = int(result.commissions.applied[0]["id"])
+    payload = json.loads(db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?", (staged_id,),
+    ).fetchone()["payload_json"])
     assert payload["recommendation"]["recommender"] == yang.name
     assert payload["recommendation"]["candidate"]["name"] == qiao.name
 
-
-def test_cross_faction_recommendation_lands_office_via_month_chain(game, monkeypatch):
-    db, state, content = game
-    yang = content.characters["杨嗣昌"]
-    qiao = content.characters["乔允升"]
-    assert yang.faction != qiao.faction
-    night = open_night(db, state)
-    office = "礼部尚书"
-    decl = normalize_audience_declaration({
-        "commissions": [{
-            "text": f"荐{qiao.name}改任{office}",
-            "appointment": {
-                "name": qiao.name, "office": office, "appoint_action": "任命",
-            },
-            "recommendation": {
-                "recommender": yang.name,
-                "reason": "刑名老成，可转掌礼部。",
-            },
-        }],
-    })
-    result = dispatch_declaration(
-        db, state, decl, minister_name=yang.name, night_id=int(night["id"]),
-    )
-    assert result.commissions.rejected == []
-    staged_id = int(result.commissions.applied[0]["id"])
     db.mark_pending_night_approved([staged_id], night_id=int(night["id"]))
     close_night(db, state, night_id=int(night["id"]), content=content)
 
@@ -116,7 +93,6 @@ def test_cross_faction_recommendation_lands_office_via_month_chain(game, monkeyp
     assert dossier is not None
     dossier_id = int(dossier["id"])
 
-    # 真实月链入口：离线判决 + 空世界段，与 #1837 reopen 玩家过月同形。
     from ming_sim.decree_forecast import decree_ref_for_dossier, stage_declaration
     from tests.month_chain_helpers import empty_rescript_response
     import ming_sim.month_chain as month_chain
@@ -177,3 +153,42 @@ def test_deceased_recommendation_is_fact_rejected(game):
     assert result.commissions.applied == []
     assert result.commissions.rejected
     assert result.commissions.rejected[0].category in {"invalid_state", "hallucinated_id"}
+
+
+def test_off_ledger_recommender_is_fact_rejected_with_zero_side_effects(game):
+    """#1931 F1：账外荐者拒收；不落暂存、不落荐人事件、不落关系边。"""
+    db, state, content = game
+    qiao = content.characters["乔允升"]
+    night = open_night(db, state)
+    phantom = "账外荐者"
+    decl = normalize_audience_declaration({
+        "commissions": [{
+            "text": f"荐{qiao.name}改任礼部尚书",
+            "appointment": {
+                "name": qiao.name, "office": "礼部尚书", "appoint_action": "任命",
+            },
+            "recommendation": {
+                "recommender": phantom,
+                "reason": "臣闻其贤。",
+            },
+        }],
+    })
+    # 调用上下文用在册大臣；声明里的荐者是账外名。
+    result = dispatch_declaration(
+        db, state, decl,
+        minister_name=content.characters["杨嗣昌"].name,
+        night_id=int(night["id"]),
+    )
+    assert result.commissions.applied == []
+    assert result.commissions.rejected
+    assert result.commissions.rejected[0].category in {"invalid_state", "hallucinated_id"}
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM pending_actions",
+    ).fetchone()["n"] == 0
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM recommendation_events",
+    ).fetchone()["n"] == 0
+    assert db.person_logs.get_relation_edge_events() == []
+    assert db.conn.execute(
+        "SELECT 1 FROM characters WHERE name=?", (phantom,),
+    ).fetchone() is None

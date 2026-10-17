@@ -60,7 +60,10 @@ import json
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
-from ming_sim.recommendations import lookup_recommendation_candidate
+from ming_sim.recommendations import (
+    lookup_recommendation_candidate,
+    recommender_on_ledger,
+)
 from ming_sim.action_materialize import (
     DecreeMaterializationValidationError,
     _assignment_absolute_end_turn,
@@ -2745,6 +2748,9 @@ def _attach_recommendation_fields(
         return ("荐人须附非空荐词缘由", "invalid_shape")
     if not recommender:
         return ("荐人声明缺荐者", "invalid_shape")
+    # #1931 F1：荐者须在人物账上（存在性事实）；不恢复派系／见闻／在场资格。
+    if not recommender_on_ledger(db, recommender):
+        return (f"荐者不在册：{recommender}", "invalid_state")
     target = str(payload.get("name") or "").strip()
     office = str(payload.get("office") or "").strip()
     if not target or not office:

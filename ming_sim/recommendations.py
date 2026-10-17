@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from .relations import EMPEROR_NODE
 
@@ -39,10 +39,27 @@ _FACT_CANDIDATE_WHERE = (
 )
 
 
+def recommender_on_ledger(db: Any, recommender: str) -> bool:
+    """荐者须在人物账上；不查派系／见闻／在场资格（#1931 F1）。"""
+    name = str(recommender or "").strip()
+    if not name:
+        return False
+    return (
+        db.conn.execute(
+            "SELECT 1 FROM characters WHERE name=?", (name,),
+        ).fetchone()
+        is not None
+    )
+
+
 def lookup_recommendation_candidate(
     db: Any, state: Any, name: str, *, recommender: str = "",
 ) -> Optional[Dict[str, object]]:
-    """按账上事实取一名可荐对象；不按派系／见闻过滤（#1931）。"""
+    """按账上事实取一名可荐对象；不按派系／见闻过滤（#1931）。
+
+    荐者在册由 ``recommender_on_ledger`` / ``validate_recommendation_snapshot``
+    与受理闸共用判断；本函数只取被荐者事实行（并排除自荐）。
+    """
     target = str(name or "").strip()
     if not target:
         return None
@@ -58,25 +75,12 @@ def lookup_recommendation_candidate(
     return _fact_candidate_row(row)
 
 
-def list_recommendation_candidates(db: Any, state: Any, recommender: str) -> List[Dict[str, object]]:
-    """账上事实可荐对象列表（无派系／见闻预筛；#1931）。
-
-    仍排除荐者本人。供测试与快照对照取池；受理／校验走
-    ``lookup_recommendation_candidate``。
-    """
-    rows = db.conn.execute(
-        "SELECT name, office, office_type, faction, status, reason_code, "
-        f"status_reason FROM characters WHERE name != ? AND {_FACT_CANDIDATE_WHERE} "
-        "ORDER BY name",
-        (recommender, int(state.year), int(state.year), int(state.period)),
-    ).fetchall()
-    return [_fact_candidate_row(row) for row in rows]
-
-
 def validate_recommendation_snapshot(
     db: Any, state: Any, recommender: str, snapshot: Dict[str, object],
 ) -> bool:
     """Check a staged recommendation before appointment mutates its candidate."""
+    if not recommender_on_ledger(db, recommender):
+        return False
     name = str(snapshot.get("name") or "").strip()
     if not name:
         return False
