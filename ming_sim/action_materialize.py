@@ -74,12 +74,16 @@ def _apply_existing_appointment_hit(
     annotate: bool = False,
     recommendation_fields: Optional[Dict[str, Any]] = None,
     night_id: Optional[int] = None,
+    decree_text: Optional[str] = None,
+    affair_declaration: Optional[Mapping[str, object]] = None,
 ) -> int:
     """既有命中唯一合并点：原地更新（mode 可升可降、字段可补）→ 同一 id。
 
     mode 唯一规则 resolve_directive_mode(extracted→existing→ordinary)；
     调用方只传原始 extracted_mode，禁止各出口自行预过滤/只升不降。
     tenure / region_id 等字段标记原样补写。
+    #1928：本轮已验证的 decree_text / 显式 affair_declaration 经同一写口持久化，
+    不得在同向复用时丢回旧正文或旧事务附件。
     """
     from ming_sim.applier import atomic
     from ming_sim.draft_intent import resolve_directive_mode
@@ -100,6 +104,8 @@ def _apply_existing_appointment_hit(
                 minister_name=minister_name,
                 night_id=night_id,
                 source_chat_turn_id=int(origin_chat_turn_id or 0),
+                decree_text=decree_text,
+                affair_declaration=affair_declaration,
             )
             if pending_id:
                 resolved = int(pending_id)
@@ -825,15 +831,24 @@ def _annotate_office_pending_path(
     minister_name: str = "",
     night_id: Optional[int] = None,
     source_chat_turn_id: int = 0,
+    decree_text: Optional[str] = None,
+    affair_declaration: Optional[Mapping[str, object]] = None,
 ) -> int:
     """原地改写 office pending：typed mode 可升可降；署理只写 任别；任所可后补。
 
     mode 唯一规则同 resolve_directive_mode：调用方传入已 resolve 的
     midzhi|ordinary；此处负责落到 payload（含既有 midzhi 被显式 ordinary 降级）。
     region_id 后补：命中既有候选后把后来的 typed 任所写入，不得吞掉。
+    #1928：本轮显式正文与事务声明经 update_office_candidate_payload 同口写入。
     """
     seat = str(region_id or "").strip()
-    if not mode_mark and not tenure_mark and not seat:
+    body = str(decree_text or "")
+    has_body = bool(body.strip())
+    has_affair = affair_declaration is not None
+    if (
+        not mode_mark and not tenure_mark and not seat
+        and not has_body and not has_affair
+    ):
         return 0
     pending_id = int(row["id"])
     payload = dict(_pending_action_payload(row))
@@ -853,10 +868,24 @@ def _annotate_office_pending_path(
     if seat and not existing_seat:
         payload["region_id"] = seat
         changed = True
+    if has_body and str(payload.get("text") or "") != body:
+        payload["text"] = body
+        changed = True
+    if has_affair:
+        declared = dict(affair_declaration)
+        prior = payload.get("affair_declaration")
+        if prior != declared:
+            payload["affair_declaration"] = declared
+            changed = True
     semantic_hit = (
         (mode_mark in {"midzhi", "ordinary"} and payload.get("mode") == mode_mark)
         or (tenure_mark in APPOINTMENT_TENURES and payload.get("任别") == tenure_mark)
         or (seat and existing_seat == seat)
+        or (has_body and str(payload.get("text") or "") == body)
+        or (
+            has_affair
+            and payload.get("affair_declaration") == dict(affair_declaration)
+        )
     )
     if not changed and not semantic_hit:
         return pending_id

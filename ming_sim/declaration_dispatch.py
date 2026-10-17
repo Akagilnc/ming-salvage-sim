@@ -2368,6 +2368,13 @@ def _dispatch_commission_items(
                     # ADR 0038：既有候选更新也按源夜承接，夜已收时不退回开夜（=0）。
                     night_id=int(night_id),
                     origin_chat_turn_id=int(source_chat_turn_id or 0),
+                    # #1928：同向复用须持久化本轮已验证正文与显式事务声明。
+                    decree_text=str(office_payload.get("text") or ""),
+                    affair_declaration=(
+                        office_payload.get("affair_declaration")
+                        if "affair_declaration" in office_payload
+                        else None
+                    ),
                 )
                 applied.append({"id": oid, "kind": "office"})
                 continue

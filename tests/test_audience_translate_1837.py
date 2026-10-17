@@ -596,6 +596,117 @@ def test_split_appoint_grant_scene_readers(game, monkeypatch):
         )
 
 
+def test_same_direction_office_reuse_keeps_new_text_and_affair(game, monkeypatch):
+    """#1928：同向复用任免候选须持久化本轮正文与显式事务声明。
+
+    复用 scene_chat 入口：先旧正文任命，再同向新正文+共享 identity 与拨款；
+    应允收夜后任免案卷读新正文，且与拨款同 affair_id。
+    """
+
+    class FakeAgent:
+        def run(self, message):
+            return SimpleNamespace(content="臣等遵旨。", tools=[])
+
+    monkeypatch.setattr(
+        "ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent(),
+    )
+    db, state, content = game
+    person = _hong_name(db, content)
+    region = _region_id(db)
+    open_night(db, state, location="乾清宫", time_of_day="夜")
+    old_text = f"任命{person}为户部右侍郎"
+    new_text = f"改任{person}为户部右侍郎专办边饷"
+    grant_text = "再拨银二十万两给陕西"
+    shared = {
+        "attach": "new",
+        "identity": "reuse-one",
+        "name": "户部右侍郎兼陕西",
+        "origin": "同向复用",
+    }
+    rounds = [
+        [{
+            "text": old_text,
+            "appointment": {
+                "name": person, "office": "户部右侍郎", "appoint_action": "任命",
+            },
+        }],
+        [
+            {
+                "text": new_text,
+                "appointment": {
+                    "name": person, "office": "户部右侍郎", "appoint_action": "任命",
+                },
+                "affair_declaration": dict(shared),
+            },
+            {
+                "text": grant_text,
+                "grant": {
+                    "grant_action": "赈灾", "amount": 20, "account": "国库",
+                    "target_kind": "region", "target_id": region,
+                    "execution_surface": "immediate",
+                },
+                "affair_declaration": dict(shared),
+            },
+        ],
+        "approve",
+    ]
+    calls = {"n": 0}
+
+    def translate_fn(prompt, llm_config, _rounds=rounds, _db=db):
+        calls["n"] += 1
+        step = _rounds[calls["n"] - 1]
+        if step == "approve":
+            rows = _db.conn.execute(
+                "SELECT id FROM pending_actions WHERE status='pending' ORDER BY id"
+            ).fetchall()
+            return {
+                **offline_empty_audience_translate(prompt, llm_config),
+                "commissions": [],
+                "promises": [
+                    {"action_id": int(r["id"]), "decision": "应允"} for r in rows
+                ],
+            }
+        return {
+            **offline_empty_audience_translate(prompt, llm_config),
+            "commissions": list(step), "promises": [],
+        }
+
+    sess = _sess(db, state, content, monkeypatch, translate_fn=translate_fn)
+    _scene_turn(sess, db, state, old_text)
+    office_rows = db.conn.execute(
+        "SELECT id FROM pending_actions WHERE status='pending' AND kind='office'"
+    ).fetchall()
+    assert len(office_rows) == 1
+    office_id = int(office_rows[0]["id"])
+    _scene_turn(sess, db, state, f"{new_text}，{grant_text}")
+    office_after = db.conn.execute(
+        "SELECT id, payload_json FROM pending_actions "
+        "WHERE status='pending' AND kind='office'"
+    ).fetchall()
+    assert len(office_after) == 1
+    assert int(office_after[0]["id"]) == office_id
+    reused_payload = json.loads(office_after[0]["payload_json"])
+    assert reused_payload.get("text") == new_text
+    assert reused_payload.get("affair_declaration", {}).get("identity") == "reuse-one"
+    _scene_turn(sess, db, state, "准")
+    close_night(db, state, content=content)
+    appt = db.conn.execute(
+        "SELECT decree_text, payload_json, affair_id FROM decree_dossiers "
+        "WHERE action_type='appointment' AND pending_action_id=?",
+        (office_id,),
+    ).fetchone()
+    grant = db.conn.execute(
+        "SELECT affair_id, decree_text FROM decree_dossiers "
+        "WHERE action_type='grant_allocation' ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    assert appt is not None and grant is not None
+    assert str(appt["decree_text"] or "") == new_text
+    formal = json.loads(appt["payload_json"])
+    assert str(formal.get("text") or "") == new_text
+    assert int(appt["affair_id"] or 0) > 0
+    assert int(appt["affair_id"]) == int(grant["affair_id"])
+
+
 def test_reject_grant_only_appointment_lands_without_rescript(game, monkeypatch):
     """#1928：外廷只打回拨款——任命落职且不进批红；拨款 rejected+rescript。
 
