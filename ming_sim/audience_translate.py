@@ -1,7 +1,7 @@
 """召对转译：每轮一次完整声明（C1a/C1b/C2；后台化归 T2 #1842）。
 
 每轮回话落定后起一次转译 LLM，读本轮（皇帝原话 + 回话 + 本场已说的话 +
-本夜暂存清单），一次声明本轮全部记录——交办载荷与应允、对暂存交办的背书
+本夜暂存清单 + 本轮引擎已落宣召），一次声明本轮全部记录——交办载荷与应允、对暂存交办的背书
 （会签/当面站台/御笔手敕）、当场实况（生死 / 下狱 / 革职）、文字事实、
 公开说法、在场进出、说话人分段、边事件、御前主角、入册；代码只把声明交给
 :func:`ming_sim.audience_translation.apply_audience_round_translation`
@@ -159,6 +159,49 @@ def _person_candidate_grounding(db: Any, state: Any) -> str:
         "事件结局只用其中一枚标签。未发生的候选不声明。\n"
         + json.dumps(roster, ensure_ascii=False)
     )
+
+
+def build_engine_summon_landings(
+    db: Any, night_id: int, *, chat_turn_id: int = 0,
+) -> List[str]:
+    """本轮引擎已落的宣召口令事实，供转译输入侧看见（#1938 / ADR 0037）。
+
+    口令账：``source_chat_turn_id==0``、``origin_chat_turn_id==本轮``；
+    tags 含召法（宣入／传召／越次）。常在员额与他轮不入。
+    返回 JSON 行，供 prompt 原样贴入；不解析戏文。
+    """
+    ctid = int(chat_turn_id or 0)
+    nid = int(night_id or 0)
+    if ctid <= 0 or nid <= 0:
+        return []
+    from ming_sim.audience_night import SUMMON_METHODS, list_ledger
+
+    out: List[str] = []
+    seen: set[tuple[str, str]] = set()
+    for entry in list_ledger(db, nid):
+        if int(entry.get("origin_chat_turn_id") or 0) != ctid:
+            continue
+        # 口令／框架账：引擎确定性写，source_chat_turn_id==0（ADR 0035）。
+        if int(entry.get("source_chat_turn_id") or 0) != 0:
+            continue
+        tags = list(entry.get("tags") or [])
+        method = next((t for t in tags if t in SUMMON_METHODS), "")
+        if not method:
+            continue
+        for name in entry.get("person_names") or []:
+            person = str(name or "").strip()
+            if not person:
+                continue
+            key = (method, person)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(json.dumps({
+                "kind": "engine_summon_landed",
+                "method": method,
+                "person_name": person,
+            }, ensure_ascii=False, sort_keys=True))
+    return out
 
 
 def build_translation_target_grounding(db: Any, state: Any = None) -> str:
@@ -428,8 +471,9 @@ def build_audience_translate_prompt(
     night_said: Sequence[str],
     pending_summaries: Sequence[str],
     target_grounding: str = "",
+    engine_summon_landings: Sequence[str] = (),
 ) -> str:
-    """转译输入：本轮皇帝原话 + 回话 + 本场已说 + 本夜暂存清单。
+    """转译输入：本轮皇帝原话 + 回话 + 本场已说 + 本夜暂存清单 + 引擎已落宣召。
 
     产出契约 = C0 全 section（交办/应允/当场实况/文字事实/公开说法/在场/
     分段/边事件/主角/入册）。不解析自由散文——模型直接给结构化声明。
@@ -439,12 +483,17 @@ def build_audience_translate_prompt(
     pending_block = "；".join(str(s) for s in pending_summaries if str(s).strip()) or "（无）"
     grounding = str(target_grounding or "")
     grounding_block = f"{grounding}\n" if grounding.strip() else ""
+    landing_lines = "\n".join(
+        str(s) for s in engine_summon_landings if str(s).strip()
+    ) or "（无）"
     return (
         "你是召对转译器。读本轮皇帝原话、回话、本场已说的话与本夜暂存清单，"
         "一次声明本轮全部记录。只输出一个 JSON 对象，无代码围栏、无多余字。\n"
         f"形状：\n{build_c0_declaration_shape()}"
         "规则：\n"
         "- scene_facts 按原顺序完整分段覆盖本轮回话；各 body 直接拼接须与回话逐字相同（含空白、标点与 Markdown），不得概括、补字或漏字；role 是该段的说话人类别，大臣/近臣的 person_names 首位是说话人（user/scene 可为空）。\n"
+        "- 【本轮引擎已落账的宣召】中的入殿／传召／越次已由引擎按口令记账，不是旨意交办；"
+        "不得写入 commissions。合法行止、关系、见闻由账本承接；真正的交办与戏文照常声明。\n"
         "- 一句话同时含拟旨 + 拨帑 + 任免时，只出一条 commission，载荷挂在同一条上；"
         "不要拆成拟旨 / 拨帑 / 交办三道。\n"
         "- 离殿后独立责成的事项逐件给 commission.assignment；title/target_id 是事项锚，"
@@ -495,6 +544,7 @@ def build_audience_translate_prompt(
         "（character_id／tier 机械档／role 职分／delegator_id 委派人，无委派留空），"
         "此人即进本案参与人名单。\n"
         f"{grounding_block}"
+        f"【本轮引擎已落账的宣召】\n{landing_lines}\n"
         f"【本场已说的话】\n{said_block}\n"
         f"【本夜暂存清单】{pending_block}\n"
         f"【本轮皇帝】{emperor_message or '（无）'}\n"
@@ -574,6 +624,7 @@ def translate_audience_turn(
     night_said: Sequence[str] = (),
     pending_summaries: Sequence[str] = (),
     target_grounding: str = "",
+    engine_summon_landings: Sequence[str] = (),
     llm_config: Any = None,
 ) -> Dict[str, object]:
     """一次转译 → 完整声明（C0 全 section）。
@@ -587,6 +638,7 @@ def translate_audience_turn(
         night_said=night_said,
         pending_summaries=pending_summaries,
         target_grounding=target_grounding,
+        engine_summon_landings=engine_summon_landings,
     )
     try:
         raw = _default_translate_runner(prompt, llm_config)
