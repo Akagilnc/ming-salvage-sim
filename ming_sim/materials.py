@@ -31,7 +31,6 @@ _REGION_DIR = "地区"
 _ARMY_DIR = "军队"
 _YAMEN_DIR = "衙门"
 _SECRET_DIR = "密令"
-_RECOMMEND_DIR = "荐人"
 _FACT_DIR = "事实"
 _BOARD_DIR = "盘面"
 _CANDIDATE_DIR = "候选事件"
@@ -670,15 +669,6 @@ def _write_secret_order_file(tmp: Path, db: Any, state: Any, character: Any, *, 
     return rel
 
 
-def _write_recommendation_file(tmp: Path, db: Any, state: Any, character: Any) -> str | None:
-    from ming_sim.recommendations import build_recommendation_brief
-
-    brief = build_recommendation_brief(db, state, str(getattr(character, "name", "") or ""))
-    rel = f"{_RECOMMEND_DIR}/可荐人切片.txt"
-    _write_text(tmp / rel, brief or "【可荐人切片】本大臣眼下没有可据以具名荐人的人选。")
-    return rel
-
-
 def _write_textual_fact_files(
     tmp: Path, db: Any, character: Any, knowledge: dict,
     matter_lines: Sequence[tuple[str, str, str, str, bool]],
@@ -964,9 +954,6 @@ def _write_tree(
     if secret_rel:
         index.append(secret_rel)
     index.extend(_inquiry_monthly_report_rels(tmp, db, character, knowledge))
-    recommend_rel = _write_recommendation_file(tmp, db, state, character)
-    if recommend_rel:
-        index.append(recommend_rel)
     index.extend(_write_textual_fact_files(tmp, db, character, knowledge, matter_lines))
     index.extend(_write_region_detail_files(tmp, db, knowledge))
     index.extend(_write_army_detail_files(tmp, db, knowledge))
@@ -2359,11 +2346,6 @@ def _write_one_present_person(
         ),
     )
     index.append(facts_rel)
-
-    from ming_sim.recommendations import build_recommendation_brief
-    recommend_rel = f"{base}/{_RECOMMEND_DIR}/可荐人切片.txt"
-    _write_text(tmp / recommend_rel, build_recommendation_brief(db, state, name))
-    index.append(recommend_rel)
 
     office_rel = f"{base}/公事档案.txt"
     _write_text(

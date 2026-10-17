@@ -1,108 +1,93 @@
-"""大臣荐人读取与审计写入（#493）。"""
+"""大臣荐人读取与审计写入（#493；#1931 删预筛切片与派系／见闻资格闸）。"""
 
 from __future__ import annotations
-from ming_sim.entities.character.store import CharacterStore
 
-from typing import Any, Dict, List
+from typing import Any, Dict, Optional
 
-from .knowledge import knowledge_row_visible_to
-from .participant_roster import participant_roster_names
 from .relations import EMPEROR_NODE
 
 
-def _known_names(db: Any, recommender: str) -> set[str]:
-    """Read independently recorded source rosters once, without event mirrors."""
-    names: set[str] = set()
-    for source in db.conn.execute(
-        'SELECT source_id, participant_roster, kind FROM character_knowledge_sources',
-        (),
-    ).fetchall():
-        roster = participant_roster_names(source["participant_roster"])
-        if (source["kind"] == "public" or recommender in roster) and knowledge_row_visible_to(
-            db, source, recommender,
-        ):
-            names.update(roster)
-    return names
+def _fact_candidate_row(row: Any) -> Dict[str, object]:
+    status = str(row["status"] or "")
+    # ADR 0009 决定 10 的 active 人才池分支锚定「听用候铨」及
+    # reason_code=被顶替；office 单独命中会把其它身名分误标为起复。
+    is_displaced_holder = (
+        status == "active"
+        and row["office"] == "听用候铨"
+        and row["reason_code"] == "被顶替"
+    )
+    kind = "荐起复" if status != "active" or is_displaced_holder else "荐在职"
+    return {
+        "name": row["name"],
+        "office": row["office"] or "",
+        "office_type": row["office_type"] or "",
+        "faction": row["faction"] or "",
+        "status": status,
+        "reason_code": row["reason_code"] or "",
+        "status_reason": row["status_reason"] or "",
+        "candidate_kind": kind,
+        # #1931：不再按派系／见闻标注依据；空串满足 NOT NULL 列。
+        "basis": "",
+    }
 
 
-def list_recommendation_candidates(db: Any, state: Any, recommender: str) -> List[Dict[str, object]]:
-    """Build the two recommendation slices visible to one minister.
+_FACT_CANDIDATE_WHERE = (
+    # #1931 J2：归明以 power_id='ming' 为准；faction 可仍为「流寇」（招抚保留标签），
+    # 不得再以派系标签否决可荐事实。
+    "power_id='ming' AND "
+    "office_type NOT IN ('后宫','宗藩','未仕') AND "
+    "status IN ('active','offstage','retired','dismissed') AND "
+    "NOT (debut_year > 0 AND (debut_year > ? OR (debut_year = ? AND debut_month > ?)))"
+)
 
-    Same-faction people form the probe's network rail; durable participation rows
-    form the minister-specific knowledge rail.  No global roster fallback is
-    allowed, so an unrelated person remains invisible.
+
+def recommender_on_ledger(db: Any, recommender: str) -> bool:
+    """荐者须在人物账上；不查派系／见闻／在场资格（#1931 F1）。"""
+    name = str(recommender or "").strip()
+    if not name:
+        return False
+    return (
+        db.conn.execute(
+            "SELECT 1 FROM characters WHERE name=?", (name,),
+        ).fetchone()
+        is not None
+    )
+
+
+def lookup_recommendation_candidate(
+    db: Any, state: Any, name: str, *, recommender: str = "",
+) -> Optional[Dict[str, object]]:
+    """按账上事实取一名可荐对象；不按派系／见闻过滤（#1931）。
+
+    荐者在册由 ``recommender_on_ledger`` / ``validate_recommendation_snapshot``
+    与受理闸共用判断；本函数只取被荐者事实行（并排除自荐）。
     """
-    conn = db.conn
-    source = CharacterStore(conn).row(recommender, fields="faction")
-    if source is None:
-        return []
-    faction = str(source["faction"] or "")
-    known = _known_names(db, recommender)
-    rows = conn.execute(
-        'SELECT name, office, office_type, faction, status, reason_code, '
-        "status_reason FROM characters WHERE name != ? AND power_id='ming' AND "
-        "faction != '流寇' AND office_type NOT IN ('后宫','宗藩','未仕') AND status IN "
-        "('active','offstage','retired','dismissed') AND NOT (debut_year > 0 AND "
-        '(debut_year > ? OR (debut_year = ? AND debut_month > ?))) ORDER BY name',
-        (recommender, int(state.year), int(state.year), int(state.period)),
-    ).fetchall()
-    result: List[Dict[str, object]] = []
-    for row in rows:
-        same_faction = str(row["faction"] or "") == faction
-        if not same_faction and str(row["name"]) not in known:
-            continue
-        status = str(row["status"] or "")
-        # ADR 0009 决定 10 的 active 人才池分支锚定「听用候铨」及
-        # reason_code=被顶替；office 单独命中会把其它身名分误标为起复。
-        is_displaced_holder = (
-            status == "active"
-            and row["office"] == "听用候铨"
-            and row["reason_code"] == "被顶替"
-        )
-        kind = "荐起复" if status != "active" or is_displaced_holder else "荐在职"
-        basis = "本派系网络" if str(row["faction"] or "") == faction else "见闻中有其人"
-        result.append({
-            "name": row["name"], "office": row["office"] or "",
-            "office_type": row["office_type"] or "", "faction": row["faction"] or "",
-            "status": status, "reason_code": row["reason_code"] or "",
-            "status_reason": row["status_reason"] or "", "candidate_kind": kind,
-            "basis": basis,
-        })
-    return result
-
-
-def build_recommendation_brief(db: Any, state: Any, recommender: str) -> str:
-    """Render the minister's already-filtered recommendation slice for context."""
-    rows = list_recommendation_candidates(db, state, recommender)
-    if not rows:
-        return "【可荐人切片】本大臣眼下没有可据以具名荐人的人选。"
-    lines = ["【可荐人切片】（已按本大臣派系网络与见闻过滤）"]
-    for row in rows:
-        status = row["status_reason"] or row["reason_code"] or row["status"]
-        if row["candidate_kind"] == "荐起复":
-            lines.append(
-                f"{row['name']}：荐起复；原职/身份={row['office'] or '居家'}；"
-                f"来历={status}；依据={row['basis']}。"
-            )
-        else:
-            lines.append(
-                f"{row['name']}：荐在职作破格差遣；现职={row['office'] or '在朝'}；"
-                f"依据={row['basis']}。"
-            )
-    return "\n".join(lines)
+    target = str(name or "").strip()
+    if not target:
+        return None
+    if recommender and target == str(recommender).strip():
+        return None
+    row = db.conn.execute(
+        "SELECT name, office, office_type, faction, status, reason_code, "
+        f"status_reason FROM characters WHERE name = ? AND {_FACT_CANDIDATE_WHERE}",
+        (target, int(state.year), int(state.year), int(state.period)),
+    ).fetchone()
+    if row is None:
+        return None
+    return _fact_candidate_row(row)
 
 
 def validate_recommendation_snapshot(
     db: Any, state: Any, recommender: str, snapshot: Dict[str, object],
 ) -> bool:
     """Check a staged recommendation before appointment mutates its candidate."""
+    if not recommender_on_ledger(db, recommender):
+        return False
     name = str(snapshot.get("name") or "").strip()
     if not name:
         return False
-    current = next(
-        (row for row in list_recommendation_candidates(db, state, recommender)
-         if row["name"] == name),
-        None,
+    current = lookup_recommendation_candidate(
+        db, state, name, recommender=recommender,
     )
     if current is None:
         return False

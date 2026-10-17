@@ -252,38 +252,6 @@ def test_commission_failure_does_not_erase_prior_staged_item(game):
 
 
 
-def test_recommendation_outside_slice_is_rejected(game):
-    db, state, content = game
-    night = open_night(db, state)
-    recommender = _active_minister(db, content, office_type="兵部")
-    hidden = next(
-        c for c in content.characters.values()
-        if c.name != recommender.name
-        and c.faction != recommender.faction
-        and c.office_type not in ("后宫", "宗藩")
-        and c.status == "active"
-    )
-    decl = normalize_audience_declaration({
-        "commissions": [{
-            "text": f"荐{hidden.name}为巡抚",
-            "appointment": {
-                "name": hidden.name, "office": "陕西巡抚", "appoint_action": "任命",
-            },
-            "recommendation": {
-                "recommender": recommender.name,
-                "reason": "臣闻其贤。",
-            },
-        }],
-    })
-    result = dispatch_declaration(
-        db, state, decl,
-        minister_name=recommender.name, night_id=int(night["id"]),
-    )
-    assert result.commissions.applied == []
-    assert result.commissions.rejected
-    assert result.commissions.rejected[0].category in {"invalid_state", "hallucinated_id"}
-
-
 def test_inquiry_declaration_preserves_assignment_in_attendant_materials(game, monkeypatch):
     db, state, content = game
     attendant = _active_minister(db, content)
