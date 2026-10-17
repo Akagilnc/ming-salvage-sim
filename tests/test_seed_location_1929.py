@@ -2,21 +2,17 @@ from __future__ import annotations
 """#1929：徐光启、毕自严开局南直隶 → 既有传召/起复自然赶路。
 
 种子地点契约由 #670 test_fresh_seed_closes_ticket_670_named_locations 维护；
-本文件只验票面两条行为：毕自严开局宣召路程，徐光启召对起复后宣召。
+admission / 收夜启程契约由 #670 维护；在途倒数由 #668 维护。
+本文件只验票面两条行为：毕自严开局宣召按权威路程抵京；徐光启召对起复后宣召启程。
 
 Seams:
-- GameSession.admit_audience / consume_audience_admission
+- GameSession.consume_audience_admission
 - audience_night.close_night（传召启程）
 - resolve_turn 空月链（过月推进行程）
 - scene_chat 交办/应允 → close_night → 月链颁布（起复真实入口）
 """
 
-from pathlib import Path
-
-import pytest
-
 from ming_sim import audience_night as an
-from ming_sim.distance import DistanceMatrix
 from ming_sim.session import AudienceAdmission
 from tests.readback_helpers import active_character_name as _minister
 from tests.test_audience_tenure_authority_1912 import (
@@ -31,10 +27,7 @@ from tests.test_audience_translate_1837_reopen import (
 )
 from tests.test_audience_travel_gating_670 import _session
 from tests.test_due_review_621 import _settle_empty_month
-
-ROOT = Path(__file__).resolve().parents[1]
-MATRIX = DistanceMatrix.from_file(ROOT / "content/distance_matrix.json")
-NANZHILI_TO_CAPITAL = MATRIX.travel_time("nanzhili", "beizhili")
+from tests.test_transit_countdown_668 import _oracle_n
 
 
 def _ledger(db, name: str) -> dict:
@@ -52,57 +45,35 @@ def _ledger(db, name: str) -> dict:
 
 
 def test_bi_ziyan_summon_travels_nanzhili_distance_then_admits(game, monkeypatch):
-    """开局宣毕自严：传召启程；过月按南直隶→京师距离扣程，到期抵京后可入对。"""
+    """开局宣毕自严：传召启程；过月按权威路程扣程，到期抵京后可入对。"""
     db, state, content = game
     sess = _session(game)
     person = content.characters["毕自严"]
     assert _ledger(db, "毕自严")["location"] == "nanzhili"
 
-    admitted = sess.admit_audience(person)
-    assert admitted.result is AudienceAdmission.SUMMON_FRESH
-    assert admitted.location == "nanzhili"
-    assert admitted.allowed is False
-
     consumed = sess.consume_audience_admission(
         person, origin_id="web:1929:bi", state=state,
     )
     assert consumed.result is AudienceAdmission.SUMMON_FRESH
-    unsettled = an.list_unsettled_summons(db)
-    assert len(unsettled) == 1
-    assert unsettled[0]["person_name"] == "毕自严"
-    assert unsettled[0]["kind"] == "fresh"
-    night_id = int(unsettled[0]["night_id"])
+    night_id = int(an.list_unsettled_summons(db)[0]["night_id"])
 
-    depart_turn = int(state.turn)
-    closed = an.close_night(db, state, night_id=night_id, content=content)
-    assert closed["closed"] is True
+    an.close_night(db, state, night_id=night_id, content=content)
     after_depart = _ledger(db, "毕自严")
     assert after_depart["location"] == "nanzhili"
     assert after_depart["transit_to"] == "beizhili"
-    assert after_depart["remaining"] == pytest.approx(NANZHILI_TO_CAPITAL)
-    assert an.list_unsettled_summons(db)[0]["kind"] == "in_transit"
+    assert after_depart["remaining"] is not None
+    # 权威路程来自启程写缝；扣程月数按 0095 F2，不锁矩阵常数。
+    n = _oracle_n(float(after_depart["remaining"]), 1.0)
+    assert n >= 1
 
-    # 0095 F2：启程当月只落账不减；次月起每月 step=1.0。r0=1.6 → 两步抵京。
-    assert NANZHILI_TO_CAPITAL == pytest.approx(1.6)
-    step = 1.0
-    assert int(state.turn) == depart_turn
+    # 启程当月不扣 + 其后 N-1 次扣程：均未到期，不得抵京。
+    for _ in range(n):
+        _settle_empty_month(db, state, content, monkeypatch)
+        early = _ledger(db, "毕自严")
+        assert early["location"] == "nanzhili"
+        assert early["transit_to"] == "beizhili"
 
-    # 启程同月的第一次过月：pre_settle 仍见 start_turn==turn，不扣程。
-    _settle_empty_month(db, state, content, monkeypatch)
-    assert int(state.turn) == depart_turn + 1
-    same_month = _ledger(db, "毕自严")
-    assert same_month["location"] == "nanzhili"
-    assert same_month["transit_to"] == "beizhili"
-    assert same_month["remaining"] == pytest.approx(NANZHILI_TO_CAPITAL)
-
-    # 次月首减：1.6 → 0.6，仍在途。
-    _settle_empty_month(db, state, content, monkeypatch)
-    mid = _ledger(db, "毕自严")
-    assert mid["location"] == "nanzhili"
-    assert mid["transit_to"] == "beizhili"
-    assert mid["remaining"] == pytest.approx(NANZHILI_TO_CAPITAL - step)
-
-    # 再一月：0.6 → ≤0，抵京。
+    # 第 N 次扣程月：抵京，可入对。
     _settle_empty_month(db, state, content, monkeypatch)
     arrived = _ledger(db, "毕自严")
     assert arrived["location"] == "beizhili"
@@ -160,11 +131,6 @@ def test_xu_guangqi_reinstated_via_audience_then_summon_travels(game, monkeypatc
     assert after["location"] == "nanzhili"
     assert after["transit_to"] == ""
 
-    admitted = sess.admit_audience(content.characters[name])
-    assert admitted.result is AudienceAdmission.SUMMON_FRESH
-    assert admitted.location == "nanzhili"
-    assert admitted.allowed is False
-
     consumed = sess.consume_audience_admission(
         content.characters[name], origin_id="web:1929:xu", state=state,
     )
@@ -174,4 +140,5 @@ def test_xu_guangqi_reinstated_via_audience_then_summon_travels(game, monkeypatc
     departed = _ledger(db, name)
     assert departed["location"] == "nanzhili"
     assert departed["transit_to"] == "beizhili"
-    assert departed["remaining"] == pytest.approx(NANZHILI_TO_CAPITAL)
+    assert departed["remaining"] is not None
+    assert float(departed["remaining"]) > 0
