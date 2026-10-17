@@ -15,8 +15,7 @@ from ming_sim.audience_night import (
     open_night,
     present_names_at,
 )
-from ming_sim.session_write_queue import get_session_write_queue
-from tests.conftest import persist_and_schedule_scene
+from tests.test_audience_translate_1837 import _scene_turn
 from tests.test_audience_travel_gating_670 import _set_place
 from tests.test_scene_llm_1836 import _sess as _base_scene_sess
 
@@ -66,20 +65,6 @@ def _landing_rows(captured: list) -> list[dict]:
     ]
 
 
-def _run_scene_turn(sess, db, state, night_id: int, message: str, *, label: str):
-    ctid = db.create_chat_turn(
-        state, "殿上", label, 0, night_id=night_id, status="generating",
-    )
-    result = sess.scene_chat(
-        message, chat_turn_id=ctid, write_gate=sess._write_gate,
-    )
-    fut = persist_and_schedule_scene(sess, db, result)
-    if fut is not None:
-        fut.result(timeout=30)
-    assert get_session_write_queue(sess).wait_idle()
-    return ctid
-
-
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_three_summon_methods_feed_exact_engine_landings(game, monkeypatch):
     """宣入／传召／越次：账照落；转译输入 method+person 精确；后轮不串前轮。"""
@@ -92,7 +77,7 @@ def test_three_summon_methods_feed_exact_engine_landings(game, monkeypatch):
     sess = _sess(db, state, content, monkeypatch, capture_prompt=captured)
 
     # ── 宣入 ──
-    _run_scene_turn(sess, db, state, night_id, "宣杨嗣昌", label="1938:xuanru")
+    _scene_turn(sess, db, state, "宣杨嗣昌", night_id=night_id)
     assert "杨嗣昌" in present_names_at(db, night_id)
     xuan_rows = _landing_rows(captured)
     assert xuan_rows == [{
@@ -103,7 +88,7 @@ def test_three_summon_methods_feed_exact_engine_landings(game, monkeypatch):
 
     # ── 传召（普通宣在外者 → METHOD_CHUANZHAO，不得宽放越次）──
     n_before = len(captured)
-    _run_scene_turn(sess, db, state, night_id, "宣毕自严", label="1938:chuan")
+    _scene_turn(sess, db, state, "宣毕自严", night_id=night_id)
     assert len(captured) > n_before
     unsettled = [
         r for r in list_unsettled_summons(db) if r["person_name"] == "毕自严"
@@ -115,13 +100,11 @@ def test_three_summon_methods_feed_exact_engine_landings(game, monkeypatch):
         "method": METHOD_CHUANZHAO,
         "person_name": "毕自严",
     }], chuan_rows
-    # 本轮隔离：前轮杨嗣昌不得串入本轮供料
-    assert all(r["person_name"] != "杨嗣昌" for r in chuan_rows)
 
     # ── 越次（在京已在场亦可留 METHOD_YUECI）──
     # 杨嗣昌已在场；越次点名仍写越次账并供料。
     n_before = len(captured)
-    _run_scene_turn(sess, db, state, night_id, "越次宣杨嗣昌", label="1938:yueci")
+    _scene_turn(sess, db, state, "越次宣杨嗣昌", night_id=night_id)
     assert len(captured) > n_before
     yue_rows = _landing_rows(captured)
     assert yue_rows == [{
@@ -129,4 +112,3 @@ def test_three_summon_methods_feed_exact_engine_landings(game, monkeypatch):
         "method": METHOD_YUECI,
         "person_name": "杨嗣昌",
     }], yue_rows
-    assert all(r["person_name"] != "毕自严" for r in yue_rows)
