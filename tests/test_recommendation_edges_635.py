@@ -153,6 +153,45 @@ def test_unapproved_appointment_writes_zero_edges(game):
     assert _recommendation_origins(db) == []
 
 
+def test_off_ledger_recommender_appointment_rejects_with_zero_edges(game):
+    """#1931 F2：任命链快照校验认载荷荐者；账外荐者拒收、零事件零边。
+
+    stage→commit→颁判真入口（与上条 unapproved 同形），不直调 validate helper。
+    """
+    db, state, content = game
+    minister = _pick_recommender(content)
+    row = _candidate_row(db, state, content, minister.name)
+    phantom = "账外荐者"
+    action_id = db.stage_pending_action(
+        state.turn,
+        kind="office",
+        action="任命",
+        minister_name=minister.name,
+        target_id=None,
+        payload={
+            "name": row["name"], "office": "巡盐御史",
+            "faction": row["faction"], "reason": "边才可用",
+            "text": f"准荐{row['name']}任巡盐御史",
+            "recommendation": {"candidate": row, "recommender": phantom},
+        },
+    )
+
+    with pytest.raises(ValueError):
+        _commit_and_promulgate(db, state, content, action_id)
+
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM recommendation_events",
+    ).fetchone()["n"] == 0
+    assert _recommendation_origins(db) == []
+    assert db.conn.execute(
+        "SELECT 1 FROM characters WHERE name=?", (phantom,),
+    ).fetchone() is None
+    char_row = db.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (row["name"],),
+    ).fetchone()
+    assert char_row["office"] != "巡盐御史"
+
+
 def test_empty_reason_fails_loud_and_rolls_back_everything(game):
     """r3：reason 缺失/空 → 任命与双边同事务 fail-loud 回滚，不落任命、不落边。"""
     db, state, content = game

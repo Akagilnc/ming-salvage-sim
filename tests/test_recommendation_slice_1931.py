@@ -125,6 +125,21 @@ def test_cross_faction_recommendation_accepts_and_lands_office_via_month_chain(
     ).fetchone()["office"] == office
 
 
+def _recommend_decl(recommender, target, office, reason):
+    return normalize_audience_declaration({
+        "commissions": [{
+            "text": f"荐{target}任{office}",
+            "appointment": {
+                "name": target, "office": office, "appoint_action": "任命",
+            },
+            "recommendation": {
+                "recommender": recommender,
+                "reason": reason,
+            },
+        }],
+    })
+
+
 def test_deceased_recommendation_is_fact_rejected(game):
     db, state, content = game
     yang = content.characters["杨嗣昌"]
@@ -135,24 +150,94 @@ def test_deceased_recommendation_is_fact_rejected(game):
     )
     db.conn.commit()
     night = open_night(db, state)
-    decl = normalize_audience_declaration({
-        "commissions": [{
-            "text": f"荐{qiao.name}起复",
-            "appointment": {
-                "name": qiao.name, "office": "刑部尚书", "appoint_action": "任命",
-            },
-            "recommendation": {
-                "recommender": yang.name,
-                "reason": "旧部可起。",
-            },
-        }],
-    })
     result = dispatch_declaration(
-        db, state, decl, minister_name=yang.name, night_id=int(night["id"]),
+        db, state,
+        _recommend_decl(yang.name, qiao.name, "刑部尚书", "旧部可起。"),
+        minister_name=yang.name, night_id=int(night["id"]),
     )
     assert result.commissions.applied == []
     assert result.commissions.rejected
     assert result.commissions.rejected[0].category in {"invalid_state", "hallucinated_id"}
+
+
+def test_future_debut_recommendation_is_fact_rejected(game):
+    db, state, content = game
+    yang = content.characters["杨嗣昌"]
+    target = next(
+        c for c in content.characters.values()
+        if c.name != yang.name and c.office_type not in ("后宫", "宗藩", "未仕")
+    )
+    db.conn.execute(
+        "UPDATE characters SET status='offstage', office='', debut_year=?, debut_month=1 "
+        "WHERE name=?",
+        (state.year + 1, target.name),
+    )
+    db.conn.commit()
+    night = open_night(db, state)
+    result = dispatch_declaration(
+        db, state,
+        _recommend_decl(yang.name, target.name, "巡盐御史", "来日可期。"),
+        minister_name=yang.name, night_id=int(night["id"]),
+    )
+    assert result.commissions.applied == []
+    assert result.commissions.rejected
+    assert result.commissions.rejected[0].category in {"invalid_state", "hallucinated_id"}
+
+
+def test_displaced_holder_recommendation_kind_is_recovery_via_dispatch(game):
+    """ADR 0009：听用候铨+被顶替 → 荐起复；经受理真入口落载荷。"""
+    db, state, content = game
+    yang = content.characters["杨嗣昌"]
+    target = next(
+        c for c in content.characters.values()
+        if c.name != yang.name and c.office_type not in ("后宫", "宗藩", "未仕")
+    )
+    db.conn.execute(
+        "UPDATE characters SET status='active', office='听用候铨', reason_code='被顶替' "
+        "WHERE name=?",
+        (target.name,),
+    )
+    db.conn.commit()
+    night = open_night(db, state)
+    result = dispatch_declaration(
+        db, state,
+        _recommend_decl(yang.name, target.name, "巡盐御史", "候铨可起。"),
+        minister_name=yang.name, night_id=int(night["id"]),
+    )
+    assert result.commissions.rejected == []
+    payload = json.loads(db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?",
+        (result.commissions.applied[0]["id"],),
+    ).fetchone()["payload_json"])
+    assert payload["recommendation"]["candidate"]["candidate_kind"] == "荐起复"
+
+
+def test_hearing_title_without_displacement_is_in_post_via_dispatch(game):
+    """ADR 0009：听用候铨但非被顶替 → 荐在职。"""
+    db, state, content = game
+    yang = content.characters["杨嗣昌"]
+    target = next(
+        c for c in content.characters.values()
+        if c.name != yang.name and c.office_type not in ("后宫", "宗藩", "未仕")
+    )
+    db.conn.execute(
+        "UPDATE characters SET status='active', office='听用候铨', reason_code='登场' "
+        "WHERE name=?",
+        (target.name,),
+    )
+    db.conn.commit()
+    night = open_night(db, state)
+    result = dispatch_declaration(
+        db, state,
+        _recommend_decl(yang.name, target.name, "巡盐御史", "现职可调。"),
+        minister_name=yang.name, night_id=int(night["id"]),
+    )
+    assert result.commissions.rejected == []
+    payload = json.loads(db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?",
+        (result.commissions.applied[0]["id"],),
+    ).fetchone()["payload_json"])
+    assert payload["recommendation"]["candidate"]["candidate_kind"] == "荐在职"
 
 
 def test_off_ledger_recommender_is_fact_rejected_with_zero_side_effects(game):
