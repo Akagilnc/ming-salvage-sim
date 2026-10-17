@@ -116,13 +116,20 @@ def test_codex_game_call_uses_isolated_codex_home_without_user_agents_or_skills(
 ):
     """#1932：游戏 codex 调用走官方 CODEX_HOME 隔离 + skills.include_instructions=false。
 
-    真实入口 CliChat.invoke → 子进程 env/argv；凭证随当前源；不改用户全局文件。
+    真实入口 CliChat.invoke → 子进程 env/argv；凭证随当前源；目录用毕释放；
+    不改用户全局文件。
     """
     from pathlib import Path
 
     profile_a = tmp_path / "profile_a"
     profile_b = tmp_path / "profile_b"
-    for home, token in ((profile_a, "fixture-A"), (profile_b, "fixture-B")):
+    # 合法用户 home 即使名带 ming_codex_game_ 前缀，也必须被尊重（不得回落默认）。
+    profile_custom = tmp_path / "ming_codex_game_customer"
+    for home, token in (
+        (profile_a, "fixture-A"),
+        (profile_b, "fixture-B"),
+        (profile_custom, "custom-fixture"),
+    ):
         home.mkdir()
         (home / "AGENTS.md").write_text("# user global agents\n", encoding="utf-8")
         (home / "auth.json").write_text(token, encoding="utf-8")
@@ -131,6 +138,7 @@ def test_codex_game_call_uses_isolated_codex_home_without_user_agents_or_skills(
     monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
     agents_before = (profile_a / "AGENTS.md").read_text(encoding="utf-8")
     seen_auth: list[str] = []
+    seen_homes: list[Path] = []
     captured: dict = {}
 
     def fake_popen(cmd, **kw):
@@ -140,6 +148,7 @@ def test_codex_game_call_uses_isolated_codex_home_without_user_agents_or_skills(
         captured["kw"] = kw
         env = kw.get("env") or {}
         iso = Path(env.get("CODEX_HOME") or "")
+        seen_homes.append(iso)
         auth = iso / "auth.json"
         seen_auth.append(auth.read_text(encoding="utf-8") if auth.exists() else "")
         return FakeCliProcess(stdout_script=("ok",), returncode=0)
@@ -154,12 +163,13 @@ def test_codex_game_call_uses_isolated_codex_home_without_user_agents_or_skills(
 
     env = captured["kw"].get("env") or {}
     isolated = Path(env.get("CODEX_HOME") or "")
-    assert isolated.is_dir()
     assert isolated.resolve() != profile_a.resolve()
     assert not (isolated / "AGENTS.md").exists()
     assert not (isolated / "AGENTS.override.md").exists()
-    assert (isolated / "auth.json").read_text(encoding="utf-8") == "fixture-A"
+    assert seen_auth[-1] == "fixture-A"
     assert (profile_a / "AGENTS.md").read_text(encoding="utf-8") == agents_before
+    # TemporaryDirectory 用毕释放
+    assert not isolated.exists()
 
     cmd = captured["cmd"]
     joined = " ".join(cmd)
@@ -167,15 +177,36 @@ def test_codex_game_call_uses_isolated_codex_home_without_user_agents_or_skills(
     assert "project_doc_max_bytes=0" in joined
     assert "--ephemeral" in cmd and "--skip-git-repo-check" in cmd
 
-    # 切换用户 CODEX_HOME 后，下一次调用必须桥接新凭证（无共享陈旧 auth）。
+    # 切换用户 CODEX_HOME 后，下一次调用必须桥接新凭证。
     monkeypatch.setenv("CODEX_HOME", str(profile_b))
     cb.CliChat(id="cli-test", backend="codex").invoke(
         [Message(role="user", content="p")], Message(role="assistant"),
     )
-    assert seen_auth == ["fixture-A", "fixture-B"]
+    assert seen_auth[-2:] == ["fixture-A", "fixture-B"]
+    assert not seen_homes[-1].exists()
 
-    # 桥接失败不得放行调用宿主。
+    # 目录名带 ming_codex_game_ 的合法用户 home 仍是认证源。
+    monkeypatch.setenv("CODEX_HOME", str(profile_custom))
+    cb.CliChat(id="cli-test", backend="codex").invoke(
+        [Message(role="user", content="p")], Message(role="assistant"),
+    )
+    assert seen_auth[-1] == "custom-fixture"
+    assert not seen_homes[-1].exists()
+
+    # 桥接失败不得放行调用宿主；失败路径隔离目录亦释放。
     import ming_sim.cli_backend as backend
+
+    failed_homes: list[Path] = []
+
+    real_td = backend.tempfile.TemporaryDirectory
+
+    class TrackingTD(real_td):
+        def __enter__(self):
+            root = super().__enter__()
+            failed_homes.append(Path(root))
+            return root
+
+    monkeypatch.setattr(backend.tempfile, "TemporaryDirectory", TrackingTD)
 
     def boom_symlink(src, dst):
         raise OSError("symlink denied")
@@ -186,7 +217,6 @@ def test_codex_game_call_uses_isolated_codex_home_without_user_agents_or_skills(
     monkeypatch.setattr(backend.os, "symlink", boom_symlink)
     monkeypatch.setattr(backend.shutil, "copy2", boom_copy)
     captured.clear()
-    seen_auth.clear()
     try:
         cb.CliChat(id="cli-test", backend="codex").invoke(
             [Message(role="user", content="p")], Message(role="assistant"),
@@ -196,6 +226,7 @@ def test_codex_game_call_uses_isolated_codex_home_without_user_agents_or_skills(
         raised = True
     assert raised
     assert "cmd" not in captured  # Popen 未启动
+    assert failed_homes and all(not p.exists() for p in failed_homes)
 
 def test_agy_materials_mode_uses_material_cwd_and_print_argument(monkeypatch, tmp_path):
     """Agy 1.2.0 材料调用用 --print=<prompt>，不再走失效 sandbox/stdin。"""
