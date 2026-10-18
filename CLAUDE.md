@@ -36,6 +36,19 @@
 
 - **P6 LLM 输出不可篡改（owner 2026-08-20 逐字拍；违者=违宪）**：「llm 想怎么写就怎么写。写出来什么就是什么。别在那去扣文字、改词。有些东西不想 AI 说，**要从它能看见的东西入手，而不是去篡改它的输出**。」——引擎/呈现层对 LLM 产出的自由文本**零删改**（禁 regex/词表/裁剪/替换，ADR 0142）；要改效果只有两条合法路：改**输入**（prompt 正向表述、喂的材料，ADR 0143）或改**呈现结构**（UI 布局，不碰字）。判官核任何触 LLM 输出显示的处方先问一句「这是在改它写的字吗？」——是即驳回。实证：#1473 曾有判官处方开 regex 剥「叩答」前缀、fixer 已落词表，r6 庭依 0142 拦于 merge 前（2026-08-20）。
 
+- **P8 代码规模上限（宪法级，owner 2026-10-18 逐字拍）**：「max-statements 50 条语句；另 max-args 5、max-branches 12、max-locals 15、max-returns 6　max-module-lines 1000 / 给我写到游戏仓库的claude.md里面去！当宪法用」（源卷 `~/.claude/projects/-Users-akagilnc-WorkSpace-Ming-LLM/a45c2e6b-8c9a-4f56-85fb-73324ee40299.jsonl`，queued_command attachment `cc934385-85c8-4eed-b938-6ab30c5132ee`）。
+
+  | 上限 | 值 |
+  |---|---|
+  | 单函数语句数（max-statements） | 50 |
+  | 单函数参数（max-args） | 5 |
+  | 单函数分支（max-branches） | 12 |
+  | 单函数局部变量（max-locals） | 15 |
+  | 单函数 return（max-returns） | 6 |
+  | 单文件行数（max-module-lines） | 1000 |
+
+  超限即违宪。
+
 ## 关键技术事实（已挖过，省得重来）
 - **启动脱 key**：`GameSession` 构造即不连 LLM（连通校验只在设置页主动提交配置时跑）。
 - **delta 落库单一入口**：`settlement.settle_delta(state, db, delta, ctx)`（经 `declaration_dispatch` 由月链调用）→ typed `SettlementOutcome`。段适配器按实体入住 `ming_sim/entities/<entity>/delta_section.py`，段序真源是 `ming_sim/settlement/registry.py` 的有序登记表（ADR 0150 决定 1/4）。旧单体入口 `apply_score_extraction` 与旧五模块 `EMPTY_EXTRACTION` 空壳包装**均已退役**，不留 deprecated 壳（#1835 F1，Owner 裁定 2026-09-30 授权拆除；ADR 0150 决定 6）。声明只把**自己带的字段**直接送到该口。拒收走 `RejectedItem` 单一形状（项级 `item/reason/category/source`，`turn`/`section` 由框架补），消费端读 typed 段（`settlement.views`）或直接读 `SettlementOutcome` 字段——不再有 39 键 ad-hoc dict、恒空兼容键、双份键或独立 `*_rejections` 键。
