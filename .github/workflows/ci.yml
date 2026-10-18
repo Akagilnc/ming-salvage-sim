@@ -49,3 +49,25 @@ jobs:
       - run: npm ci
       # build = `tsc -b && vite build`:类型检查 + 构建一并把关(web 无单测)。
       - run: npm run build
+
+  ming:
+    name: ming 新包（P8 约束 + 分层 + 类型 + 测试）
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: requirements-ming.txt
+      - run: pip install -r requirements-ming.txt
+      # P8 六项里的五项 + TID251 禁正则 + PGH004 禁裸 noqa。--ignore-noqa：带码的 noqa 也不能豁免。
+      - run: ruff check --ignore-noqa ming tests_ming
+      # ruff 没有「豁免配置」开关，per-file-ignores 一出现就失败。
+      - run: "! grep -n 'per-file-ignores' pyproject.toml"
+      # P8 单文件 1000 行（ruff 无此规则）。
+      - run: git ls-files 'ming/*.py' 'tests_ming/*.py' | xargs wc -l | awk '$2 != "total" && $1 > 1000 {print; bad = 1} END {exit bad}'
+      - run: lint-imports
+      - run: pyright
+      - run: python -m pytest tests_ming -q
