@@ -5,6 +5,7 @@
 """
 
 import json
+from collections import Counter
 from pathlib import Path
 from typing import NamedTuple
 
@@ -45,9 +46,9 @@ def court_for(tmp_path: Path, replies: list[str]) -> tuple[Court, list[int]]:
     return Court(tmp_path / "game.sqlite", model), calls
 
 
-def declared(name: str) -> dict[str, object]:
-    """录下的最后一条回话里模型所声明的字段。"""
-    return json.loads(replies_of(name)[-1])["result"]["data"]
+def declared(name: str) -> dict[str, list[dict[str, object]]]:
+    """录下的最后一条回话里模型所声明的全部交办与拨款。"""
+    return json.loads(replies_of(name)[-1])
 
 
 def handle_recorded(court: Court, name: str) -> None:
@@ -59,24 +60,32 @@ def replies_of(name: str) -> list[str]:
     return load(name).replies
 
 
-def test_assign_keeps_declared_assignees_and_the_emperors_own_words(tmp_path: Path) -> None:
+def test_every_declared_assign_lands_with_the_emperors_own_words(tmp_path: Path) -> None:
     court, _ = court_for(tmp_path, replies_of("assign"))
     handle_recorded(court, "assign")
-    (fact,) = court.facts("emperor")
-    assert fact.kind == "affair"
-    assert fact.detail["assignees"] == ["倪元璐", "黄道周"]
-    assert fact.detail["task"] == declared("assign")["task"]
-    assert fact.emperor_words == load("assign").emperor_words
+    facts = court.facts("emperor")
+    assigns = declared("assign")["assigns"]
+    assert len(assigns) == len(facts) > 0
+    assert [(f.kind, f.detail["assignees"], f.detail["task"]) for f in facts] == [
+        ("affair", a["assignees"], a["task"]) for a in assigns
+    ]
+    assert {f.emperor_words for f in facts} == {load("assign").emperor_words}
 
 
-def test_grant_lands_only_the_nominal_amount_with_the_emperors_words(tmp_path: Path) -> None:
+def test_one_sentence_with_a_grant_and_an_assignment_lands_both(tmp_path: Path) -> None:
     court, _ = court_for(tmp_path, replies_of("grant"))
     handle_recorded(court, "grant")
-    (fact,) = court.facts("emperor")
-    assert fact.kind == "grant_nominal"
+    facts = court.facts("emperor")
     data = declared("grant")
-    assert fact.detail == {"amount": 500000, "recipient": "徐光启", "purpose": data["purpose"]}
-    assert fact.emperor_words == "另每月国库拨你五十万两。"
+    (grant,) = [f for f in facts if f.kind == "grant_nominal"]
+    assert grant.detail == {
+        "amount": 500000,
+        "recipient": data["grants"][0]["recipient"],
+        "purpose": data["grants"][0]["purpose"],
+    }
+    (affair,) = [f for f in facts if f.kind == "affair"]
+    assert affair.detail["assignees"] == data["assigns"][0]["assignees"]
+    assert {f.emperor_words for f in facts} == {load("grant").emperor_words}
 
 
 def test_a_line_that_is_no_order_lands_nothing(tmp_path: Path) -> None:
@@ -90,7 +99,8 @@ def test_facts_accumulate_in_one_game_file(tmp_path: Path) -> None:
     court, _ = court_for(tmp_path, replies_of("assign") + replies_of("grant"))
     handle_recorded(court, "assign")
     handle_recorded(court, "grant")
-    assert [f.kind for f in court.facts("emperor")] == ["affair", "grant_nominal"]
+    kinds = Counter(f.kind for f in court.facts("emperor"))
+    assert kinds == {"affair": len(declared("assign")["assigns"]) + 1, "grant_nominal": 1}
 
 
 def test_rewrite_after_bad_format_leaves_no_trace_of_the_retry(tmp_path: Path) -> None:
@@ -102,7 +112,7 @@ def test_rewrite_after_bad_format_leaves_no_trace_of_the_retry(tmp_path: Path) -
     for identity in identities:
         (fact,) = court.facts(identity)
         assert fact.kind == "affair"
-        assert fact.detail["assignees"] == ["倪元璐", "黄道周"]
+        assert fact.detail["assignees"] == declared("bad_recovered")["assigns"][0]["assignees"]
 
 
 def test_exhausted_retry_is_one_unhandled_fact_and_play_goes_on(tmp_path: Path) -> None:
@@ -118,7 +128,8 @@ def test_exhausted_retry_is_one_unhandled_fact_and_play_goes_on(tmp_path: Path) 
     assert audited.detail["model_text"] == bad
     assert audited.detail["failure_point"]
     handle_recorded(court, "assign")
-    assert [f.kind for f in court.facts("emperor")] == ["affair", "unhandled"]
+    kinds = Counter(f.kind for f in court.facts("emperor"))
+    assert kinds == {"affair": len(declared("assign")["assigns"]), "unhandled": 1}
 
 
 def test_transport_failure_is_not_turned_into_unhandled(tmp_path: Path) -> None:

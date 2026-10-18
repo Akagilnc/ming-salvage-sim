@@ -1,21 +1,17 @@
 """转译：皇帝一句话 → 声明；重试只在这一层，用尽在这里接住成「接不住」。"""
 
-from typing import Annotated
-
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from pydantic_ai import Agent, PromptedOutput, capture_run_messages
 from pydantic_ai.exceptions import ToolRetryError, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models import Model
 
-from ming.middle.declaration import Assign, Grant, NoOrder
-
-Declaration = Annotated[Assign | Grant | NoOrder, Field(discriminator="kind")]
+from ming.middle.declaration import Declaration
 
 INSTRUCTIONS = (
     "你是明朝皇帝的转译官。把皇帝说的这句话转成声明：皇帝把事交给某些人办是交办，"
-    "拨银子是拨款，二者都不是则为 none。承办人、收款人写姓名，不写衙门；"
-    "这句话里指代的人，照上文写出姓名。"
+    "拨银子是拨款。一句话里有几道交办、几笔拨款，就各声明几项；都没有则两个列表皆空。"
+    "承办人、收款人写姓名，不写衙门；这句话里指代的人，照上文写出姓名。"
 )
 
 
