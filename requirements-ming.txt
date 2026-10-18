@@ -1,0 +1,6 @@
+eventsourcing==9.5.6
+pydantic-ai-slim==2.57.0
+pytest
+ruff==0.17.1
+import-linter==2.15
+pyright==1.1.414

@@ -1,0 +1,44 @@
+# 重写版新包 `ming`（#1943）的约束配置。只管 ming/ 与 tests_ming/；旧 ming_sim/ 不在范围内。
+# P8 六项上限与 CI 的咬合方式见 .github/workflows/ci.yml 的 ming 任务。
+
+[tool.ruff]
+include = ["ming/**/*.py", "tests_ming/**/*.py"]
+target-version = "py314"
+
+[tool.ruff.lint]
+preview = true
+explicit-preview-rules = true
+# P8：语句 50 / 参数 5 / 分支 12 / return 6 / 局部变量 15（PLR0914 仍是 preview，显式开启）；
+# TID251 禁正则模块；PGH004 禁裸 `# noqa`。
+select = ["PLR0915", "PLR0913", "PLR0912", "PLR0911", "PLR0914", "TID251", "PGH004"]
+
+[tool.ruff.lint.pylint]
+max-statements = 50
+max-args = 5
+max-branches = 12
+max-returns = 6
+max-locals = 15
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"re".msg = "禁用正则模块（ADR 0028、全局硬规）"
+
+[tool.pyright]
+include = ["ming", "tests_ming"]
+typeCheckingMode = "strict"
+pythonVersion = "3.14"
+
+[tool.importlinter]
+root_packages = ["ming"]
+
+# 分层：入口 → 中间层 → 账本，只往下依赖。
+[[tool.importlinter.contracts]]
+name = "layers: entry > middle > ledger"
+type = "layers"
+layers = ["ming.__main__", "ming.middle", "ming.ledger"]
+
+# 账本只有一个门：只被中间层导入。
+[[tool.importlinter.contracts]]
+name = "ledger only via middle"
+type = "protected"
+protected_modules = ["ming.ledger"]
+allowed_importers = ["ming.middle.*"]
