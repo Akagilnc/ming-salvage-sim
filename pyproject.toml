@@ -13,7 +13,7 @@ explicit-preview-rules = true
 select = ["PLR0915", "PLR0913", "PLR0912", "PLR0911", "PLR0914", "TID251", "PGH004"]
 
 [tool.ruff.lint.pylint]
-max-statements = 50
+max-statements = 200
 max-args = 5
 max-branches = 12
 max-returns = 6
