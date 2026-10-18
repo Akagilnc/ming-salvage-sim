@@ -2,7 +2,7 @@
   "emperor_words": "另每月国库拨你五十万两。",
   "scene": "朕：宣徐光启。\n徐光启：臣徐光启，叩见陛下。",
   "replies": [
-    "{\"result\":{\"kind\":\"Grant\",\"data\":{\"kind\":\"grant\",\"recipient\":\"徐光启\",\"amount_taels\":500000,\"purpose\":\"每月例拨\"}}}"
+    "{\"result\":{\"kind\":\"Grant\",\"data\":{\"kind\":\"grant\",\"recipient\":\"徐光启\",\"amount_taels\":500000,\"purpose\":\"每月拨银（皇帝未言用途）\"}}}\n"
   ],
   "source": "北极星案例B夜二句"
 }

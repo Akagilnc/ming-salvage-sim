@@ -38,4 +38,4 @@ class ClaudeCliModel(Model):
         stdout, _ = await proc.communicate()
         if proc.returncode:
             raise RuntimeError(f"claude CLI exited {proc.returncode}")
-        return ModelResponse(parts=[TextPart(stdout.decode().strip())], model_name=self.model_name)
+        return ModelResponse(parts=[TextPart(stdout.decode())], model_name=self.model_name)

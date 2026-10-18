@@ -45,6 +45,11 @@ def court_for(tmp_path: Path, replies: list[str]) -> tuple[Court, list[int]]:
     return Court(tmp_path / "game.sqlite", model), calls
 
 
+def declared(name: str) -> dict[str, object]:
+    """录下的最后一条回话里模型所声明的字段。"""
+    return json.loads(replies_of(name)[-1])["result"]["data"]
+
+
 def handle_recorded(court: Court, name: str) -> None:
     case = load(name)
     court.handle(case.emperor_words, case.scene)
@@ -60,8 +65,8 @@ def test_assign_keeps_declared_assignees_and_the_emperors_own_words(tmp_path: Pa
     (fact,) = court.facts("emperor")
     assert fact.kind == "affair"
     assert fact.detail["assignees"] == ["倪元璐", "黄道周"]
+    assert fact.detail["task"] == declared("assign")["task"]
     assert fact.emperor_words == load("assign").emperor_words
-    assert fact.detail["task"] != fact.emperor_words
 
 
 def test_grant_lands_only_the_nominal_amount_with_the_emperors_words(tmp_path: Path) -> None:
@@ -69,7 +74,8 @@ def test_grant_lands_only_the_nominal_amount_with_the_emperors_words(tmp_path: P
     handle_recorded(court, "grant")
     (fact,) = court.facts("emperor")
     assert fact.kind == "grant_nominal"
-    assert fact.detail == {"amount": 500000, "recipient": "徐光启", "purpose": "每月例拨"}
+    data = declared("grant")
+    assert fact.detail == {"amount": 500000, "recipient": "徐光启", "purpose": data["purpose"]}
     assert fact.emperor_words == "另每月国库拨你五十万两。"
 
 
