@@ -80,13 +80,16 @@ def test_cli_new_games_never_overwrite_and_missing_game_is_not_created(
     args = ["new", "--directory", str(tmp_path)]
     main(args)
     first = json.loads(capsys.readouterr().out)
-    saved = Path(first["db"]).read_bytes()
+    main(["read", "--db", first["db"], "--identity", "audit"])
+    saved = json.loads(capsys.readouterr().out)
     main(args)
     second = json.loads(capsys.readouterr().out)
     assert first["db"] != second["db"]
-    assert Path(first["db"]).read_bytes() == saved
     main(["read", "--db", first["db"], "--identity", "audit"])
-    assert len(json.loads(capsys.readouterr().out)["entities"]) > len(first["entities"])
+    after = json.loads(capsys.readouterr().out)
+    assert after["entities"] == saved["entities"]
+    assert after["facts"] == saved["facts"]
+    assert len(after["entities"]) > len(first["entities"])
     absent = tmp_path / "absent.sqlite"
     with pytest.raises(FileNotFoundError):
         main(["decree", "着史可法办理赈灾。", "--db", str(absent)])
