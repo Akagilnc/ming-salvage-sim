@@ -1,0 +1,7 @@
+{
+  "accounts": [
+    {"name": "国库", "taels": 3200000},
+    {"name": "内库", "taels": 4400000}
+  ],
+  "calendar": [{"id": "world", "year": 1627, "month": 10}]
+}

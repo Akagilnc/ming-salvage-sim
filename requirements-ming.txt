@@ -1,4 +1,5 @@
 eventsourcing==9.5.6
+eventsourcing-sqlalchemy==1.0.1
 pydantic-ai-slim==2.57.0
 pytest
 ruff==0.17.1

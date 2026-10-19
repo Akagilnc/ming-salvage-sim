@@ -8,7 +8,7 @@ target-version = "py314"
 [tool.ruff.lint]
 preview = true
 explicit-preview-rules = true
-# P8：语句 50 / 参数 5 / 分支 12 / return 6 / 局部变量 15（PLR0914 仍是 preview，显式开启）；
+# P8：语句 200 / 参数 5 / 分支 12 / return 6 / 局部变量 15（PLR0914 仍是 preview，显式开启）；
 # TID251 禁正则模块；PGH004 禁裸 `# noqa`。
 select = ["PLR0915", "PLR0913", "PLR0912", "PLR0911", "PLR0914", "TID251", "PGH004"]
 
@@ -20,7 +20,7 @@ max-returns = 6
 max-locals = 15
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
-"re".msg = "禁用正则模块（ADR 0028、全局硬规）"
+"re".msg = "禁用正则模块（仓内约束、全局锚定宪法）"
 
 [tool.pyright]
 include = ["ming", "tests_ming"]

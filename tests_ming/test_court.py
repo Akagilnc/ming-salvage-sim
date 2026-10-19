@@ -1,142 +1,166 @@
-"""中间层往外的口：一句皇帝原话进、已落事实出。
-
-模型回话全部是真实 claude CLI 后端录下的原样回话（recorded/*.json，含出处）；
-观察只走 Court.facts，不碰账本、不开 SQLite。
-"""
+"""Real recorded model replies enter Court; assertions use structured audit results."""
 
 import json
-from collections import Counter
 from pathlib import Path
-from typing import NamedTuple
+from typing import Any
 
 import pytest
+from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from ming.middle.court import Court
-from ming.middle.view import Identity
 
 RECORDED = Path(__file__).parent / "recorded"
 
 
-class Recorded(NamedTuple):
-    emperor_words: str
-    scene: str
-    replies: list[str]
+def load(name: str) -> dict[str, Any]:
+    return json.loads((RECORDED / f"{name}.json").read_text())
 
 
-def load(name: str) -> Recorded:
-    raw = json.loads((RECORDED / f"{name}.json").read_text())
-    return Recorded(raw["emperor_words"], raw["scene"], raw["replies"])
-
-
-def replaying(replies: list[str]) -> tuple[FunctionModel, list[int]]:
-    """按序吐出录下的回话；返回模型与调用计数。"""
-    calls: list[int] = []
+def replaying(replies: list[str]) -> FunctionModel:
+    remaining = iter(replies)
 
     def reply(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        calls.append(1)
-        return ModelResponse(parts=[TextPart(replies[len(calls) - 1])])
+        return ModelResponse(parts=[TextPart(next(remaining))])
 
-    return FunctionModel(reply), calls
-
-
-def court_for(tmp_path: Path, replies: list[str]) -> tuple[Court, list[int]]:
-    model, calls = replaying(replies)
-    return Court(tmp_path / "game.sqlite", model), calls
-
-
-def declared(name: str) -> dict[str, list[dict[str, object]]]:
-    """录下的最后一条回话里模型所声明的全部交办与拨款。"""
-    return json.loads(replies_of(name)[-1])
+    return FunctionModel(reply)
 
 
 def handle_recorded(court: Court, name: str) -> None:
     case = load(name)
-    court.handle(case.emperor_words, case.scene)
+    court.handle(case["emperor_words"], case["scene"])
 
 
-def replies_of(name: str) -> list[str]:
-    return load(name).replies
-
-
-def test_every_declared_assign_lands_with_the_emperors_own_words(tmp_path: Path) -> None:
-    court, _ = court_for(tmp_path, replies_of("assign"))
-    handle_recorded(court, "assign")
-    facts = court.facts("emperor")
-    assigns = declared("assign")["assigns"]
-    assert len(assigns) == len(facts) > 0
-    assert [(f.kind, f.detail["assignees"], f.detail["task"]) for f in facts] == [
-        ("affair", a["assignees"], a["task"]) for a in assigns
-    ]
-    assert {f.emperor_words for f in facts} == {load("assign").emperor_words}
-
-
-def test_one_sentence_with_a_grant_and_an_assignment_lands_both(tmp_path: Path) -> None:
-    court, _ = court_for(tmp_path, replies_of("grant"))
-    handle_recorded(court, "grant")
-    facts = court.facts("emperor")
-    data = declared("grant")
-    (grant,) = [f for f in facts if f.kind == "grant_nominal"]
-    assert grant.detail == {
-        "amount": 500000,
-        "recipient": data["grants"][0]["recipient"],
-        "purpose": data["grants"][0]["purpose"],
-    }
-    (affair,) = [f for f in facts if f.kind == "affair"]
-    assert affair.detail["assignees"] == data["assigns"][0]["assignees"]
-    assert {f.emperor_words for f in facts} == {load("grant").emperor_words}
-
-
-def test_a_line_that_is_no_order_lands_nothing(tmp_path: Path) -> None:
-    court, _ = court_for(tmp_path, replies_of("none"))
-    handle_recorded(court, "none")
+def test_joint_assignment_is_an_affair_event_and_each_persons_history(
+    tmp_path: Path,
+) -> None:
+    case = load("assign")
+    court = Court.new_game(tmp_path, replaying(case["replies"]))
+    court.handle(case["emperor_words"], load("assign")["scene"])
+    facts = court.facts("audit")
+    (affair,) = [e for e in court.entities("audit") if e.kind == "affair"]
+    (assigned,) = [f for f in facts if f.entity_id == affair.id]
+    assert assigned.kind == "assigned"
+    assert set(assigned.detail["assignees"]) == {"倪元璐", "黄道周"}
+    people = {e.key: e.id for e in court.entities("audit") if e.kind == "person"}
+    histories = [f for f in facts if f.entity_id != affair.id]
+    assert {f.entity_id for f in histories} == {people["倪元璐"], people["黄道周"]}
+    assert all(f.detail["affair_id"] == str(affair.id) for f in histories)
+    assert {f.emperor_words for f in facts} == {case["emperor_words"]}
     assert court.facts("emperor") == []
-    assert court.facts("audit") == []
+    court.close()
 
 
-def test_facts_accumulate_in_one_game_file(tmp_path: Path) -> None:
-    court, _ = court_for(tmp_path, replies_of("assign") + replies_of("grant"))
-    handle_recorded(court, "assign")
+def test_unknown_person_rejects_the_whole_declaration_and_next_order_still_lands(
+    tmp_path: Path,
+) -> None:
+    bad = load("unknown")
+    good = load("assign")
+    court = Court.new_game(tmp_path, replaying(bad["replies"] + good["replies"]))
+    before = court.entities("audit")
+    handle_recorded(court, "unknown")
+    (failure,) = court.facts("audit")
+    assert failure.kind == "unhandled"
+    assert failure.detail["model_text"] == bad["replies"][-1]
+    assert failure.detail["failure_point"]
+    (visible,) = court.facts("emperor")
+    assert visible.kind == "unhandled"
+    assert visible.detail == {}
+    assert all(e in court.entities("audit") for e in before)
+    assert not [e for e in court.entities("audit") if e.kind == "affair"]
+    court.handle(good["emperor_words"], load("assign")["scene"])
+    assert [f.kind for f in court.facts("audit")].count("assigned") == 3
+    assert not [f for f in court.facts("audit") if f.kind == "grant_nominal"]
+    court.close()
+
+
+def test_grant_is_nominal_and_reopening_preserves_rows_and_event_replay(
+    tmp_path: Path,
+) -> None:
+    case = load("grant")
+    model = replaying(case["replies"] * 2)
+    court = Court.new_game(tmp_path, model)
+    before_accounts = [e for e in court.entities("audit") if e.kind == "account"]
     handle_recorded(court, "grant")
-    kinds = Counter(f.kind for f in court.facts("emperor"))
-    assert kinds == {"affair": len(declared("assign")["assigns"]) + 1, "grant_nominal": 1}
+    (grant,) = [f for f in court.facts("audit") if f.kind == "grant_nominal"]
+    treasury = next(e for e in before_accounts if e.key == "国库")
+    assert grant.entity_id == treasury.id
+    assert grant.detail["amount_taels"] == 500000
+    assert grant.emperor_words == case["emperor_words"]
+    assert [
+        e for e in court.entities("audit") if e.kind == "account"
+    ] == before_accounts
+    assert [f.kind for f in court.facts("audit")].count("assigned") == 2
+    path = court.db_path
+    before = court.entities("audit")
+    facts = court.facts("audit")
+    court.close()
+    court = Court(path, model)
+    assert court.entities("audit") == before == court.entities("audit", replay=True)
+    assert court.facts("audit") == facts == court.facts("audit", replay=True)
+    handle_recorded(court, "grant")
+    assert [f.kind for f in court.facts("audit")].count("grant_nominal") == 2
+    court.close()
 
 
-def test_rewrite_after_bad_format_leaves_no_trace_of_the_retry(tmp_path: Path) -> None:
-    replies = replies_of("bad_recovered")
-    court, calls = court_for(tmp_path, replies)
-    handle_recorded(court, "bad_recovered")
-    assert len(calls) == 2
-    identities: list[Identity] = ["emperor", "audit"]
-    for identity in identities:
-        (fact,) = court.facts(identity)
-        assert fact.kind == "affair"
-        assert fact.detail["assignees"] == declared("bad_recovered")["assigns"][0]["assignees"]
+@pytest.mark.parametrize("name", ["alias", "format_retry"])
+def test_model_can_correct_name_or_structure_without_leaving_partial_facts(
+    tmp_path: Path, name: str
+) -> None:
+    case = load(name)
+    court = Court.new_game(tmp_path, replaying(case["replies"]))
+    handle_recorded(court, name)
+    assert not [f for f in court.facts("audit") if f.kind == "unhandled"]
+    declaration = json.loads(case["replies"][-1])
+    people = {e.key: e.id for e in court.entities("audit") if e.kind == "person"}
+    expected_people = {
+        people[p] for a in declaration["assigns"] for p in a["assignees"]
+    }
+    actual_people = {
+        f.entity_id for f in court.facts("audit") if f.entity_id in set(people.values())
+    }
+    assert actual_people == expected_people
+    assert len([e for e in court.entities("audit") if e.kind == "affair"]) == len(
+        declaration["assigns"]
+    )
+    assert court.facts("emperor") == []
+    court.close()
 
 
-def test_exhausted_retry_is_one_unhandled_fact_and_play_goes_on(tmp_path: Path) -> None:
-    bad = replies_of("bad_recovered")[0]
-    court, calls = court_for(tmp_path, [bad, bad] + replies_of("assign"))
-    handle_recorded(court, "bad_recovered")
-    assert len(calls) == 2
-    (seen_by_emperor,) = court.facts("emperor")
-    assert seen_by_emperor.kind == "unhandled"
-    assert seen_by_emperor.emperor_words == load("bad_recovered").emperor_words
-    assert seen_by_emperor.detail == {}
-    (audited,) = court.facts("audit")
-    assert audited.detail["model_text"] == bad
-    assert audited.detail["failure_point"]
-    handle_recorded(court, "assign")
-    kinds = Counter(f.kind for f in court.facts("emperor"))
-    assert kinds == {"affair": len(declared("assign")["assigns"]), "unhandled": 1}
+@pytest.mark.parametrize("name", ["format_retry", "missing_account"])
+def test_missing_or_malformed_field_exhaustion_is_retained_and_next_sentence_is_accepted(
+    tmp_path: Path, name: str
+) -> None:
+    bad = load(name)
+    empty = load("none")
+    court = Court.new_game(
+        tmp_path, replaying([bad["replies"][0]] * 2 + empty["replies"])
+    )
+    handle_recorded(court, name)
+    (fact,) = court.facts("audit")
+    assert fact.kind == "unhandled"
+    assert fact.detail["model_text"] == bad["replies"][0]
+    assert fact.detail["failure_point"]
+    assert court.facts("emperor")[0].detail == {}
+    handle_recorded(court, "none")
+    assert court.facts("audit") == [fact]
+    court.close()
 
 
-def test_transport_failure_is_not_turned_into_unhandled(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "failure", [ConnectionError, UnexpectedModelBehavior, RuntimeError]
+)
+def test_call_failures_are_not_disguised_as_bad_declarations(
+    tmp_path: Path, failure: type[Exception]
+) -> None:
     def broken(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        raise ConnectionError("host did not answer")
+        raise failure("backend did not supply a declaration")
 
-    court = Court(tmp_path / "game.sqlite", FunctionModel(broken))
-    with pytest.raises(ConnectionError):
-        court.handle("拨银五万两给海瑞。", "")
+    court = Court.new_game(tmp_path, FunctionModel(broken))
+    before = court.entities("audit")
+    with pytest.raises(failure):
+        court.handle("拨银五万两给徐光启。")
     assert court.facts("audit") == []
+    assert court.entities("audit") == before
+    court.close()

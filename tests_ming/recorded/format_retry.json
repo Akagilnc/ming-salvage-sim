@@ -1,0 +1,9 @@
+{
+  "emperor_words": "着史可法办理陕西赈灾。",
+  "scene": "",
+  "replies": [
+    "{\"assigns\":[{\"assignees\":[\"史可法\"]}],\"grants\":[]}\n",
+    "{\"assigns\":[{\"assignees\":[\"史可法\"],\"task\":\"办理陕西赈灾\"}],\"grants\":[]}\n"
+  ],
+  "source": "Live Claude CLI haiku via Court.handle with Agent.override instructions as deliberate malformed-input stimulus; /tmp/1945-extra-acceptance.py; /tmp/1945-entities-evidence/extra/format_retry-messages.json"
+}

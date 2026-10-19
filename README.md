@@ -40,6 +40,20 @@
 
 ---
 
+## 新账本开发入口（#1943 / #1945）
+
+当前切片只有开局导入、交办与名义拨款，不是完整游戏。Python 3.14：
+
+```bash
+python -m pip install -r requirements-ming.txt
+python -m ming new --directory saves
+python -m ming decree '着史可法办理陕西赈灾。' --db saves/<新局文件>.sqlite
+python -m ming read --db saves/<新局文件>.sqlite --identity audit
+python -m ming read --db saves/<新局文件>.sqlite --identity audit --replay
+```
+
+`new` 输出新局路径；继续操作使用该路径。下旨使用已安装、已登录的 `claude` CLI；不改宿主配置。`decree --scene` 可传完整上文。默认读取皇帝材料，`audit` 用于内部对账，`--replay` 从事件重放读取。
+
 ## 我们努力的方向
 
 | 方向 | 我们希望做到什么 |

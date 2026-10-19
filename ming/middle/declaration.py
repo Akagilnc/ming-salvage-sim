@@ -16,7 +16,8 @@ class Assign(BaseModel):
 class Grant(BaseModel):
     """拨款：皇帝拨一笔银子。"""
 
-    recipient: str = Field(description="收款人姓名，不是经办衙门")
+    account: str = Field(description="出钱账户的账本正名，如国库或内库；不得省略")
+    recipient: str = Field(description="收款人账本正名，不是经办衙门")
     amount_taels: int = Field(description="两数，整数，照皇帝说的数")
     purpose: str = Field(description="用途")
 
