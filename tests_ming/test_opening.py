@@ -18,7 +18,6 @@ def test_new_game_imports_complete_world_records_and_separates_identities(
 ) -> None:
     court = Court.new_game(tmp_path, TestModel())
     entities = court.entities("audit")
-    expected_count = 0
     for filename, collection in [
         ("characters", "characters"),
         ("characters", "factions"),
@@ -31,14 +30,17 @@ def test_new_game_imports_complete_world_records_and_separates_identities(
         ("relation_seed", "summaries"),
         ("opening", "accounts"),
         ("opening", "calendar"),
+        ("multiple_offices", "offices"),
     ]:
         source = f"{filename}.json/{collection}"
         expected = json.loads((CONTENT / f"{filename}.json").read_text())[collection]
         assert [e.data for e in entities if e.source == source] == expected
-        expected_count += len(expected)
     dossiers = json.loads((CONTENT / "minister_dossiers.json").read_text())
     assert {e.key: e.data for e in entities if e.kind == "dossier"} == dossiers
-    assert len(entities) == expected_count + len(dossiers)
+    assert [e.key for e in entities if e.kind == "gazette"] == ["opening"]
+    offices = {e.key: e.data for e in entities if e.kind == "office"}
+    assert offices["巡抚"]["multiple"] is False
+    assert offices["内阁大学士"]["multiple"] is True
     visible = court.entities("emperor")
     assert {e.key for e in visible} == {e.key for e in entities if e.kind == "person"}
     visible_fields = {"name", "office", "location", "status"}
@@ -48,6 +50,12 @@ def test_new_game_imports_complete_world_records_and_separates_identities(
         p["name"]: p
         for p in json.loads((CONTENT / "characters.json").read_text())["characters"]
     }
+    assert all(
+        p[field] in offices
+        for p in characters.values()
+        for field in ("office", "historical_office")
+        if p.get(field)
+    )
     for name in ["史可法", "徐光启", "黄道周", "练国事", "郭允厚"]:
         assert shown[name] == {
             k: v for k, v in characters[name].items() if k in visible_fields
@@ -74,7 +82,7 @@ def test_cli_new_games_never_overwrite_and_missing_game_is_not_created(
     assert len(after["entities"]) > len(first["entities"])
     absent = tmp_path / "absent.sqlite"
     with pytest.raises(FileNotFoundError):
-        main(["decree", "着史可法办理赈灾。", "--db", str(absent)])
+        main(["read", "--db", str(absent)])
     assert not absent.exists()
 
 
@@ -82,7 +90,7 @@ def test_cli_new_games_never_overwrite_and_missing_game_is_not_created(
 def test_bad_opening_data_leaves_no_partial_world(tmp_path: Path, broken: str) -> None:
     content = tmp_path / "content"
     content.mkdir()
-    for file in CONTENT.glob("*.json"):
+    for file in [*CONTENT.glob("*.json"), CONTENT / "opening_gazette.md"]:
         shutil.copyfile(file, content / file.name)
     if broken == "json":
         (content / "armies.json").write_text("{")

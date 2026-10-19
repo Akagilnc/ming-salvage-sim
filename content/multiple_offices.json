@@ -1,0 +1,77 @@
+{
+  "source": "多员官衔据《明史·职官志》内阁、六部、科道、翰林、司礼监及营伍员额。其余官名从开局人物的现职与原职导入。",
+  "offices": [
+    {
+      "name": "兵科给事中",
+      "multiple": true
+    },
+    {
+      "name": "兵部主事",
+      "multiple": true
+    },
+    {
+      "name": "兵部郎中",
+      "multiple": true
+    },
+    {
+      "name": "内阁大学士",
+      "multiple": true
+    },
+    {
+      "name": "副总兵",
+      "multiple": true
+    },
+    {
+      "name": "参将",
+      "multiple": true
+    },
+    {
+      "name": "司礼监秉笔太监",
+      "multiple": true
+    },
+    {
+      "name": "守备",
+      "multiple": true
+    },
+    {
+      "name": "御史",
+      "multiple": true
+    },
+    {
+      "name": "户部郎中",
+      "multiple": true
+    },
+    {
+      "name": "游击",
+      "multiple": true
+    },
+    {
+      "name": "礼部主事",
+      "multiple": true
+    },
+    {
+      "name": "礼部仪制司主事",
+      "multiple": true
+    },
+    {
+      "name": "给事中",
+      "multiple": true
+    },
+    {
+      "name": "翰林院检讨",
+      "multiple": true
+    },
+    {
+      "name": "翰林院编修",
+      "multiple": true
+    },
+    {
+      "name": "辽东游击将军",
+      "multiple": true
+    },
+    {
+      "name": "锦衣卫千户",
+      "multiple": true
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "source": "/tmp/1947-final-live/A-translation-006.json",
+  "emperor_words": "退朝",
+  "scene": "王承恩躬身应一声“遵旨”，退行两步，转身面向殿外，扬声道：“退朝——”\n\n殿角的香炉里一线残香将尽。侍立的太监无声上前，把御座前的羊角灯一盏盏挑暗，先引皇帝自暖阁后门起驾。王承恩落后半步随行，低声回道：\n\n“万岁爷，起复倪元璐、黄道周的旨，奴婢明日一早拟好，候万岁爷看了发下。今夜无别的事，请万岁爷安歇。”",
+  "replies": [
+    "{\"facts\": [{\"entity_type\": \"person\", \"entity\": \"王承恩\", \"create\": false, \"changes\": [], \"text\": \"王承恩扬声宣“退朝”，侍立太监挑暗御座前羊角灯，引皇帝自暖阁后门起驾；王承恩落后半步随行，低声回奏起复倪元璐、黄道周的旨意明日一早拟好候发。\"}], \"decrees\": [], \"assents\": [], \"segments\": [{\"start\": 0, \"end\": 33, \"speaker\": \"王承恩\", \"hearers\": [\"emperor\"]}, {\"start\": 33, \"end\": 57, \"speaker\": \"王承恩\", \"hearers\": [\"emperor\"]}, {\"start\": 58, \"end\": 87, \"speaker\": \"王承恩\", \"hearers\": [\"emperor\"]}, {\"start\": 88, \"end\": 153, \"speaker\": \"王承恩\", \"hearers\": [\"emperor\"]}], \"protagonist\": \"王承恩\", \"dismiss\": true}"
+  ]
+}
