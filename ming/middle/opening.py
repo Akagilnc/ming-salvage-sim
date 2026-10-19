@@ -19,6 +19,7 @@ COLLECTIONS = [
     ("relation_seed", "summaries", "relationship_summary", ("source", "target")),
     ("opening", "accounts", "account", ("name",)),
     ("opening", "calendar", "calendar", ("id",)),
+    ("multiple_offices", "offices", "office", ("name",)),
 ]
 
 
@@ -50,5 +51,26 @@ def import_opening(ledger: Ledger, content: Path) -> None:
         raise ValueError(f"{path}: {exc}") from exc
     entities.extend(
         Entity("dossier", name, path.name, data) for name, data in dossiers.items()
+    )
+    multi = {e.key for e in entities if e.kind == "office"}
+    titles = {
+        title
+        for e in entities
+        if e.kind == "person"
+        for title in (e.data.get("office"), e.data.get("historical_office"))
+        if title
+    }
+    entities.extend(
+        Entity(
+            "office",
+            title,
+            "characters.json/offices",
+            {"name": title, "multiple": False},
+        )
+        for title in sorted(titles - multi)
+    )
+    gazette = (content / "opening_gazette.md").read_text()
+    entities.append(
+        Entity("gazette", "opening", "opening_gazette.md", {"text": gazette})
     )
     ledger.commit(entities)

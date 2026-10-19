@@ -1,9 +1,0 @@
-{
-  "emperor_words": "着张三办理陕西赈灾，另从国库拨三十万两给徐光启。",
-  "scene": "张三就是皇帝点名的承办人，不得换成另一个人。",
-  "replies": [
-    "{\"assigns\":[{\"assignees\":[\"张三\"],\"task\":\"办理陕西赈灾\"}],\"grants\":[{\"account\":\"国库\",\"recipient\":\"徐光启\",\"amount_taels\":300000,\"purpose\":\"未言用途\"}]}\n",
-    "{\"assigns\":[{\"assignees\":[\"张三\"],\"task\":\"办理陕西赈灾\"}],\"grants\":[{\"account\":\"国库\",\"recipient\":\"徐光启\",\"amount_taels\":300000,\"purpose\":\"未言用途\"}]}\n"
-  ],
-  "source": "Live Claude CLI haiku via Court.handle; /tmp/1945-live-entities.py; /tmp/1945-entities-evidence/unknown-messages.json; 2026-10-19"
-}

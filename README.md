@@ -40,19 +40,37 @@
 
 ---
 
-## 新账本开发入口（#1943 / #1945）
+## 新包开发入口（#1943 / #1947）
 
-当前切片只有开局导入、交办与名义拨款，不是完整游戏。Python 3.14：
+当前包含开局导入、召对夜与通用实体字段落账；过月和前端接线由后续切片承接，不是完整游戏。Python 3.14：
 
 ```bash
 python -m pip install -r requirements-ming.txt
 python -m ming new --directory saves
-python -m ming decree '着史可法办理陕西赈灾。' --db saves/<新局文件>.sqlite
 python -m ming read --db saves/<新局文件>.sqlite --identity audit
 python -m ming read --db saves/<新局文件>.sqlite --identity audit --replay
 ```
 
-`new` 输出新局路径；继续操作使用该路径。下旨使用已安装、已登录的 `claude` CLI；不改宿主配置。`decree --scene` 可传完整上文。默认读取皇帝材料，`audit` 用于内部对账，`--replay` 从事件重放读取。
+`new` 输出新局路径；继续操作使用该路径。旧 `decree` 开发入口随交办／拨款声明一并退役；下旨走下方的 `audience`，旨意只记录皇帝认可的圣旨定稿全文、来历与涉及的人，后果由后续过月切片处理。默认读取皇帝材料，`audit` 用于内部对账，`--replay` 从事件重放读取。
+
+召对使用支持原生文本和工具的 Pydantic AI 模型；OpenAI 兼容端点用自己的 `OPENAI_BASE_URL`、`OPENAI_API_KEY` 环境变量；仅支持 Chat Completions 的端点选原生 `openai-chat:` 前缀（`openai:` 默认走 Responses）。场景不走 CLI 转译适配器（该适配器没有场景工具能力），也不加智能体外壳或文本工具协议。转译默认沿用已登录的 `claude -p`，可用逐次参数换成 API 模型，不改宿主配置：
+
+```bash
+python -m ming audience --db saves/<新局文件>.sqlite \
+  --scene-model openai-chat:<模型名> --translation-model openai-chat:<模型名>
+```
+
+stdin/stdout 为逐行 JSON。进入时输出夜 id；输入示例：
+
+```json
+{"action":"say","words":"宣杨嗣昌。"}
+{"action":"dismiss"}
+{"action":"open"}
+{"action":"drain"}
+{"action":"state"}
+```
+
+`say` 返回原样带标记的戏文及夜状态。皇帝吩咐的事由领旨人拟成正式圣旨念出，认可才成旨，没表态即默拒。`dismiss` 请求收夜；若仍有回话在生成，先完成并落账最后一轮，再记收夜。打字退朝由场景模型调退朝工具走同一路径。收夜后后台转译整夜一次，退朝不等；`open` 续未收夜或开新夜。`drain` 等在飞回话与所有已收夜的转译（给过月／正常退出使用）；EOF 也先排空再关档，不自动收夜。未收夜重开续到最后一轮；已收夜缺结果的夜补转，已落不重落。夜的 `result` 为 `null`、`translated` 或 `unhandled`，状态只读账本。`Court.pending_nights()` 给过月检查缺结果的已收夜，`Court.approved_decrees()` 读取已成旨；「接不住」不含字段诊断，调用／传输／代码异常仍抛出。
 
 ## 我们努力的方向
 

@@ -1,7 +1,8 @@
 """Entities own their events; ORM query rows and event streams commit together.
 
 A single row shape holds people, accounts and other entities without duplicating
-persistence rules. Opening data remains intact; this slice records nominal orders.
+persistence rules. Opening data is imported once; recorded changes update the same
+entity state during both landing and replay.
 """
 
 from pathlib import Path
@@ -12,7 +13,7 @@ from eventsourcing.application import Application
 from eventsourcing.domain import Aggregate, event
 from eventsourcing.system import NotificationLogReader
 from eventsourcing_sqlalchemy.recorders import SQLAlchemyApplicationRecorder
-from sqlalchemy import JSON, Engine, Uuid, select
+from sqlalchemy import JSON, Engine, Uuid, literal_column, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 Item = dict[str, Any]
@@ -21,11 +22,20 @@ Item = dict[str, Any]
 class Entity(Aggregate):
     @event("Created")
     def __init__(self, kind: str, key: str, source: str, data: Item) -> None:
-        self.kind, self.key, self.source, self.data = kind, key, source, data
+        self.kind, self.key, self.source, self.data = (
+            kind,
+            key or str(self.id),
+            source,
+            data,
+        )
         self.events: list[Item] = []
 
     @event("Recorded")
-    def record(self, kind: str, emperor_words: str, detail: Item) -> None:
+    def record(
+        self, kind: str, emperor_words: str, detail: Item, changes: Item | None = None
+    ) -> None:
+        if changes:
+            self.data = {**self.data, **changes}
         self.events.append(
             {"kind": kind, "emperor_words": emperor_words, "detail": detail}
         )
@@ -81,7 +91,12 @@ class Ledger(Application[UUID]):
             ids = dict.fromkeys(cast(UUID, n.originator_id) for n in notifications)
             return [self.get(entity_id).snapshot() for entity_id in ids]
         with self.sql.transaction(commit=False) as session:
-            return [r.snapshot() for r in session.scalars(select(EntityRow))]
+            return [
+                r.snapshot()
+                for r in session.scalars(
+                    select(EntityRow).order_by(literal_column("rowid"))
+                )
+            ]
 
     def get(self, entity_id: UUID) -> Entity:
         return self.repository.get(entity_id)
