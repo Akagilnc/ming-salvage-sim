@@ -5,7 +5,7 @@ import json
 
 from uuid import UUID
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -27,6 +27,7 @@ class Audience:
         self._worker: asyncio.Task[None] | None = None
         self._scene = Agent(
             scene_model,
+            deps_type=UUID,
             output_type=str,
             instructions=(CONTENT / "prompts/scene_agent.md").read_text(),
         )
@@ -36,15 +37,17 @@ class Audience:
             """查某人的档案，姓名取账本正名。"""
             return self.court.read_person(name)
 
-        @self._scene.tool_plain
-        async def get_hall() -> list[str]:
+        @self._scene.tool
+        async def get_hall(ctx: RunContext[UUID]) -> list[str]:
             """看今夜殿上名单。"""
-            return self.court.night(self.night_id).hall
+            return self.court.night(ctx.deps).hall
 
-        @self._scene.tool_plain
-        async def set_hall(add: list[str], remove: list[str]) -> HallResult:
+        @self._scene.tool
+        async def set_hall(
+            ctx: RunContext[UUID], add: list[str], remove: list[str]
+        ) -> HallResult:
             """有人入殿或退下时先改名单；不在京师的人加不进殿。"""
-            return self.court.set_hall(self.night_id, add, remove)
+            return self.court.set_hall(ctx.deps, add, remove)
 
     @property
     def night_id(self) -> UUID:
@@ -75,7 +78,8 @@ class Audience:
 
     async def say(self, emperor_words: str) -> str:
         self._start_worker()
-        night = self.court.night(self.night_id)
+        night_id = self.night_id
+        night = self.court.night(night_id)
         if night.closed:
             raise ValueError("night already closed")
         history: list[ModelMessage] = []
@@ -88,14 +92,13 @@ class Audience:
             )
         result = await self._scene.run(
             [
-                json.dumps(
-                    self.court.scene_material(self.night_id), ensure_ascii=False
-                ),
+                json.dumps(self.court.scene_material(night_id), ensure_ascii=False),
                 emperor_words,
             ],
             message_history=history,
+            deps=night_id,
         )
-        self.court.append_turn(self.night_id, emperor_words, result.output)
+        self.court.append_turn(night_id, emperor_words, result.output)
         self._start_worker()
         return result.output
 
