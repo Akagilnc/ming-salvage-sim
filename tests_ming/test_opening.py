@@ -41,35 +41,17 @@ def test_new_game_imports_complete_world_records_and_separates_identities(
     assert len(entities) == expected_count + len(dossiers)
     visible = court.entities("emperor")
     assert {e.key for e in visible} == {e.key for e in entities if e.kind == "person"}
-    assert all(set(e.data) <= {"name", "office", "location", "status"} for e in visible)
+    visible_fields = {"name", "office", "location", "status"}
+    assert all(set(e.data) <= visible_fields for e in visible)
     shown = {e.key: e.data for e in visible}
-    assert shown["史可法"] == {
-        "name": "史可法",
-        "office": "诸生（应天府学）",
-        "status": "active",
+    characters = {
+        p["name"]: p
+        for p in json.loads((CONTENT / "characters.json").read_text())["characters"]
     }
-    assert shown["徐光启"] == {
-        "name": "徐光启",
-        "office": "",
-        "location": "nanzhili",
-        "status": "offstage",
-    }
-    assert shown["黄道周"] == {
-        "name": "黄道周",
-        "office": "翰林院编修",
-        "location": "beizhili",
-    }
-    assert shown["练国事"] == {
-        "name": "练国事",
-        "office": "巡抚",
-        "location": "shaanxi",
-        "status": "active",
-    }
-    assert shown["郭允厚"] == {
-        "name": "郭允厚",
-        "office": "户部尚书",
-        "location": "beizhili",
-    }
+    for name in ["史可法", "徐光启", "黄道周", "练国事", "郭允厚"]:
+        assert shown[name] == {
+            k: v for k, v in characters[name].items() if k in visible_fields
+        }
     assert court.facts("audit") == []
     court.close()
 

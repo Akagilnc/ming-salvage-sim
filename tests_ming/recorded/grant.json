@@ -4,5 +4,11 @@
   "replies": [
     "{\"assigns\":[{\"assignees\":[\"王承恩\"],\"task\":\"召用徐光启入京候见一事，全权负责\"}],\"grants\":[{\"account\":\"国库\",\"recipient\":\"王承恩\",\"amount_taels\":500000,\"purpose\":\"每月拨用，圣旨未明言用途\"}]}\n"
   ],
-  "source": "Live Claude CLI haiku via Court.handle; /tmp/1945-live-entities.py; /tmp/1945-entities-evidence/grant-messages.json; 2026-10-19"
+  "source": "Live Claude CLI haiku via Court.handle; /tmp/1945-live-entities.py; /tmp/1945-entities-evidence/grant-messages.json; 2026-10-19",
+  "missing_account": {
+    "replies": [
+      "{\"assigns\":[{\"assignees\":[\"王承恩\"],\"task\":\"宣召徐光启入京，办理起复事宜\"}],\"grants\":[{\"recipient\":\"王承恩\",\"amount_taels\":500000,\"purpose\":\"办理召用徐光启一事，每月拨付\"}]}\n"
+    ],
+    "source": "北极星案例B夜二（B-night2.txt）整句；scene=宣徐光启、卿有何策两块原文"
+  }
 }
