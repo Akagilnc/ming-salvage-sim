@@ -65,6 +65,14 @@ def test_nights_are_persistent_and_translate_only_after_dismissal(
         second = audience.open()
         assert first != second
         assert court.night(second).closed is False
+        histories = {
+            name: court.read_person(name).events for name in ("王承恩", "徐光启")
+        }
+        for history in histories.values():
+            assert {e["decree_id"] for e in history if e["kind"] == "decreed"} == {
+                str(e.id) for e in orders
+            }
+        assert not court.read_person("杨嗣昌").events
         before = physical_state(court)
         await audience.close()
         court = Court(path, replaying([]))
@@ -74,6 +82,7 @@ def test_nights_are_persistent_and_translate_only_after_dismissal(
         assert physical_state(court) == before == physical_state(court, replay=True)
         assert {n.id for n in court.nights()} == {first, second}
         assert court.night(second).turns == []
+        assert {name: court.read_person(name).events for name in histories} == histories
         await audience.close()
 
     asyncio.run(play())

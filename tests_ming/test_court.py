@@ -4,6 +4,7 @@ import asyncio
 import json
 from pathlib import Path
 
+import pytest
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
@@ -47,25 +48,57 @@ def physical_state(court: Court, replay: bool = False) -> list[dict[str, object]
     ]
 
 
+@pytest.mark.parametrize(
+    ("appointee", "changes", "incumbent_status"),
+    [
+        ("洪承畴", [{"office": "巡抚"}], "offstage"),
+        (
+            "洪承畴",
+            [{"office": "巡抚", "office_region": "shaanxi", "status": "active"}],
+            "offstage",
+        ),
+        ("李待问", [{"office_region": "shaanxi"}], "offstage"),
+        ("李待问", [{"office": "巡抚"}, {"office_region": "shaanxi"}], "offstage"),
+        ("李待问", [{"office_region": "shaanxi"}, {"office": "巡抚"}], "offstage"),
+        ("李待问", [{"office": "", "office_region": "shaanxi"}], "active"),
+        ("李待问", [{"office": ""}, {"office_region": "shaanxi"}], "active"),
+        ("洪承畴", [{"location": "beizhili"}], "active"),
+    ],
+    ids=[
+        "office-only",
+        "combined",
+        "region-only",
+        "office-then-region",
+        "region-then-office",
+        "clear-office",
+        "empty-office-then-region",
+        "location-only",
+    ],
+)
 def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
     tmp_path: Path,
+    appointee: str,
+    changes: list[dict[str, str]],
+    incumbent_status: str,
 ) -> None:
     # The sole schema-only example (#1943): landing, not the model's reading of prose.
     reply = json.dumps(
         {
             "decrees": [],
             "facts": [
-                {
-                    "entity_type": "person",
-                    "entity": "洪承畴",
-                    "create": False,
-                    "changes": [
-                        {"field": "office", "value": "巡抚"},
-                        {"field": "office_region", "value": "shaanxi"},
-                        {"field": "status", "value": "active"},
-                    ],
-                    "text": "特旨钦命。",
-                },
+                *[
+                    {
+                        "entity_type": "person",
+                        "entity": appointee,
+                        "create": False,
+                        "changes": [
+                            {"field": field, "value": value}
+                            for field, value in fields.items()
+                        ],
+                        "text": "特旨钦命。",
+                    }
+                    for fields in changes
+                ],
                 {
                     "entity_type": "person",
                     "entity": "徐光启",
@@ -75,6 +108,20 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
                         {"field": "status", "value": "active"},
                     ],
                     "text": "起复入阁。",
+                },
+                {
+                    "entity_type": "person",
+                    "entity": "徐光启",
+                    "create": False,
+                    "changes": [{"field": "office_region", "value": "shaanxi"}],
+                    "text": "任职地区变更。",
+                },
+                {
+                    "entity_type": "person",
+                    "entity": "徐光启",
+                    "create": False,
+                    "changes": [{"field": "office_region", "value": ""}],
+                    "text": "任职地区变更。",
                 },
                 {
                     "entity_type": "affair",
@@ -88,24 +135,32 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
         ensure_ascii=False,
     )
     court = Court.new_game(tmp_path, replaying([reply]))
+    expected = dict(court.read_person(appointee).person)
+    for fields in changes:
+        expected.update(fields)
     scene = json.loads(
         (Path(__file__).parent / "recorded/night_unknown_field.json").read_text()
     )["scene"]
 
     async def play() -> None:
         audience = Audience(court, replaying([scene]))
-        audience.open()
+        night = audience.open()
+        before = physical_state(court)
         await audience.say("任命洪承畴为陕西巡抚，调银三十万两赈灾。")
-        assert court.read_person("洪承畴").person["office"] != "巡抚"
+        assert [e for e in physical_state(court) if e["kind"] != "night"] == [
+            e for e in before if e["kind"] != "night"
+        ]
         audience.dismiss()
         await audience.drain()
+        assert court.night(night).result == "translated"
 
     asyncio.run(play())
     people = {e.key: e for e in court.entities("audit") if e.kind == "person"}
-    assert people["洪承畴"].data["office"] == "巡抚"
-    assert people["洪承畴"].data["location"] == "shaanxi"
-    assert people["练国事"].data["status"] == "offstage"
-    assert people["练国事"].data["office"] == ""
+    assert court.read_person(appointee).person == expected
+    assert people["练国事"].data["status"] == incumbent_status
+    assert people["练国事"].data["office"] == (
+        "" if incumbent_status == "offstage" else "巡抚"
+    )
     assert people["徐光启"].data["status"] == "active"
     assert people["徐光启"].data["location"] == "nanzhili"
     assert people["张瑞图"].data["office"] == "内阁大学士"

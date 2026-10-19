@@ -511,7 +511,7 @@
     }
   ],
   "replies": [
-    "{\"facts\":[],\"decrees\":[{\"text\":\"徐光启，原任礼部右少卿，因事罢职，朕念其素究农政、火器、历算，实心任事，着起复原官，改礼部右侍郎，仍支原俸。所司即日行文南直隶，不得推诿迟延。钦此。\",\"origin\":\"emperor\",\"people\":[\"徐光启\"]}]}"
+    "{\"facts\":[],\"decrees\":[{\"text\":\"徐光启，原任礼部右少卿，因事罢职，朕念其素究农政、火器、历算，实心任事，着起复原官，改礼部右侍郎，仍支原俸。所司即日行文南直隶，不得推诿迟延。钦此。\",\"origin\":\"emperor\",\"people\":[\"徐光启\",\"王承恩\"]}]}"
   ],
-  "translation_source": "/tmp/1947-v10-replay-B/request-0.json"
+  "translation_source": "/Users/akagilnc/.ak-roles/books/Ming_LLM/1947/runs/01a1550c-ec82-734a-93a4-cbde10ef78d3@fixer/evidence/f2-after-request.json"
 }

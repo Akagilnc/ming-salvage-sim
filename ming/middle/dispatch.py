@@ -39,7 +39,11 @@ def dispatch(
             entity = Entity(*pair, "", {}) if fact.create else known(*pair)
             changes = {c.field: c.value for c in fact.changes}
             record(entity, "changed", {"text": fact.text, "changes": changes}, changes)
-            if entity.kind == "person" and "office" in changes and changes["office"]:
+            if (
+                entity.kind == "person"
+                and {"office", "office_region"}.intersection(changes)
+                and entity.data.get("office")
+            ):
                 displace(entity, existing, known, record)
         for decree in result.decrees:
             data = decree.model_dump()

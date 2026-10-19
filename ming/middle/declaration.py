@@ -32,7 +32,11 @@ class Decree(StrictModel):
     text: str = Field(description="皇帝已经认可的圣旨定稿全文，原样保留")
     origin: Literal["emperor", "minister"]
     people: list[str] = Field(
-        description="旨意涉及的人，账本正名；用于把旨意事件记在人身上"
+        description=(
+            "旨意涉及的人：旨意所及对象，以及戏文中实际拟旨、宣读或领旨的经手者；"
+            "均用账本正名，旨意事件记入这些人的履历（经手即知）。"
+            "不按殿上名单扩散；仅旁听、被提到或拟在日后经手，不因此算实际经手者。"
+        )
     )
 
 
