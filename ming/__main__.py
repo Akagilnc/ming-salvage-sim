@@ -1,29 +1,73 @@
-"""入口：python -m ming "皇帝这一句" [--scene 上文] [--db 本局文件] [--identity emperor|audit]
-
-只经中间层：落一句，再按身份把已落事实原样打印。
-"""
+"""Package entry: new game creates a fresh file; read/decree open an existing game."""
 
 import argparse
+import json
 from pathlib import Path
 from typing import get_args
 
-from pydantic import TypeAdapter
-
 from ming.middle.cli_model import ClaudeCliModel
 from ming.middle.court import Court
-from ming.middle.view import FactView, Identity
+from ming.middle.opening import CONTENT
+from ming.middle.view import Identity
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="ming")
-    parser.add_argument("emperor_words")
-    parser.add_argument("--scene", default="")
-    parser.add_argument("--db", type=Path, default=Path("ming_game.sqlite"))
-    parser.add_argument("--identity", choices=get_args(Identity), default="emperor")
-    args = parser.parse_args()
-    court = Court(args.db, ClaudeCliModel())
-    court.handle(args.emperor_words, args.scene)
-    print(TypeAdapter(list[FactView]).dump_json(court.facts(args.identity), indent=2).decode())
+    commands = parser.add_subparsers(dest="command", required=True)
+    new = commands.add_parser(
+        "new", help="Create a new game without changing any existing save"
+    )
+    new.add_argument("--directory", type=Path, default=Path("saves"))
+    new.add_argument("--content", type=Path, default=CONTENT)
+    read = commands.add_parser("read", help="Read the selected existing game")
+    decree = commands.add_parser(
+        "decree", help="Land an order in the selected existing game"
+    )
+    decree.add_argument("emperor_words")
+    decree.add_argument("--scene", default="")
+    for sub in (read, decree):
+        sub.add_argument("--db", type=Path, required=True)
+    read.add_argument(
+        "--replay",
+        action="store_true",
+        help="Rebuild entity states from events for audit",
+    )
+    for sub in (new, read, decree):
+        sub.add_argument("--identity", choices=get_args(Identity), default="emperor")
+    args = parser.parse_args(argv)
+    model = ClaudeCliModel()
+    court = (
+        Court.new_game(args.directory, model, args.content)
+        if args.command == "new"
+        else Court(args.db, model)
+    )
+    try:
+        if args.command == "decree":
+            court.handle(args.emperor_words, args.scene)
+        print(
+            json.dumps(
+                {
+                    "db": str(court.db_path),
+                    "entities": [
+                        e.model_dump(mode="json")
+                        for e in court.entities(
+                            args.identity, getattr(args, "replay", False)
+                        )
+                    ],
+                    "facts": [
+                        f.model_dump(mode="json")
+                        for f in court.facts(
+                            args.identity, getattr(args, "replay", False)
+                        )
+                    ],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+    finally:
+        court.close()
 
 
-main()
+if __name__ == "__main__":
+    main()

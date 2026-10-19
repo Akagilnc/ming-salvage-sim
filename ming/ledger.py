@@ -1,103 +1,87 @@
-"""账本：五类事实，各一个 Aggregate、各一条 @event；只管存取，不知道模型存在。
+"""Entities own their events; ORM query rows and event streams commit together.
 
-一局一个 SQLite 文件，文件就是这一局。每类在本局第一次写入时建一个实例，id 由类名定。
-读出的是聚合从事件重放出的状态（投影）。
+A single row shape holds people, accounts and other entities without duplicating
+persistence rules. Opening data remains intact; this slice records nominal orders.
 """
 
 from pathlib import Path
-from typing import Any, TypeVar
-from uuid import NAMESPACE_URL, UUID, uuid5
+from typing import Any, cast
+from uuid import UUID
 
-from eventsourcing.application import AggregateNotFoundError, Application
+from eventsourcing.application import Application
 from eventsourcing.domain import Aggregate, event
+from eventsourcing.system import NotificationLogReader
+from eventsourcing_sqlalchemy.recorders import SQLAlchemyApplicationRecorder
+from sqlalchemy import JSON, Engine, Uuid, select
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 Item = dict[str, Any]
 
 
-class Facts(Aggregate):
-    @staticmethod
-    def create_id(name: str) -> UUID:
-        return uuid5(NAMESPACE_URL, f"ming/{name}")
-
+class Entity(Aggregate):
     @event("Created")
-    def __init__(self, name: str) -> None:
-        self.name = name
-        self.items: list[Item] = []
-
-
-class NumberLedger(Facts):
-    """数值账。"""
+    def __init__(self, kind: str, key: str, source: str, data: Item) -> None:
+        self.kind, self.key, self.source, self.data = kind, key, source, data
+        self.events: list[Item] = []
 
     @event("Recorded")
-    def record(self, item: str, amount: int, emperor_words: str, detail: dict[str, str]) -> None:
-        self.items.append({"item": item, "amount": amount, "emperor_words": emperor_words, "detail": detail})
+    def record(self, kind: str, emperor_words: str, detail: Item) -> None:
+        self.events.append(
+            {"kind": kind, "emperor_words": emperor_words, "detail": detail}
+        )
+
+    def snapshot(self) -> Item:
+        return {
+            "id": self.id,
+            "kind": self.kind,
+            "key": self.key,
+            "source": self.source,
+            "data": self.data,
+            "events": self.events,
+        }
 
 
-class TextFacts(Facts):
-    """文字事实。"""
-
-    @event("Recorded")
-    def record(self, kind: str, emperor_words: str, detail: dict[str, str]) -> None:
-        self.items.append({"kind": kind, "emperor_words": emperor_words, "detail": detail})
+class Base(DeclarativeBase):
+    pass
 
 
-class Affairs(Facts):
-    """事务。"""
+class EntityRow(Base):
+    __tablename__ = "entities"
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    kind: Mapped[str]
+    key: Mapped[str]
+    source: Mapped[str]
+    data: Mapped[Item] = mapped_column(JSON)
+    events: Mapped[list[Item]] = mapped_column(JSON)
 
-    @event("Recorded")
-    def record(self, assignees: list[str], emperor_words: str, detail: dict[str, str]) -> None:
-        self.items.append({"assignees": assignees, "emperor_words": emperor_words, "detail": detail})
-
-
-class PublicStatements(Facts):
-    """公开说法。本片只定义。"""
-
-    @event("Recorded")
-    def record(self, speaker: str, text: str) -> None:
-        self.items.append({"speaker": speaker, "text": text})
-
-
-class Sightings(Facts):
-    """人物见闻。本片只定义。"""
-
-    @event("Recorded")
-    def record(self, person: str, text: str) -> None:
-        self.items.append({"person": person, "text": text})
-
-
-F = TypeVar("F", bound=Facts)
+    def snapshot(self) -> Item:
+        return {c.name: getattr(self, c.name) for c in self.__table__.columns}
 
 
 class Ledger(Application[UUID]):
     def __init__(self, db_path: Path) -> None:
-        super().__init__(env={"PERSISTENCE_MODULE": "eventsourcing.sqlite", "SQLITE_DBNAME": str(db_path)})
+        super().__init__(
+            env={
+                "PERSISTENCE_MODULE": "eventsourcing_sqlalchemy",
+                "SQLALCHEMY_URL": f"sqlite:///{db_path}",
+            }
+        )
+        self.sql = cast(SQLAlchemyApplicationRecorder, self.recorder)
+        Base.metadata.create_all(cast(Engine, self.sql.datastore.engine))
 
-    def _facts(self, cls: type[F]) -> F:
-        try:
-            return self.repository.get(Facts.create_id(cls.__name__))
-        except AggregateNotFoundError:
-            return cls(cls.__name__)
+    def commit(self, entities: list[Entity]) -> None:
+        with self.sql.transaction() as session:
+            for entity in entities:
+                session.merge(EntityRow(**entity.snapshot()))
+            self.save(*entities)
 
-    def record_number(self, item: str, amount: int, emperor_words: str, detail: dict[str, str]) -> None:
-        numbers = self._facts(NumberLedger)
-        numbers.record(item, amount, emperor_words, detail)
-        self.save(numbers)
+    def entities(self, replay: bool = False) -> list[Item]:
+        if replay:
+            notifications = NotificationLogReader(self.notification_log).read(start=1)
+            ids = dict.fromkeys(cast(UUID, n.originator_id) for n in notifications)
+            return [self.get(entity_id).snapshot() for entity_id in ids]
+        with self.sql.transaction(commit=False) as session:
+            return [r.snapshot() for r in session.scalars(select(EntityRow))]
 
-    def record_text(self, kind: str, emperor_words: str, detail: dict[str, str]) -> None:
-        texts = self._facts(TextFacts)
-        texts.record(kind, emperor_words, detail)
-        self.save(texts)
-
-    def record_affair(self, assignees: list[str], emperor_words: str, detail: dict[str, str]) -> None:
-        affairs = self._facts(Affairs)
-        affairs.record(assignees, emperor_words, detail)
-        self.save(affairs)
-
-    def numbers(self) -> list[Item]:
-        return list(self._facts(NumberLedger).items)
-
-    def texts(self) -> list[Item]:
-        return list(self._facts(TextFacts).items)
-
-    def affairs(self) -> list[Item]:
-        return list(self._facts(Affairs).items)
+    def get(self, entity_id: UUID) -> Entity:
+        return self.repository.get(entity_id)
