@@ -54,7 +54,7 @@ def test_nights_are_persistent_and_translate_only_after_dismissal(
         assert court.pending_nights() == []
         orders = court.approved_decrees()
         assert orders
-        assert {e.id for e in orders} == {e.id for e in court.decrees(first)}
+        assert all(e.data["night_id"] == str(first) for e in orders)
         assert all(
             set(e.data) == {"text", "origin", "people", "night_id"} for e in orders
         )
@@ -95,7 +95,7 @@ def test_call_failures_remain_pending_not_unhandled(
     tmp_path: Path, failure: type[Exception]
 ) -> None:
     case = json.loads(
-        (Path(__file__).parent / "recorded/night_unknown_field.json").read_text()
+        (Path(__file__).parent / "recorded/night_invalid.json").read_text()
     )
 
     def broken(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
@@ -103,7 +103,7 @@ def test_call_failures_remain_pending_not_unhandled(
 
     async def play() -> None:
         court = Court.new_game(tmp_path, FunctionModel(broken))
-        audience = Audience(court, replaying([case["scene"]]))
+        audience = Audience(court, replaying([case["cases"]["unknown_field"]["scene"]]))
         night = audience.open()
         await audience.say(case["emperor_words"])
         audience.dismiss()
@@ -156,50 +156,50 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
     court.close()
 
 
-@pytest.mark.parametrize(
-    "name",
-    [
-        "missing_fields",
-        "unknown_field",
-        "unknown_entity",
-        "affair_field",
-        "decree_field",
-    ],
-)
 def test_failed_night_translation_is_terminal_and_reaches_following_nights(
-    tmp_path: Path, name: str
+    tmp_path: Path,
 ) -> None:
-    case = json.loads(
-        (Path(__file__).parent / f"recorded/night_{name}.json").read_text()
+    recording = json.loads(
+        (Path(__file__).parent / "recorded/night_invalid.json").read_text()
     )
+    cases = recording["cases"]
 
     async def play() -> None:
-        court = Court.new_game(tmp_path, replaying(case["replies"]))
-        audience = Audience(court, replaying([case["scene"]]))
-        night = audience.open()
-        before_world = [e for e in physical_state(court) if e["kind"] != "night"]
-        await audience.say(case["emperor_words"])
-        audience.dismiss()
-        await audience.drain()
-        assert court.night(night).result == "unhandled"
-        assert court.pending_nights() == []
-        assert [
-            e for e in physical_state(court) if e["kind"] != "night"
-        ] == before_world
-        assert court.facts("emperor")[-1].detail == {}
-        second = audience.open()
-        material = court.scene_material()
-        assert set(material) == {"date", "gazette", "unhandled"}
-        assert material["unhandled"] == [{"kind": "unhandled", "night_id": str(night)}]
+        court = Court.new_game(
+            tmp_path,
+            replaying([case["reply"] for case in cases.values() for _ in range(2)]),
+        )
+        audience = Audience(
+            court, replaying([case["scene"] for case in cases.values()])
+        )
+        before_world = physical_state(court)
+        nights = [audience.open()]
+        for name in cases:
+            night = nights[-1]
+            await audience.say(recording["emperor_words"])
+            audience.dismiss()
+            await audience.drain()
+            assert court.night(night).result == "unhandled", name
+            assert court.pending_nights() == [], name
+            assert [
+                e for e in physical_state(court) if e["kind"] != "night"
+            ] == before_world, name
+            assert court.facts("emperor")[-1].detail == {}, name
+            nights.append(audience.open())
+            material = court.scene_material()
+            assert set(material) == {"date", "gazette", "unhandled"}
+            assert material["unhandled"] == [
+                {"kind": "unhandled", "night_id": str(n)} for n in nights[:-1]
+            ], name
         before = physical_state(court)
         facts = [(f.entity_id, f.kind) for f in court.facts("audit")]
         path = court.db_path
         await audience.close()
         court = Court(path, replaying([]))
         audience = Audience(court, replaying([]))
-        assert audience.open() == second
+        assert audience.open() == nights[-1]
         await audience.drain()
-        assert court.night(night).result == "unhandled"
+        assert all(court.night(n).result == "unhandled" for n in nights[:-1])
         assert physical_state(court) == before == physical_state(court, replay=True)
         assert [
             (f.entity_id, f.kind) for f in court.facts("audit", replay=True)

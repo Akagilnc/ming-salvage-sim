@@ -139,8 +139,8 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
     for fields in changes:
         expected.update(fields)
     scene = json.loads(
-        (Path(__file__).parent / "recorded/night_unknown_field.json").read_text()
-    )["scene"]
+        (Path(__file__).parent / "recorded/night_invalid.json").read_text()
+    )["cases"]["unknown_field"]["scene"]
 
     async def play() -> None:
         audience = Audience(court, replaying([scene]))

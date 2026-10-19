@@ -39,40 +39,8 @@
           "part_kind": "tool-call"
         }
       ],
-      "usage": {
-        "input_tokens": 2025,
-        "cache_write_tokens": 0,
-        "cache_read_tokens": 0,
-        "output_tokens": 68,
-        "input_audio_tokens": 0,
-        "cache_audio_read_tokens": 0,
-        "output_audio_tokens": 0,
-        "audio_seconds": 0.0,
-        "details": {
-          "audio_tokens": 0,
-          "reasoning_tokens": 13,
-          "image_tokens": 0
-        },
-        "cost": null,
-        "output_reasoning_tokens": 13
-      },
       "model_name": "deepseek/deepseek-v4.1-flash-1017",
-      "timestamp": "2026-10-19T15:47:57.417717Z",
-      "kind": "response",
-      "provider_name": "openai",
-      "provider_url": "http://127.0.0.1:8646/v1/",
-      "provider_details": {
-        "finish_reason": "tool_calls",
-        "timestamp": "2026-10-19T15:47:57Z"
-      },
-      "provider_response_id": "gen-1792424877-HnvPsmKz490MAgUNG5tK",
-      "finish_reason": "tool_call",
-      "run_id": null,
-      "conversation_id": null,
-      "metadata": null,
-      "workspace_ref": null,
-      "failed_attempts": null,
-      "state": "complete"
+      "kind": "response"
     },
     {
       "parts": [
@@ -92,40 +60,8 @@
           "part_kind": "text"
         }
       ],
-      "usage": {
-        "input_tokens": 2265,
-        "cache_write_tokens": 0,
-        "cache_read_tokens": 2048,
-        "output_tokens": 223,
-        "input_audio_tokens": 0,
-        "cache_audio_read_tokens": 0,
-        "output_audio_tokens": 0,
-        "audio_seconds": 0.0,
-        "details": {
-          "audio_tokens": 0,
-          "reasoning_tokens": 48,
-          "image_tokens": 0
-        },
-        "cost": null,
-        "output_reasoning_tokens": 48
-      },
       "model_name": "deepseek/deepseek-v4.1-flash-1017",
-      "timestamp": "2026-10-19T15:48:00.862101Z",
-      "kind": "response",
-      "provider_name": "openai",
-      "provider_url": "http://127.0.0.1:8646/v1/",
-      "provider_details": {
-        "finish_reason": "stop",
-        "timestamp": "2026-10-19T15:47:58Z"
-      },
-      "provider_response_id": "gen-1792424878-z49m1LEqxVsmxV2hGeuL",
-      "finish_reason": "stop",
-      "run_id": null,
-      "conversation_id": null,
-      "metadata": null,
-      "workspace_ref": null,
-      "failed_attempts": null,
-      "state": "complete"
+      "kind": "response"
     },
     {
       "parts": [
@@ -145,40 +81,8 @@
           "part_kind": "text"
         }
       ],
-      "usage": {
-        "input_tokens": 2232,
-        "cache_write_tokens": 0,
-        "cache_read_tokens": 512,
-        "output_tokens": 735,
-        "input_audio_tokens": 0,
-        "cache_audio_read_tokens": 0,
-        "output_audio_tokens": 0,
-        "audio_seconds": 0.0,
-        "details": {
-          "audio_tokens": 0,
-          "reasoning_tokens": 419,
-          "image_tokens": 0
-        },
-        "cost": null,
-        "output_reasoning_tokens": 419
-      },
       "model_name": "deepseek/deepseek-v4.1-flash-1017",
-      "timestamp": "2026-10-19T15:48:09.966927Z",
-      "kind": "response",
-      "provider_name": "openai",
-      "provider_url": "http://127.0.0.1:8646/v1/",
-      "provider_details": {
-        "finish_reason": "stop",
-        "timestamp": "2026-10-19T15:48:01Z"
-      },
-      "provider_response_id": "gen-1792424881-6cDy6AmAxlyqlxgnrTN9",
-      "finish_reason": "stop",
-      "run_id": null,
-      "conversation_id": null,
-      "metadata": null,
-      "workspace_ref": null,
-      "failed_attempts": null,
-      "state": "complete"
+      "kind": "response"
     },
     {
       "parts": [
@@ -211,40 +115,8 @@
           "part_kind": "tool-call"
         }
       ],
-      "usage": {
-        "input_tokens": 2610,
-        "cache_write_tokens": 0,
-        "cache_read_tokens": 768,
-        "output_tokens": 217,
-        "input_audio_tokens": 0,
-        "cache_audio_read_tokens": 0,
-        "output_audio_tokens": 0,
-        "audio_seconds": 0.0,
-        "details": {
-          "audio_tokens": 0,
-          "reasoning_tokens": 160,
-          "image_tokens": 0
-        },
-        "cost": null,
-        "output_reasoning_tokens": 160
-      },
       "model_name": "deepseek/deepseek-v4.1-flash-1017",
-      "timestamp": "2026-10-19T15:48:12.697977Z",
-      "kind": "response",
-      "provider_name": "openai",
-      "provider_url": "http://127.0.0.1:8646/v1/",
-      "provider_details": {
-        "finish_reason": "tool_calls",
-        "timestamp": "2026-10-19T15:48:11Z"
-      },
-      "provider_response_id": "gen-1792424891-bTapwZRqnbHSK6nTmLyr",
-      "finish_reason": "tool_call",
-      "run_id": null,
-      "conversation_id": null,
-      "metadata": null,
-      "workspace_ref": null,
-      "failed_attempts": null,
-      "state": "complete"
+      "kind": "response"
     },
     {
       "parts": [
@@ -264,40 +136,8 @@
           "part_kind": "text"
         }
       ],
-      "usage": {
-        "input_tokens": 3019,
-        "cache_write_tokens": 0,
-        "cache_read_tokens": 2560,
-        "output_tokens": 1004,
-        "input_audio_tokens": 0,
-        "cache_audio_read_tokens": 0,
-        "output_audio_tokens": 0,
-        "audio_seconds": 0.0,
-        "details": {
-          "audio_tokens": 0,
-          "reasoning_tokens": 388,
-          "image_tokens": 0
-        },
-        "cost": null,
-        "output_reasoning_tokens": 388
-      },
       "model_name": "deepseek/deepseek-v4.1-flash-1017",
-      "timestamp": "2026-10-19T15:48:23.751887Z",
-      "kind": "response",
-      "provider_name": "openai",
-      "provider_url": "http://127.0.0.1:8646/v1/",
-      "provider_details": {
-        "finish_reason": "stop",
-        "timestamp": "2026-10-19T15:48:14Z"
-      },
-      "provider_response_id": "gen-1792424894-oh1IHhhHqMhyEpWXRNgW",
-      "finish_reason": "stop",
-      "run_id": null,
-      "conversation_id": null,
-      "metadata": null,
-      "workspace_ref": null,
-      "failed_attempts": null,
-      "state": "complete"
+      "kind": "response"
     },
     {
       "parts": [
@@ -320,40 +160,8 @@
           "part_kind": "tool-call"
         }
       ],
-      "usage": {
-        "input_tokens": 3219,
-        "cache_write_tokens": 0,
-        "cache_read_tokens": 1280,
-        "output_tokens": 1224,
-        "input_audio_tokens": 0,
-        "cache_audio_read_tokens": 0,
-        "output_audio_tokens": 0,
-        "audio_seconds": 0.0,
-        "details": {
-          "audio_tokens": 0,
-          "reasoning_tokens": 1227,
-          "image_tokens": 0
-        },
-        "cost": null,
-        "output_reasoning_tokens": 1227
-      },
       "model_name": "deepseek/deepseek-v4.1-flash-1017",
-      "timestamp": "2026-10-19T15:48:35.476677Z",
-      "kind": "response",
-      "provider_name": "openai",
-      "provider_url": "http://127.0.0.1:8646/v1/",
-      "provider_details": {
-        "finish_reason": "tool_calls",
-        "timestamp": "2026-10-19T15:48:25Z"
-      },
-      "provider_response_id": "gen-1792424905-viNmxDN7pnWUd9nmZYTj",
-      "finish_reason": "tool_call",
-      "run_id": null,
-      "conversation_id": null,
-      "metadata": null,
-      "workspace_ref": null,
-      "failed_attempts": null,
-      "state": "complete"
+      "kind": "response"
     },
     {
       "parts": [
@@ -373,40 +181,8 @@
           "part_kind": "text"
         }
       ],
-      "usage": {
-        "input_tokens": 4459,
-        "cache_write_tokens": 0,
-        "cache_read_tokens": 4096,
-        "output_tokens": 507,
-        "input_audio_tokens": 0,
-        "cache_audio_read_tokens": 0,
-        "output_audio_tokens": 0,
-        "audio_seconds": 0.0,
-        "details": {
-          "audio_tokens": 0,
-          "reasoning_tokens": 5,
-          "image_tokens": 0
-        },
-        "cost": null,
-        "output_reasoning_tokens": 5
-      },
       "model_name": "deepseek/deepseek-v4.1-flash-1017",
-      "timestamp": "2026-10-19T15:48:43.269583Z",
-      "kind": "response",
-      "provider_name": "openai",
-      "provider_url": "http://127.0.0.1:8646/v1/",
-      "provider_details": {
-        "finish_reason": "stop",
-        "timestamp": "2026-10-19T15:48:37Z"
-      },
-      "provider_response_id": "gen-1792424917-rWkYVh62s2rUSOy5HcsH",
-      "finish_reason": "stop",
-      "run_id": null,
-      "conversation_id": null,
-      "metadata": null,
-      "workspace_ref": null,
-      "failed_attempts": null,
-      "state": "complete"
+      "kind": "response"
     },
     {
       "parts": [
@@ -429,40 +205,8 @@
           "part_kind": "tool-call"
         }
       ],
-      "usage": {
-        "input_tokens": 3726,
-        "cache_write_tokens": 0,
-        "cache_read_tokens": 1792,
-        "output_tokens": 117,
-        "input_audio_tokens": 0,
-        "cache_audio_read_tokens": 0,
-        "output_audio_tokens": 0,
-        "audio_seconds": 0.0,
-        "details": {
-          "audio_tokens": 0,
-          "reasoning_tokens": 110,
-          "image_tokens": 0
-        },
-        "cost": null,
-        "output_reasoning_tokens": 110
-      },
       "model_name": "deepseek/deepseek-v4.1-flash-1017",
-      "timestamp": "2026-10-19T15:48:45.208071Z",
-      "kind": "response",
-      "provider_name": "openai",
-      "provider_url": "http://127.0.0.1:8646/v1/",
-      "provider_details": {
-        "finish_reason": "tool_calls",
-        "timestamp": "2026-10-19T15:48:44Z"
-      },
-      "provider_response_id": "gen-1792424924-yQQI4fGtwrhT6s60bOSV",
-      "finish_reason": "tool_call",
-      "run_id": null,
-      "conversation_id": null,
-      "metadata": null,
-      "workspace_ref": null,
-      "failed_attempts": null,
-      "state": "complete"
+      "kind": "response"
     },
     {
       "parts": [
@@ -474,40 +218,8 @@
           "part_kind": "text"
         }
       ],
-      "usage": {
-        "input_tokens": 3853,
-        "cache_write_tokens": 0,
-        "cache_read_tokens": 3584,
-        "output_tokens": 302,
-        "input_audio_tokens": 0,
-        "cache_audio_read_tokens": 0,
-        "output_audio_tokens": 0,
-        "audio_seconds": 0.0,
-        "details": {
-          "audio_tokens": 0,
-          "reasoning_tokens": 0,
-          "image_tokens": 0
-        },
-        "cost": null,
-        "output_reasoning_tokens": 0
-      },
       "model_name": "deepseek/deepseek-v4.1-flash-1017",
-      "timestamp": "2026-10-19T15:48:50.455151Z",
-      "kind": "response",
-      "provider_name": "openai",
-      "provider_url": "http://127.0.0.1:8646/v1/",
-      "provider_details": {
-        "finish_reason": "stop",
-        "timestamp": "2026-10-19T15:48:46Z"
-      },
-      "provider_response_id": "gen-1792424926-jKg7plfo27xcxkNRk59Q",
-      "finish_reason": "stop",
-      "run_id": null,
-      "conversation_id": null,
-      "metadata": null,
-      "workspace_ref": null,
-      "failed_attempts": null,
-      "state": "complete"
+      "kind": "response"
     }
   ],
   "replies": [

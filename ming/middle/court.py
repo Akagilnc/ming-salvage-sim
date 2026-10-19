@@ -66,8 +66,8 @@ class Court:
     def decrees(self, night_id: UUID) -> list[EntityView]:
         return [
             e
-            for e in self.entities("audit")
-            if e.kind == "decree" and e.data.get("night_id") == str(night_id)
+            for e in self.approved_decrees()
+            if e.data.get("night_id") == str(night_id)
         ]
 
     def approved_decrees(self) -> list[EntityView]:
