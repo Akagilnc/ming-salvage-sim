@@ -4,15 +4,14 @@ from collections.abc import Callable
 from uuid import UUID
 
 from ming.ledger import Entity, Item, Ledger
-from ming.middle.declaration import Declaration, NightDeclaration
+from ming.middle.declaration import NightDeclaration
 from ming.middle.translate import Unhandled
 
 
 def dispatch(
     ledger: Ledger,
-    result: Declaration | Unhandled,
-    emperor_words: str,
-    night_id: UUID | None = None,
+    result: NightDeclaration | Unhandled,
+    night_id: UUID,
 ) -> None:
     existing = {(e["kind"], e["key"]): e for e in ledger.entities()}
     changed: dict[tuple[str, str], Entity] = {}
@@ -30,7 +29,7 @@ def dispatch(
         detail: dict[str, object],
         changes: dict[str, object] | None = None,
     ) -> None:
-        entity.record(kind, emperor_words, {**detail, "date": date}, changes)
+        entity.record(kind, "", {**detail, "date": date}, changes)
         changed[(entity.kind, entity.key)] = entity
         existing[(entity.kind, entity.key)] = entity.snapshot()
 
@@ -42,29 +41,23 @@ def dispatch(
             record(entity, "changed", {"text": fact.text, "changes": changes}, changes)
             if entity.kind == "person" and "office" in changes and changes["office"]:
                 displace(entity, existing, known, record)
-        if isinstance(result, NightDeclaration):
-            for decree in result.decrees:
-                data = decree.model_dump()
-                if night_id:
-                    data["night_id"] = str(night_id)
-                entity = Entity("decree", "", "", data)
-                record(entity, "decreed", data)
-                for person in decree.people:
-                    record(
-                        known("person", person),
-                        "decreed",
-                        {"decree_id": str(entity.id)},
-                    )
-    if night_id:
-        night = ledger.get(night_id)
-        record(
-            night,
-            "unhandled" if isinstance(result, Unhandled) else "translated",
-            {"result": result.model_dump()},
-        )
-    elif isinstance(result, Unhandled):
-        entity = Entity("decree", "", "", {"emperor_words": emperor_words})
-        record(entity, "unhandled", result.model_dump())
+        for decree in result.decrees:
+            data = decree.model_dump()
+            data["night_id"] = str(night_id)
+            entity = Entity("decree", "", "", data)
+            record(entity, "decreed", data)
+            for person in decree.people:
+                record(
+                    known("person", person),
+                    "decreed",
+                    {"decree_id": str(entity.id)},
+                )
+    night = ledger.get(night_id)
+    record(
+        night,
+        "unhandled" if isinstance(result, Unhandled) else "translated",
+        {"result": result.model_dump()},
+    )
     ledger.commit(list(changed.values()))
 
 

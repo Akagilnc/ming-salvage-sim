@@ -98,7 +98,7 @@ class Court:
             self._night_agent,
             json.dumps(night.model_dump(mode="json"), ensure_ascii=False),
         )
-        dispatch(self._ledger, result, "", night_id)
+        dispatch(self._ledger, result, night_id)
 
     def facts(self, identity: Identity, replay: bool = False) -> list[FactView]:
         return project(self._ledger, identity, replay)
