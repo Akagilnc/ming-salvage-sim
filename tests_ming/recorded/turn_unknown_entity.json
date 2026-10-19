@@ -1,7 +1,0 @@
-{
-  "source": "/tmp/1947-unknown_entity.py; input = turn_summon; deliberately faulty real provider responses, unchanged",
-  "replies": [
-    "{\"facts\":[{\"entity_type\":\"person\",\"entity\":\"张三\",\"create\":false,\"changes\":[],\"text\":\"传召南京户部尚书毕自严入京陛见。\"}],\"decrees\":[],\"assents\":[],\"segments\":[],\"protagonist\":null,\"dismiss\":false}",
-    "{\"facts\": [{\"entity_type\": \"person\", \"entity\": \"张三\", \"create\": false, \"changes\": [], \"text\": \"传召南京户部尚书毕自严入京陛见。\"}], \"decrees\": [], \"assents\": [], \"segments\": [], \"protagonist\": null, \"dismiss\": false}"
-  ]
-}

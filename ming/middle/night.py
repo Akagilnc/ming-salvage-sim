@@ -1,6 +1,6 @@
 """Persistent audience records, owned by the same entity/event ledger."""
 
-from typing import Any
+from typing import Literal
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
@@ -12,8 +12,6 @@ class TurnView(BaseModel):
     id: str
     emperor_words: str
     scene: str
-    result: dict[str, Any] | None = None
-    unhandled: bool = False
 
 
 class NightView(BaseModel):
@@ -21,30 +19,22 @@ class NightView(BaseModel):
     closed: bool
     hall: list[str]
     turns: list[TurnView] = Field(default_factory=list[TurnView])
+    result: Literal["translated", "unhandled"] | None = None
 
 
 def read_night(ledger: Ledger, night_id: UUID) -> NightView:
     night = ledger.get(night_id)
-    turns: dict[str, TurnView] = {}
+    turns: list[TurnView] = []
+    result = None
     for item in night.events:
         detail = item["detail"]
         if item["kind"] == "turn":
-            turns[detail["id"]] = TurnView(
-                **detail, emperor_words=item["emperor_words"]
-            )
-        elif item["kind"] in {"translated", "unhandled"}:
-            turn = turns[detail["turn_id"]]
-            turn.unhandled = item["kind"] == "unhandled"
-            turn.result = (
-                {"kind": "unhandled"}
-                if turn.unhandled
-                else {
-                    k: v
-                    for k, v in detail["result"].items()
-                    if k in {"segments", "protagonist", "dismiss"}
-                }
-            )
-    return NightView(id=night.id, **night.data, turns=list(turns.values()))
+            turns.append(TurnView(**detail, emperor_words=item["emperor_words"]))
+        elif item["kind"] == "translated":
+            result = "translated"
+        elif item["kind"] == "unhandled":
+            result = "unhandled"
+    return NightView(id=night.id, **night.data, turns=turns, result=result)
 
 
 def open_night(ledger: Ledger) -> UUID:

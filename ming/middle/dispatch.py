@@ -4,7 +4,7 @@ from collections.abc import Callable
 from uuid import UUID
 
 from ming.ledger import Entity, Item, Ledger
-from ming.middle.declaration import Declaration, TurnDeclaration
+from ming.middle.declaration import Declaration, NightDeclaration
 from ming.middle.translate import Unhandled
 
 
@@ -12,7 +12,7 @@ def dispatch(
     ledger: Ledger,
     result: Declaration | Unhandled,
     emperor_words: str,
-    turn: tuple[UUID, str] | None = None,
+    night_id: UUID | None = None,
 ) -> None:
     existing = {(e["kind"], e["key"]): e for e in ledger.entities()}
     changed: dict[tuple[str, str], Entity] = {}
@@ -42,11 +42,11 @@ def dispatch(
             record(entity, "changed", {"text": fact.text, "changes": changes}, changes)
             if entity.kind == "person" and "office" in changes and changes["office"]:
                 displace(entity, existing, known, record)
-        if isinstance(result, TurnDeclaration):
+        if isinstance(result, NightDeclaration):
             for decree in result.decrees:
-                data = decree.model_dump(exclude={"people"})
-                if turn:
-                    data.update({"night_id": str(turn[0]), "turn_id": turn[1]})
+                data = decree.model_dump()
+                if night_id:
+                    data["night_id"] = str(night_id)
                 entity = Entity("decree", "", "", data)
                 record(entity, "decreed", data)
                 for person in decree.people:
@@ -55,29 +55,13 @@ def dispatch(
                         "decreed",
                         {"decree_id": str(entity.id)},
                     )
-            for assent in result.assents:
-                record(
-                    known("decree", assent.decree_id),
-                    "assent",
-                    assent.model_dump(),
-                    {"stance": assent.stance},
-                )
-    if turn:
-        night = ledger.get(turn[0])
+    if night_id:
+        night = ledger.get(night_id)
         record(
             night,
             "unhandled" if isinstance(result, Unhandled) else "translated",
-            {
-                "turn_id": turn[1],
-                "result": result.model_dump(),
-            },
+            {"result": result.model_dump()},
         )
-        if (
-            isinstance(result, TurnDeclaration)
-            and result.dismiss
-            and not night.data["closed"]
-        ):
-            record(night, "dismissed", {}, {"closed": True})
     elif isinstance(result, Unhandled):
         entity = Entity("decree", "", "", {"emperor_words": emperor_words})
         record(entity, "unhandled", result.model_dump())

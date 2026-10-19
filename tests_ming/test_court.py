@@ -11,11 +11,16 @@ from ming.audience import Audience
 from ming.middle.court import Court
 
 
-def replaying(replies: list[str]) -> FunctionModel:
+def replaying(replies: list[str] | list[ModelResponse]) -> FunctionModel:
     remaining = iter(replies)
 
     def reply(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[TextPart(next(remaining))])
+        result = next(remaining)
+        return (
+            result
+            if isinstance(result, ModelResponse)
+            else ModelResponse(parts=[TextPart(result)])
+        )
 
     return FunctionModel(reply)
 
@@ -27,9 +32,7 @@ def physical_state(court: Court, replay: bool = False) -> list[dict[str, object]
         "location",
         "status",
         "origin",
-        "stance",
         "night_id",
-        "turn_id",
         "closed",
         "hall",
     }
@@ -51,10 +54,6 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
     reply = json.dumps(
         {
             "decrees": [],
-            "assents": [],
-            "segments": [],
-            "protagonist": None,
-            "dismiss": False,
             "facts": [
                 {
                     "entity_type": "person",
@@ -90,13 +89,15 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
     )
     court = Court.new_game(tmp_path, replaying([reply]))
     scene = json.loads(
-        (Path(__file__).parent / "recorded/turn_dismiss.json").read_text()
+        (Path(__file__).parent / "recorded/night_unknown_field.json").read_text()
     )["scene"]
 
     async def play() -> None:
         audience = Audience(court, replaying([scene]))
         audience.open()
         await audience.say("任命洪承畴为陕西巡抚，调银三十万两赈灾。")
+        assert court.read_person("洪承畴").person["office"] != "巡抚"
+        audience.dismiss()
         await audience.drain()
 
     asyncio.run(play())

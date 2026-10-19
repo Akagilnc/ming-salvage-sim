@@ -29,31 +29,12 @@ class Declaration(StrictModel):
 
 
 class Decree(StrictModel):
-    emperor_words: str = Field(
-        description="这道旨的皇帝原话；大臣奏请未答时保留其奏请原文"
-    )
+    text: str = Field(description="皇帝已经认可的圣旨定稿全文，原样保留")
     origin: Literal["emperor", "minister"]
-    stance: Literal["approved", "rejected", "unanswered"]
     people: list[str] = Field(
         description="旨意涉及的人，账本正名；用于把旨意事件记在人身上"
     )
 
 
-class Assent(StrictModel):
-    decree_id: str
-    stance: Literal["approved", "rejected"]
-
-
-class Segment(StrictModel):
-    start: int = Field(ge=0, description="原文字符起点（含）")
-    end: int = Field(ge=0, description="原文字符终点（不含）；只挂标记，不重写原文")
-    speaker: str
-    hearers: list[str] = Field(description="听得见的人；皇帝用 emperor")
-
-
-class TurnDeclaration(Declaration):
+class NightDeclaration(Declaration):
     decrees: list[Decree]
-    assents: list[Assent]
-    segments: list[Segment]
-    protagonist: str | None
-    dismiss: bool

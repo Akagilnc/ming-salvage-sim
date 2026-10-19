@@ -1,4 +1,4 @@
-"""Audience user: free scene text in front, ordered translation behind it."""
+"""Audience user: persistent scene rounds, one background translation after dismissal."""
 
 import asyncio
 import json
@@ -25,6 +25,8 @@ class Audience:
         self.court = court
         self._night_id: UUID | None = None
         self._worker: asyncio.Task[None] | None = None
+        self._turn: asyncio.Task[str] | None = None
+        self._dismiss_requested: UUID | None = None
         self._scene = Agent(
             scene_model,
             deps_type=UUID,
@@ -49,6 +51,11 @@ class Audience:
             """有人入殿或退下时先改名单；不在京师的人加不进殿。"""
             return self.court.set_hall(ctx.deps, add, remove)
 
+        @self._scene.tool
+        async def dismiss(ctx: RunContext[UUID]) -> None:
+            """退朝：本轮回话落账后收夜，不等后台转译。"""
+            self.dismiss(ctx.deps)
+
     @property
     def night_id(self) -> UUID:
         if self._night_id is None:
@@ -60,9 +67,17 @@ class Audience:
         self._start_worker()
         return self.night_id
 
-    def dismiss(self) -> None:
-        self.court.dismiss(self.night_id)
-        self._start_worker()
+    def dismiss(self, night_id: UUID | None = None) -> None:
+        night_id = night_id or self.night_id
+        self._dismiss_requested = night_id
+        if self._turn is None or self._turn.done():
+            self._finish_dismiss(night_id)
+
+    def _finish_dismiss(self, night_id: UUID) -> None:
+        if self._dismiss_requested == night_id:
+            self.court.dismiss(night_id)
+            self._dismiss_requested = None
+            self._start_worker()
 
     def _start_worker(self) -> None:
         if self._worker is None:
@@ -72,9 +87,9 @@ class Audience:
             self._worker = asyncio.create_task(self._translate_pending())
 
     async def _translate_pending(self) -> None:
-        while pending := self.court.pending_turns():
-            for night_id, turn_id in pending:
-                await self.court.translate_turn(night_id, turn_id)
+        while pending := self.court.pending_nights():
+            for night_id in pending:
+                await self.court.translate_night(night_id)
 
     async def say(self, emperor_words: str) -> str:
         self._start_worker()
@@ -82,6 +97,13 @@ class Audience:
         night = self.court.night(night_id)
         if night.closed:
             raise ValueError("night already closed")
+        if self._turn is not None and not self._turn.done():
+            raise ValueError("a scene round is already generating")
+        self._turn = asyncio.create_task(self._generate(night_id, emperor_words))
+        return await asyncio.shield(self._turn)
+
+    async def _generate(self, night_id: UUID, emperor_words: str) -> str:
+        night = self.court.night(night_id)
         history: list[ModelMessage] = []
         for turn in night.turns:
             history.extend(
@@ -90,22 +112,31 @@ class Audience:
                     ModelResponse(parts=[TextPart(turn.scene)]),
                 ]
             )
-        result = await self._scene.run(
-            [
-                json.dumps(self.court.scene_material(night_id), ensure_ascii=False),
-                emperor_words,
-            ],
-            message_history=history,
-            deps=night_id,
-        )
+        try:
+            result = await self._scene.run(
+                [
+                    json.dumps(self.court.scene_material(), ensure_ascii=False),
+                    emperor_words,
+                ],
+                message_history=history,
+                deps=night_id,
+            )
+        except Exception:
+            # Model failure is still raised; only the requested dismissal proceeds.
+            self._finish_dismiss(night_id)
+            raise
         self.court.append_turn(night_id, emperor_words, result.output)
-        self._start_worker()
+        self._finish_dismiss(night_id)
         return result.output
 
     async def drain(self) -> None:
-        self._start_worker()
-        assert self._worker is not None
-        await self._worker
+        try:
+            if self._turn is not None:
+                await asyncio.shield(self._turn)
+        finally:
+            self._start_worker()
+            assert self._worker is not None
+            await asyncio.shield(self._worker)
 
     async def close(self) -> None:
         try:
