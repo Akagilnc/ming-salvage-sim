@@ -43,9 +43,23 @@ def read_person(ledger: Ledger, name: str) -> PersonView:
     for row in rows:
         if row["kind"] == "dossier" and row["key"] == name:
             data.update(row["data"])
+    decrees = {
+        str(e["id"]): {
+            k: v
+            for k, v in e["data"].items()
+            if k in {"emperor_words", "origin", "stance"}
+        }
+        for e in rows
+        if e["kind"] == "decree"
+    }
     events = [
         {
             "kind": e["kind"],
+            **(
+                {"decree": decrees[e["detail"]["decree_id"]]}
+                if e["kind"] == "decreed"
+                else {}
+            ),
             **{
                 k: v
                 for k, v in e["detail"].items()

@@ -152,6 +152,14 @@ def test_each_scene_round_survives_reopening_and_failed_translation(
         assert turn.result is not None
         if not unhandled:
             orders = court.decrees(night)
+            history = court.read_person(
+                "毕自严" if name == "turn_summon" else "徐光启"
+            ).events
+            assert any(
+                e.get("decree", {}).get("origin") == "emperor"
+                and e["decree"]["stance"] == "approved"
+                for e in history
+            )
             petition = next(e for e in orders if e.data["origin"] == "minister")
             assert petition.data["stance"] == "unanswered"
             assert petition.id not in {e.id for e in court.approved_decrees()}
