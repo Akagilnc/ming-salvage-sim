@@ -107,13 +107,14 @@ def test_call_failures_remain_pending_not_unhandled(
         night = audience.open()
         await audience.say(case["emperor_words"])
         audience.dismiss()
-        with pytest.raises(failure):
-            await audience.drain()
+        await audience.drain()
         assert court.night(night).result is None
         assert court.pending_nights() == [night]
         assert not [f for f in court.facts("audit") if f.kind == "unhandled"]
-        with pytest.raises(failure):
-            await audience.close()
+        stopped = court.presentation()["failure"]
+        assert stopped["action"] == "translation"
+        assert stopped["payload"]["type"] == failure.__name__
+        await audience.close()
 
     asyncio.run(play())
 

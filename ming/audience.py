@@ -30,7 +30,7 @@ class Audience:
     def __init__(self, court: Court, scene_model: Model) -> None:
         self.court = court
         self._night_id: UUID | None = None
-        self._worker: asyncio.Task[None] | None = None
+        self._worker: asyncio.Task[bool] | None = None
         self._turn: asyncio.Task[str] | None = None
         self._dismiss_requested: UUID | None = None
         async def read_person(name: str) -> PersonView:
@@ -64,8 +64,8 @@ class Audience:
         return self._night_id
 
     def open(self) -> UUID:
-        self._night_id = self.court.open_night()
         self._start_worker()
+        self._night_id = self.court.open_night()
         return self.night_id
 
     def dismiss(self, night_id: UUID | None = None) -> None:
@@ -81,18 +81,17 @@ class Audience:
             self._start_worker()
 
     def _start_worker(self) -> None:
-        if self._worker is None:
-            self._worker = asyncio.create_task(self._translate_pending())
-        elif self._worker.done():
-            self._worker.result()  # Unexpected failures stay failures; never relabel them.
+        # A recorded failure belongs to its retry line, not to later scene actions.
+        if self._worker is None or (self._worker.done() and self._worker.result()):
             self._worker = asyncio.create_task(self._translate_pending())
 
-    async def _translate_pending(self) -> None:
+    async def _translate_pending(self) -> bool:
         try:
             while pending := self.court.pending_nights():
                 for night_id in pending:
                     await self.court.translate_night(night_id)
         except Exception as error:
+            self.court.log.exception("translation worker")
             self.court.interaction(
                 "translation",
                 "failed",
@@ -101,7 +100,7 @@ class Audience:
                     "log": str(self.court.db_path.with_suffix(".errors.log")),
                 },
             )
-            raise
+            return False
         else:
             attempts = [
                 f.detail
@@ -110,6 +109,7 @@ class Audience:
             ]
             if attempts and attempts[-1]["status"] != "done":
                 self.court.interaction("translation", "done")
+            return True
 
     async def say(
         self, emperor_words: str, on_delta: Callable[[str], None] | None = None
@@ -192,7 +192,7 @@ class Audience:
         return result.output
 
     def retry_translation(self) -> None:
-        """Explicitly acknowledge the failed worker before retrying its missing work."""
+        """Retry missing nights, on request or before month advancement."""
         if self._worker is not None and self._worker.done():
             self._worker = None
         self.court.interaction("translation", "running")
@@ -207,18 +207,8 @@ class Audience:
             assert self._worker is not None
             await asyncio.shield(self._worker)
 
-    async def close(self, acknowledge_failure: bool = False) -> None:
+    async def close(self) -> None:
         try:
             await self.drain()
-        except Exception as error:
-            # Selecting another backend/game acknowledges only the exact worker
-            # failure already logged and persisted. Cleanup failures still escape.
-            if not (
-                acknowledge_failure
-                and self._worker is not None
-                and self._worker.done()
-                and self._worker.exception() is error
-            ):
-                raise
         finally:
             self.court.close()

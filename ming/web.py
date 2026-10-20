@@ -127,12 +127,12 @@ class Web:
         if self.active is not None:
             await asyncio.shield(self.active)
         if self.background:
-            # background_done logs the failure; Audience.close below applies the
-            # same explicit acknowledgement rule for backend/game selection.
+            # Audience persists translation failures; background_done logs any
+            # unexpected scheduling failure. Shutdown still waits for live work.
             await asyncio.gather(*self.background, return_exceptions=True)
         if self.audience is not None:
             try:
-                await self.audience.close(acknowledge_failure=not shutdown)
+                await self.audience.close()
             finally:
                 self.audience = None
                 self.court = None
@@ -244,7 +244,11 @@ class Web:
                 if self.court.world_route(create=False) is not None:
                     await self.month.advance()
             else:
+                if self.court.pending_nights():
+                    self.audience.retry_translation()
                 await self.audience.drain()
+                if self.court.pending_nights():
+                    return  # The failed translation already has its persisted retry line.
                 await self.month.advance()
         except Exception:
             # The HTTP consumer may be gone; retain the real failure and log location.
@@ -288,7 +292,7 @@ class Web:
             if not failure:
                 raise HTTPException(409, "没有待重试的动作")
             if failure["action"] == "translation":
-                # Explicit acknowledgement allows the failed worker to be replaced.
+                # Reuse the same missing-night worker as month advancement.
                 self.audience.retry_translation()
                 self.start_background()
                 return JSONResponse(self.snapshot())
