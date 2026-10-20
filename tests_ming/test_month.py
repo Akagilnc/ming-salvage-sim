@@ -3,11 +3,20 @@
 import asyncio
 import sqlite3
 from pathlib import Path
+from typing import Any, cast
 
 from eventsourcing.persistence import IntegrityError
 
 import pytest
 
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
 from ming.middle.court import Court
@@ -22,8 +31,52 @@ def test_month_without_decrees_advances_and_replays_after_reopening(
     # Real model responses and input provenance: recorded/month_README.md.
     reply = (Path(__file__).parent / "recorded/month_empty.txt").read_text()
     court = Court.new_game(tmp_path, replaying([reply]))
-    month = Month(court, TestModel(custom_output_text="本月诸务平稳，未有新事。"))
+    inputs: list[dict[str, Any]] = []
+
+    def inspect_inputs(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        returned = [
+            part.content
+            for message in messages
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+        if not returned:
+            return ModelResponse(parts=[ToolCallPart("read_records", {})])
+        inputs.append(cast(dict[str, Any], returned[-1]))
+        return ModelResponse(parts=[TextPart("本月诸务平稳，未有新事。")])
+
+    month = Month(court, FunctionModel(inspect_inputs))
     asyncio.run(month.advance())
+    person = next(
+        e
+        for e in inputs[0]["entities"]
+        if e["kind"] == "person" and e["key"] == "杨嗣昌"
+    )["data"]
+    assert {
+        k: person[k]
+        for k in ("loyalty", "ability", "integrity", "courage", "identity", "intrigue")
+    } == {
+        "loyalty": "颇知向背",
+        "ability": "足任大事",
+        "integrity": "操守平常",
+        "courage": "敢任其事",
+        "identity": "党色极深",
+        "intrigue": "善藏行迹",
+    }
+    assert (
+        next(e for e in inputs[0]["entities"] if e["key"] == "国库")["data"]["taels"]
+        == 3200000
+    )
+    assert (
+        next(e for e in inputs[0]["entities"] if e["kind"] == "army")["data"][
+            "firearm_equipment"
+        ]
+        == next(e for e in court.entities("world") if e.kind == "army").data[
+            "firearm_equipment"
+        ]
+    )
+    raw = asyncio.run(court.read_records("world", "person", "杨嗣昌"))
+    assert raw["entities"][0]["data"]["loyalty"] == 75
     calendar = next(e for e in court.entities("audit") if e.kind == "calendar")
     assert (calendar.data["year"], calendar.data["month"]) == (1627, 11)
     assert [f.kind for f in court.facts("emperor")] == ["gazette"]
@@ -99,7 +152,7 @@ def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
         e.key
         for e in court.entities(Officials(people=["王承恩"]))
         if e.kind == "account"
-    } == {"内库"}
+    } == set()
     assert not [e for e in court.entities("public") if e.kind == "account"]
     assert all(
         "nominal" not in f.detail and "actual" not in f.detail
@@ -114,6 +167,32 @@ def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
             == next(e.id for e in court.entities("audit") if e.key == "国库")
             for f in reports
         )
+        for identity in (
+            "public",
+            Officials(people=["韩爌"]),
+            Officials(people=["王承恩"]),
+        ):
+            for kind, key in (
+                (None, None),
+                ("account", None),
+                (None, "国库"),
+                ("account", "国库"),
+            ):
+                records = asyncio.run(court.read_records(identity, kind, key))
+                assert not [e for e in records["entities"] if e["kind"] == "account"]
+                assert [
+                    (f["entity_id"], f["kind"], set(f["detail"]))
+                    for f in records["facts"]
+                    if f["kind"] == "changed"
+                ] == [(str(f.entity_id), f.kind, {"text"}) for f in reports]
+            assert asyncio.run(court.read_records(identity, "person", "国库")) == {
+                "entities": [],
+                "facts": [],
+            }
+            assert asyncio.run(court.read_records(identity, "account", "不存在")) == {
+                "entities": [],
+                "facts": [],
+            }
     transfers = [
         f.detail
         for f in court.facts("audit")

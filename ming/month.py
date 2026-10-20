@@ -11,7 +11,7 @@ from ming.middle.court import Court
 from ming.middle.invoke import invoke, transport_model
 from ming.middle.declaration import Declaration, PendingPetition
 from ming.middle.translate import Unhandled
-from ming.middle.view import Identity, Officials
+from ming.middle.view import Identity, Officials, character_input
 
 
 class Month:
@@ -39,15 +39,17 @@ class Month:
             kind: str | None = None, key: str | None = None
         ) -> dict[str, object]:
             """按类型与正名取本身份材料；空参取全部可读材料，含各衙门呈报的文字。"""
-            return await self.court.read_records(identity, kind, key)
+            return character_input(await self.court.read_records(identity, kind, key))
 
         result = await invoke(
             agent,
             json.dumps(
-                {
-                    "context": context,
-                    "catalogue": [{"kind": e.kind, "key": e.key} for e in rows],
-                },
+                character_input(
+                    {
+                        "context": context,
+                        "catalogue": [{"kind": e.kind, "key": e.key} for e in rows],
+                    }
+                ),
                 ensure_ascii=False,
             ),
             background,

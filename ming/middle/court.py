@@ -248,14 +248,20 @@ class Court:
 
     async def read_records(
         self, identity: Identity, kind: str | None = None, key: str | None = None
-    ) -> dict[str, object]:
+    ) -> Item:
         """按类型与正名取本身份材料；空参取全部可读材料，含各衙门呈报的文字。"""
         rows = [
             e
             for e in self.entities(identity)
             if (kind is None or e.kind == kind) and (key is None or e.key == key)
         ]
-        ids = {e.id for e in rows}
+        # Target resolution is not permission: a hidden physical row can still
+        # carry reports this identity is allowed to read.
+        ids = {
+            e.id
+            for e in self.entities("audit")
+            if (kind is None or e.kind == kind) and (key is None or e.key == key)
+        }
         return {
             "entities": [e.model_dump(mode="json") for e in rows],
             "facts": [

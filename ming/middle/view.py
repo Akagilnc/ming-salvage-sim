@@ -1,6 +1,6 @@
 """Identity-specific structured read boundary; no summaries of model prose."""
 
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -15,6 +15,38 @@ class Officials(BaseModel):
 
 
 Identity = PublicIdentity | Officials
+
+# ADR 0143: retain the canonical score bands in the independent rewrite.
+CHARACTER_BANDS = {
+    "loyalty": ("离心已显", "心志浮动", "大体守中", "颇知向背", "可托腹心"),
+    "ability": ("才具浅薄", "才具有限", "堪当常务", "才具出众", "足任大事"),
+    "integrity": ("操守多亏", "操守未稳", "操守平常", "操守清正", "清介可称"),
+    "courage": ("临事易退", "多有顾忌", "进退审慎", "敢任其事", "临难不屈"),
+    "identity": ("几乎不染党色", "党色较淡", "党色不显", "党色较深", "党色极深"),
+    "intrigue": ("毫无城府", "心思疏浅", "善藏行迹", "机权深沉", "鬼蜮难测"),
+}
+
+
+def character_input(value: Any) -> Any:
+    """Project structured axes and declaration endpoints, never model prose.
+
+    Used only by mixed/player-facing calls; the ledger and pure-machine reads
+    retain their numerical inputs, including world facts such as money and arms.
+    """
+    if isinstance(value, list):
+        return [character_input(item) for item in cast(list[Any], value)]
+    if not isinstance(value, dict):
+        return value
+    result = {key: character_input(item) for key, item in cast(Item, value).items()}
+    fields = [(key, key) for key in CHARACTER_BANDS if key in result]
+    if result.get("field") in CHARACTER_BANDS and "value" in result:
+        fields.append(("value", result["field"]))
+    for key, axis in fields:
+        if type(result[key]) in (int, float):
+            result[key] = CHARACTER_BANDS[axis][
+                sum(int(result[key]) >= cutoff for cutoff in (20, 40, 60, 80))
+            ]
+    return result
 
 
 class EntityView(BaseModel):
@@ -35,13 +67,24 @@ class FactView(BaseModel):
 def owned_accounts(rows: list[Item], identity: Identity) -> set[UUID]:
     if not isinstance(identity, Officials):
         return set()
+    # Resolve the current formal title through the imported office catalogue,
+    # never a person's stale office_type or an umbrella-office exception.
     departments = {
-        {"司礼监": "内廷"}.get(
-            r["data"].get("office_type"), r["data"].get("office_type")
+        next(
+            (
+                rule["data"]["type"]
+                for rule in rows
+                if rule["kind"] == "office_type"
+                and any(stem in r["data"]["office"] for stem in rule["data"]["stems"])
+            ),
+            None,
         )
         for r in rows
-        if r["kind"] == "person" and r["key"] in identity.people
-    }
+        if r["kind"] == "person"
+        and r["key"] in identity.people
+        and r["data"].get("office")
+        and r["data"].get("status", "active") == "active"
+    } - {None, "内阁", "司礼监"}
     return {
         r["id"]
         for r in rows
@@ -83,7 +126,7 @@ def project(ledger: Ledger, identity: Identity, replay: bool = False) -> list[Fa
                     fact.kind == "gazette"
                     or fact.detail.get("audience") == "public"
                     or (
-                        identity == "public"
+                        (identity == "public" or isinstance(identity, Officials))
                         and fact.detail.get("audience") == "official"
                     )
                 ):

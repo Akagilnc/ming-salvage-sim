@@ -31,6 +31,7 @@ def test_new_game_imports_complete_world_records_and_separates_identities(
         ("opening", "accounts"),
         ("opening", "calendar"),
         ("multiple_offices", "offices"),
+        ("offices", "priority"),
     ]:
         source = f"{filename}.json/{collection}"
         expected = json.loads((CONTENT / f"{filename}.json").read_text())[collection]
