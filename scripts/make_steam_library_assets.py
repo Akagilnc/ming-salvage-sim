@@ -95,8 +95,7 @@ def make_logo(lang: str, size: tuple[int, int] = (1280, 720)) -> Image.Image:
         y += th + gap
 
     glow = logo.filter(ImageFilter.GaussianBlur(radius=2))
-    out = Image.alpha_composite(glow, logo)
-    return out
+    return Image.alpha_composite(glow, logo)
 
 
 def paste_logo(base: Image.Image, logo: Image.Image, box: tuple[int, int, int, int]) -> Image.Image:

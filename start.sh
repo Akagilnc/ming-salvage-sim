@@ -19,7 +19,7 @@ if [[ -f .env ]]; then
   set +a
 fi
 if [[ -x .venv/bin/python ]]; then PY=.venv/bin/python; else PY=python3; fi
-"$PY" -m pip install -r requirements-ming.txt
+"$PY" -m pip install -r requirements.txt
 if [[ "$DO_BUILD" -eq 1 ]]; then
   if [[ ! -d web/node_modules ]]; then (cd web && npm ci); fi
   (cd web && npm run build)
