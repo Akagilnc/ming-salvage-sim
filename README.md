@@ -16,55 +16,61 @@
 
 这里没有开局送神兵，没有天降忠臣，没有科技树一键升级，也没有一键中兴。你能依靠的只有奏报、大臣嘴里的半真半假、账本上的银子、欠饷的边军、动乱的地方，以及自己的判断：怎么借力打力，怎么拆东墙补西墙，怎么把一句话说成一道能落地的旨。
 
----
-
 ## 本分支是什么
 
 本仓库基于 [wangwei-ying3/ming-salvage-sim](https://github.com/wangwei-ying3/ming-salvage-sim) 继续开发，方向是一个更重视后果落地与状态可信的晚明皇帝模拟器。
 
-我们希望保留对话式政略模拟最有意思的部分：大臣奏对、官场推诿、地方回奏、月末邸报、人心变动和历史压力。同时，也希望关键结果能真正进入盘面，而不是只停在一段写得很好看的叙事里。
-
 > **AI 负责奏对、推演和人心；引擎负责账本、状态和后果。**
 
-故事可以由 AI 来讲，局势可以由 AI 来判断，大臣可以推诿、敷衍、站队、误导；但关键结果需要留下可追踪的痕迹。
+当前仍是实验分支。重写后的游戏只有 `ming/` 一套：前端 → 召对／过月使用者 → 中间层 → 实体与事件账本。旧实现与迁移过程查 git 历史；历史文档不代表当前已迁入的玩法。
 
-砍了的人，要真的从人物状态里消失。  
-欠的饷，要真的留在军队账上。  
-拨出去的银子，要真的进出账本。  
-玩家已经干预过的历史事件，不能只靠“史实惯性”强行发生。  
-一项国策跑完，不能只写一句“卓有成效”，却不给盘面留下任何变化。
+## 安装与启动
 
-这就是本分支所谓的“微硬核”。
-
-它不是要把游戏变成电子表格。它只是要求：**朝廷可以骗你，但系统不能骗你。**
-
----
-
-## 新包入口（#1943 / #1947 / #1948 / #1949）
-
-Python 3.14。网页与桌面包走同一个包内服务；开发态先构建前端：
+需要 Python 3.14、Node.js 20+，以及 OpenAI 兼容 API 或本机已安装且已登录的 Claude CLI。
 
 ```bash
-python -m pip install -r requirements-ming.txt
+git clone https://github.com/Akagilnc/ming-salvage-sim.git Ming_LLM
+cd Ming_LLM
+python3.14 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+./start.sh
+```
+
+`start.sh` 安装 Python 依赖、构建前端、启动本地浏览器入口。可用 `--port 8010` 指定端口，已有前端构建时可加 `--no-build`。手动等价入口：
+
+```bash
 (cd web && npm ci && npm run build)
 python -m ming.desktop
 # 原生桌面窗口：python -m ming.desktop --desktop
+# 开发数据目录：python -m ming.desktop --directory /tmp/ming-dev
 ```
 
-也可用 `./start.sh`。启动先到主菜单：新开一局、继续（最新存档）、读取存档、设置。存档与模型设置默认在 `~/.ming/saves/`，可用 `--directory` 指定开发目录；每次落账自动保存，没有存档位或另存。API 地址、key、模型或 Claude CLI 后端在设置中填写。CLI 使用本机已安装且已登录的 `claude`，四工具经原生 MCP、戏文经 `stream-json` 交付，不修改宿主配置或替用户登录；进程自然结束，不强杀。关窗正常退出会先等在飞工作，浏览器断线不打断已接受的说话动作。
+启动先到主菜单：新开一局、继续（最新存档）、读取存档、设置。每局一个 SQLite 文件，每次落账自动保存，没有存档位或另存。默认存档与模型设置在 `~/.ming/saves/`。
 
-命令行开发入口仍可用于开局导入、召对夜、过月与批红：
+API 地址、key、模型或 Claude CLI 后端在主菜单设置中填写。网页／桌面设置不从 `.env` 读取；`.env.example` 仅说明命令行开发入口的可选环境变量。CLI 使用本机的 `claude`，四工具经原生 MCP、戏文经 `stream-json` 交付，不修改宿主配置或替用户登录；进程自然结束，不强杀。关窗正常退出会先等在飞工作，浏览器断线不打断已接受的说话动作。
+
+## 怎么玩
+
+从御案进入召对，直接说话、宣人、追问或下旨。皇帝吩咐的事由领旨人拟成正式圣旨念出，认可才成旨，没表态即默拒。
+
+退朝后后台转译整夜，已经发生的实况落账，旨意留待过月处理。过月有待批项时在奏折匣中批红；结果由邸报呈上。错误提示附本局 `.errors.log` 路径，待重试的动作从原处继续。
+
+重开未收夜的存档会续到最后一轮；已收夜缺转译结果的夜补转，已落不重落。
+
+## 命令行开发入口
+
+开局导入与对账不调用模型：
 
 ```bash
-python -m pip install -r requirements-ming.txt
 python -m ming new --directory saves
 python -m ming read --db saves/<新局文件>.sqlite --identity audit
 python -m ming read --db saves/<新局文件>.sqlite --identity audit --replay
 ```
 
-`new` 输出新局路径；继续操作使用该路径。旧 `decree` 开发入口随交办／拨款声明一并退役；下旨走下方的 `audience`，旨意只记录皇帝认可的圣旨定稿全文、来历与涉及的人，后果由过月处理。默认读取皇帝材料，`audit` 用于内部对账，`--replay` 从事件重放读取。
+`new` 输出新局路径；继续操作使用该路径。默认读取皇帝材料，`audit` 用于内部对账，`--replay` 从事件重放读取。
 
-召对使用支持原生文本和工具的 Pydantic AI 模型；OpenAI 兼容端点用自己的 `OPENAI_BASE_URL`、`OPENAI_API_KEY` 环境变量；仅支持 Chat Completions 的端点选原生 `openai-chat:` 前缀（`openai:` 默认走 Responses）。场景也可选 `--scene-model claude-cli`（原生 MCP 工具与流），不加文本工具协议。转译默认沿用已登录的 `claude -p`，可用逐次参数换成 API 模型，不改宿主配置：
+召对使用支持原生文本和工具的 Pydantic AI 模型；OpenAI 兼容端点用自己的 `OPENAI_BASE_URL`、`OPENAI_API_KEY` 环境变量。仅支持 Chat Completions 的端点选 `openai-chat:` 前缀（`openai:` 默认走 Responses）。也可选 `--scene-model claude-cli`。转译默认沿用已登录的 `claude -p`，可用逐次参数换成 API 模型，不改宿主配置：
 
 ```bash
 python -m ming audience --db saves/<新局文件>.sqlite \
@@ -83,9 +89,11 @@ stdin/stdout 为逐行 JSON。进入时输出夜 id；输入示例：
 {"action":"choose","petition":"<奏疏 id>","option":0}
 ```
 
-`say` 返回原样带标记的戏文及夜状态。皇帝吩咐的事由领旨人拟成正式圣旨念出，认可才成旨，没表态即默拒。`dismiss` 请求收夜；若仍有回话在生成，先完成并落账最后一轮，再记收夜。打字退朝由场景模型调退朝工具走同一路径。收夜后后台转译整夜一次，退朝不等；`open` 续未收夜或开新夜。`drain` 等在飞回话与所有已收夜的转译（给过月／正常退出使用）；EOF 也先排空再关档，不自动收夜。未收夜重开续到最后一轮；已收夜缺结果的夜补转，已落不重落。夜的 `result` 为 `null`、`translated` 或 `unhandled`，状态只读账本。`Court.pending_nights()` 给过月检查缺结果的已收夜，`Court.approved_decrees()` 读取已成旨；「接不住」不含字段诊断，调用／传输／代码异常仍抛出。
+`say` 返回原样带标记的戏文及夜状态。`dismiss` 请求收夜；若仍有回话在生成，先完成并落账最后一轮，再记收夜。打字退朝由场景模型调退朝工具走同一路径。收夜后后台转译整夜一次，退朝不等；`open` 续未收夜或开新夜。`drain` 等在飞回话与所有已收夜的转译；EOF 也先排空再关档，不自动收夜。
 
-`month` 立即返回，`month_running` 表示后台仍在执行；`state` 可查看日期、奏折匣 `petitions` 与原始 `month_error`。选项下标从 0 起；夜里出现的奏疏也可用 `choose` 批。`drain`／EOF 等候后台工作。调用方在收夜转译成旨后后台调 `Month.prepare(id, background=True)`；调用方不是召对使用者。Python 入口为 `Month.advance()`、`Month.choose(id, option, background=False)`，共用同一路预推；夜间批红由调用方传 `background=True`，失败留日志、由过月补跑，前台过月的失败仍上抛。重开后再次过月，只补账本里缺的产物；没有另立进度文件。
+夜的 `result` 为 `null`、`translated` 或 `unhandled`，状态只读账本。「接不住」不含字段诊断，调用／传输／代码异常仍抛出。
+
+`month` 立即返回，`month_running` 表示后台仍在执行；`state` 可查看日期、奏折匣 `petitions` 与原始 `month_error`。选项下标从 0 起；夜里出现的奏疏也可用 `choose` 批。`drain`／EOF 等候后台工作。重开后再次过月，只补账本里缺的产物；没有另立进度文件。
 
 单次开发调用也可用：
 
@@ -99,310 +107,63 @@ python -m ming choose --db saves/<新局文件>.sqlite \
 
 错误与模型原文写在存档旁的同名 `.errors.log`（Python 标准日志）。API 的 5xx／超时按 #1846 共三次、间隔五秒，429 不自动重试；夜里预推只试一次，失败由过月补跑。声明校验仍由 Pydantic AI 单层回喂；CLI 的不可分类错误保留原文，不猜 HTTP 状态。
 
-## 我们努力的方向
-
-| 方向 | 我们希望做到什么 |
-| --- | --- |
-| 状态可信 | 邸报、奏对和结算结果尽量落到人物、军队、财政、地区和事项状态里，让下一回合能读到。 |
-| 后果落库 | 玩家做过的关键决策，不只在文本里出现，也要尽量进入可追踪的结构化记录。 |
-| 账本有牙 | 银子、欠饷、起运、火耗、逋赋、宗禄这些数字不只是氛围，而是会限制行动、制造代价。 |
-| 历史有门 | 历史事件不只看年月，也要看盘面前提。玩家已经改动过的人和局势，应当影响事件是否发生。 |
-| 错误要响 | 畸形数据、未知字段、落库失败、半落库状态不能悄悄吞掉。系统没办成的事，应当留下告警。 |
-| 可复盘 | 每月发生了什么、为什么变成这样、哪些决策真正生效，应该能被玩家和开发者追溯。 |
-
-我们追求的不是“算得越多越好”，而是让每一层计算都服务于一个目标：让玩家相信，自己面对的是一台会拖延、会变形、会反噬的国家机器，而不是一段每月重新开始的故事。
-
----
-
-## 为什么值得试
-
-| 看点 | 说明 |
-| --- | --- |
-| 圣旨不是按钮 | 你不是点一个改革按钮，而是通过召见、试探、拟旨和结算，把一句话变成一道可能执行、可能走样、可能被抵消的命令。 |
-| 大臣不是百科 | 不同职位、派系、利益和性格的人，会给你不同角度的信息。有人会说真话，有人只说半截，有人会把事情说成对自己有利的样子。 |
-| 局势会留下痕迹 | 财政、军队、人物、地方、国策、密令都尽量落成结构化状态，后续回合可以继续读取，而不是每月重新编故事。 |
-| 代价越来越具体 | 补饷不是一句“拨银”，清丈不是一句“严查”，赈灾不是一句“体恤”。银子从哪来、谁少拿、谁多怨，都会逐步落到盘面上。 |
-| 历史不是剧本锁死 | 皇太极、辽东、流寇、党争、边镇、宗室、士绅都会动，但玩家可以干预。干预之后，系统应该承认这件事已经发生。 |
-| 适合魔改 | 人物、事件、地区、军队、外部势力和提示词都在内容层，适合继续扩写。 |
-
----
-
-## 旧引擎状态（迁移资料，不代表新包能力）
-
-本分支还不是正式发行版。它更接近一个正在推进中的实验分支。
-
-已经比较成型的部分：
-
-- 月度回合制：月初奏报、召见大臣、拟旨、颁诏、月末结算。
-- 大臣召见：内阁、六部、宦官、将领、地方官、密探等角色参与问政；召对不再是一问一答，而是汇入同一场「召对夜」——连续对话流 + 按时间序的故事账本，可连场传见多人、侍立者插话、断线续夜、整轮撤回。
-- 诏令流程：对话形成草案，玩家核定后再进入月末结算；一场召对里可同时酝酿多道旨意，各自独立成稿。
-- 票拟批红：急务可交廷议请大臣站台；无人肯担名时会保留待议，皇帝也可从自由下旨入口明确御笔强推原案。
-- 圣旨承诺账本：每月补饷、连续数月执行、数月后复核等旨意可作为可追踪事项留在盘面。
-- 密令暗查：可以绕开朝堂派人查办，办结结果可作为后续定罪或处置依据。
-- 人物状态：在朝、罢黜、下狱、流放、致仕、身故等状态逐步结构化。
-- 事项推进：国策、危机、改革和事件会按月推进。
-- 本地存档：状态保存在本机数据库，可多周目重开。
-- 网页界面：提供地图、朝班、奏报、邸报、密令、拟诏等入口。
-
-正在重点推进的部分：
-
-- **状态可信链路**：修复“邸报说发生了，DB 没发生”的漂移问题。
-- **历史事件前提门**：v0.12.4.0 已把人物核心事件、战略/外敌战事、事件结局、时间窗终态和战略/外敌分类接到真实盘面；事件可声明最晚触发时点或显式开放窗，过期会记录 `expired` 终态，之后不会晚弹或重入。后续继续补链路覆盖和实玩调参。
-- **结算事务边界**：避免中途失败后留下半落库状态。（v0.8.0.0 已落地第一阶段：结算后半段单一事务、崩溃断点续跑、推演产物畸形响亮中止 + 诊断错误包）
-- **省级财政基座**：明控且已 seed 的省会在月末推进账本，把三饷、火耗、起运、欠饷、宗禄等做成可检验状态；省级起运、盐税、商税、太仓亏空、边饷 hub 与中央军饷经 substrate hub 接入国库和分源欠饷。
-- **fail-loud**：畸形数据、未知字段、落库失败不能静默吞掉。（v0.8.0.0 起结算推演产物坏掉已改响亮中止；落库白名单静默裁剪的收口仍在进行）
-
-还在实验或待整理的部分：
-
-- 长线平衡性。
-- 更完整的结局线。
-- 更细的派系权力联动。
-- 更稳定的历史事件硬门。
-- 新手引导和前端体验。
-- 财政基座 cutover 后的长线平衡调参、盐商玩法与玩家拨饷偏移。
-
----
-
-## 旧引擎快速开始（仅历史资料）
-
-本轮新包使用上方「新包入口」，不再用以下旧端点或旧前端能力。
-
-环境要求：
-
-- Python 3.11+
-- Node.js 20+
-- 一个可用于 AI 对话的 API Key，或已登录的本机 `agy` / `codex` / `claude` / `cursor` / `kimi` / `grok` / `pi` CLI runner
+## 开发检查
 
 ```bash
-git clone https://github.com/Akagilnc/ming-salvage-sim.git Ming_LLM
-cd Ming_LLM
-
-python3 -m venv .venv
-source .venv/bin/activate
-python3 -m pip install -r requirements.txt
-
-cd web
-npm install
-npm run build
-cd ..
-
-cp .env.example .env
+ruff check --ignore-noqa .
+lint-imports
+pyright
+# 聚焦示例；全量执行时点见 CLAUDE.md「测试分级」
+python -m pytest tests/test_web.py -q
+(cd web && npm ci && npm run build)
 ```
 
-如果走 API 通道，编辑 `.env` 填入 API Key，并按你自己的服务商填写端点和模型（本项目不绑定特定服务商，任何 OpenAI 兼容服务都可用）：
+CI 命令以 [ci.yml](.github/workflows/ci.yml) 为准。P8、禁正则、禁裸 noqa 和 Python 单文件行数检查覆盖全仓，pyright strict 与分层检查限定游戏包。
 
-```bash
-OPENAI_API_KEY=your_api_key_here
-# 端点与模型按你的服务商自填,例如:
-#   OpenAI 官方   https://api.openai.com/v1   gpt-4o-mini
-#   DeepSeek 官方 https://api.deepseek.com    deepseek-chat
-OPENAI_BASE_URL=https://api.openai.com/v1
-OPENAI_MODEL=gpt-4o-mini
-```
-
-如果走 CLI 通道，可以先启动游戏，再在菜单的 LLM 设置里选择本地 `agy` / `codex` / `claude` / `cursor` / `kimi` / `grok` / `pi` runner；这种模式不需要 `OPENAI_API_KEY`。
-
-启动网页游戏：
-
-```bash
-set -a
-source .env
-set +a
-python3 -m uvicorn web_app:app --host 127.0.0.1 --port 8010
-```
-
-打开：
-
-```text
-http://127.0.0.1:8010
-```
-
----
-
-## 怎么玩
-
-每一回合是一个月。
-
-月初，你会看到上月发生了什么：收了多少税，花了多少饷，哪里闹灾，谁在办差，哪道旨意被执行成了什么样。
-
-然后你开始召见大臣。
-
-你可以直接问，也可以试探；可以让大臣拟旨，也可以要求查账、查军、查地方、查宫里。不同职位、不同人物、不同派系能告诉你的东西不一样，也会有不同的私心。
-
-![召见大臣](docs/screenshots/chat.png)
-
-局势是你判断国家还能撑多久的核心依据。
-
-国库见底，说明再漂亮的改革也可能没钱执行。  
-皇威太低，说明圣旨出了紫禁城就会被打折。  
-某省动乱升高，说明地方已经不只是穷，而是在准备掀桌。  
-边军欠饷不只是一个数字，它可能变成士气下滑、哗变、失守、投敌。  
-士绅阻力也不只是态度，它会影响清丈、征收、赈济和地方官执行。
-
-等你整理好本月诏令，颁诏，时间推进一个月。系统会结算圣旨执行、财政流动、朝局变化、地区变化、军队变化和外部势力动向。
-
-你的判断会让大明续命，也可能让局势更快崩坏。
-
-![游戏菜单与存档](docs/screenshots/menu.png)
-
----
-
-## 设计原则
-
-### 1. 后果要落地
-
-玩家做出的关键决策，应尽量落成结构化状态。不是“邸报写了就算发生”，而是人物、军队、地区、财政、国策都要能在下一回合读到。
-
-### 2. AI 判人心，引擎守账本
-
-AI 适合判断官场反应、地方推诿、政策代价、突发事件和叙事回声。但银子、欠饷、人物状态、军队人数、地区动乱这些关键事实，需要有更硬的账本和边界。
-
-### 3. 不防爽，不防作弊
-
-这个分支不追求强行阻止玩家爽，也不强行把历史锁死。如果你真的拿出几千万两补饷，那就让系统承认你拿出了几千万两。真正重要的是：这笔钱从哪里来、去了哪里、引发了什么后果。
-
-### 4. 历史不是单线程剧本
-
-历史事件可以作为压力和锚点，但不能无视玩家已经做出的结构化干预。如果玩家提前安抚、调离、收买、清算或改造了相关人物和势力，事件触发就应该读到这些变化。
-
-### 5. 错误要响
-
-未知字段、畸形 delta、落库失败、事务半完成、事件结果未落地，都不应该静默吞掉。如果系统没能把一件事落进盘面，就应该让开发者知道。
-
----
-
-## 旧引擎模块概览
-
-| 模块 | 功能 | 说明 |
-| --- | --- | --- |
-| 核心玩法 | 月度回合制 | 一回合一个月，月初读奏报、召见、下旨，月末结算时局。 |
-| 大臣召见 | 多角色问政 / 召对夜 | 内阁、六部、宦官、将领、地方官、密探等按身份与立场回应；一场召对可连场传见、侍立插话、断线续夜、整轮撤回。 |
-| 诏令流程 | 草案 → 核定 → 颁诏 | 对话中形成草案，一场召对可同时酝酿多道旨意，玩家可编辑、删除、批准，再进入结算。 |
-| 票拟批红 | 廷议站台 / 御笔强推 | 大臣肯站台的廷议可进入颁布；无人担名时原案保留待议，皇帝可自由下旨强推同一案卷。 |
-| 圣旨承诺 | 持续 / 时限 / 未来复核 | “每月补饷直到补齐”“半年为限”“三月后复试”等旨意会进入承诺账本，按月兑现、到期待裁或收尾。 |
-| 执行偏差 | 圣旨不等于结果 | 钱不够、皇威低、派系作梗、地方阳奉阴违都会影响执行。 |
-| 密令暗查 | 绕开朝堂查办 | 密令按月推进，办结后可作为后续处置依据。 |
-| 月末邸报 | AI 推演回声 | 每回合生成一份月末报告，叙述局势变化和旨意回响。 |
-| 事项推进 | 国策 / 危机 / 事件 | 改革和危机以可追踪事项存在，按惯性和玩家行动推进。 |
-| 人物系统 | 状态与登场 | 人物可在朝、罢黜、下狱、流放、致仕、身故；部分人物按史实时间登场。 |
-| 经济系统 | 国库 / 内库 / 地方税收 | 现有模型已能结算收支；省级财政基座经 substrate hub 接入国库与军饷分源欠账。 |
-| 世界盘面 | 地区 / 军队 / 外部势力 | 两京十三省、边军、后金/清、流寇等都会参与局势变化。 |
-| 平台 | Web 本地运行 | 本地网页界面，状态存入本机数据库。 |
-
----
-
-## 路线图
-
-### 近期优先
-
-- 状态可信链路内审：冻结 fail-loud、事务边界、状态契约。
-- 修复静默吞异常和畸形数据的问题。
-- 合并人物相关 delta，减少“人事变更 / 人物状态变化”这种近义混淆。
-- 继续补齐历史事件链条与实玩验证，扩大结构化前提门覆盖。
-- ~~修复 settlement 半落库问题。~~（v0.8.0.0 已修：月末结算后半段收进单一事务，全有或全无）
-
-### 中期目标
-
-- 调整省级财政基座 cutover 后的长线平衡、盐商旁路玩法与玩家拨饷偏移。
-- 强化派系系统：人物退场、官职权力、派系 leverage 要联动。
-- 增加更清晰的 driver / 测试入口，让长线跑局更容易复盘。
-- 改善新手引导，让第一次当皇帝的人少一点“朕是谁，朕在哪，朕的钱呢”。
-
-### 长期目标
-
-- 更完整的结局线：中兴、南迁、议和、迁都、辽东崩盘、流寇入京、权臣架空等。
-- 更强的地方财政与军事循环。
-- 更稳定的多周目统计和关键历史节点回顾。
-- 更丰富的历史人物、地方官、派系网络和事件链。
-
----
-
-## 旧引擎配置（新包在主菜单设置）
-
-复制 `.env.example` 为 `.env` 后填写配置。
-
-| 变量 | 必填 | 默认值 | 说明 |
-| --- | --- | --- | --- |
-| `OPENAI_API_KEY` | API 通道必填 | 无 | API Key；CLI 通道可不填 |
-| `OPENAI_BASE_URL` | 否 | `https://api.openai.com/v1` | 任意 OpenAI 兼容服务的端点，按你的服务商填 |
-| `OPENAI_MODEL` | 否 | `gpt-4o-mini` | 模型名，按你的服务商自选（本项目不绑定特定模型）|
-| `MING_SIM_DB` | 否 | `data/ming_sim.db` | 存档数据库路径 |
-| `MING_SIM_SEED` | 否 | `7` | 随机种子 |
-
-> **LLM 执行通道(v0.6.0.0 起)**:菜单设置面板支持 **API / CLI 双通道**选择并各自持久化。选 **CLI 通道**(本地 `agy` / `codex` / `claude` / `cursor` / `kimi` / `grok` / `pi` runner)即可**脱 API Key** 跑;选 **API 通道**则用上面的 `OPENAI_*` 配置。宿主与通道只由运行配置（`channel` + `cli_runner`）决定，不由环境变量切换。
->
-> CLI 通道的 **CLI Model** 是 **per-runner 策展下拉**(随 CLI Runner 切换):codex/claude 各列各自已知可用档；其余 runner 可手填模型,首档「默认」= 走该 runner 的后端默认模型;选「其他(手填)」露出文本框可填任意 id(将来新模型 / 大写 id)。档位清单单一真源在后端 `ming_sim/cli_backend.py:cli_model_choices()`,经 config 端点下发,前端不硬编。下拉只挡常见拼写/大小写错(某档实际可用性仍取决于账号类型与 CLI 版本,故连通性检查仍是兜底)。API 通道的模型字段保持自由手填(任意 OpenAI 兼容端点)。
-
----
-
-## 目录
+## 目录与文档
 
 ```text
 .
 ├── launcher.py              # 桌面 Web 窗口入口
-├── web_app.py               # 网页服务
-├── ming_sim/                # 游戏规则、结算、存档、角色对话
-├── content/                 # 人物、事件、地区、军队、外部势力、提示词
+├── ming/                    # 使用者、中间层、账本与包内服务
+├── tests/                   # 游戏契约测试与录制样本
+├── content/                 # 开局素材与提示词；未使用的数据保留待迁入
 ├── web/                     # 网页界面
-├── docs/                    # 设定、架构、ADR 与开发文档
-├── scripts/                 # 自动跑局与平衡性测试
-├── requirements.txt         # Python 依赖
-└── .env.example             # 配置模板
+├── docs/                    # 设定、架构、ADR 与历史开发资料
+├── scripts/                 # 构建与素材工具
+└── requirements.txt         # Python 依赖
 ```
 
----
-
-## 重要文档
-
-- [游戏架构重构导航](docs/design/game-v2-architecture.md)
-- [省级财政基座设计](docs/FISCAL_PROVINCE_SUBSTRATE.md)
-- [月末结算管线](docs/SETTLEMENT_FLOW.md)
-- [密令系统](docs/memory-and-secret-orders.md)
-- [LLM 后端基准](docs/LLM_BACKEND_BENCH.md)
-- [系统模块索引](docs/system-modules.md)
-- [设定草案](docs/setting-outline.md)
-- [TODO / TOFIX](TODOS.md)
-
----
+- [账本与落账](docs/adr/0159-ledger-entities-events-and-landing.md)
+- [召对北极星](docs/AUDIENCE_NORTH_STAR.md)
+- [领域词表](CONTEXT.md)
+- [开发规则](CLAUDE.md)
+- [历史 TODO / TOFIX](TODOS.md)
 
 ## 打包发行（桌面包 · 自部署）
 
-发行形态 = **自部署**：群友各自跑实例，LLM 后端在游戏内「设置」面板自理；当前新包支持 OpenAI 兼容 API 与 Claude CLI，见上方「新包入口」。
-
-桌面包用 PyInstaller 把后端 + 前端 + content 冻结成可分发应用（pywebview 套壳渲染 React UI，无需另起 uvicorn）。分发形态（#186）= **mac / win / linux 各一个 zip，解压后根目录一个可执行**（其余依赖在 `_internal/` 子目录 / mac 在 `.app` bundle 内）。
+群友各自跑实例，LLM 后端在游戏内设置。PyInstaller 冻结后端、前端与 content，pywebview 渲染原生窗口。
 
 ```bash
-pip install -r requirements-ming.txt -r requirements-release.txt  # Python 3.14 venv
+pip install -r requirements.txt -r requirements-release.txt  # Python 3.14 venv
 # Windows 打包另装：pip install -r requirements-release-windows.txt
 
-# 一键：构建前端 → PyInstaller 打包 → 打 zip
 scripts/build_release.sh        # macOS / Linux
-scripts\build_release.bat       # Windows（朋友代打 win 包时用）
+scripts\build_release.bat       # Windows
 
-# 产物（解压后根目录一个可执行）：
-#   macOS   → dist/Ming_LLM-macos.zip   → Ming_LLM.app（双击即用）
-#   Linux   → dist/Ming_LLM-linux.zip   → Ming_LLM + _internal/
-#   Windows → dist/Ming_LLM-windows.zip → Ming_LLM.exe + _internal\
+# macOS   → dist/Ming_LLM-macos.zip   → Ming_LLM.app
+# Linux   → dist/Ming_LLM-linux.zip   → Ming_LLM + _internal/
+# Windows → dist/Ming_LLM-windows.zip → Ming_LLM.exe + _internal\
 ```
 
-脚本内部三步（手动等价）：`cd web && npm install && npm run build && cd ..` →
-`pyinstaller --noconfirm --clean Ming_LLM.spec` → 把 onedir 产物 / `.app` 打进 zip。
-**必须先构建前端**：`web/dist` 被 `.gitignore` 排除，不先 build 打出来的包会缺前端（运行期白屏）。
+脚本先构建前端，再走 `Ming_LLM.spec`，最后打 zip。`web/dist` 被 `.gitignore` 排除，不先 build 会缺前端。spec 在前端未构建、`content/buildings.json` 带金手指或有未提交改动时响亮中止。
 
-> 打包前先确认 `git status content/buildings.json` 干净（无未提交改动）——金手指建筑（见下）若没还原，会被打进发行包。`Ming_LLM.spec` 已内置 build-time 守门：前端未构建 / content/buildings.json 带金手指 / 有未提交改动时**会响亮报错中止**，不会静默打出坏包或作弊包。
+解压后启动应用，自动开 webview 原生窗口；`MING_DEBUG=1` 开 devtools。默认数据位置与后端设置见「安装与启动」。
 
-启动：macOS 双击 `Ming_LLM.app`、Windows/Linux 双击或命令行跑根目录可执行，自动开 webview 原生窗口；`MING_DEBUG=1` 开 devtools。默认数据位置与后端设置见「新包入口」；失败提示行附本局 `.errors.log` 路径。
+金手指建筑（皇家天佑金矿／大明中央银行／帝国航空）只活在开发工作区，发行包不带。
 
-- **金手指不入包**：`content/buildings.json` 末尾三个本地实验建筑（皇家天佑金矿 / 大明中央银行 / 帝国航空）只活在开发工作区的未提交改动里，**发行包从 main 打、自动不含**；需要的群友单独找作者拿。
+## 许可与致谢
 
-## 许可（GPLv3）
+本仓库继承上游 [wangwei-ying3/ming-salvage-sim](https://github.com/wangwei-ying3/ming-salvage-sim) 的 **GPLv3** 许可。发行包按 GPLv3 附源码指向：<https://github.com/Akagilnc/ming-salvage-sim>。
 
-本仓库继承上游 [wangwei-ying3/ming-salvage-sim](https://github.com/wangwei-ying3/ming-salvage-sim) 的 **GPLv3** 许可。发行包按 GPLv3 须附源码指向 —— 即本公开仓库：<https://github.com/Akagilnc/ming-salvage-sim>。
-
----
-
-## 致谢
-
-本分支基于 [wangwei-ying3/ming-salvage-sim](https://github.com/wangwei-ying3/ming-salvage-sim)。感谢原项目提供的晚明皇帝模拟器框架、内容基础和玩法方向。
-
-本仓库在此基础上继续探索状态可信、财政基座、结构化落库和长期跑局稳定性。
+感谢原项目提供的晚明皇帝模拟器框架、内容基础和玩法方向。本仓库继续探索状态可信、结构化落库和长期跑局稳定性。

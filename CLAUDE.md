@@ -36,7 +36,7 @@
   超限即违宪。
 
 ## 关键技术事实
-- **领域素材在 `content/`**：开局数据一次导入账本；`content/prompts/*.md`（含 `gazette_author.md`）是提示词素材，各切片按新声明重写，不原样搬。
+- **领域素材在 `content/`**：新包按 `ming/middle/opening.py` 导入开局数据；尚未使用的数据保留，按需另票导入。`content/prompts/scene_agent.md`、`month_translate.md` 是在用提示词素材，其他提示在 `ming/` 内声明。
 
 ## LLM 后端（换模型时查，非每回合）
 - **工程坑（换 codex/claude 前必改）**：codex 必须 `--skip-git-repo-check` + 并发 `--ephemeral`，干净输出在 stdout（日志在 stderr）；claude 用 `MAX_THINKING_TOKENS`（~10k≈medium）代 gpt 的 reasoning_effort，`claude -p` 默认重思考会拖慢。

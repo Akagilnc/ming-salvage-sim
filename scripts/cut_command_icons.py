@@ -48,15 +48,13 @@ def main():
     OUT.mkdir(parents=True, exist_ok=True)
     for (x0, x1), name in zip(segs, NAMES):
         # 该列段内裁紧上下
-        sub = a[:, x0:x1]
-        rows = np.where((sub > ALPHA_T).any(axis=1))[0]
-        y0, y1 = rows[0], rows[-1] + 1
-        bx0 = max(0, x0 - PAD); bx1 = min(W, x1 + PAD)
-        by0 = max(0, y0 - PAD); by1 = min(H, y1 + PAD)
-        crop = im.crop((bx0, by0, bx1, by1))
-        dst = OUT / f"{name}.png"
-        crop.save(dst)
-        print(f"  -> {dst}  {crop.width}x{crop.height}")
+        rows = np.where((a[:, x0:x1] > ALPHA_T).any(axis=1))[0]
+        crop = im.crop((
+            max(0, x0 - PAD), max(0, rows[0] - PAD),
+            min(W, x1 + PAD), min(H, rows[-1] + 1 + PAD),
+        ))
+        crop.save(OUT / f"{name}.png")
+        print(f"  -> {OUT / f'{name}.png'}  {crop.width}x{crop.height}")
 
 if __name__ == "__main__":
     main()

@@ -122,10 +122,8 @@ def main() -> None:
         with Image.open(path) as src:
             w, h = src.size
             im = resize_to_max(cutout_white(src, args.threshold, args.soft), args.size)
-            nw, nh = im.size
-
             if args.dry:
-                print(f"{path.name:34} {w}x{h} {before//1024}KB -> {nw}x{nh} cutout")
+                print(f"{path.name:34} {w}x{h} {before//1024}KB -> {im.width}x{im.height} cutout")
                 continue
 
             backup = BACKUP / path.name
@@ -136,7 +134,7 @@ def main() -> None:
         after = path.stat().st_size
         after_total += after
         pct = 0 if before == 0 else round(100 * (before - after) / before)
-        print(f"{path.name:34} {w}x{h} {before//1024}KB -> {nw}x{nh} {after//1024}KB  -{pct}%")
+        print(f"{path.name:34} {w}x{h} {before//1024}KB -> {im.width}x{im.height} {after//1024}KB  -{pct}%")
 
     if not args.dry:
         print(f"\n总计：{before_total//1024//1024}MB -> {after_total//1024//1024}MB")

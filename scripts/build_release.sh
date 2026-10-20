@@ -3,7 +3,7 @@
 #
 # 前置（在干净 clone 里跑一次）：
 #   python -m venv .venv && . .venv/bin/activate
-#   pip install -r requirements-ming.txt -r requirements-release.txt
+#   pip install -r requirements.txt -r requirements-release.txt
 # 然后：
 #   scripts/build_release.sh
 #
