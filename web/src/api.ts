@@ -7,11 +7,11 @@ export async function api<T>(path: string, options?: RequestInit): Promise<T> {
 }
 export const state = () => api<Snapshot>('/state');
 export const records = () => api<Records>('/records');
-export async function act(action: Action): Promise<void> {
+export async function act(action: Action): Promise<number> {
   const response = await fetch('/actions', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(action),
   });
   if (!response.ok) throw new Error(await response.text());
-  // SSE delivery is independent of this request; EventSource receives increments.
-  await response.text();
+  // Completed long actions return 204; /stream supplies their final snapshot.
+  return response.status;
 }

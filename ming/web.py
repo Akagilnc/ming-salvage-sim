@@ -208,9 +208,7 @@ class Web:
         return EventSourceResponse(self.consume(queue))
 
     async def consume(
-        self,
-        queue: asyncio.Queue[dict[str, Any]],
-        task: asyncio.Task[None] | None = None,
+        self, queue: asyncio.Queue[dict[str, Any]]
     ) -> AsyncIterator[dict[str, str]]:
         try:
             while True:
@@ -221,8 +219,6 @@ class Web:
                     "event": event["event"],
                     "data": json.dumps(event["data"], ensure_ascii=False),
                 }
-                if task is not None and event.get("source") is task:
-                    return
         finally:
             self.listeners.discard(queue)
 
@@ -289,13 +285,7 @@ class Web:
                     },
                 )
         finally:
-            self.emit(
-                {
-                    "event": "done",
-                    "data": self.snapshot(),
-                    "source": asyncio.current_task(),
-                }
-            )
+            self.emit({"event": "done", "data": self.snapshot()})
 
     async def actions(self, request: Request) -> Response:
         try:
@@ -346,8 +336,6 @@ class Web:
             for p in self.court.petitions()
         ):
             raise HTTPException(400, "无效的批红选项")
-        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
-        self.listeners.add(queue)
         task = asyncio.create_task(self.execute(action))
         if (
             action.action == "choose"
@@ -358,7 +346,9 @@ class Web:
             task.add_done_callback(self.background_done)
         else:
             self.active = task
-        return EventSourceResponse(self.consume(queue, task=task))
+        # The action outlives a disconnected POST; only /stream carries events.
+        await asyncio.shield(task)
+        return Response(status_code=204)
 
     async def configure(self, action: Action) -> JSONResponse:
         if action.settings is None:

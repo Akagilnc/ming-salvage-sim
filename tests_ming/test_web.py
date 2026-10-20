@@ -2,7 +2,6 @@
 
 import json
 from pathlib import Path
-from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -75,7 +74,7 @@ def test_menu_creates_distinct_games_and_opens_only_existing_saves(
 
 
 @pytest.mark.parametrize("path", ["complete", "petition", "gazette-error"])
-def test_http_month_dispatches_choices_streams_and_retries_missing_step(
+def test_http_month_dispatches_choices_and_retries_missing_step(
     tmp_path: Path,
     path: str,
 ) -> None:
@@ -108,18 +107,8 @@ def test_http_month_dispatches_choices_streams_and_retries_missing_step(
             == 400
         )
         response = client.post("/actions", json={"action": "month"})
-        assert response.status_code == 200
-        transitions: list[dict[str, Any] | str] = [
-            json.loads(line[6:])
-            for line in response.iter_lines()
-            if line.startswith("data: ")
-        ]
-        assert any(
-            isinstance(value, dict)
-            and value.get("game", {}).get("face") == "month"
-            and value["game"]["running"]
-            for value in transitions
-        )
+        assert response.status_code == 204
+        assert response.content == b""
         game = client.get("/state").json()["game"]
         if path == "petition":
             assert game["date"]["month"] == 10
@@ -133,7 +122,8 @@ def test_http_month_dispatches_choices_streams_and_retries_missing_step(
                 == 400
             )
             response = client.post("/actions", json=choice)
-            assert response.status_code == 200
+            assert response.status_code == 204
+            assert response.content == b""
             assert client.post("/actions", json=choice).status_code == 400
         elif path == "gazette-error":
             assert game["failure"]["action"] == "month"
@@ -141,13 +131,14 @@ def test_http_month_dispatches_choices_streams_and_retries_missing_step(
             assert game["date"]["month"] == 10
             assert client.get("/records").json()["entities"] == before
             response = client.post("/actions", json={"action": "retry"})
-            assert response.status_code == 200
+            assert response.status_code == 204
+            assert response.content == b""
         game = client.get("/state").json()["game"]
         assert game["date"]["month"] == 11
         assert game["face"] == "desk"
+        assert game["running"] is False
         assert game["failure"] is None
         assert game["petitions"] == []
-        assert "event: gazette" in response.text.splitlines()
         assert (
             len(
                 [
@@ -177,7 +168,8 @@ def test_http_audience_records_unhandled_night_and_resumes_after_reopening(
         response = client.post(
             "/actions", json={"action": "say", "words": case["emperor_words"]}
         )
-        assert response.status_code == 200
+        assert response.status_code == 204
+        assert response.content == b""
         state = client.get("/state").json()["game"]
         assert state["face"] == "audience"
         assert len(state["night"]["turns"]) == 1

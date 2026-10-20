@@ -63,8 +63,7 @@ export function App() {
     else if (value.action !== 'dismiss') setBusy(true);
     if (value.action === 'say') { setPendingWords(value.words ?? ''); setLive(''); follow.current = true; }
     try {
-      await act(value);
-      await refresh();
+      if (await act(value) === 200) await refresh();
       if (value.action === 'open') follow.current = true;
       if (value.action === 'new' || value.action === 'continue' || value.action === 'load') { setPanel(null); setReading('latest'); }
     } catch (reason) { setError(String(reason)); }
