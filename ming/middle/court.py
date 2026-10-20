@@ -151,11 +151,13 @@ class Court:
         )
         self._ledger.commit([entity])
 
-    def world_route(self) -> EntityView:
+    def world_route(self, *, create: bool = True) -> EntityView | None:
         key = f"world:{self.calendar().data['year']}:{self.calendar().data['month']}"
         for entity in self.entities("audit"):
             if entity.kind == "affair" and entity.key == key:
                 return entity
+        if not create:
+            return None
         entity = Entity("affair", key, "", {"text": "世界局势"})
         self._ledger.commit([entity])
         return next(e for e in self.entities("audit") if e.id == entity.id)

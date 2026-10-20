@@ -134,15 +134,24 @@ class Month:
             lock.release()
 
     async def choose(
-        self, petition_id: UUID, option: int, *, background: bool = False
+        self, petition_id: UUID, option: int, *, background: bool = True
     ) -> None:
         route_id = self.court.choose(petition_id, option)
+        # A task is only live caller context; the current month's world route
+        # survives reopening and makes a presented petition foreground work.
+        background = (
+            background
+            and not self.court.locks[self.court.calendar().id].locked()
+            and self.court.world_route(create=False) is None
+        )
         await self.prepare(route_id, background=background)
 
     async def advance(self) -> list[PendingPetition]:
         lock = self.court.locks[self.court.calendar().id]
         await lock.acquire()
         try:
+            world = self.court.world_route()
+            assert world is not None  # Creation is enabled for month advancement.
             for night_id in self.court.pending_nights():
                 await self.court.translate_night(night_id)
             landed = {
@@ -152,7 +161,7 @@ class Month:
             }
             routes = [
                 e for e in self.court.approved_decrees() if e.id not in landed
-            ] + [self.court.world_route()]
+            ] + [world]
             results = await asyncio.gather(
                 *(self.prepare(e.id) for e in routes), return_exceptions=True
             )

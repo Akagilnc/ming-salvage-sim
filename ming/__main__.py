@@ -94,7 +94,6 @@ async def conversation(court: Court, scene_model: Model) -> None:
                     or (
                         advancing.done()
                         and advancing.exception() is None
-                        and not advancing.result()
                     ),
                 )
             elif action == "drain":
