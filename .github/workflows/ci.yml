@@ -28,7 +28,7 @@ jobs:
       # ruff 没有「豁免配置」开关，per-file-ignores 一出现就失败。
       - run: "! grep -n 'per-file-ignores' pyproject.toml"
       # P8 单文件 1000 行（ruff 无此规则）；全仓已跟踪 Python。
-      - run: git ls-files '*.py' | xargs wc -l | awk '$2 != "total" && $1 > 1000 {print; bad = 1} END {exit bad}'
+      - run: git ls-files '*.py' '*.spec' | xargs wc -l | awk '$2 != "total" && $1 > 1000 {print; bad = 1} END {exit bad}'
       - run: lint-imports
       - run: pyright
       - run: python -m pytest tests/ -q

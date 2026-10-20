@@ -2,7 +2,7 @@
 # P8 六项上限与 CI 的咬合方式见 .github/workflows/ci.yml 的 python 任务。
 
 [tool.ruff]
-include = ["*.py"]
+include = ["*.py", "*.spec"]
 target-version = "py314"
 
 [tool.ruff.lint]
