@@ -32,9 +32,9 @@ root_packages = ["ming"]
 
 # 分层：入口 → 使用者 → 中间层 → 账本；入口读中间层是既定例外。
 [[tool.importlinter.contracts]]
-name = "layers: entry > audience > middle > ledger"
+name = "layers: entry > audience | month > middle > ledger"
 type = "layers"
-layers = ["ming.__main__", "ming.audience", "ming.middle", "ming.ledger"]
+layers = ["ming.__main__", "ming.audience | ming.month", "ming.middle", "ming.ledger"]
 
 # 账本只有一个门：只被中间层导入。
 [[tool.importlinter.contracts]]

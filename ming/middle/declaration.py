@@ -1,6 +1,7 @@
 """One entity/field declaration for immediate facts and monthly consequences."""
 
 from typing import Any, Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -9,9 +10,30 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class EntityRef(StrictModel):
+    entity_type: str
+    entity: str
+
+
+class Petition(StrictModel):
+    text: str
+    options: list[str] = Field(min_length=1)
+
+
+class PendingPetition(Petition):
+    id: UUID
+    route_id: UUID
+    entity_id: UUID
+    round: int
+
+
 class Change(StrictModel):
     field: str
     value: Any
+    counterpart: EntityRef | None = Field(
+        default=None,
+        description="钱粮另一边；必须也在本份 facts 中，两边带符号增减成对。无出处收入可不填。",
+    )
 
 
 class Fact(StrictModel):
@@ -19,6 +41,7 @@ class Fact(StrictModel):
     entity: str = Field(description="实体的账本正名或新实体的名字")
     create: bool = Field(description="是否新建；已有实体填 false")
     changes: list[Change]
+    audience: Literal["world", "public", "official"] = "world"
     text: str = Field(
         description="发生的事实，原文记在这个实体上；没有字段变化也可以只记文字"
     )

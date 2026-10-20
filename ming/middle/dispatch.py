@@ -4,18 +4,25 @@ from collections.abc import Callable
 from uuid import UUID
 
 from ming.ledger import Entity, Item, Ledger
-from ming.middle.declaration import NightDeclaration
+from ming.middle.declaration import Declaration, NightDeclaration
 from ming.middle.translate import Unhandled
+from ming.middle.rules import field_values, money_amounts
 
 
 def dispatch(
     ledger: Ledger,
-    result: NightDeclaration | Unhandled,
+    result: Declaration | Unhandled,
     night_id: UUID,
+    monthly: bool = False,
 ) -> None:
     existing = {(e["kind"], e["key"]): e for e in ledger.entities()}
     changed: dict[tuple[str, str], Entity] = {}
     date = existing[("calendar", "world")]["data"]
+    owner = ledger.get(night_id)
+    origin = (
+        ledger.get(UUID(owner.data["night_id"])) if owner.kind == "decree" else owner
+    )
+    words = "\n".join(e["emperor_words"] for e in origin.events if e["kind"] == "turn")
 
     def known(kind: str, key: str) -> Entity:
         pair = kind, key
@@ -29,22 +36,45 @@ def dispatch(
         detail: dict[str, object],
         changes: dict[str, object] | None = None,
     ) -> None:
-        entity.record(kind, "", {**detail, "date": date}, changes)
+        entity.record(kind, words, {**detail, "date": date}, changes)
         changed[(entity.kind, entity.key)] = entity
         existing[(entity.kind, entity.key)] = entity.snapshot()
 
     if not isinstance(result, Unhandled):
+        amounts = money_amounts(result.facts, existing)
         for fact in result.facts:
             pair = fact.entity_type, fact.entity
-            entity = Entity(*pair, "", {}) if fact.create else known(*pair)
-            changes = {c.field: c.value for c in fact.changes}
-            record(entity, "changed", {"text": fact.text, "changes": changes}, changes)
+            if fact.create and pair not in existing:
+                entity = Entity(*pair, "", {})
+                changed[pair] = entity
+                existing[pair] = entity.snapshot()
+        for i, fact in enumerate(result.facts):
+            entity = known(fact.entity_type, fact.entity)
+            detail = field_values(fact, entity.data, amounts.get(i))
+            changes = detail["changes"]
+            record(entity, "changed", detail, changes)
             if (
                 entity.kind == "person"
                 and {"office", "office_region"}.intersection(changes)
                 and entity.data.get("office")
             ):
                 displace(entity, existing, known, record)
+        for i, fact in enumerate(result.facts):
+            for change in fact.changes:
+                if change.counterpart and change.counterpart.entity_type != "account":
+                    record(
+                        known(
+                            change.counterpart.entity_type, change.counterpart.entity
+                        ),
+                        "received",
+                        {
+                            "nominal": -change.value,
+                            "actual": -amounts[i],
+                            "source": fact.entity,
+                            "audience": "world",
+                        },
+                    )
+    if isinstance(result, NightDeclaration):
         for decree in result.decrees:
             data = decree.model_dump()
             data["night_id"] = str(night_id)
@@ -56,10 +86,11 @@ def dispatch(
                     "decreed",
                     {"decree_id": str(entity.id)},
                 )
-    night = ledger.get(night_id)
     record(
-        night,
-        "unhandled" if isinstance(result, Unhandled) else "translated",
+        known(owner.kind, owner.key),
+        "unhandled"
+        if isinstance(result, Unhandled)
+        else ("landed" if monthly else "translated"),
         {"result": result.model_dump()},
     )
     ledger.commit(list(changed.values()))

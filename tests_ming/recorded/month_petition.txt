@@ -1,0 +1,1 @@
+{"facts": [{"entity_type": "affair", "entity": "world:1627:10", "create": false, "changes": [{"field": "petition", "value": {"text": "陕西饥民待赈，巡抚奏请皇帝选择：一、先赈饥民，二、先修仓廪。", "options": ["一、先赈饥民", "二、先修仓廪"]}}], "text": "陕西巡抚奏请皇帝就饥民赈济与仓廪修建先后顺序作出选择。"}]}

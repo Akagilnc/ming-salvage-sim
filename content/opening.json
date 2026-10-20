@@ -1,7 +1,7 @@
 {
   "accounts": [
-    {"name": "国库", "taels": 3200000},
-    {"name": "内库", "taels": 4400000}
+    {"name": "国库", "taels": 3200000, "department": "户部"},
+    {"name": "内库", "taels": 4400000, "department": "内廷"}
   ],
   "calendar": [{"id": "world", "year": 1627, "month": 10}]
 }

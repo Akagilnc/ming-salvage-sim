@@ -124,6 +124,16 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
                     "text": "任职地区变更。",
                 },
                 {
+                    "entity_type": "army",
+                    "entity": "jingying",
+                    "create": False,
+                    "changes": [
+                        {"field": "firearm_equipment", "value": 120},
+                        {"field": "cannon_equipment", "value": -2},
+                    ],
+                    "text": "军器交割。",
+                },
+                {
                     "entity_type": "affair",
                     "entity": "陕西赈灾",
                     "create": True,
@@ -164,6 +174,10 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
     assert people["徐光启"].data["status"] == "active"
     assert people["徐光启"].data["location"] == "nanzhili"
     assert people["张瑞图"].data["office"] == "内阁大学士"
+    army = next(
+        e for e in court.entities("audit") if e.kind == "army" and e.key == "jingying"
+    )
+    assert (army.data["firearm_equipment"], army.data["cannon_equipment"]) == (100, 0)
     assert [e.key for e in court.entities("audit") if e.kind == "affair"] == [
         "陕西赈灾"
     ]

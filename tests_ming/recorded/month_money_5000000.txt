@@ -1,0 +1,48 @@
+```json
+{
+  "facts": [
+    {
+      "entity_type": "account",
+      "entity": "国库",
+      "create": false,
+      "changes": [
+        {
+          "field": "taels",
+          "value": -5000000,
+          "counterpart": {
+            "entity_type": "account",
+            "entity": "内库"
+          }
+        }
+      ],
+      "audience": "world",
+      "text": "国库向内库拨银五百万两"
+    },
+    {
+      "entity_type": "account",
+      "entity": "内库",
+      "create": false,
+      "changes": [
+        {
+          "field": "taels",
+          "value": 5000000,
+          "counterpart": {
+            "entity_type": "account",
+            "entity": "国库"
+          }
+        }
+      ],
+      "audience": "world",
+      "text": "接收国库拨入银五百万两"
+    },
+    {
+      "entity_type": "account",
+      "entity": "国库",
+      "create": false,
+      "changes": [],
+      "audience": "official",
+      "text": "臣已如数解银五百万两，分毫不差"
+    }
+  ]
+}
+```

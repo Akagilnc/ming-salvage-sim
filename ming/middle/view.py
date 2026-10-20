@@ -5,9 +5,16 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from ming.ledger import Ledger
+from ming.ledger import Item, Ledger
 
-Identity = Literal["emperor", "audit"]
+PublicIdentity = Literal["emperor", "audit", "world", "public"]
+
+
+class Officials(BaseModel):
+    people: list[str]
+
+
+Identity = PublicIdentity | Officials
 
 
 class EntityView(BaseModel):
@@ -25,31 +32,82 @@ class FactView(BaseModel):
     detail: dict[str, Any]
 
 
+def owned_accounts(rows: list[Item], identity: Identity) -> set[UUID]:
+    if not isinstance(identity, Officials):
+        return set()
+    departments = {
+        {"司礼监": "内廷"}.get(
+            r["data"].get("office_type"), r["data"].get("office_type")
+        )
+        for r in rows
+        if r["kind"] == "person" and r["key"] in identity.people
+    }
+    return {
+        r["id"]
+        for r in rows
+        if r["kind"] == "account" and r["data"].get("department") in departments
+    }
+
+
 def entities(
     ledger: Ledger, identity: Identity, replay: bool = False
 ) -> list[EntityView]:
+    rows = ledger.entities(replay)
+    accounts = owned_accounts(rows, identity)
     result: list[EntityView] = []
-    for row in ledger.entities(replay):
-        if identity == "emperor":
-            if row["kind"] != "person":
+    for row in rows:
+        if identity not in ("audit", "world"):
+            if row["id"] in accounts:
+                pass
+            elif row["kind"] == "person":
+                row["data"] = {
+                    k: v
+                    for k, v in row["data"].items()
+                    if k in {"name", "office", "location", "status"}
+                }
+            elif row["kind"] not in {"gazette", "calendar"} or identity == "emperor":
                 continue
-            row["data"] = {
-                k: v
-                for k, v in row["data"].items()
-                if k in {"name", "office", "location", "status"}
-            }
         result.append(EntityView.model_validate(row))
     return result
 
 
 def project(ledger: Ledger, identity: Identity, replay: bool = False) -> list[FactView]:
+    rows = ledger.entities(replay)
+    accounts = owned_accounts(rows, identity)
     result: list[FactView] = []
-    for row in ledger.entities(replay):
+    for row in rows:
         for item in row["events"]:
             fact = FactView(entity_id=row["id"], **item)
-            if identity == "emperor":
-                if fact.kind != "unhandled":
+            if identity not in ("audit", "world"):
+                if (
+                    fact.kind == "gazette"
+                    or fact.detail.get("audience") == "public"
+                    or (
+                        identity == "public"
+                        and fact.detail.get("audience") == "official"
+                    )
+                ):
+                    fact.detail = {"text": fact.detail["text"]}
+                elif fact.kind in {"petition", "choice"}:
+                    pass
+                elif fact.kind == "unhandled" and identity == "emperor":
+                    fact.detail = {}
+                elif (
+                    isinstance(identity, Officials)
+                    and (
+                        row["id"] in accounts
+                        or (
+                            row["kind"] == "decree"
+                            and set(identity.people).intersection(
+                                row["data"].get("people", [])
+                            )
+                        )
+                    )
+                    and fact.kind in {"changed", "received", "decreed"}
+                ):
+                    fact.detail = {"text": fact.detail.get("text", "")}
+                else:
                     continue
-                fact.detail = {}
+                fact.emperor_words = ""
             result.append(fact)
     return result

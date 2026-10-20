@@ -189,7 +189,7 @@ def test_failed_night_translation_is_terminal_and_reaches_following_nights(
             material = court.scene_material()
             assert set(material) == {"date", "gazette", "unhandled"}
             assert material["unhandled"] == [
-                {"kind": "unhandled", "night_id": str(n)} for n in nights[:-1]
+                {"kind": "unhandled", "entity_id": str(n)} for n in nights[:-1]
             ], name
         before = physical_state(court)
         facts = [(f.entity_id, f.kind) for f in court.facts("audit")]
