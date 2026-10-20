@@ -20,6 +20,7 @@ COLLECTIONS = [
     ("opening", "accounts", "account", ("name",)),
     ("opening", "calendar", "calendar", ("id",)),
     ("multiple_offices", "offices", "office", ("name",)),
+    ("offices", "priority", "office_type", ("type",)),
 ]
 
 

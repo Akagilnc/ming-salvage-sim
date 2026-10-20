@@ -31,6 +31,7 @@ def test_new_game_imports_complete_world_records_and_separates_identities(
         ("opening", "accounts"),
         ("opening", "calendar"),
         ("multiple_offices", "offices"),
+        ("offices", "priority"),
     ]:
         source = f"{filename}.json/{collection}"
         expected = json.loads((CONTENT / f"{filename}.json").read_text())[collection]
@@ -80,6 +81,17 @@ def test_cli_new_games_never_overwrite_and_missing_game_is_not_created(
     assert after["entities"] == saved["entities"]
     assert after["facts"] == saved["facts"]
     assert len(after["entities"]) > len(first["entities"])
+    main(
+        ["month", "--db", first["db"], "--model", "test", "--translation-model", "test"]
+    )
+    month = json.loads(capsys.readouterr().out)
+    assert month["date"]["month"] == 11
+    main(["read", "--db", first["db"], "--identity", "audit", "--replay"])
+    replay = json.loads(capsys.readouterr().out)
+    assert (
+        next(e["data"]["month"] for e in replay["entities"] if e["kind"] == "calendar")
+        == 11
+    )
     absent = tmp_path / "absent.sqlite"
     with pytest.raises(FileNotFoundError):
         main(["read", "--db", str(absent)])

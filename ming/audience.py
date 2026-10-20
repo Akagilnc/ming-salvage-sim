@@ -16,6 +16,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import Model
 
 from ming.middle.court import Court
+from ming.middle.invoke import invoke, transport_model
 from ming.middle.opening import CONTENT
 from ming.middle.scene import HallResult, PersonView
 
@@ -28,7 +29,7 @@ class Audience:
         self._turn: asyncio.Task[str] | None = None
         self._dismiss_requested: UUID | None = None
         self._scene = Agent(
-            scene_model,
+            transport_model(scene_model),
             deps_type=UUID,
             output_type=str,
             instructions=(CONTENT / "prompts/scene_agent.md").read_text(),
@@ -113,7 +114,8 @@ class Audience:
                 ]
             )
         try:
-            result = await self._scene.run(
+            result = await invoke(
+                self._scene,
                 [
                     json.dumps(self.court.scene_material(), ensure_ascii=False),
                     emperor_words,
@@ -122,6 +124,7 @@ class Audience:
                 deps=night_id,
             )
         except Exception:
+            self.court.log.exception("audience night=%s", night_id)
             # Model failure is still raised; only the requested dismissal proceeds.
             self._finish_dismiss(night_id)
             raise

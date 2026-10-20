@@ -10,6 +10,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from ming.audience import Audience
 from ming.middle.court import Court
+from ming.middle.view import Officials
 
 
 def replaying(replies: list[str] | list[ModelResponse]) -> FunctionModel:
@@ -49,23 +50,36 @@ def physical_state(court: Court, replay: bool = False) -> list[dict[str, object]
 
 
 @pytest.mark.parametrize(
-    ("appointee", "changes", "incumbent_status"),
+    ("appointee", "changes", "incumbent_status", "office_status"),
     [
-        ("洪承畴", [{"office": "巡抚"}], "offstage"),
+        ("洪承畴", [{"office": "巡抚"}], "offstage", "active"),
+        ("洪承畴", [{"office": "巡抚"}], "offstage", "offstage"),
         (
             "洪承畴",
             [{"office": "巡抚", "office_region": "shaanxi", "status": "active"}],
             "offstage",
+            "active",
         ),
-        ("李待问", [{"office_region": "shaanxi"}], "offstage"),
-        ("李待问", [{"office": "巡抚"}, {"office_region": "shaanxi"}], "offstage"),
-        ("李待问", [{"office_region": "shaanxi"}, {"office": "巡抚"}], "offstage"),
-        ("李待问", [{"office": "", "office_region": "shaanxi"}], "active"),
-        ("李待问", [{"office": ""}, {"office_region": "shaanxi"}], "active"),
-        ("洪承畴", [{"location": "beizhili"}], "active"),
+        ("李待问", [{"office_region": "shaanxi"}], "offstage", "active"),
+        (
+            "李待问",
+            [{"office": "巡抚"}, {"office_region": "shaanxi"}],
+            "offstage",
+            "active",
+        ),
+        (
+            "李待问",
+            [{"office_region": "shaanxi"}, {"office": "巡抚"}],
+            "offstage",
+            "active",
+        ),
+        ("李待问", [{"office": "", "office_region": "shaanxi"}], "active", "active"),
+        ("李待问", [{"office": ""}, {"office_region": "shaanxi"}], "active", "active"),
+        ("洪承畴", [{"location": "beizhili"}], "active", "active"),
     ],
     ids=[
         "office-only",
+        "inactive-office",
         "combined",
         "region-only",
         "office-then-region",
@@ -80,6 +94,7 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
     appointee: str,
     changes: list[dict[str, str]],
     incumbent_status: str,
+    office_status: str,
 ) -> None:
     # The sole schema-only example (#1943): landing, not the model's reading of prose.
     reply = json.dumps(
@@ -90,6 +105,7 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
                     {
                         "entity_type": "person",
                         "entity": appointee,
+                        "affair": "陕西赈灾",
                         "create": False,
                         "changes": [
                             {"field": field, "value": value}
@@ -102,6 +118,7 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
                 {
                     "entity_type": "person",
                     "entity": "徐光启",
+                    "affair": "陕西赈灾",
                     "create": False,
                     "changes": [
                         {"field": "office", "value": "内阁大学士"},
@@ -124,6 +141,27 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
                     "text": "任职地区变更。",
                 },
                 {
+                    "entity_type": "person",
+                    "entity": "徐光启",
+                    "create": False,
+                    "changes": [
+                        {"field": "office", "value": "户部尚书"},
+                        {"field": "status", "value": office_status},
+                    ],
+                    "text": "钦命户部尚书。",
+                },
+                {
+                    "entity_type": "army",
+                    "entity": "jingying",
+                    "affair": "陕西赈灾",
+                    "create": False,
+                    "changes": [
+                        {"field": "firearm_equipment", "value": 120},
+                        {"field": "cannon_equipment", "value": -2},
+                    ],
+                    "text": "军器交割。",
+                },
+                {
                     "entity_type": "affair",
                     "entity": "陕西赈灾",
                     "create": True,
@@ -134,7 +172,17 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
         },
         ensure_ascii=False,
     )
-    court = Court.new_game(tmp_path, replaying([reply]))
+    court = Court.new_game(tmp_path, replaying([reply, reply]))
+    assert asyncio.run(
+        court.read_records(Officials(people=["郭允厚"]), "account", "国库")
+    )["entities"]
+    for name in ("徐光启", "韩爌", "王承恩"):
+        assert (
+            asyncio.run(court.read_records(Officials(people=[name]), "account"))[
+                "entities"
+            ]
+            == []
+        )
     expected = dict(court.read_person(appointee).person)
     for fields in changes:
         expected.update(fields)
@@ -161,18 +209,44 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
     assert people["练国事"].data["office"] == (
         "" if incumbent_status == "offstage" else "巡抚"
     )
-    assert people["徐光启"].data["status"] == "active"
+    assert people["徐光启"].data["status"] == office_status
     assert people["徐光启"].data["location"] == "nanzhili"
+    assert people["郭允厚"].data["office"] == ""
+    assert people["郭允厚"].data["status"] == "offstage"
+    for identity, names in (
+        (Officials(people=["徐光启"]), ["国库"] if office_status == "active" else []),
+        (Officials(people=["郭允厚"]), []),
+        (
+            Officials(people=["徐光启", "郭允厚", "王承恩"]),
+            ["国库"] if office_status == "active" else [],
+        ),
+    ):
+        assert [
+            e["key"]
+            for e in asyncio.run(court.read_records(identity, "account"))["entities"]
+        ] == names
     assert people["张瑞图"].data["office"] == "内阁大学士"
+    army = next(
+        e for e in court.entities("audit") if e.kind == "army" and e.key == "jingying"
+    )
+    assert (army.data["firearm_equipment"], army.data["cannon_equipment"]) == (100, 0)
     assert [e.key for e in court.entities("audit") if e.kind == "affair"] == [
         "陕西赈灾"
     ]
+    affair = next(e for e in court.entities("audit") if e.kind == "affair")
+    associated = [f for f in court.facts("audit") if f.detail.get("affair_id")]
+    expected_entities = {people[appointee].id, people["徐光启"].id, army.id}
+    if incumbent_status == "offstage":
+        expected_entities.add(people["练国事"].id)
+    assert {f.entity_id for f in associated} == expected_entities
+    assert all(f.detail["affair_id"] == str(affair.id) for f in associated)
+    assert all(f.detail["origin_ref"] == str(n.id) for f in associated for n in court.nights())
     before = physical_state(court)
-    facts = [(f.entity_id, f.kind) for f in court.facts("audit")]
+    facts = court.facts("audit")
     path = court.db_path
     court.close()
     court = Court(path, replaying([]))
     assert physical_state(court) == before == physical_state(court, replay=True)
-    assert [(f.entity_id, f.kind) for f in court.facts("audit")] == facts
-    assert [(f.entity_id, f.kind) for f in court.facts("audit", replay=True)] == facts
+    assert court.facts("audit") == facts
+    assert court.facts("audit", replay=True) == facts
     court.close()

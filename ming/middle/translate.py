@@ -16,6 +16,8 @@ from pydantic_ai.models import Model
 
 from ming.ledger import Ledger
 from ming.middle.declaration import Declaration, NightDeclaration
+from ming.middle.rules import check_rules
+from ming.middle.invoke import invoke, transport_model
 
 T = TypeVar("T", bound=Declaration)
 INSTRUCTIONS = """你是御前召对的转译官。退朝后通读整夜已落账的全部轮次，一夜只交一次声明。
@@ -52,8 +54,8 @@ def catalogue(ledger: Ledger) -> dict[str, dict[str, list[str]]]:
 
 def allowed_fields(ledger: Ledger) -> dict[str, set[str]]:
     fields: dict[str, set[str]] = {
-        "affair": {"text"},
-        "decree": {"text", "origin", "people"},
+        "affair": {"text", "closed", "petition"},
+        "decree": {"text", "origin", "people", "petition"},
     }
     for row in ledger.entities():
         if row["source"]:
@@ -110,6 +112,7 @@ def check(ledger: Ledger, out: Declaration) -> None:
                     fail(
                         f"{path}.changes[{j}].value", change.value, names.get(kind, {})
                     )
+    check_rules(out, set(names.get("affair", {})))
     if isinstance(out, NightDeclaration):
         for decree in out.decrees:
             for person in decree.people:
@@ -117,11 +120,13 @@ def check(ledger: Ledger, out: Declaration) -> None:
                     fail("decrees.people", person, names["person"])
 
 
-def build_agent(model: Model, ledger: Ledger, output_type: type[T]) -> Agent[None, T]:
+def build_agent(
+    model: Model, ledger: Ledger, output_type: type[T], instructions: str = INSTRUCTIONS
+) -> Agent[None, T]:
     agent = Agent(
-        model,
+        transport_model(model),
         output_type=PromptedOutput(output_type),
-        instructions=INSTRUCTIONS,
+        instructions=instructions,
         retries=1,
     )
 
@@ -148,11 +153,14 @@ def build_agent(model: Model, ledger: Ledger, output_type: type[T]) -> Agent[Non
 async def translate(
     agent: Agent[None, T],
     prompt: str,
+    background: bool = False,
 ) -> T | Unhandled:
     with capture_run_messages() as messages:
         try:
             return (
-                await agent.run("请按 JSON schema 提交完整声明。\n" + prompt)
+                await invoke(
+                    agent, "请按 JSON schema 提交完整声明。\n" + prompt, background
+                )
             ).output
         except UnexpectedModelBehavior as exhausted:
             if not isinstance(exhausted.__cause__, ToolRetryError):

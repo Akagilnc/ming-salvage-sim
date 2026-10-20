@@ -1,18 +1,26 @@
 """The ledger's one door: new game, continue game, land orders and read by identity."""
 
+import asyncio
 import json
+import logging
+from collections import defaultdict
 from pathlib import Path
 from uuid import UUID, uuid4
 
 from pydantic_ai.models import Model
 
-from ming.ledger import Ledger
+from ming.ledger import Entity, Item, Ledger
 from ming.middle.dispatch import dispatch
-from ming.middle.declaration import NightDeclaration
+from ming.middle.declaration import (
+    Declaration,
+    NightDeclaration,
+    PendingPetition,
+    Petition,
+)
 from ming.middle.opening import CONTENT, import_opening
 from ming.middle.night import NightView, append_turn, dismiss, open_night, read_night
 from ming.middle.scene import HallResult, PersonView, read_person, set_hall
-from ming.middle.translate import build_agent, translate
+from ming.middle.translate import Unhandled, build_agent, translate
 from ming.middle.view import EntityView, FactView, Identity, entities, project
 
 
@@ -21,8 +29,22 @@ class Court:
         if not db_path.is_file():
             raise FileNotFoundError(db_path)
         self.db_path = db_path
+        self.locks: defaultdict[UUID, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self.log = logging.getLogger(f"ming.{db_path.stem}")
+        self._log_handler = logging.FileHandler(
+            db_path.with_suffix(".errors.log"), encoding="utf-8"
+        )
+        self.log.addHandler(self._log_handler)
+        self.log.setLevel(logging.INFO)
+        self.log.propagate = False
         self._ledger = Ledger(db_path)
         self._night_agent = build_agent(model, self._ledger, NightDeclaration)
+        self._month_agent = build_agent(
+            model,
+            self._ledger,
+            Declaration,
+            (CONTENT / "prompts/month_translate.md").read_text(),
+        )
 
     @classmethod
     def new_game(
@@ -84,21 +106,172 @@ class Court:
             "date": {k: calendar.data[k] for k in ("year", "month")},
             "gazette": gazette,
             "unhandled": [
-                {"kind": "unhandled", "night_id": str(n.id)}
-                for n in self.nights()
-                if n.result == "unhandled"
+                {"kind": "unhandled", "entity_id": str(f.entity_id)}
+                for f in self.facts("emperor")
+                if f.kind == "unhandled"
             ],
         }
 
     async def translate_night(self, night_id: UUID) -> None:
-        night = self.night(night_id)
-        if not night.closed or night.result is not None:
-            return
-        result = await translate(
-            self._night_agent,
-            json.dumps(night.model_dump(mode="json"), ensure_ascii=False),
+        async with self.locks[night_id]:
+            try:
+                night = self.night(night_id)
+                if not night.closed or night.result is not None:
+                    return
+                result = await translate(
+                    self._night_agent,
+                    json.dumps(night.model_dump(mode="json"), ensure_ascii=False),
+                )
+                self.log.info("night translation: %s", result.model_dump_json())
+                dispatch(self._ledger, result, night_id)
+            except Exception:
+                self.log.exception("translate night=%s", night_id)
+                raise
+
+    def calendar(self) -> EntityView:
+        return next(e for e in self.entities("audit") if e.kind == "calendar")
+
+    def products(self, entity_id: UUID) -> list[FactView]:
+        date = self.calendar().data
+        return [
+            f
+            for f in self.facts("audit")
+            if f.entity_id == entity_id and f.detail.get("date") == date
+        ]
+
+    def record_product(
+        self, entity_id: UUID, kind: str, detail: Item, changes: Item | None = None
+    ) -> None:
+        entity = self._ledger.get(entity_id)
+        entity.record(
+            kind,
+            "",
+            {**detail, "date": self.calendar().data},
+            changes,
         )
-        dispatch(self._ledger, result, night_id)
+        self._ledger.commit([entity])
+
+    def world_route(self, *, create: bool = True) -> EntityView | None:
+        key = f"world:{self.calendar().data['year']}:{self.calendar().data['month']}"
+        for entity in self.entities("audit"):
+            if entity.kind == "affair" and entity.key == key:
+                return entity
+        if not create:
+            return None
+        entity = Entity("affair", key, "", {"text": "世界局势"})
+        self._ledger.commit([entity])
+        return next(e for e in self.entities("audit") if e.id == entity.id)
+
+    async def translate_month(
+        self, prompt: str, background: bool = False
+    ) -> Declaration | Unhandled:
+        result = await translate(self._month_agent, prompt, background)
+        self.log.info("translation output: %s", result.model_dump_json())
+        return result
+
+    def store_declaration(
+        self, route_id: UUID, result: Declaration | Unhandled, round_number: int | None
+    ) -> None:
+        if round_number is None:
+            dispatch(self._ledger, result, route_id, monthly=True)
+            return
+        route = self._ledger.get(route_id)
+        changed = {route.id: route}
+        existing = {(e.kind, e.key): e for e in self.entities("audit")}
+        date = self.calendar().data
+        if isinstance(result, Declaration):
+            for fact in result.facts:
+                for change in fact.changes:
+                    if change.field != "petition":
+                        continue
+                    pair = fact.entity_type, fact.entity
+                    row = existing.get(pair)
+                    entity = (
+                        (changed.get(row.id) or self._ledger.get(row.id))
+                        if row
+                        else Entity(*pair, "", {})
+                    )
+                    changed[entity.id] = entity
+                    existing[pair] = EntityView.model_validate(entity.snapshot())
+                    petition = PendingPetition(
+                        **Petition.model_validate(change.value).model_dump(),
+                        id=uuid4(),
+                        route_id=route_id,
+                        entity_id=entity.id,
+                        round=round_number,
+                    )
+                    entity.record(
+                        "petition",
+                        "",
+                        {**petition.model_dump(mode="json"), "date": date},
+                    )
+        route.record(
+            "declaration",
+            "",
+            {
+                "result": result.model_dump(),
+                "unhandled": isinstance(result, Unhandled),
+                "round": round_number,
+                "date": date,
+            },
+        )
+        self._ledger.commit(list(changed.values()))
+
+    def petitions(self) -> list[PendingPetition]:
+        facts = self.facts("audit")
+        chosen = {f.detail["petition_id"] for f in facts if f.kind == "choice"}
+        return [
+            PendingPetition.model_validate(
+                {k: v for k, v in f.detail.items() if k != "date"}
+            )
+            for f in facts
+            if f.kind == "petition" and f.detail["id"] not in chosen
+        ]
+
+    def choose(self, petition_id: UUID, option: int) -> UUID:
+        petition = next((p for p in self.petitions() if p.id == petition_id), None)
+        if (
+            petition is None
+            or type(option) is not int
+            or not 0 <= option < len(petition.options)
+        ):
+            raise ValueError("not an unanswered petition option")
+        self.record_product(
+            petition.route_id,
+            "choice",
+            {
+                "petition_id": str(petition_id),
+                "option": option,
+                "round": petition.round,
+                "text": petition.options[option],
+            },
+        )
+        return petition.route_id
+
+    async def read_records(
+        self, identity: Identity, kind: str | None = None, key: str | None = None
+    ) -> Item:
+        """按类型与正名取本身份材料；空参取全部可读材料，含各衙门呈报的文字。"""
+        rows = [
+            e
+            for e in self.entities(identity)
+            if (kind is None or e.kind == kind) and (key is None or e.key == key)
+        ]
+        # Target resolution is not permission: a hidden physical row can still
+        # carry reports this identity is allowed to read.
+        ids = {
+            e.id
+            for e in self.entities("audit")
+            if (kind is None or e.kind == kind) and (key is None or e.key == key)
+        }
+        return {
+            "entities": [e.model_dump(mode="json") for e in rows],
+            "facts": [
+                f.model_dump(mode="json")
+                for f in self.facts(identity)
+                if (kind is None and key is None) or f.entity_id in ids
+            ],
+        }
 
     def facts(self, identity: Identity, replay: bool = False) -> list[FactView]:
         return project(self._ledger, identity, replay)
@@ -108,3 +281,5 @@ class Court:
 
     def close(self) -> None:
         self._ledger.close()
+        self.log.removeHandler(self._log_handler)
+        self._log_handler.close()

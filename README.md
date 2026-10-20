@@ -40,9 +40,9 @@
 
 ---
 
-## 新包开发入口（#1943 / #1947）
+## 新包开发入口（#1943 / #1947 / #1948）
 
-当前包含开局导入、召对夜与通用实体字段落账；过月和前端接线由后续切片承接，不是完整游戏。Python 3.14：
+当前包含开局导入、召对夜、过月与批红；前端接线由后续切片承接，不是完整游戏。Python 3.14：
 
 ```bash
 python -m pip install -r requirements-ming.txt
@@ -51,7 +51,7 @@ python -m ming read --db saves/<新局文件>.sqlite --identity audit
 python -m ming read --db saves/<新局文件>.sqlite --identity audit --replay
 ```
 
-`new` 输出新局路径；继续操作使用该路径。旧 `decree` 开发入口随交办／拨款声明一并退役；下旨走下方的 `audience`，旨意只记录皇帝认可的圣旨定稿全文、来历与涉及的人，后果由后续过月切片处理。默认读取皇帝材料，`audit` 用于内部对账，`--replay` 从事件重放读取。
+`new` 输出新局路径；继续操作使用该路径。旧 `decree` 开发入口随交办／拨款声明一并退役；下旨走下方的 `audience`，旨意只记录皇帝认可的圣旨定稿全文、来历与涉及的人，后果由过月处理。默认读取皇帝材料，`audit` 用于内部对账，`--replay` 从事件重放读取。
 
 召对使用支持原生文本和工具的 Pydantic AI 模型；OpenAI 兼容端点用自己的 `OPENAI_BASE_URL`、`OPENAI_API_KEY` 环境变量；仅支持 Chat Completions 的端点选原生 `openai-chat:` 前缀（`openai:` 默认走 Responses）。场景不走 CLI 转译适配器（该适配器没有场景工具能力），也不加智能体外壳或文本工具协议。转译默认沿用已登录的 `claude -p`，可用逐次参数换成 API 模型，不改宿主配置：
 
@@ -68,9 +68,25 @@ stdin/stdout 为逐行 JSON。进入时输出夜 id；输入示例：
 {"action":"open"}
 {"action":"drain"}
 {"action":"state"}
+{"action":"month"}
+{"action":"choose","petition":"<奏疏 id>","option":0}
 ```
 
 `say` 返回原样带标记的戏文及夜状态。皇帝吩咐的事由领旨人拟成正式圣旨念出，认可才成旨，没表态即默拒。`dismiss` 请求收夜；若仍有回话在生成，先完成并落账最后一轮，再记收夜。打字退朝由场景模型调退朝工具走同一路径。收夜后后台转译整夜一次，退朝不等；`open` 续未收夜或开新夜。`drain` 等在飞回话与所有已收夜的转译（给过月／正常退出使用）；EOF 也先排空再关档，不自动收夜。未收夜重开续到最后一轮；已收夜缺结果的夜补转，已落不重落。夜的 `result` 为 `null`、`translated` 或 `unhandled`，状态只读账本。`Court.pending_nights()` 给过月检查缺结果的已收夜，`Court.approved_decrees()` 读取已成旨；「接不住」不含字段诊断，调用／传输／代码异常仍抛出。
+
+`month` 立即返回，`month_running` 表示后台仍在执行；`state` 可查看日期、奏折匣 `petitions` 与原始 `month_error`。选项下标从 0 起；夜里出现的奏疏也可用 `choose` 批。`drain`／EOF 等候后台工作。调用方在收夜转译成旨后后台调 `Month.prepare(id, background=True)`；调用方不是召对使用者。Python 入口为 `Month.advance()`、`Month.choose(id, option, background=False)`，共用同一路预推；夜间批红由调用方传 `background=True`，失败留日志、由过月补跑，前台过月的失败仍上抛。重开后再次过月，只补账本里缺的产物；没有另立进度文件。
+
+单次开发调用也可用：
+
+```bash
+python -m ming month --db saves/<新局文件>.sqlite \
+  --model openai-chat:<模型名> --translation-model openai-chat:<模型名>
+python -m ming choose --db saves/<新局文件>.sqlite \
+  --petition <奏疏id> --option 0 --model openai-chat:<模型名> \
+  --translation-model openai-chat:<模型名>
+```
+
+错误与模型原文写在存档旁的同名 `.errors.log`（Python 标准日志）。API 的 5xx／超时按 #1846 共三次、间隔五秒，429 不自动重试；夜里预推只试一次，失败由过月补跑。声明校验仍由 Pydantic AI 单层回喂；CLI 的不可分类错误保留原文，不猜 HTTP 状态。
 
 ## 我们努力的方向
 
