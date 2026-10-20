@@ -2,22 +2,27 @@
 
 import asyncio
 import json
+from collections.abc import Callable
+from functools import partial
 from uuid import UUID
 
 from pydantic_ai import Agent
 from pydantic_ai.models import Model
 
 from ming.middle.court import Court
-from ming.middle.invoke import invoke, transport_model
+from ming.middle.invoke import invoke, stream_text, transport_model
 from ming.middle.declaration import Declaration, PendingPetition
 from ming.middle.translate import Unhandled
 from ming.middle.view import Identity, Officials, character_input
 
 
 class Month:
-    def __init__(self, court: Court, model: Model) -> None:
+    def __init__(
+        self, court: Court, model: Model, on_delta: Callable[[str], None] | None = None
+    ) -> None:
         self.court = court
         self._model = transport_model(model)
+        self.on_delta = on_delta
 
     async def text(
         self,
@@ -27,6 +32,7 @@ class Month:
         background: bool = False,
     ) -> str:
         rows = self.court.entities(identity)
+
         async def read_records(
             kind: str | None = None, key: str | None = None
         ) -> dict[str, object]:
@@ -52,6 +58,9 @@ class Month:
                 ensure_ascii=False,
             ),
             background,
+            event_stream_handler=partial(stream_text, self.on_delta)
+            if identity == "public" and self.on_delta
+            else None,
         )
         self.court.log.info("model output: %s", result.output)
         return result.output

@@ -93,10 +93,27 @@ def owned_accounts(rows: list[Item], identity: Identity) -> set[UUID]:
     }
 
 
+def month_open(rows: list[Item]) -> Item | None:
+    """The month's persisted emperor projection, not execution state."""
+    calendar = next((r for r in rows if r["kind"] == "calendar"), None)
+    if calendar is None:
+        return None
+    return next(
+        (
+            e["detail"]
+            for e in reversed(calendar["events"])
+            if e["kind"] == "month_open" and e["detail"]["date"] == calendar["data"]
+        ),
+        None,
+    )
+
+
 def entities(
     ledger: Ledger, identity: Identity, replay: bool = False
 ) -> list[EntityView]:
     rows = ledger.entities(replay)
+    if identity == "emperor" and (opening := month_open(rows)):
+        return [EntityView.model_validate(e) for e in opening["entities"]]
     accounts = owned_accounts(rows, identity)
     result: list[EntityView] = []
     for row in rows:
@@ -125,10 +142,22 @@ def entities(
 
 def project(ledger: Ledger, identity: Identity, replay: bool = False) -> list[FactView]:
     rows = ledger.entities(replay)
+    opening = month_open(rows) if identity == "emperor" else None
+    controls = {"interaction", "petition", "choice", "gazette"}
     accounts = owned_accounts(rows, identity)
-    result: list[FactView] = []
+    result: list[FactView] = (
+        [
+            FactView.model_validate(f)
+            for f in opening["facts"]
+            if f["kind"] not in controls
+        ]
+        if opening
+        else []
+    )
     for row in rows:
         for item in row["events"]:
+            if opening and item["kind"] not in controls:
+                continue
             fact = FactView(entity_id=row["id"], **item)
             if identity not in ("audit", "world"):
                 if (

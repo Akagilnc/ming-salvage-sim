@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 from collections import defaultdict
+from collections.abc import Callable
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -159,7 +160,20 @@ class Court:
         if not create:
             return None
         entity = Entity("affair", key, "", {"text": "世界局势"})
-        self._ledger.commit([entity])
+        calendar = self._ledger.get(self.calendar().id)
+        # Presentation only: never consulted to execute or resume the month.
+        calendar.record(
+            "month_open",
+            "",
+            {
+                "date": self.calendar().data,
+                "entities": [
+                    e.model_dump(mode="json") for e in self.entities("emperor")
+                ],
+                "facts": [f.model_dump(mode="json") for f in self.facts("emperor")],
+            },
+        )
+        self._ledger.commit([entity, calendar])
         return next(e for e in self.entities("audit") if e.id == entity.id)
 
     async def translate_month(
@@ -293,14 +307,17 @@ class Court:
             },
         )
 
+    def interactions(self) -> dict[str, Item]:
+        return {
+            f.detail["action"]: f.detail
+            for f in self.products(self.calendar().id)
+            if f.kind == "interaction"
+        }
+
     def presentation(self) -> Item:
         """The emperor's landing point and records share the identity projection."""
         date = self.calendar().data
-        interactions = {
-            f.detail["action"]: f.detail
-            for f in self.facts("emperor")
-            if f.kind == "interaction" and f.detail["date"] == date
-        }
+        interactions = self.interactions()
         nights = [e for e in self.entities("emperor") if e.kind == "night"]
         night = nights[-1].data if nights else None
         say = interactions.get("say")
@@ -317,6 +334,9 @@ class Court:
             (item for item in interactions.values() if item["status"] == "running"),
             None,
         )
+        month = interactions.get("month")
+        if month and month["status"] == "running":
+            pending = month  # Translation can be an unfinished step of this action.
         failure = next(
             (item for item in interactions.values() if item["status"] == "failed"), None
         )
@@ -324,16 +344,23 @@ class Court:
         return {
             "face": "audience"
             if night and not night["closed"]
-            else ("month" if world else "desk"),
+            else (
+                "month" if world or (month and month["status"] != "done") else "desk"
+            ),
             "night": night,
             "date": date,
-            "running": pending is not None,
+            "running": pending is not None and failure is None,
             "failure": failure,
             "pending": pending,
             "petitions": [p.model_dump(mode="json") for p in self.petitions()],
         }
 
+    def observe(self, on_change: Callable[[], None]) -> None:
+        """Notify consumers after a committed ledger transition."""
+        self._ledger.on_commit = on_change
+
     def close(self) -> None:
+        self._ledger.on_commit = None
         self._ledger.close()
         self.log.removeHandler(self._log_handler)
         self._log_handler.close()

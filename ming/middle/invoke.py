@@ -1,11 +1,18 @@
 """One transport retry policy, independent of declaration validation retries."""
 
-from collections.abc import Callable, Sequence
+from collections.abc import AsyncIterable, Callable, Sequence
 from typing import Any, TypeVar
 
 from httpx2 import TimeoutException
 from openai import APIConnectionError
-from pydantic_ai import Agent, AgentRunResult
+from pydantic_ai import Agent, AgentRunResult, RunContext
+from pydantic_ai.messages import (
+    AgentStreamEvent,
+    PartStartEvent,
+    PartDeltaEvent,
+    TextPart,
+    TextPartDelta,
+)
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 from pydantic_ai.models import Model
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
@@ -36,6 +43,21 @@ def transient(error: BaseException) -> bool:
             and isinstance(error.__cause__, APIConnectionError)
         )
     )
+
+
+async def stream_text(
+    on_delta: Callable[[str], None],
+    _ctx: RunContext[None],
+    stream: AsyncIterable[AgentStreamEvent],
+) -> None:
+    """Forward native text events without exposing tools or reasoning."""
+    async for event in stream:
+        if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
+            on_delta(event.part.content)
+        elif isinstance(event, PartDeltaEvent) and isinstance(
+            event.delta, TextPartDelta
+        ):
+            on_delta(event.delta.content_delta)
 
 
 async def invoke(

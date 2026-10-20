@@ -155,11 +155,19 @@ class Web:
             else Court(self.directory / save, model)
         )
         self.audience = Audience(self.court, model)
-        self.month = Month(self.court, model)
+        self.month = Month(
+            self.court,
+            model,
+            lambda text: self.emit({"event": "gazette", "data": text}),
+        )
+        self.court.observe(
+            lambda: self.emit({"event": "state", "data": self.snapshot()})
+        )
         nights = self.court.nights()
         if nights and not nights[-1].closed:
             self.audience.open()
         pending = self.court.presentation()["pending"]
+        failure = self.court.presentation()["failure"]
         if pending and pending["action"] == "say":
             # A process died, not merely an HTTP connection. Retry only on request.
             self.court.interaction(
@@ -172,9 +180,16 @@ class Web:
                 },
             )
             self.court.log.error("process interrupted a scene round")
-        elif pending:
-            self.active = asyncio.create_task(self.execute(Action(action="month")))
-        if self.court.pending_nights():
+        elif not failure and (
+            pending
+            or (self.court.world_route(create=False) and not self.court.petitions())
+        ):
+            resume_action = pending["action"] if pending else "month"
+            resuming = Action(
+                action="retry" if resume_action == "translation" else resume_action
+            )
+            self.active = asyncio.create_task(self.execute(resuming))
+        if self.court.pending_nights() and not failure and not pending:
             self.start_background()
         return {"save": self.court.db_path.name}
 
@@ -193,7 +208,9 @@ class Web:
         return EventSourceResponse(self.consume(queue))
 
     async def consume(
-        self, queue: asyncio.Queue[dict[str, Any]], once: bool = False
+        self,
+        queue: asyncio.Queue[dict[str, Any]],
+        task: asyncio.Task[None] | None = None,
     ) -> AsyncIterator[dict[str, str]]:
         try:
             while True:
@@ -204,7 +221,7 @@ class Web:
                     "event": event["event"],
                     "data": json.dumps(event["data"], ensure_ascii=False),
                 }
-                if once and event["event"] == "done":
+                if task is not None and event.get("source") is task:
                     return
         finally:
             self.listeners.discard(queue)
@@ -241,15 +258,25 @@ class Web:
             elif action.action == "choose":
                 assert action.petition is not None
                 await self.month.choose(action.petition, action.option)
-                if self.court.world_route(create=False) is not None:
+                if self.court.world_route(create=False) is not None and (
+                    self.active is None
+                    or self.active.done()
+                    or self.active is asyncio.current_task()
+                ):
                     await self.month.advance()
             else:
+                if action.action == "month":
+                    # Retain the player's original action before waiting on translation.
+                    self.court.interaction("month", "running")
                 if self.court.pending_nights():
                     self.audience.retry_translation()
                 await self.audience.drain()
                 if self.court.pending_nights():
                     return  # The failed translation already has its persisted retry line.
-                await self.month.advance()
+                if action.action == "month":
+                    await self.month.advance()
+                    return
+                self.start_background()
         except Exception:
             # The HTTP consumer may be gone; retain the real failure and log location.
             self.court.log.exception("action=%s", action.action)
@@ -262,7 +289,13 @@ class Web:
                     },
                 )
         finally:
-            self.emit({"event": "done", "data": self.snapshot()})
+            self.emit(
+                {
+                    "event": "done",
+                    "data": self.snapshot(),
+                    "source": asyncio.current_task(),
+                }
+            )
 
     async def actions(self, request: Request) -> Response:
         try:
@@ -282,7 +315,11 @@ class Web:
             self.audience.dismiss()
             self.start_background()
             return JSONResponse(self.snapshot())
-        if self.active is not None and not self.active.done():
+        if (
+            action.action != "choose"
+            and self.active is not None
+            and not self.active.done()
+        ):
             raise HTTPException(409, "这一步还在进行")
         if action.action == "open":
             self.audience.open()
@@ -291,12 +328,13 @@ class Web:
             failure = self.court.presentation()["failure"]
             if not failure:
                 raise HTTPException(409, "没有待重试的动作")
-            if failure["action"] == "translation":
-                # Reuse the same missing-night worker as month advancement.
-                self.audience.retry_translation()
-                self.start_background()
-                return JSONResponse(self.snapshot())
-            action = Action(action=failure["action"], **failure["payload"])
+            pending = self.court.presentation()["pending"]
+            resume_action = failure["action"]
+            if resume_action == "translation":
+                resume_action = (
+                    "month" if pending and pending["action"] == "month" else "retry"
+                )
+            action = Action(action=resume_action, **failure["payload"])
         if action.action == "month" and self.court.presentation()["face"] == "audience":
             raise HTTPException(409, "请先退朝")
         if action.action == "say" and (
@@ -310,8 +348,17 @@ class Web:
             raise HTTPException(400, "无效的批红选项")
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self.listeners.add(queue)
-        self.active = asyncio.create_task(self.execute(action))
-        return EventSourceResponse(self.consume(queue, once=True))
+        task = asyncio.create_task(self.execute(action))
+        if (
+            action.action == "choose"
+            and self.active is not None
+            and not self.active.done()
+        ):
+            self.background.add(task)
+            task.add_done_callback(self.background_done)
+        else:
+            self.active = task
+        return EventSourceResponse(self.consume(queue, task=task))
 
     async def configure(self, action: Action) -> JSONResponse:
         if action.settings is None:

@@ -2,16 +2,13 @@
 
 import asyncio
 import json
-from collections.abc import AsyncIterable, Callable
+from collections.abc import Callable
+from functools import partial
 
 from uuid import UUID
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent
 from pydantic_ai.messages import (
-    AgentStreamEvent,
-    PartStartEvent,
-    PartDeltaEvent,
-    TextPartDelta,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -21,7 +18,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import Model
 
 from ming.middle.court import Court
-from ming.middle.invoke import invoke, transport_model
+from ming.middle.invoke import invoke, stream_text, transport_model
 from ming.middle.opening import CONTENT
 from ming.middle.scene import HallResult, PersonView
 
@@ -33,6 +30,7 @@ class Audience:
         self._worker: asyncio.Task[bool] | None = None
         self._turn: asyncio.Task[str] | None = None
         self._dismiss_requested: UUID | None = None
+
         async def read_person(name: str) -> PersonView:
             """查某人的档案，姓名取账本正名。"""
             return self.court.read_person(name)
@@ -82,6 +80,9 @@ class Audience:
 
     def _start_worker(self) -> None:
         # A recorded failure belongs to its retry line, not to later scene actions.
+        translation = self.court.interactions().get("translation")
+        if translation and translation["status"] == "failed":
+            return
         if self._worker is None or (self._worker.done() and self._worker.result()):
             self._worker = asyncio.create_task(self._translate_pending())
 
@@ -102,12 +103,8 @@ class Audience:
             )
             return False
         else:
-            attempts = [
-                f.detail
-                for f in self.court.products(self.court.calendar().id)
-                if f.kind == "interaction" and f.detail["action"] == "translation"
-            ]
-            if attempts and attempts[-1]["status"] != "done":
+            translation = self.court.interactions().get("translation")
+            if translation and translation["status"] != "done":
                 self.court.interaction("translation", "done")
             return True
 
@@ -135,23 +132,6 @@ class Audience:
         emperor_words: str,
         on_delta: Callable[[str], None] | None = None,
     ) -> str:
-        async def events(
-            _ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]
-        ) -> None:
-            async for event in stream:
-                if (
-                    on_delta
-                    and isinstance(event, PartStartEvent)
-                    and isinstance(event.part, TextPart)
-                ):
-                    on_delta(event.part.content)
-                elif (
-                    on_delta
-                    and isinstance(event, PartDeltaEvent)
-                    and isinstance(event.delta, TextPartDelta)
-                ):
-                    on_delta(event.delta.content_delta)
-
         night = self.court.night(night_id)
         history: list[ModelMessage] = []
         for turn in night.turns:
@@ -169,7 +149,9 @@ class Audience:
                     emperor_words,
                 ],
                 message_history=history,
-                event_stream_handler=events if on_delta else None,
+                event_stream_handler=partial(stream_text, on_delta)
+                if on_delta
+                else None,
             )
         except Exception as error:
             self.court.interaction(
@@ -204,8 +186,8 @@ class Audience:
                 await asyncio.shield(self._turn)
         finally:
             self._start_worker()
-            assert self._worker is not None
-            await asyncio.shield(self._worker)
+            if self._worker is not None:
+                await asyncio.shield(self._worker)
 
     async def close(self) -> None:
         try:

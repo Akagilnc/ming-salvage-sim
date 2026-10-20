@@ -3,7 +3,7 @@
 import asyncio
 import json
 from pathlib import Path
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 
 import pytest
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
@@ -15,7 +15,7 @@ from ming.middle.view import Officials
 
 
 def replaying(
-    replies: list[str] | list[ModelResponse] | list[Exception],
+    replies: Sequence[str | ModelResponse | Exception],
 ) -> FunctionModel:
     remaining = iter(replies)
 

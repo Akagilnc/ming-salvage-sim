@@ -12,6 +12,10 @@ export function App() {
   const [error, setError] = React.useState('');
   const [busy, setBusy] = React.useState(false);
   const [live, setLive] = React.useState('');
+  const [liveGazette, setLiveGazette] = React.useState('');
+  const [reading, setReading] = React.useState<number | 'latest' | null>('latest');
+  const gazetteStreaming = React.useRef(false);
+  const [choosing, setChoosing] = React.useState<Set<string>>(new Set());
   const [pendingWords, setPendingWords] = React.useState('');
   const [input, setInput] = React.useState('');
   const [panel, setPanel] = React.useState<'roster' | 'orders' | 'history' | 'settings' | null>(null);
@@ -22,7 +26,7 @@ export function App() {
     const value = next ?? await state();
     setSnapshot(value);
     if (value.save) setBook(await records());
-    if (!value.game?.running) { setLive(''); setPendingWords(''); }
+    if (!value.game?.running) { setLive(''); setPendingWords(''); setLiveGazette(''); }
   }, []);
 
   React.useEffect(() => {
@@ -35,7 +39,15 @@ export function App() {
         ...value, game: { ...value.game, night: { ...value.game.night, hall: chunk.hall } },
       } : value);
     });
-    const receive = (event: Event) => { void refresh(JSON.parse((event as MessageEvent).data)).catch(reason => setError(String(reason))); };
+    events.addEventListener('gazette', event => {
+      if (!gazetteStreaming.current) { setReading('latest'); setLiveGazette(''); }
+      gazetteStreaming.current = true;
+      setLiveGazette(text => text + (JSON.parse((event as MessageEvent).data) as string));
+    });
+    const receive = (event: Event) => {
+      if (event.type === 'done') gazetteStreaming.current = false;
+      void refresh(JSON.parse((event as MessageEvent).data)).catch(reason => setError(String(reason)));
+    };
     events.addEventListener('state', receive);
     events.addEventListener('done', receive);
     return () => events.close();
@@ -47,15 +59,19 @@ export function App() {
 
   async function action(value: Action) {
     setError('');
-    if (value.action !== 'dismiss') setBusy(true);
+    if (value.action === 'choose' && value.petition) setChoosing(ids => new Set(ids).add(value.petition!));
+    else if (value.action !== 'dismiss') setBusy(true);
     if (value.action === 'say') { setPendingWords(value.words ?? ''); setLive(''); follow.current = true; }
     try {
       await act(value);
       await refresh();
       if (value.action === 'open') follow.current = true;
-      if (value.action === 'new' || value.action === 'continue' || value.action === 'load') setPanel(null);
+      if (value.action === 'new' || value.action === 'continue' || value.action === 'load') { setPanel(null); setReading('latest'); }
     } catch (reason) { setError(String(reason)); }
-    finally { if (value.action !== 'dismiss') setBusy(false); }
+    finally {
+      if (value.action === 'choose') setChoosing(ids => { const next = new Set(ids); next.delete(value.petition!); return next; });
+      else if (value.action !== 'dismiss') setBusy(false);
+    }
   }
 
   if (!snapshot) return <main className="loading">{error || '正在打开…'}</main>;
@@ -67,8 +83,12 @@ export function App() {
   const turns = night?.turns ?? [];
   const speaker = currentSpeaker(turns, live, night?.hall ?? []);
   const people = book.entities.filter(entity => entity.kind === 'person');
-  const gazette = book.facts.filter(fact => fact.kind === 'gazette').at(-1)?.detail.text
-    ?? book.entities.find(entity => entity.kind === 'gazette')?.data.text;
+  const gazettes = [
+    ...book.entities.filter(entity => entity.kind === 'gazette').map(entity => String(entity.data.text ?? '')),
+    ...book.facts.filter(fact => fact.kind === 'gazette').map(fact => String(fact.detail.text ?? '')),
+  ];
+  const gazette = reading === 'latest' ? (liveGazette || gazettes.at(-1))
+    : reading === null ? null : gazettes[reading];
   const pending = game.pending?.payload.words || pendingWords || game.failure?.payload.words;
   const failure = game.failure && <div className="system-failure" role="alert">
     此处未能完成。{game.failure.payload.log && <>错误记录：<code>{game.failure.payload.log}</code>，请把它发给作者。</>}
@@ -103,16 +123,19 @@ export function App() {
             {live && <Scene text={live} />}
             {failure}
           </> : <>
-            <h2>{game.face === 'month' ? '核账期' : '邸报'}</h2>
-            <div className="gazette">{String(gazette ?? '')}</div>
+            <h2>{game.face === 'month' ? '核账期' : '案头'}</h2>
             {failure}
             {game.face === 'month' && !game.running && !game.failure && game.petitions.length === 0 && <button disabled={busy} onClick={() => void action({ action: 'month' })}>接续核账</button>}
           </>}
+          {reading !== null && (!audience || typeof reading === 'number') && <article className="gazette">
+            <h2>邸报</h2><div>{gazette}</div>
+            <button onClick={() => setReading(null)}>朕知道了</button>
+          </article>}
           {!audience && night?.result === 'unhandled' && <p className="unhandled">接不住</p>}
           {!audience && book.facts.filter(fact => fact.kind === 'unhandled' && !book.entities.some(entity => entity.id === fact.entity_id && entity.kind === 'night')).map((fact, index) => <p key={`${fact.entity_id}-${index}`} className="unhandled">接不住</p>)}
           {game.petitions.map(petition => <article className="petition" key={petition.id}>
             <h3>奏疏</h3><p>{petition.text}</p>
-            {petition.options.map((option, index) => <button disabled={busy} key={index} onClick={() => void action({ action: 'choose', petition: petition.id, option: index })}>{option}</button>)}
+            {petition.options.map((option, index) => <button disabled={choosing.has(petition.id)} key={index} onClick={() => void action({ action: 'choose', petition: petition.id, option: index })}>{option}</button>)}
           </article>)}
         </div>
         {audience ? <form className="composer" onSubmit={event => {
@@ -134,7 +157,7 @@ export function App() {
           </article>)}</> : <><h2>起居录</h2>{book.entities.filter(entity => entity.kind === 'night').map(entity => <details key={entity.id}>
             <summary>{entity.key}</summary><ScrollMessages turns={(entity.data as unknown as NonNullable<typeof night>).turns} />
             {entity.data.result === 'unhandled' && <p className="unhandled">接不住</p>}
-          </details>)}</>}
+          </details>)}<h2>历期邸报</h2>{gazettes.map((_text, index) => <button key={index} onClick={() => { setReading(index); setPanel(null); }}>第 {index + 1} 期</button>)}</>}
       </aside>}
     </div>
   </main>;
