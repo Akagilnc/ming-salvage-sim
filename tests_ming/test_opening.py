@@ -43,10 +43,11 @@ def test_new_game_imports_complete_world_records_and_separates_identities(
     assert offices["巡抚"]["multiple"] is False
     assert offices["内阁大学士"]["multiple"] is True
     visible = court.entities("emperor")
-    assert {e.key for e in visible} == {e.key for e in entities if e.kind == "person"}
+    assert {e.kind for e in visible} == {"person", "calendar", "gazette"}
+    shown = {e.key: e.data for e in visible if e.kind == "person"}
+    assert shown.keys() == {e.key for e in entities if e.kind == "person"}
     visible_fields = {"name", "office", "location", "status"}
-    assert all(set(e.data) <= visible_fields for e in visible)
-    shown = {e.key: e.data for e in visible}
+    assert all(set(data) <= visible_fields for data in shown.values())
     characters = {
         p["name"]: p
         for p in json.loads((CONTENT / "characters.json").read_text())["characters"]
