@@ -112,7 +112,7 @@ def check(ledger: Ledger, out: Declaration) -> None:
                     fail(
                         f"{path}.changes[{j}].value", change.value, names.get(kind, {})
                     )
-    check_rules(out)
+    check_rules(out, set(names.get("affair", {})))
     if isinstance(out, NightDeclaration):
         for decree in out.decrees:
             for person in decree.people:

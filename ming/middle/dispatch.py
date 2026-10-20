@@ -36,7 +36,9 @@ def dispatch(
         detail: dict[str, object],
         changes: dict[str, object] | None = None,
     ) -> None:
-        entity.record(kind, words, {**detail, "date": date}, changes)
+        entity.record(
+            kind, words, {**detail, "origin_ref": str(owner.id), "date": date}, changes
+        )
         changed[(entity.kind, entity.key)] = entity
         existing[(entity.kind, entity.key)] = entity.snapshot()
 
@@ -50,7 +52,13 @@ def dispatch(
                 existing[pair] = entity.snapshot()
         for i, fact in enumerate(result.facts):
             entity = known(fact.entity_type, fact.entity)
+            association = (
+                {"affair_id": str(known("affair", fact.affair).id)}
+                if fact.affair is not None
+                else {}
+            )
             detail = field_values(fact, entity.data, amounts.get(i))
+            detail.update(association)
             changes = detail["changes"]
             record(entity, "changed", detail, changes)
             if (
@@ -58,7 +66,7 @@ def dispatch(
                 and {"office", "office_region"}.intersection(changes)
                 and entity.data.get("office")
             ):
-                displace(entity, existing, known, record)
+                displace(entity, existing, known, record, association)
         for i, fact in enumerate(result.facts):
             for change in fact.changes:
                 if change.counterpart and change.counterpart.entity_type != "account":
@@ -71,6 +79,9 @@ def dispatch(
                             "nominal": -change.value,
                             "actual": -amounts[i],
                             "source": fact.entity,
+                            "affair_id": str(known("affair", fact.affair).id)
+                            if fact.affair is not None
+                            else None,
                             "audience": "world",
                         },
                     )
@@ -102,6 +113,7 @@ def displace(
     existing: dict[tuple[str, str], Item],
     known: Callable[[str, str], Entity],
     record: Callable[[Entity, str, Item, Item], None],
+    association: Item,
 ) -> None:
     office = appointee.data["office"]
     office_row = existing.get(("office", office))
@@ -115,6 +127,6 @@ def displace(
                 record(
                     known(kind, key),
                     "displaced",
-                    {"successor": appointee.key},
+                    {"successor": appointee.key, **association},
                     {"office": "", "status": "offstage"},
                 )

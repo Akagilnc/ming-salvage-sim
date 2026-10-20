@@ -9,8 +9,12 @@ from pydantic_ai import ModelRetry
 from ming.middle.declaration import Declaration, Fact, Petition
 
 
-def check_rules(out: Declaration) -> None:
-    for fact in out.facts:
+def check_rules(out: Declaration, affairs: set[str]) -> None:
+    for i, fact in enumerate(out.facts):
+        if fact.affair is not None and fact.affair not in affairs:
+            raise ModelRetry(
+                f"facts[{i}].affair: {fact.affair!r}; 期望事务正名 {sorted(affairs)}，重交整份。"
+            )
         if len({c.field for c in fact.changes}) != len(fact.changes):
             raise ModelRetry("一条事实的字段变更不得重名；重交整份，不能静默丢项。")
         for change in fact.changes:
@@ -94,31 +98,35 @@ def money_amounts(
             if fact.entity_type != "account" or change.field != "taels" or i in amounts:
                 continue
             pair = fact.entity_type, fact.entity
-            if change.value <= 0:
-                actual = min(-change.value, max(0, balances.get(pair, 0)))
-                amounts[i] = -actual
-                balances[pair] = balances.get(pair, 0) - actual
-                if change.counterpart and change.counterpart.entity_type == "account":
-                    other = change.counterpart.entity_type, change.counterpart.entity
-                    j = next(
-                        j
-                        for j, f in enumerate(facts)
-                        if j not in amounts
-                        and (f.entity_type, f.entity) == other
-                        and any(
-                            c.field == "taels"
-                            and c.value == -change.value
-                            and c.counterpart is not None
-                            and (c.counterpart.entity_type, c.counterpart.entity)
-                            == pair
-                            for c in f.changes
-                        )
+            if change.counterpart and change.counterpart.entity_type == "account":
+                other = change.counterpart.entity_type, change.counterpart.entity
+                j = next(
+                    j
+                    for j, f in enumerate(facts)
+                    if j not in amounts
+                    and (f.entity_type, f.entity) == other
+                    and any(
+                        c.field == "taels"
+                        and c.value == -change.value
+                        and c.counterpart is not None
+                        and (c.counterpart.entity_type, c.counterpart.entity) == pair
+                        for c in f.changes
                     )
-                    amounts[j] = actual
-                    balances[other] = balances.get(other, 0) + actual
-            elif change.counterpart is None:
-                amounts[i] = change.value
-                balances[pair] = balances.get(pair, 0) + change.value
+                )
+                # Either edge establishes the whole transfer, exactly once.
+                source, destination = (pair, other) if change.value <= 0 else (other, pair)
+                actual = min(abs(change.value), max(0, balances.get(source, 0)))
+                amounts[i] = -actual if change.value <= 0 else actual
+                amounts[j] = -amounts[i]
+                balances[source] = balances.get(source, 0) - actual
+                balances[destination] = balances.get(destination, 0) + actual
+            else:
+                amounts[i] = (
+                    -min(-change.value, max(0, balances.get(pair, 0)))
+                    if change.value <= 0
+                    else change.value
+                )
+                balances[pair] = balances.get(pair, 0) + amounts[i]
     return amounts
 
 

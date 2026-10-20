@@ -133,9 +133,11 @@ class Month:
         finally:
             lock.release()
 
-    async def choose(self, petition_id: UUID, option: int) -> None:
+    async def choose(
+        self, petition_id: UUID, option: int, *, background: bool = False
+    ) -> None:
         route_id = self.court.choose(petition_id, option)
-        await self.prepare(route_id)
+        await self.prepare(route_id, background=background)
 
     async def advance(self) -> list[PendingPetition]:
         lock = self.court.locks[self.court.calendar().id]

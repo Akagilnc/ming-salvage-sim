@@ -87,7 +87,16 @@ async def conversation(court: Court, scene_model: Model) -> None:
                 if advancing is None or advancing.done():
                     advancing = asyncio.create_task(month.advance())
             elif action == "choose":
-                await month.choose(UUID(request["petition"]), request["option"])
+                await month.choose(
+                    UUID(request["petition"]),
+                    request["option"],
+                    background=advancing is None
+                    or (
+                        advancing.done()
+                        and advancing.exception() is None
+                        and not advancing.result()
+                    ),
+                )
             elif action == "drain":
                 await audience.drain()
                 await asyncio.gather(*background)

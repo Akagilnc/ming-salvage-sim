@@ -1,6 +1,7 @@
 """Medium (SQLite): month actions through the package's user/read boundaries."""
 
 import asyncio
+import json
 import sqlite3
 from pathlib import Path
 from typing import Any, cast
@@ -98,18 +99,29 @@ def test_month_without_decrees_advances_and_replays_after_reopening(
 
 
 @pytest.mark.parametrize(
-    ("nominal", "actual", "interrupt"),
+    ("nominal", "actual", "interrupt", "prefund"),
     [
-        (300000, 300000, False),
-        (3200000, 3200000, False),
-        (5000000, 3200000, False),
-        (5000000, 3200000, True),
+        (300000, 300000, False, 0),
+        (3200000, 3200000, False, 0),
+        (5000000, 3200000, False, 0),
+        (5000000, 3200000, True, 0),
+        (7600000, 7600000, False, 4400000),
     ],
 )
 def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
-    tmp_path: Path, nominal: int, actual: int, interrupt: bool
+    tmp_path: Path, nominal: int, actual: int, interrupt: bool, prefund: int
 ) -> None:
-    reply = (Path(__file__).parent / f"recorded/month_money_{nominal}.txt").read_text()
+    recorded_nominal = 3200000 if prefund else nominal
+    reply = (Path(__file__).parent / f"recorded/month_money_{recorded_nominal}.txt").read_text()
+    if prefund:
+        declaration = json.loads(reply)
+        credit, debit = json.loads(reply)["facts"][:2]
+        credit["changes"][0]["value"] = prefund
+        debit["changes"][0]["value"] = -prefund
+        declaration["facts"][0]["changes"][0]["value"] = -nominal
+        declaration["facts"][1]["changes"][0]["value"] = nominal
+        declaration["facts"] = [credit, *declaration["facts"], debit]
+        reply = json.dumps(declaration)
     court = Court.new_game(tmp_path, replaying([reply, reply]))
     if interrupt:
         with sqlite3.connect(court.db_path) as connection:
@@ -142,7 +154,10 @@ def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
     accounts = {
         e.key: e.data["taels"] for e in court.entities("audit") if e.kind == "account"
     }
-    assert accounts == {"国库": 3200000 - actual, "内库": 4400000 + actual}
+    assert accounts == {
+        "国库": 3200000 + prefund - actual,
+        "内库": 4400000 - prefund + actual,
+    }
     assert {
         e.key
         for e in court.entities(Officials(people=["杨嗣昌"]))
@@ -198,10 +213,10 @@ def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
         for f in court.facts("audit")
         if f.kind == "changed" and "taels" in f.detail["nominal"]
     ]
-    assert [(t["nominal"]["taels"], t["actual"]["taels"]) for t in transfers] == [
-        (-nominal, -actual),
-        (nominal, actual),
-    ]
+    expected = [(-nominal, -actual), (nominal, actual)]
+    if prefund:
+        expected = [(prefund, prefund), *expected, (-prefund, -prefund)]
+    assert [(t["nominal"]["taels"], t["actual"]["taels"]) for t in transfers] == expected
     assert court.entities("audit") == court.entities("audit", replay=True)
     assert court.facts("audit") == court.facts("audit", replay=True)
     court.close()

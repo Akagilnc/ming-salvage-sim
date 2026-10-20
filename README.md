@@ -74,7 +74,7 @@ stdin/stdout 为逐行 JSON。进入时输出夜 id；输入示例：
 
 `say` 返回原样带标记的戏文及夜状态。皇帝吩咐的事由领旨人拟成正式圣旨念出，认可才成旨，没表态即默拒。`dismiss` 请求收夜；若仍有回话在生成，先完成并落账最后一轮，再记收夜。打字退朝由场景模型调退朝工具走同一路径。收夜后后台转译整夜一次，退朝不等；`open` 续未收夜或开新夜。`drain` 等在飞回话与所有已收夜的转译（给过月／正常退出使用）；EOF 也先排空再关档，不自动收夜。未收夜重开续到最后一轮；已收夜缺结果的夜补转，已落不重落。夜的 `result` 为 `null`、`translated` 或 `unhandled`，状态只读账本。`Court.pending_nights()` 给过月检查缺结果的已收夜，`Court.approved_decrees()` 读取已成旨；「接不住」不含字段诊断，调用／传输／代码异常仍抛出。
 
-`month` 立即返回，`month_running` 表示后台仍在执行；`state` 可查看日期、奏折匣 `petitions` 与原始 `month_error`。选项下标从 0 起；夜里出现的奏疏也可用 `choose` 批。`drain`／EOF 等候后台工作。调用方在收夜转译成旨后后台调 `Month.prepare(id, background=True)`；调用方不是召对使用者。Python 入口为 `Month.advance()`、`Month.choose(id, option)`，共用同一路预推。重开后再次过月，只补账本里缺的产物；没有另立进度文件。
+`month` 立即返回，`month_running` 表示后台仍在执行；`state` 可查看日期、奏折匣 `petitions` 与原始 `month_error`。选项下标从 0 起；夜里出现的奏疏也可用 `choose` 批。`drain`／EOF 等候后台工作。调用方在收夜转译成旨后后台调 `Month.prepare(id, background=True)`；调用方不是召对使用者。Python 入口为 `Month.advance()`、`Month.choose(id, option, background=False)`，共用同一路预推；夜间批红由调用方传 `background=True`，失败留日志、由过月补跑，前台过月的失败仍上抛。重开后再次过月，只补账本里缺的产物；没有另立进度文件。
 
 单次开发调用也可用：
 

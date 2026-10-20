@@ -40,6 +40,10 @@ class Fact(StrictModel):
     entity_type: str = Field(description="账本实体类型，如 person、army、affair")
     entity: str = Field(description="实体的账本正名或新实体的名字")
     create: bool = Field(description="是否新建；已有实体填 false")
+    affair: str | None = Field(
+        default=None,
+        description="本条后果所属事务的正名；可指同份声明新建的 affair，无所属事务可省略。",
+    )
     changes: list[Change]
     audience: Literal["world", "public", "official"] = "world"
     text: str = Field(

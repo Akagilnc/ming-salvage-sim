@@ -105,6 +105,7 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
                     {
                         "entity_type": "person",
                         "entity": appointee,
+                        "affair": "陕西赈灾",
                         "create": False,
                         "changes": [
                             {"field": field, "value": value}
@@ -117,6 +118,7 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
                 {
                     "entity_type": "person",
                     "entity": "徐光启",
+                    "affair": "陕西赈灾",
                     "create": False,
                     "changes": [
                         {"field": "office", "value": "内阁大学士"},
@@ -151,6 +153,7 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
                 {
                     "entity_type": "army",
                     "entity": "jingying",
+                    "affair": "陕西赈灾",
                     "create": False,
                     "changes": [
                         {"field": "firearm_equipment", "value": 120},
@@ -169,7 +172,7 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
         },
         ensure_ascii=False,
     )
-    court = Court.new_game(tmp_path, replaying([reply]))
+    court = Court.new_game(tmp_path, replaying([reply, reply]))
     assert asyncio.run(
         court.read_records(Officials(people=["郭允厚"]), "account", "国库")
     )["entities"]
@@ -230,12 +233,20 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
     assert [e.key for e in court.entities("audit") if e.kind == "affair"] == [
         "陕西赈灾"
     ]
+    affair = next(e for e in court.entities("audit") if e.kind == "affair")
+    associated = [f for f in court.facts("audit") if f.detail.get("affair_id")]
+    expected_entities = {people[appointee].id, people["徐光启"].id, army.id}
+    if incumbent_status == "offstage":
+        expected_entities.add(people["练国事"].id)
+    assert {f.entity_id for f in associated} == expected_entities
+    assert all(f.detail["affair_id"] == str(affair.id) for f in associated)
+    assert all(f.detail["origin_ref"] == str(n.id) for f in associated for n in court.nights())
     before = physical_state(court)
-    facts = [(f.entity_id, f.kind) for f in court.facts("audit")]
+    facts = court.facts("audit")
     path = court.db_path
     court.close()
     court = Court(path, replaying([]))
     assert physical_state(court) == before == physical_state(court, replay=True)
-    assert [(f.entity_id, f.kind) for f in court.facts("audit")] == facts
-    assert [(f.entity_id, f.kind) for f in court.facts("audit", replay=True)] == facts
+    assert court.facts("audit") == facts
+    assert court.facts("audit", replay=True) == facts
     court.close()
