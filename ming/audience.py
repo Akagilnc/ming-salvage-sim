@@ -169,7 +169,6 @@ class Audience:
             self._finish_dismiss(night_id)
             raise
         self.court.append_turn(night_id, emperor_words, result.output)
-        self.court.interaction("say", "done")
         self._finish_dismiss(night_id)
         return result.output
 

@@ -19,7 +19,7 @@ from ming.middle.declaration import (
     Petition,
 )
 from ming.middle.opening import CONTENT, import_opening
-from ming.middle.night import NightView, append_turn, dismiss, open_night, read_night
+from ming.middle.night import NightView, dismiss, open_night, read_night
 from ming.middle.scene import HallResult, PersonView, read_person, set_hall
 from ming.middle.translate import Unhandled, build_agent, translate
 from ming.middle.view import EntityView, FactView, Identity, entities, project
@@ -72,7 +72,11 @@ class Court:
         dismiss(self._ledger, night_id)
 
     def append_turn(self, night_id: UUID, words: str, scene: str) -> str:
-        return append_turn(self._ledger, night_id, words, scene)
+        night = self._ledger.get(night_id)
+        turn_id = str(uuid4())
+        night.record("turn", words, {"id": turn_id, "scene": scene})
+        self.interaction("say", "done", product=night)
+        return turn_id
 
     def read_person(self, name: str) -> PersonView:
         return read_person(self._ledger, name)
@@ -294,18 +298,26 @@ class Court:
         return entities(self._ledger, identity, replay)
 
     def interaction(
-        self, action: str, status: str, payload: Item | None = None
+        self,
+        action: str,
+        status: str,
+        payload: Item | None = None,
+        *,
+        product: Entity | None = None,
     ) -> None:
-        """Persist a player action/outcome, not a parallel copy of world products."""
-        self.record_product(
-            self.calendar().id,
+        """Commit the action outcome together with its product, when provided."""
+        calendar = self._ledger.get(self.calendar().id)
+        calendar.record(
             "interaction",
+            "",
             {
                 "action": action,
                 "status": status,
                 "payload": payload or {},
+                "date": calendar.data,
             },
         )
+        self._ledger.commit([calendar] if product is None else [product, calendar])
 
     def interactions(self) -> dict[str, Item]:
         return {
