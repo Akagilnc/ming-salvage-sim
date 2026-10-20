@@ -5,6 +5,7 @@ persistence rules. Opening data is imported once; recorded changes update the sa
 entity state during both landing and replay.
 """
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 from uuid import UUID
@@ -76,14 +77,23 @@ class Ledger(Application[UUID]):
                 "SQLALCHEMY_URL": f"sqlite:///{db_path}",
             }
         )
+        self.on_commit: Callable[[], None] | None = None
         self.sql = cast(SQLAlchemyApplicationRecorder, self.recorder)
         Base.metadata.create_all(cast(Engine, self.sql.datastore.engine))
+
+    def close(self) -> None:
+        super().close()
+        # The recorder factory does not close SQLAlchemy's pool. Release SQLite
+        # before selecting another game; deferred WAL checkpoints change mtimes.
+        cast(Engine, self.sql.datastore.engine).dispose()
 
     def commit(self, entities: list[Entity]) -> None:
         with self.sql.transaction() as session:
             for entity in entities:
                 session.merge(EntityRow(**entity.snapshot()))
             self.save(*entities)
+        if self.on_commit is not None:
+            self.on_commit()
 
     def entities(self, replay: bool = False) -> list[Item]:
         if replay:

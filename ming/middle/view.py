@@ -6,6 +6,7 @@ from uuid import UUID
 from pydantic import BaseModel
 
 from ming.ledger import Item, Ledger
+from ming.middle.night import read_night
 
 PublicIdentity = Literal["emperor", "audit", "world", "public"]
 
@@ -92,10 +93,27 @@ def owned_accounts(rows: list[Item], identity: Identity) -> set[UUID]:
     }
 
 
+def month_open(rows: list[Item]) -> Item | None:
+    """The month's persisted emperor projection, not execution state."""
+    calendar = next((r for r in rows if r["kind"] == "calendar"), None)
+    if calendar is None:
+        return None
+    return next(
+        (
+            e["detail"]
+            for e in reversed(calendar["events"])
+            if e["kind"] == "month_open" and e["detail"]["date"] == calendar["data"]
+        ),
+        None,
+    )
+
+
 def entities(
     ledger: Ledger, identity: Identity, replay: bool = False
 ) -> list[EntityView]:
     rows = ledger.entities(replay)
+    if identity == "emperor" and (opening := month_open(rows)):
+        return [EntityView.model_validate(e) for e in opening["entities"]]
     accounts = owned_accounts(rows, identity)
     result: list[EntityView] = []
     for row in rows:
@@ -108,7 +126,15 @@ def entities(
                     for k, v in row["data"].items()
                     if k in {"name", "office", "location", "status"}
                 }
-            elif row["kind"] not in {"gazette", "calendar"} or identity == "emperor":
+            elif row["kind"] == "night" and identity == "emperor":
+                row["data"] = read_night(ledger, row["id"]).model_dump(mode="json")
+            elif row["kind"] == "decree" and identity == "emperor":
+                row["data"] = {
+                    k: v
+                    for k, v in row["data"].items()
+                    if k in {"text", "origin", "people", "night_id"}
+                }
+            elif row["kind"] not in {"gazette", "calendar"}:
                 continue
         result.append(EntityView.model_validate(row))
     return result
@@ -116,10 +142,22 @@ def entities(
 
 def project(ledger: Ledger, identity: Identity, replay: bool = False) -> list[FactView]:
     rows = ledger.entities(replay)
+    opening = month_open(rows) if identity == "emperor" else None
+    controls = {"interaction", "petition", "choice", "gazette"}
     accounts = owned_accounts(rows, identity)
-    result: list[FactView] = []
+    result: list[FactView] = (
+        [
+            FactView.model_validate(f)
+            for f in opening["facts"]
+            if f["kind"] not in controls
+        ]
+        if opening
+        else []
+    )
     for row in rows:
         for item in row["events"]:
+            if opening and item["kind"] not in controls:
+                continue
             fact = FactView(entity_id=row["id"], **item)
             if identity not in ("audit", "world"):
                 if (
@@ -131,6 +169,8 @@ def project(ledger: Ledger, identity: Identity, replay: bool = False) -> list[Fa
                     )
                 ):
                     fact.detail = {"text": fact.detail["text"]}
+                elif fact.kind == "interaction" and identity == "emperor":
+                    pass
                 elif fact.kind in {"petition", "choice"}:
                     pass
                 elif fact.kind == "unhandled" and identity == "emperor":

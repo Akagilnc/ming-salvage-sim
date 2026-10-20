@@ -61,17 +61,19 @@ def resolve_model(name: str) -> Model:
     return ClaudeCliModel() if name == "claude-cli" else infer_model(name)
 
 
+async def precompute(audience: Audience, month: Month) -> None:
+    """Entry adapters schedule the same existing speculative work."""
+    await audience.drain()
+    await asyncio.gather(
+        *(month.prepare(e.id, background=True) for e in audience.court.approved_decrees())
+    )
+
+
 async def conversation(court: Court, scene_model: Model) -> None:
     audience = Audience(court, scene_model)
     month = Month(court, scene_model)
     background: list[asyncio.Task[None]] = []
     advancing: asyncio.Task[object] | None = None
-
-    async def precompute() -> None:
-        await audience.drain()
-        await asyncio.gather(
-            *(month.prepare(e.id, background=True) for e in court.approved_decrees())
-        )
 
     try:
         print(json.dumps({"night": str(audience.open())}), flush=True)
@@ -104,7 +106,7 @@ async def conversation(court: Court, scene_model: Model) -> None:
             elif action != "state":
                 raise ValueError(f"unknown audience action: {action}")
             if court.night(audience.night_id).closed and action in {"say", "dismiss"}:
-                background.append(asyncio.create_task(precompute()))
+                background.append(asyncio.create_task(precompute(audience, month)))
             error = (
                 advancing.exception()
                 if advancing is not None and advancing.done()

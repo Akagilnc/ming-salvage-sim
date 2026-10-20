@@ -51,11 +51,3 @@ def dismiss(ledger: Ledger, night_id: UUID) -> None:
     if not night.data["closed"]:
         night.record("dismissed", "", {}, {"closed": True})
         ledger.commit([night])
-
-
-def append_turn(ledger: Ledger, night_id: UUID, words: str, scene: str) -> str:
-    night = ledger.get(night_id)
-    turn_id = str(uuid4())
-    night.record("turn", words, {"id": turn_id, "scene": scene})
-    ledger.commit([night])
-    return turn_id

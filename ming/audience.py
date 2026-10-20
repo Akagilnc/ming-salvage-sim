@@ -2,10 +2,12 @@
 
 import asyncio
 import json
+from collections.abc import Callable
+from functools import partial
 
 from uuid import UUID
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -16,7 +18,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import Model
 
 from ming.middle.court import Court
-from ming.middle.invoke import invoke, transport_model
+from ming.middle.invoke import invoke, stream_text, transport_model
 from ming.middle.opening import CONTENT
 from ming.middle.scene import HallResult, PersonView
 
@@ -25,37 +27,33 @@ class Audience:
     def __init__(self, court: Court, scene_model: Model) -> None:
         self.court = court
         self._night_id: UUID | None = None
-        self._worker: asyncio.Task[None] | None = None
+        self._worker: asyncio.Task[bool] | None = None
         self._turn: asyncio.Task[str] | None = None
         self._dismiss_requested: UUID | None = None
-        self._scene = Agent(
-            transport_model(scene_model),
-            deps_type=UUID,
-            output_type=str,
-            instructions=(CONTENT / "prompts/scene_agent.md").read_text(),
-        )
 
-        @self._scene.tool_plain
         async def read_person(name: str) -> PersonView:
             """查某人的档案，姓名取账本正名。"""
             return self.court.read_person(name)
 
-        @self._scene.tool
-        async def get_hall(ctx: RunContext[UUID]) -> list[str]:
+        async def get_hall() -> list[str]:
             """看今夜殿上名单。"""
-            return self.court.night(ctx.deps).hall
+            return self.court.night(self.night_id).hall
 
-        @self._scene.tool
-        async def set_hall(
-            ctx: RunContext[UUID], add: list[str], remove: list[str]
-        ) -> HallResult:
+        async def set_hall(add: list[str], remove: list[str]) -> HallResult:
             """有人入殿或退下时先改名单；不在京师的人加不进殿。"""
-            return self.court.set_hall(ctx.deps, add, remove)
+            return self.court.set_hall(self.night_id, add, remove)
 
-        @self._scene.tool
-        async def dismiss(ctx: RunContext[UUID]) -> None:
+        async def dismiss() -> None:
             """退朝：本轮回话落账后收夜，不等后台转译。"""
-            self.dismiss(ctx.deps)
+            self.dismiss()
+
+        tools = [read_person, get_hall, set_hall, dismiss]
+        self._scene = Agent(
+            transport_model(scene_model, tools),
+            output_type=str,
+            instructions=(CONTENT / "prompts/scene_agent.md").read_text(),
+            tools=tools,
+        )
 
     @property
     def night_id(self) -> UUID:
@@ -64,8 +62,8 @@ class Audience:
         return self._night_id
 
     def open(self) -> UUID:
-        self._night_id = self.court.open_night()
         self._start_worker()
+        self._night_id = self.court.open_night()
         return self.night_id
 
     def dismiss(self, night_id: UUID | None = None) -> None:
@@ -81,18 +79,38 @@ class Audience:
             self._start_worker()
 
     def _start_worker(self) -> None:
-        if self._worker is None:
-            self._worker = asyncio.create_task(self._translate_pending())
-        elif self._worker.done():
-            self._worker.result()  # Unexpected failures stay failures; never relabel them.
+        # A recorded failure belongs to its retry line, not to later scene actions.
+        translation = self.court.interactions().get("translation")
+        if translation and translation["status"] == "failed":
+            return
+        if self._worker is None or (self._worker.done() and self._worker.result()):
             self._worker = asyncio.create_task(self._translate_pending())
 
-    async def _translate_pending(self) -> None:
-        while pending := self.court.pending_nights():
-            for night_id in pending:
-                await self.court.translate_night(night_id)
+    async def _translate_pending(self) -> bool:
+        try:
+            while pending := self.court.pending_nights():
+                for night_id in pending:
+                    await self.court.translate_night(night_id)
+        except Exception as error:
+            self.court.log.exception("translation worker")
+            self.court.interaction(
+                "translation",
+                "failed",
+                {
+                    "type": type(error).__name__,
+                    "log": str(self.court.db_path.with_suffix(".errors.log")),
+                },
+            )
+            return False
+        else:
+            translation = self.court.interactions().get("translation")
+            if translation and translation["status"] != "done":
+                self.court.interaction("translation", "done")
+            return True
 
-    async def say(self, emperor_words: str) -> str:
+    async def say(
+        self, emperor_words: str, on_delta: Callable[[str], None] | None = None
+    ) -> str:
         self._start_worker()
         night_id = self.night_id
         night = self.court.night(night_id)
@@ -100,10 +118,20 @@ class Audience:
             raise ValueError("night already closed")
         if self._turn is not None and not self._turn.done():
             raise ValueError("a scene round is already generating")
-        self._turn = asyncio.create_task(self._generate(night_id, emperor_words))
+        self.court.interaction(
+            "say", "running", {"words": emperor_words, "night_id": str(night_id)}
+        )
+        self._turn = asyncio.create_task(
+            self._generate(night_id, emperor_words, on_delta)
+        )
         return await asyncio.shield(self._turn)
 
-    async def _generate(self, night_id: UUID, emperor_words: str) -> str:
+    async def _generate(
+        self,
+        night_id: UUID,
+        emperor_words: str,
+        on_delta: Callable[[str], None] | None = None,
+    ) -> str:
         night = self.court.night(night_id)
         history: list[ModelMessage] = []
         for turn in night.turns:
@@ -121,9 +149,21 @@ class Audience:
                     emperor_words,
                 ],
                 message_history=history,
-                deps=night_id,
+                event_stream_handler=partial(stream_text, on_delta)
+                if on_delta
+                else None,
             )
-        except Exception:
+        except Exception as error:
+            self.court.interaction(
+                "say",
+                "failed",
+                {
+                    "words": emperor_words,
+                    "night_id": str(night_id),
+                    "type": type(error).__name__,
+                    "log": str(self.court.db_path.with_suffix(".errors.log")),
+                },
+            )
             self.court.log.exception("audience night=%s", night_id)
             # Model failure is still raised; only the requested dismissal proceeds.
             self._finish_dismiss(night_id)
@@ -132,14 +172,21 @@ class Audience:
         self._finish_dismiss(night_id)
         return result.output
 
+    def retry_translation(self) -> None:
+        """Retry missing nights, on request or before month advancement."""
+        if self._worker is not None and self._worker.done():
+            self._worker = None
+        self.court.interaction("translation", "running")
+        self._start_worker()
+
     async def drain(self) -> None:
         try:
-            if self._turn is not None:
+            if self._turn is not None and not self._turn.done():
                 await asyncio.shield(self._turn)
         finally:
             self._start_worker()
-            assert self._worker is not None
-            await asyncio.shield(self._worker)
+            if self._worker is not None:
+                await asyncio.shield(self._worker)
 
     async def close(self) -> None:
         try:

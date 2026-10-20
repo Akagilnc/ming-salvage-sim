@@ -1,20 +1,34 @@
 """One transport retry policy, independent of declaration validation retries."""
 
+from collections.abc import AsyncIterable, Callable, Sequence
 from typing import Any, TypeVar
 
 from httpx2 import TimeoutException
 from openai import APIConnectionError
-from pydantic_ai import Agent, AgentRunResult
+from pydantic_ai import Agent, AgentRunResult, RunContext
+from pydantic_ai.messages import (
+    AgentStreamEvent,
+    PartStartEvent,
+    PartDeltaEvent,
+    TextPart,
+    TextPartDelta,
+)
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 from pydantic_ai.models import Model
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 from tenacity import AsyncRetrying, retry_if_exception, stop_after_attempt, wait_fixed
 
+from ming.middle.cli_model import ClaudeCliModel
+
 T = TypeVar("T")
 D = TypeVar("D")
 
 
-def transport_model(model: Model) -> Model:
+def transport_model(
+    model: Model, tools: Sequence[Callable[..., Any]] | None = None
+) -> Model:
+    if isinstance(model, ClaudeCliModel) and tools is not None:
+        return ClaudeCliModel(model.model_name, tools=tools)
     if isinstance(model, (OpenAIChatModel, OpenAIResponsesModel)):
         model.client.max_retries = 0
     return model
@@ -29,6 +43,21 @@ def transient(error: BaseException) -> bool:
             and isinstance(error.__cause__, APIConnectionError)
         )
     )
+
+
+async def stream_text(
+    on_delta: Callable[[str], None],
+    _ctx: RunContext[None],
+    stream: AsyncIterable[AgentStreamEvent],
+) -> None:
+    """Forward native text events without exposing tools or reasoning."""
+    async for event in stream:
+        if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
+            on_delta(event.part.content)
+        elif isinstance(event, PartDeltaEvent) and isinstance(
+            event.delta, TextPartDelta
+        ):
+            on_delta(event.delta.content_delta)
 
 
 async def invoke(

@@ -2,22 +2,27 @@
 
 import asyncio
 import json
+from collections.abc import Callable
+from functools import partial
 from uuid import UUID
 
 from pydantic_ai import Agent
 from pydantic_ai.models import Model
 
 from ming.middle.court import Court
-from ming.middle.invoke import invoke, transport_model
+from ming.middle.invoke import invoke, stream_text, transport_model
 from ming.middle.declaration import Declaration, PendingPetition
 from ming.middle.translate import Unhandled
 from ming.middle.view import Identity, Officials, character_input
 
 
 class Month:
-    def __init__(self, court: Court, model: Model) -> None:
+    def __init__(
+        self, court: Court, model: Model, on_delta: Callable[[str], None] | None = None
+    ) -> None:
         self.court = court
         self._model = transport_model(model)
+        self.on_delta = on_delta
 
     async def text(
         self,
@@ -27,20 +32,20 @@ class Month:
         background: bool = False,
     ) -> str:
         rows = self.court.entities(identity)
-        agent = Agent(
-            self._model,
-            output_type=str,
-            instructions=instructions
-            + "用 read_records 按类型和正名查账；材料只据所读，不猜未读实况。",
-        )
 
-        @agent.tool_plain
         async def read_records(
             kind: str | None = None, key: str | None = None
         ) -> dict[str, object]:
             """按类型与正名取本身份材料；空参取全部可读材料，含各衙门呈报的文字。"""
             return character_input(await self.court.read_records(identity, kind, key))
 
+        agent = Agent(
+            transport_model(self._model, [read_records]),
+            output_type=str,
+            instructions=instructions
+            + "用 read_records 按类型和正名查账；材料只据所读，不猜未读实况。",
+            tools=[read_records],
+        )
         result = await invoke(
             agent,
             json.dumps(
@@ -53,6 +58,9 @@ class Month:
                 ensure_ascii=False,
             ),
             background,
+            event_stream_handler=partial(stream_text, self.on_delta)
+            if identity == "public" and self.on_delta
+            else None,
         )
         self.court.log.info("model output: %s", result.output)
         return result.output
@@ -60,7 +68,9 @@ class Month:
     async def prepare(self, route_id: UUID, *, background: bool = False) -> None:
         async with self.court.locks[route_id]:
             try:
-                route = next(e for e in self.court.entities("audit") if e.id == route_id)
+                route = next(
+                    e for e in self.court.entities("audit") if e.id == route_id
+                )
                 if any(
                     f.entity_id == route_id and f.kind in {"landed", "unhandled"}
                     for f in self.court.facts("audit")
@@ -86,7 +96,9 @@ class Month:
                         {"route": route.model_dump(mode="json")},
                         background,
                     )
-                    self.court.record_product(route.id, "deliberation", {"text": output})
+                    self.court.record_product(
+                        route.id, "deliberation", {"text": output}
+                    )
                 history = self.court.products(route.id)
                 context = {
                     "route": route.model_dump(mode="json"),
@@ -141,10 +153,22 @@ class Month:
             and not self.court.locks[self.court.calendar().id].locked()
             and self.court.world_route(create=False) is None
         )
-        await self.prepare(route_id, background=background)
+        try:
+            await self.prepare(route_id, background=background)
+        except Exception as error:
+            self.court.interaction(
+                "month",
+                "failed",
+                {
+                    "type": type(error).__name__,
+                    "log": str(self.court.db_path.with_suffix(".errors.log")),
+                },
+            )
+            raise
 
     async def advance(self) -> list[PendingPetition]:
         async with self.court.locks[self.court.calendar().id]:
+            self.court.interaction("month", "running")
             try:
                 world = self.court.world_route()
                 assert world is not None  # Creation is enabled for month advancement.
@@ -165,23 +189,29 @@ class Month:
                     if isinstance(result, BaseException):
                         raise result
                 if pending := self.court.petitions():
+                    self.court.interaction("month", "done")
                     return pending
                 for route in routes:
                     # A choice can arrive while the other routes are still preparing.
                     await self.prepare(route.id)
                     if pending := self.court.petitions():
+                        self.court.interaction("month", "done")
                         return pending
                     products = self.court.products(route.id)
                     if any(f.kind in {"landed", "unhandled"} for f in products):
                         continue
-                    declarations = [f.detail for f in products if f.kind == "declaration"]
+                    declarations = [
+                        f.detail for f in products if f.kind == "declaration"
+                    ]
                     last = declarations[-1]
                     result = (
                         Unhandled if last["unhandled"] else Declaration
                     ).model_validate(last["result"])
                     self.court.store_declaration(route.id, result, None)
                 calendar = self.court.calendar()
-                if not any(f.kind == "gazette" for f in self.court.products(calendar.id)):
+                if not any(
+                    f.kind == "gazette" for f in self.court.products(calendar.id)
+                ):
                     output = await self.text(
                         "全部月末后果已落账。以朝廷公开口径写本月邸报，保留官员奏报说法，"
                         "用 read_records() 读各衙门奏报文字，不套模板，不把奏报当核算数。",
@@ -199,7 +229,16 @@ class Month:
                         "month": month % 12 + 1,
                     },
                 )
+                self.court.interaction("month", "done")
                 return []
-            except Exception:
+            except Exception as error:
+                self.court.interaction(
+                    "month",
+                    "failed",
+                    {
+                        "type": type(error).__name__,
+                        "log": str(self.court.db_path.with_suffix(".errors.log")),
+                    },
+                )
                 self.court.log.exception("advance month")
                 raise

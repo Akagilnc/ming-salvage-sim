@@ -79,7 +79,13 @@ def test_month_without_decrees_advances_and_replays_after_reopening(
     assert raw["entities"][0]["data"]["loyalty"] == 75
     calendar = next(e for e in court.entities("audit") if e.kind == "calendar")
     assert (calendar.data["year"], calendar.data["month"]) == (1627, 11)
-    assert [f.kind for f in court.facts("emperor")] == ["gazette"]
+    assert [
+        f.kind for f in court.facts("emperor") if f.kind != "interaction"
+    ] == ["gazette"]
+    state = court.presentation()
+    assert state["running"] is False
+    assert state["failure"] is None
+    assert state["pending"] is None
     path = court.db_path
     court.close()
     court = Court(path, replaying([reply, reply]))
@@ -226,7 +232,14 @@ def test_petition_waits_for_choice_then_takes_effect_this_month(tmp_path: Path) 
     assert len(pending) == 1
     assert court.calendar().data["month"] == 10
     assert not [f for f in court.facts("audit") if f.kind == "landed"]
-    assert [f.kind for f in court.facts("emperor")] == ["petition"]
+    assert [
+        f.kind for f in court.facts("emperor") if f.kind != "interaction"
+    ] == ["petition"]
+    state = court.presentation()
+    assert state["face"] == "month"
+    assert state["running"] is False
+    assert state["failure"] is None
+    assert state["petitions"][0]["id"] == str(pending[0].id)
     with pytest.raises(ValueError):
         asyncio.run(month.choose(pending[0].id, 5))
     asyncio.run(month.choose(pending[0].id, 0))
@@ -255,7 +268,12 @@ def test_exhausted_month_declaration_is_unhandled_not_a_stopped_month(
         == []
     )
     assert court.calendar().data["month"] == 11
-    assert {f.kind for f in court.facts("emperor")} == {"unhandled", "gazette"}
+    assert {
+        f.kind for f in court.facts("emperor") if f.kind != "interaction"
+    } == {"unhandled", "gazette"}
+    state = court.presentation()
+    assert state["running"] is False
+    assert state["failure"] is None
     assert all(not f.detail for f in court.facts("emperor") if f.kind == "unhandled")
     assert {
         e.key: e.data["taels"] for e in court.entities("audit") if e.kind == "account"
