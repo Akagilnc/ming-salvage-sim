@@ -6,7 +6,7 @@ from typing import Any
 from pydantic import ValidationError
 from pydantic_ai import ModelRetry
 
-from ming.middle.declaration import Declaration, Fact, Petition
+from ming.middle.declaration import Change, Declaration, Fact, Petition
 
 
 def check_rules(out: Declaration, affairs: set[str]) -> None:
@@ -40,6 +40,22 @@ def check_rules(out: Declaration, affairs: set[str]) -> None:
         check_money(fact, out)
 
 
+def money_mirrors(facts: list[Fact], fact: Fact, change: Change) -> list[int]:
+    return [
+        i
+        for i, other in enumerate(facts)
+        if change.counterpart is not None
+        and (other.entity_type, other.entity)
+        == (change.counterpart.entity_type, change.counterpart.entity)
+        for c in other.changes
+        if c.field == "taels"
+        and c.value == -change.value
+        and c.counterpart is not None
+        and (c.counterpart.entity_type, c.counterpart.entity)
+        == (fact.entity_type, fact.entity)
+    ]
+
+
 def check_money(fact: Fact, out: Declaration) -> None:
     # A counterpart is a fact reference, not a guessed source or intent check.
     for change in fact.changes:
@@ -63,16 +79,7 @@ def check_money(fact: Fact, out: Declaration) -> None:
         ) == (fact.entity_type, fact.entity):
             raise ModelRetry("counterpart 必须指向同份 facts 的另一实体，重交整份。")
         if change.counterpart.entity_type == "account":
-            mirrors = [
-                c
-                for f in matches
-                for c in f.changes
-                if c.field == "taels"
-                and c.value == -change.value
-                and c.counterpart is not None
-                and (c.counterpart.entity_type, c.counterpart.entity)
-                == (fact.entity_type, fact.entity)
-            ]
+            mirrors = money_mirrors(out.facts, fact, change)
             sources = [
                 c
                 for f in out.facts
@@ -101,17 +108,7 @@ def money_amounts(
             if change.counterpart and change.counterpart.entity_type == "account":
                 other = change.counterpart.entity_type, change.counterpart.entity
                 j = next(
-                    j
-                    for j, f in enumerate(facts)
-                    if j not in amounts
-                    and (f.entity_type, f.entity) == other
-                    and any(
-                        c.field == "taels"
-                        and c.value == -change.value
-                        and c.counterpart is not None
-                        and (c.counterpart.entity_type, c.counterpart.entity) == pair
-                        for c in f.changes
-                    )
+                    j for j in money_mirrors(facts, fact, change) if j not in amounts
                 )
                 # Either edge establishes the whole transfer, exactly once.
                 source, destination = (pair, other) if change.value <= 0 else (other, pair)
