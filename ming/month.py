@@ -77,21 +77,20 @@ class Month:
                 for f in history
                 if f.detail.get("round", round_number) == round_number
             }
-            context = {
-                "route": route.model_dump(mode="json"),
-                "history": [f.model_dump(mode="json") for f in history],
-            }
             if route.kind == "decree" and "deliberation" not in products:
                 output = await self.text(
                     "你演外廷内阁票拟、六科封驳、部院议处。只写文字，准驳由你判断，"
                     "不交判决字段。按经手官员所知议处这道定稿圣旨，不得用世界全知。",
                     Officials(people=route.data["people"]),
-                    context,
+                    {"route": route.model_dump(mode="json")},
                     background,
                 )
                 self.court.record_product(route.id, "deliberation", {"text": output})
             history = self.court.products(route.id)
-            context["history"] = [f.model_dump(mode="json") for f in history]
+            context = {
+                "route": route.model_dump(mode="json"),
+                "history": [f.model_dump(mode="json") for f in history],
+            }
             if "simulation" not in products:
                 output = await self.text(
                     "你推演真实世界。只写文字，不交字段。各道旨依外廷准驳办理；"
