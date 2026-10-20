@@ -3,28 +3,48 @@
 import asyncio
 import json
 from pathlib import Path
+from collections.abc import AsyncIterator
 
 import pytest
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel, DeltaToolCall
 
 from ming.audience import Audience
 from ming.middle.court import Court
 from ming.middle.view import Officials
 
 
-def replaying(replies: list[str] | list[ModelResponse]) -> FunctionModel:
+def replaying(
+    replies: list[str] | list[ModelResponse] | list[Exception],
+) -> FunctionModel:
     remaining = iter(replies)
 
     def reply(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         result = next(remaining)
+        if isinstance(result, Exception):
+            raise result
         return (
             result
             if isinstance(result, ModelResponse)
             else ModelResponse(parts=[TextPart(result)])
         )
 
-    return FunctionModel(reply)
+    async def stream_response(
+        messages: list[ModelMessage], info: AgentInfo
+    ) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
+        for index, part in enumerate(reply(messages, info).parts):
+            if isinstance(part, TextPart):
+                yield part.content
+            elif isinstance(part, ToolCallPart):
+                yield {
+                    index: DeltaToolCall(
+                        name=part.tool_name,
+                        json_args=part.args_as_json_str(),
+                        tool_call_id=part.tool_call_id,
+                    )
+                }
+
+    return FunctionModel(reply, stream_function=stream_response)
 
 
 def physical_state(court: Court, replay: bool = False) -> list[dict[str, object]]:
@@ -240,7 +260,9 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
         expected_entities.add(people["练国事"].id)
     assert {f.entity_id for f in associated} == expected_entities
     assert all(f.detail["affair_id"] == str(affair.id) for f in associated)
-    assert all(f.detail["origin_ref"] == str(n.id) for f in associated for n in court.nights())
+    assert all(
+        f.detail["origin_ref"] == str(n.id) for f in associated for n in court.nights()
+    )
     before = physical_state(court)
     facts = court.facts("audit")
     path = court.db_path

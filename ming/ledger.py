@@ -79,6 +79,12 @@ class Ledger(Application[UUID]):
         self.sql = cast(SQLAlchemyApplicationRecorder, self.recorder)
         Base.metadata.create_all(cast(Engine, self.sql.datastore.engine))
 
+    def close(self) -> None:
+        super().close()
+        # The recorder factory does not close SQLAlchemy's pool. Release SQLite
+        # before selecting another game; deferred WAL checkpoints change mtimes.
+        cast(Engine, self.sql.datastore.engine).dispose()
+
     def commit(self, entities: list[Entity]) -> None:
         with self.sql.transaction() as session:
             for entity in entities:

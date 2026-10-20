@@ -1,18 +1,73 @@
-/* 样式入口清单：按层叠顺序组装 src/styles/ 下的分文件，顺序即层叠顺序，勿随意调整。
-   新增/修改规则请写入对应功能分文件；各分文件按原 styles.css 物理区段切分，内容逐字节未动。 */
-@import "./styles/base.css";
-@import "./styles/map.css";
-@import "./styles/topbar.css";
-@import "./styles/court.css";
-@import "./styles/modals.css";
-@import "./styles/ending.css";
-@import "./styles/chat.css";
-@import "./styles/edict.css";
-@import "./styles/modal-theme.css";
-@import "./styles/situation.css";
-@import "./styles/menu.css";
-@import "./styles/secret-order.css";
-@import "./styles/drawers.css";
-@import "./styles/hud2.css";
-@import "./styles/decision.css";
-@import "./styles/theme-night.css";
+:root {
+  font-family: 'Songti SC', 'STSong', 'SimSun', serif;
+  color: #291e14; background: #1c211d; font-size: 18px; line-height: 1.65;
+  --gold: #d2a34a; --muted: #80633c;
+}
+* { box-sizing: border-box; }
+body { margin: 0; }
+button, input, textarea, select { font: inherit; }
+button { cursor: pointer; color: #493317; background: #fff9e9; border: 1px solid #c4ae83; border-radius: 3px; padding: .3rem .8rem; }
+button:hover { background: #f4e3b8; }
+button:disabled { opacity: .45; cursor: wait; }
+button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px solid #ac7522; }
+h1, h2, h3 { font-weight: 500; letter-spacing: .1em; }
+.menu-screen { min-height: 100dvh; display: grid; place-items: center; position: relative; }
+.menu-poster { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: .4; }
+.menu-panel { position: relative; padding: 3rem; background: #201e19e8; color: #efdca8; min-width: min(90vw, 430px); box-shadow: 0 20px 70px #0008; }
+.menu-panel h1 img { width: 270px; max-width: 65vw; }
+.menu-panel nav { display: flex; flex-direction: column; gap: .8rem; }
+.menu-panel nav button { background: #30291f; color: #efdca8; padding: .7rem; border-color: #897044; }
+.menu-sheet { position: absolute; z-index: 2; inset: 0; overflow: auto; background: #f5eedb; color: #291e14; padding: 1.5rem; }
+.menu-sheet > button:not(.close) { display: block; max-width: 100%; word-break: break-all; margin: 1rem 0; }
+.close { float: right; }
+.settings { display: grid; gap: 1rem; clear: both; }
+.settings label { display: grid; gap: .3rem; }
+.settings input, .settings select { width: 100%; min-width: 0; padding: .35rem; }
+.loading { color: #e8dcba; padding: 3rem; }
+.game { height: 100dvh; display: flex; flex-direction: column; background: linear-gradient(#141a17aa, #141a1799), url('/bg_court.png') center/cover; }
+.game.audience { background-image: linear-gradient(#141a1766, #141a1788), url('/bg_chat_night.png'); }
+.topbar { display: flex; align-items: center; gap: 1.5rem; padding: .4rem 1rem; color: #eddfbd; background: #211c16eb; border-bottom: 1px solid #9e773c; flex-wrap: wrap; }
+.topbar h1 { font-size: 1.3rem; margin: .2rem 0; }
+.topbar nav { margin-left: auto; display: flex; gap: .5rem; }
+.court-layout { display: flex; flex: 1; min-height: 0; padding: 1.3rem; gap: 1rem; max-width: 1600px; width: 100%; align-self: center; }
+.paper { display: flex; flex-direction: column; flex: 1; min-width: 0; background: #faf7eeed; border: 1px solid #d0c2a0; border-radius: 4px; box-shadow: 0 8px 40px #0006; }
+.scroll { overflow: auto; flex: 1; padding: 1.3rem 2rem; scroll-behavior: auto; }
+.portrait { width: 23%; min-width: 150px; align-self: end; color: #f5e7ca; text-align: center; }
+.portrait > img:not(.attendant-avatar) { width: 100%; max-height: 67dvh; object-fit: contain; object-position: bottom; filter: drop-shadow(0 6px 16px #0008); }
+.portrait h2 { margin: .2rem; }
+.attendant-avatar { width: 45px; height: 55px; object-fit: cover; border: 1px solid #bca879; border-radius: 4px; }
+.scene-block { margin: 1rem 0; padding: .7rem 1rem; border: 1px solid #d9e2df; background: #ffffffb3; border-radius: 4px; }
+.scene-block header { color: #8b6536; font-size: .85rem; }
+.scene-block p { margin: .3rem 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.scene-block strong { color: #8f2f25; font-weight: 800; }
+.scene-block .attendant-avatar { float: left; margin: .2rem .8rem .2rem 0; }
+.scene-block.aside { margin-left: 2rem; font-style: italic; background: #fffaf0; border-style: dashed; }
+.scene-block.narration { text-align: center; background: transparent; border: 0; color: #6b6251; }
+.scene-block.decree { background: #f7edcf; border-color: #c9ae67; }
+.emperor { margin-left: auto; width: fit-content; max-width: 85%; white-space: pre-wrap; background: #fff8e8; border: 1px solid #dfcba3; border-radius: 4px; padding: .6rem 1rem; }
+.emperor small { display: block; color: #9f6b34; }
+.composer { display: flex; align-items: center; gap: .7rem; padding: .8rem; border-top: 1px solid #d0c2a0; }
+.composer textarea { resize: vertical; min-height: 70px; max-height: 180px; flex: 1; min-width: 0; background: #fffaf0; border: 1px solid #c6b38b; padding: .5rem; }
+.desk-actions { padding: 1rem; text-align: right; border-top: 1px solid #d0c2a0; }
+.gazette, .petition p { white-space: pre-wrap; }
+.petition { border: 1px solid #c7a66a; padding: 1rem; margin: 1rem 0; background: #fff8e5; }
+.petition button { display: block; margin: .7rem 0; text-align: left; }
+.system-failure, .request-error { color: #8b3024; background: #fff0de; padding: .7rem; border: 1px solid #e1bba1; overflow-wrap: anywhere; }
+.system-failure code { font-size: .75rem; }
+.system-failure button { margin-left: .8rem; }
+.unhandled { color: #725b3b; border-top: 1px solid #c7b78f; padding: .5rem; }
+.drawer { width: min(38vw, 460px); overflow: auto; background: #f7efdc; padding: 1rem; box-shadow: 0 5px 30px #0008; }
+.drawer article { border-bottom: 1px solid #d6c6a2; padding: .5rem 0; }
+.drawer article p { white-space: pre-wrap; }
+.drawer details { margin: 1rem 0; }
+@media (max-width: 800px) {
+  :root { font-size: 16px; }
+  .topbar { gap: .5rem; }
+  .topbar nav { gap: .2rem; }
+  .topbar nav button { padding: .2rem .4rem; }
+  .court-layout { padding: .4rem; gap: .3rem; }
+  .portrait { min-width: 70px; width: 16%; }
+  .portrait h2 { font-size: 1rem; }
+  .scroll { padding: .7rem; }
+  .drawer { position: fixed; z-index: 3; right: 0; top: 100px; bottom: 0; width: min(90vw, 460px); }
+}

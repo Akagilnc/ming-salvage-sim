@@ -1,67 +1,27 @@
 #!/usr/bin/env bash
-# 前端 build + 启 web_app。
-# 用法：./start.sh [--port 8010] [--host 127.0.0.1] [--no-build]
+# Build the frontend and launch the package's loopback browser entry.
 set -euo pipefail
-
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
-
-HOST="127.0.0.1"
-PORT="8010"
+PORT=8010
 DO_BUILD=1
-
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --host) HOST="$2"; shift 2 ;;
     --port) PORT="$2"; shift 2 ;;
     --no-build) DO_BUILD=0; shift ;;
-    -h|--help)
-      echo "Usage: $0 [--host HOST] [--port PORT] [--no-build]"
-      exit 0 ;;
+    -h|--help) echo "Usage: $0 [--port PORT] [--no-build]"; exit 0 ;;
     *) echo "未知参数：$1" >&2; exit 2 ;;
   esac
 done
-
-# 1. 注入 .env
 if [[ -f .env ]]; then
   set -a
-  # shellcheck disable=SC1091
   source .env
   set +a
-else
-  echo "[warn] 未找到 .env，LLM 相关变量未注入" >&2
 fi
-
-# 1b. 网页版默认开 LLM dump（每次调用一行 JSONL：scripts/runs/llm_dump_<pid>.jsonl；
-#     含 tag/messages/reasoning/usage/finish_reason）。不想要就在 .env 设 MING_SIM_DUMP_LLM=0。
-export MING_SIM_DUMP_LLM="${MING_SIM_DUMP_LLM:-1}"
-
-# 2. 选 python：优先 .venv
-if [[ -x ".venv/bin/python" ]]; then
-  PY=".venv/bin/python"
-else
-  PY="python3"
-fi
-
-# 2b. 对齐 Python 依赖到 requirements.txt（起服务前；失败则不起）
-echo "[start] 同步 Python 依赖"
-if ! "$PY" -m pip install -r "$ROOT/requirements.txt"; then
-  echo "[start] Python 依赖同步失败，不起服务" >&2
-  exit 1
-fi
-
-# 3. 前端 build
+if [[ -x .venv/bin/python ]]; then PY=.venv/bin/python; else PY=python3; fi
+"$PY" -m pip install -r requirements-ming.txt
 if [[ "$DO_BUILD" -eq 1 ]]; then
-  if [[ ! -d web/node_modules ]]; then
-    echo "[start] 安装前端依赖"
-    (cd web && npm install)
-  fi
-  echo "[start] 构建前端"
+  if [[ ! -d web/node_modules ]]; then (cd web && npm ci); fi
   (cd web && npm run build)
-else
-  echo "[start] 跳过前端 build (--no-build)"
 fi
-
-# 4. 启 uvicorn
-echo "[start] 启动 web_app at http://${HOST}:${PORT}"
-exec "$PY" -m uvicorn web_app:app --host "$HOST" --port "$PORT"
+exec "$PY" -m ming.desktop --port "$PORT"

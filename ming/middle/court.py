@@ -279,6 +279,60 @@ class Court:
     def entities(self, identity: Identity, replay: bool = False) -> list[EntityView]:
         return entities(self._ledger, identity, replay)
 
+    def interaction(
+        self, action: str, status: str, payload: Item | None = None
+    ) -> None:
+        """Persist a player action/outcome, not a parallel copy of world products."""
+        self.record_product(
+            self.calendar().id,
+            "interaction",
+            {
+                "action": action,
+                "status": status,
+                "payload": payload or {},
+            },
+        )
+
+    def presentation(self) -> Item:
+        """The emperor's landing point and records share the identity projection."""
+        date = self.calendar().data
+        interactions = {
+            f.detail["action"]: f.detail
+            for f in self.facts("emperor")
+            if f.kind == "interaction" and f.detail["date"] == date
+        }
+        nights = [e for e in self.entities("emperor") if e.kind == "night"]
+        night = nights[-1].data if nights else None
+        say = interactions.get("say")
+        if say and (
+            not night
+            or night["closed"]
+            or (
+                say["status"] != "done"
+                and say["payload"].get("night_id") != night["id"]
+            )
+        ):
+            interactions.pop("say", None)
+        pending = next(
+            (item for item in interactions.values() if item["status"] == "running"),
+            None,
+        )
+        failure = next(
+            (item for item in interactions.values() if item["status"] == "failed"), None
+        )
+        world = self.world_route(create=False)
+        return {
+            "face": "audience"
+            if night and not night["closed"]
+            else ("month" if world else "desk"),
+            "night": night,
+            "date": date,
+            "running": pending is not None,
+            "failure": failure,
+            "pending": pending,
+            "petitions": [p.model_dump(mode="json") for p in self.petitions()],
+        }
+
     def close(self) -> None:
         self._ledger.close()
         self.log.removeHandler(self._log_handler)

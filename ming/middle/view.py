@@ -6,6 +6,7 @@ from uuid import UUID
 from pydantic import BaseModel
 
 from ming.ledger import Item, Ledger
+from ming.middle.night import read_night
 
 PublicIdentity = Literal["emperor", "audit", "world", "public"]
 
@@ -108,7 +109,15 @@ def entities(
                     for k, v in row["data"].items()
                     if k in {"name", "office", "location", "status"}
                 }
-            elif row["kind"] not in {"gazette", "calendar"} or identity == "emperor":
+            elif row["kind"] == "night" and identity == "emperor":
+                row["data"] = read_night(ledger, row["id"]).model_dump(mode="json")
+            elif row["kind"] == "decree" and identity == "emperor":
+                row["data"] = {
+                    k: v
+                    for k, v in row["data"].items()
+                    if k in {"text", "origin", "people", "night_id"}
+                }
+            elif row["kind"] not in {"gazette", "calendar"}:
                 continue
         result.append(EntityView.model_validate(row))
     return result
@@ -131,6 +140,8 @@ def project(ledger: Ledger, identity: Identity, replay: bool = False) -> list[Fa
                     )
                 ):
                     fact.detail = {"text": fact.detail["text"]}
+                elif fact.kind == "interaction" and identity == "emperor":
+                    pass
                 elif fact.kind in {"petition", "choice"}:
                     pass
                 elif fact.kind == "unhandled" and identity == "emperor":

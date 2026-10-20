@@ -40,9 +40,20 @@
 
 ---
 
-## 新包开发入口（#1943 / #1947 / #1948）
+## 新包入口（#1943 / #1947 / #1948 / #1949）
 
-当前包含开局导入、召对夜、过月与批红；前端接线由后续切片承接，不是完整游戏。Python 3.14：
+Python 3.14。网页与桌面包走同一个包内服务；开发态先构建前端：
+
+```bash
+python -m pip install -r requirements-ming.txt
+(cd web && npm ci && npm run build)
+python -m ming.desktop
+# 原生桌面窗口：python -m ming.desktop --desktop
+```
+
+也可用 `./start.sh`。启动先到主菜单：新开一局、继续（最新存档）、读取存档、设置。存档与模型设置默认在 `~/.ming/saves/`，可用 `--directory` 指定开发目录；每次落账自动保存，没有存档位或另存。API 地址、key、模型或 Claude CLI 后端在设置中填写。CLI 使用本机已安装且已登录的 `claude`，四工具经原生 MCP、戏文经 `stream-json` 交付，不修改宿主配置或替用户登录；进程自然结束，不强杀。关窗正常退出会先等在飞工作，浏览器断线不打断已接受的说话动作。
+
+命令行开发入口仍可用于开局导入、召对夜、过月与批红：
 
 ```bash
 python -m pip install -r requirements-ming.txt
@@ -53,7 +64,7 @@ python -m ming read --db saves/<新局文件>.sqlite --identity audit --replay
 
 `new` 输出新局路径；继续操作使用该路径。旧 `decree` 开发入口随交办／拨款声明一并退役；下旨走下方的 `audience`，旨意只记录皇帝认可的圣旨定稿全文、来历与涉及的人，后果由过月处理。默认读取皇帝材料，`audit` 用于内部对账，`--replay` 从事件重放读取。
 
-召对使用支持原生文本和工具的 Pydantic AI 模型；OpenAI 兼容端点用自己的 `OPENAI_BASE_URL`、`OPENAI_API_KEY` 环境变量；仅支持 Chat Completions 的端点选原生 `openai-chat:` 前缀（`openai:` 默认走 Responses）。场景不走 CLI 转译适配器（该适配器没有场景工具能力），也不加智能体外壳或文本工具协议。转译默认沿用已登录的 `claude -p`，可用逐次参数换成 API 模型，不改宿主配置：
+召对使用支持原生文本和工具的 Pydantic AI 模型；OpenAI 兼容端点用自己的 `OPENAI_BASE_URL`、`OPENAI_API_KEY` 环境变量；仅支持 Chat Completions 的端点选原生 `openai-chat:` 前缀（`openai:` 默认走 Responses）。场景也可选 `--scene-model claude-cli`（原生 MCP 工具与流），不加文本工具协议。转译默认沿用已登录的 `claude -p`，可用逐次参数换成 API 模型，不改宿主配置：
 
 ```bash
 python -m ming audience --db saves/<新局文件>.sqlite \
@@ -116,7 +127,7 @@ python -m ming choose --db saves/<新局文件>.sqlite \
 
 ---
 
-## 当前状态
+## 旧引擎状态（迁移资料，不代表新包能力）
 
 本分支还不是正式发行版。它更接近一个正在推进中的实验分支。
 
@@ -152,7 +163,9 @@ python -m ming choose --db saves/<新局文件>.sqlite \
 
 ---
 
-## 快速开始
+## 旧引擎快速开始（仅历史资料）
+
+本轮新包使用上方「新包入口」，不再用以下旧端点或旧前端能力。
 
 环境要求：
 
@@ -258,7 +271,7 @@ AI 适合判断官场反应、地方推诿、政策代价、突发事件和叙�
 
 ---
 
-## 已实现模块概览
+## 旧引擎模块概览
 
 | 模块 | 功能 | 说明 |
 | --- | --- | --- |
@@ -304,7 +317,7 @@ AI 适合判断官场反应、地方推诿、政策代价、突发事件和叙�
 
 ---
 
-## 配置
+## 旧引擎配置（新包在主菜单设置）
 
 复制 `.env.example` 为 `.env` 后填写配置。
 
@@ -354,12 +367,12 @@ AI 适合判断官场反应、地方推诿、政策代价、突发事件和叙�
 
 ## 打包发行（桌面包 · 自部署）
 
-发行形态 = **自部署**：群友各自跑实例，LLM 后端在游戏内「设置」面板自理（API 通道填 key，或 CLI 通道走本地 `agy` / `codex` / `claude` / `cursor` / `kimi` / `grok` / `pi` runner 脱 key，见上方「配置」）。
+发行形态 = **自部署**：群友各自跑实例，LLM 后端在游戏内「设置」面板自理；当前新包支持 OpenAI 兼容 API 与 Claude CLI，见上方「新包入口」。
 
 桌面包用 PyInstaller 把后端 + 前端 + content 冻结成可分发应用（pywebview 套壳渲染 React UI，无需另起 uvicorn）。分发形态（#186）= **mac / win / linux 各一个 zip，解压后根目录一个可执行**（其余依赖在 `_internal/` 子目录 / mac 在 `.app` bundle 内）。
 
 ```bash
-pip install -r requirements-release.txt       # 一次性装打包依赖（建议在项目 venv 内）
+pip install -r requirements-ming.txt -r requirements-release.txt  # Python 3.14 venv
 # Windows 打包另装：pip install -r requirements-release-windows.txt
 
 # 一键：构建前端 → PyInstaller 打包 → 打 zip
@@ -378,7 +391,7 @@ scripts\build_release.bat       # Windows（朋友代打 win 包时用）
 
 > 打包前先确认 `git status content/buildings.json` 干净（无未提交改动）——金手指建筑（见下）若没还原，会被打进发行包。`Ming_LLM.spec` 已内置 build-time 守门：前端未构建 / content/buildings.json 带金手指 / 有未提交改动时**会响亮报错中止**，不会静默打出坏包或作弊包。
 
-启动：macOS 双击 `Ming_LLM.app`、Windows/Linux 双击或命令行跑根目录可执行，自动开 webview 原生窗口；`MING_USE_BROWSER=1` 改用系统浏览器，`MING_DEBUG=1` 开 devtools + uvicorn 日志（日志也写 `~/.ming_sim/launcher.log`）。零配置文件：LLM 后端在游戏内「设置」面板自理。
+启动：macOS 双击 `Ming_LLM.app`、Windows/Linux 双击或命令行跑根目录可执行，自动开 webview 原生窗口；`MING_DEBUG=1` 开 devtools。默认数据位置与后端设置见「新包入口」；失败提示行附本局 `.errors.log` 路径。
 
 - **金手指不入包**：`content/buildings.json` 末尾三个本地实验建筑（皇家天佑金矿 / 大明中央银行 / 帝国航空）只活在开发工作区的未提交改动里，**发行包从 main 打、自动不含**；需要的群友单独找作者拿。
 

@@ -2,6 +2,12 @@ eventsourcing==9.5.6
 eventsourcing-sqlalchemy==1.0.1
 pydantic-ai-slim[openai]==2.57.0
 tenacity==9.1.4
+starlette==1.9.0
+sse-starlette==3.5.0
+uvicorn==0.54.0
+mcp==2.3.0
+httpx==0.28.1
+pywebview==6.2.1
 pytest
 ruff==0.17.1
 import-linter==2.15

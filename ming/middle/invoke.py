@@ -1,5 +1,6 @@
 """One transport retry policy, independent of declaration validation retries."""
 
+from collections.abc import Callable, Sequence
 from typing import Any, TypeVar
 
 from httpx2 import TimeoutException
@@ -10,11 +11,17 @@ from pydantic_ai.models import Model
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 from tenacity import AsyncRetrying, retry_if_exception, stop_after_attempt, wait_fixed
 
+from ming.middle.cli_model import ClaudeCliModel
+
 T = TypeVar("T")
 D = TypeVar("D")
 
 
-def transport_model(model: Model) -> Model:
+def transport_model(
+    model: Model, tools: Sequence[Callable[..., Any]] | None = None
+) -> Model:
+    if isinstance(model, ClaudeCliModel) and tools is not None:
+        return ClaudeCliModel(model.model_name, tools=tools)
     if isinstance(model, (OpenAIChatModel, OpenAIResponsesModel)):
         model.client.max_retries = 0
     return model

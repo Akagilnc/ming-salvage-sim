@@ -31,8 +31,9 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          python-version: "3.14"
           cache: pip
+          cache-dependency-path: requirements-ming.txt
 
       - name: Setup Node
         uses: actions/setup-node@v5
@@ -44,7 +45,7 @@ jobs:
       - name: Install Python deps
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements-ming.txt
           pip install -r requirements-release.txt
 
       - name: Build macOS package
@@ -69,8 +70,9 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          python-version: "3.14"
           cache: pip
+          cache-dependency-path: requirements-ming.txt
 
       - name: Setup Node
         uses: actions/setup-node@v5
@@ -83,7 +85,7 @@ jobs:
         shell: pwsh
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements-ming.txt
           # Windows pywebview EdgeChromium backend needs pythonnet.
           pip install -r requirements-release-windows.txt
 
