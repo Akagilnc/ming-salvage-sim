@@ -167,7 +167,8 @@ def move_person(
     if not person.data.get("location"):
         return
     destination = changes.pop("location", person.data["location"])
-    if changes.get("status") == "offstage":
+    if changes.get("status") not in (None, "active"):
+        # Leaving active (卒/下狱/罢黜/归场) clears the journey like offstage does.
         changes.update(transit_to="", remaining_distance=0, waiting_audience=False)
     elif destination != person.data.get("location") and not person.data.get(
         "transit_to"

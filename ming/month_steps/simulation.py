@@ -151,19 +151,24 @@ class Simulations:
             task.add_done_callback(self.log_failure)
         return self.continuations[key]
 
-    async def wait_for_continuation(self, key: tuple[UUID, str]) -> None:
+    async def wait_for_continuation(
+        self, key: tuple[UUID, str], *, rerun: bool
+    ) -> None:
         task = self.continuations[key]
         try:
             await asyncio.shield(task)
         except Exception:
-            # A failed continuation may be rerun once along the same gap-filling entry.
+            if self.continuations[key] is task:
+                del self.continuations[key]
+            if not rerun:
+                # Formal failures stop for an explicit retry, which re-creates the task.
+                raise
+            # A failed night speculation may be rerun once along the same entry.
             segment = next(
                 f.detail
                 for f in self.court.products(key[0], kind="simulation")
                 if f.detail["id"] == key[1]
             )
-            if self.continuations[key] is task:
-                del self.continuations[key]
             await asyncio.shield(self.start_continuation(key[0], segment))
 
     async def run(self, route: EntityView, context: dict[str, Any]) -> bool:

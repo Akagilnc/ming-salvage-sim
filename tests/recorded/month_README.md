@@ -14,6 +14,7 @@
 | --- | --- | --- |
 | `deliberation.txt` | `1951-A/009-deliberation-messages.json` | 结构化准行判词 |
 | `deliberation_rejected.txt` | `1951-transfer-3200000/005-deliberation-messages.json` | 结构化封驳判词 |
+| `deliberation_vital.txt` | `1951-vital/001-deliberation-messages.json` | 命门（迁都）中旨亦不可颁判词 |
 | `simulation.txt` | `1951-world/003-simulation-messages.json` | 月底、零奏疏 |
 | `month_petition.txt` | `1951-transfer-3200000/006-simulation-messages.json` | 一道月中岔路 |
 | `month_multiple_petitions.txt` | `1951-world/001-simulation-messages.json` | 同段多道独立岔路 |

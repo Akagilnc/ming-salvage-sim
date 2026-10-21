@@ -16,17 +16,31 @@ RECORDED = Path(__file__).parent / "recorded"
 
 @pytest.mark.parametrize("steps", ["approved"], indirect=True)
 @pytest.mark.parametrize(
-    ("option", "new_night"), [(0, False), (0, True), (1, False), (2, False), (2, True)]
+    "case",
+    [
+        (0, False, ("rejected", "approved")),
+        (0, True, ("rejected", "approved")),
+        (1, False, ("rejected", "approved")),
+        (2, False, ("rejected", "approved")),
+        (2, True, ("rejected", "approved")),
+        (0, False, ("vital",)),
+        (2, False, ("rejected", "rejected")),
+    ],
 )
 def test_rejected_decree_is_forced_withdrawn_or_reconsidered(
-    tmp_path: Path, steps, audit, option: int, new_night: bool
+    tmp_path: Path, steps, audit, case: tuple
 ) -> None:
+    option, new_night, verdicts = case
+    names = {
+        "rejected": "deliberation_rejected.txt",
+        "approved": "deliberation.txt",
+        "vital": "deliberation_vital.txt",
+    }
     steps["deliberation"] = replaying(
-        [
-            (RECORDED / name).read_text()
-            for name in ("deliberation_rejected.txt", "deliberation.txt")
-        ]
+        [(RECORDED / names[v]).read_text() for v in verdicts]
     )
+    vital = verdicts[0] == "vital"
+    reforced = len(verdicts) == 2 and verdicts[-1] == "rejected"
     with TestClient(create_app(tmp_path)) as client:
         save = client.post("/actions", json={"action": "new"}).json()["save"]
         client.post("/actions", json={"action": "open"})
@@ -37,16 +51,50 @@ def test_rejected_decree_is_forced_withdrawn_or_reconsidered(
         client.post("/actions", json={"action": "load", "save": save})
         state = client.get("/state").json()["game"]
         petition = state["petitions"][0]
-        assert petition["options"] == ["强颁", "收回", "留中"]
+        assert petition["options"] == (
+            ["收回", "留中"] if vital else ["强颁", "收回", "留中"]
+        )
         ledger = audit(tmp_path / save)
         assert len([f for f in ledger["facts"] if f["kind"] == "simulation"]) == 1
         assert not [f for f in ledger["facts"] if f["kind"] == "declaration"]
-        if option == 0:
+        if vital:
+            decree = next(e for e in ledger["entities"] if e["kind"] == "decree")
+            assert next(
+                f["detail"]["route_id"]
+                for f in ledger["facts"]
+                if f["kind"] == "deliberation"
+            ) == decree["data"]["night_id"]
             steps["Declaration"] = replaying(
-                [
-                    (RECORDED / name).read_text()
-                    for name in ("month_force.txt", "month_empty.txt")
-                ]
+                [(RECORDED / "month_empty.txt").read_text()] * 2
+            )
+            client.post(
+                "/actions",
+                json={"action": "choose", "petition": petition["id"], "option": 0},
+            )
+            assert client.get("/state").json()["game"]["date"]["month"] == 10
+            client.post("/actions", json={"action": "month"})
+            assert client.get("/state").json()["game"]["date"]["month"] == 11
+            client.post("/actions", json={"action": "month"})
+            ledger = audit(tmp_path / save)
+            assert client.get("/state").json()["game"]["date"]["month"] == 12
+            assert not [
+                f
+                for f in ledger["facts"]
+                if f["kind"] == "landed" and f["entity_id"] == decree["id"]
+            ]
+            assert not [f for f in ledger["facts"] if f["kind"] == "interim"]
+            world = next(e for e in ledger["entities"] if e["kind"] == "world")
+            assert world["data"]["imperial_prestige"] == 20
+            assert ledger == audit(tmp_path / save, True)
+            return
+        declarations = (
+            ("month_empty.txt", "month_force.txt", "month_empty.txt")
+            if reforced
+            else ("month_force.txt", "month_empty.txt")
+        )
+        if option == 0 or reforced:
+            steps["Declaration"] = replaying(
+                [(RECORDED / name).read_text() for name in declarations]
             )
         if option != 0 or new_night:
             client.post("/actions", json={"action": "month"})
@@ -99,6 +147,38 @@ def test_rejected_decree_is_forced_withdrawn_or_reconsidered(
             assert len(segments) == 2
             assert segments[1]["petition_id"] == petition["id"]
             assert len(segments[1]["messages"]) > len(segments[0]["messages"])
+        if reforced:
+            client.post("/actions", json={"action": "month"})
+            state = client.get("/state").json()["game"]
+            assert state["date"]["month"] == 11
+            petition = state["petitions"][0]
+            assert petition["options"] == ["强颁", "收回", "留中"]
+            client.post(
+                "/actions",
+                json={"action": "choose", "petition": petition["id"], "option": 0},
+            )
+            assert client.get("/state").json()["game"]["date"]["month"] == 12
+            ledger = audit(tmp_path / save)
+            world = next(e for e in ledger["entities"] if e["kind"] == "world")
+            assert world["data"]["imperial_prestige"] < 20
+            assert len(
+                [
+                    f
+                    for f in ledger["facts"]
+                    if f["kind"] == "landed" and f["entity_id"] == decree["id"]
+                ]
+            ) == 1
+            assert len([f for f in ledger["facts"] if f["kind"] == "interim"]) == 1
+            assert len(
+                [f for f in ledger["facts"] if f["kind"] == "deliberation"]
+            ) == 2
+            assert next(
+                f["detail"]["route_id"]
+                for f in reversed(ledger["facts"])
+                if f["kind"] == "deliberation"
+            ) == next(e["id"] for e in ledger["entities"] if e["kind"] == "calendar")
+            assert ledger == audit(tmp_path / save, True)
+            return
         steps["Declaration"] = TestModel(
             call_tools=[], custom_output_text=(RECORDED / "month_empty.txt").read_text()
         )

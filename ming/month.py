@@ -102,52 +102,60 @@ class Month:
         date = self.court.calendar().data
         while date == self.court.calendar().data:
             pending = await self._resume(speculative=speculative)
-            if speculative or date != self.court.calendar().data:
+            if date != self.court.calendar().data:
                 return pending
-            facts = self.court.facts("audit")
-            choices = {
-                (f.detail["petition_id"], f.detail["option"])
-                for f in facts
-                if f.kind == "choice"
-            }
-            published = {
-                f.detail.get("petition_id") for f in facts if f.kind == "simulation"
-            }
-            waiting = [
-                key
-                for key in self.simulations.tasks
-                if key[1:] in choices
-                and key[1] not in published
-                and (petition_id is None or key[1] == petition_id)
-            ]
-            routes = {
-                f.detail["id"]: f.detail["route_id"]
-                for f in facts
-                if f.kind == "petition"
-            }
-            scope = (
-                None
-                if petition_id is None
-                else {routes.get(petition_id), str(self.court.calendar().id)}
-            )
-            continuing = [
-                key
-                for key, task in self.simulations.continuations.items()
-                if not (task.done() and task.exception() is None)
-                and (scope is None or str(key[0]) in scope)
-            ]
+            waiting, continuing = self.gaps(petition_id)
             if not waiting and not continuing:
                 return pending
             # Only the caller's selected work waits here, outside the month lock.
             results = await asyncio.gather(
                 *(self.simulations.wait_for_choice(key) for key in waiting),
-                *(self.simulations.wait_for_continuation(key) for key in continuing),
+                *(
+                    self.simulations.wait_for_continuation(key, rerun=speculative)
+                    for key in continuing
+                ),
                 return_exceptions=True,
             )
             for result in results:
                 if isinstance(result, BaseException):
                     raise result
         return self.petitions()
+
+    def gaps(
+        self, petition_id: str | None
+    ) -> tuple[list[tuple[UUID, str, int]], list[tuple[UUID, str]]]:
+        """Unfinished selected work; one question waits only for its own chain."""
+        facts = self.court.facts("audit")
+        choices = {
+            (f.detail["petition_id"], f.detail["option"])
+            for f in facts
+            if f.kind == "choice"
+        }
+        published = {
+            f.detail.get("petition_id") for f in facts if f.kind == "simulation"
+        }
+        waiting = [
+            key
+            for key in self.simulations.tasks
+            if key[1:] in choices
+            and key[1] not in published
+            and (petition_id is None or key[1] == petition_id)
+        ]
+        chain: set[str] | None = None
+        if petition_id is not None:
+            segments = [f.detail for f in facts if f.kind == "simulation"]
+            chain = {s["id"] for s in segments if s.get("petition_id") == petition_id}
+            while any(
+                s.get("after") in chain and s["id"] not in chain for s in segments
+            ):
+                chain |= {s["id"] for s in segments if s.get("after") in chain}
+        continuing = [
+            key
+            for key, task in self.simulations.continuations.items()
+            if not (task.done() and task.exception() is None)
+            and (chain is None or key[1] in chain)
+        ]
+        return waiting, continuing
 
     async def _resume(self, *, speculative: bool) -> list[PendingPetition]:
         date = self.court.calendar().data

@@ -18,12 +18,14 @@ class NightView(BaseModel):
     id: UUID
     closed: bool
     hall: list[str]
+    date: dict[str, int]
     turns: list[TurnView] = Field(default_factory=list[TurnView])
     result: Literal["translated", "unhandled"] | None = None
 
 
 def read_night(ledger: Ledger, night_id: UUID) -> NightView:
     night = ledger.get(night_id)
+    date = next(r["data"] for r in ledger.entities() if r["kind"] == "calendar")
     turns: list[TurnView] = []
     result = None
     for item in night.events:
@@ -34,7 +36,13 @@ def read_night(ledger: Ledger, night_id: UUID) -> NightView:
             result = "translated"
         elif item["kind"] == "unhandled":
             result = "unhandled"
-    return NightView(id=night.id, **night.data, turns=turns, result=result)
+    return NightView(
+        id=night.id,
+        **night.data,
+        date={"year": date["year"], "month": date["month"]},
+        turns=turns,
+        result=result,
+    )
 
 
 def open_night(ledger: Ledger) -> UUID:
