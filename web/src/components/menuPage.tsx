@@ -8,7 +8,7 @@ export function SettingsForm({ initial, onSave }: { initial: Settings; onSave: (
     <label>后端<select value={value.backend} onChange={event => setValue({ ...value, backend: event.target.value as Settings['backend'] })}>
       <option value="api">OpenAI 兼容 API</option><option value="claude-cli">Claude 命令行宿主</option>
     </select></label>
-    <label>模型<input required value={value.model} onChange={event => setValue({ ...value, model: event.target.value })} /></label>
+    <label>模型<input required={value.backend === 'api'} value={value.model} onChange={event => setValue({ ...value, model: event.target.value })} /></label>
     {value.backend === 'api' && <>
       <label>API 地址<input required type="url" value={value.base_url} onChange={event => setValue({ ...value, base_url: event.target.value })} /></label>
       <label>API Key<input type="password" autoComplete="off" value={value.api_key} onChange={event => setValue({ ...value, api_key: event.target.value })} /></label>

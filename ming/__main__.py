@@ -8,11 +8,8 @@ from pathlib import Path
 from typing import get_args
 from uuid import UUID
 
-from pydantic_ai.models import Model, infer_model
-
-from ming.audience import Audience
-from ming.month import Month
-from ming.middle.cli_model import ClaudeCliModel
+from ming.game import Game
+from ming.middle.invoke import ModelSource
 from ming.middle.court import Court
 from ming.middle.opening import CONTENT
 from ming.middle.view import PublicIdentity
@@ -57,110 +54,81 @@ def parser() -> argparse.ArgumentParser:
     return result
 
 
-def resolve_model(name: str) -> Model:
-    return ClaudeCliModel() if name == "claude-cli" else infer_model(name)
-
-
-async def precompute(audience: Audience, month: Month) -> None:
-    """Entry adapters schedule the same existing speculative work."""
-    await audience.drain()
-    await asyncio.gather(
-        *(month.prepare(e.id, background=True) for e in audience.court.approved_decrees())
-    )
-
-
-async def conversation(court: Court, scene_model: Model) -> None:
-    audience = Audience(court, scene_model)
-    month = Month(court, scene_model)
-    background: list[asyncio.Task[None]] = []
-    advancing: asyncio.Task[object] | None = None
-
+async def conversation(court: Court, scene_model: ModelSource) -> None:
+    game = Game(court, scene_model)
+    game.resume()
+    await game.drain()
+    if game.presentation()["face"] != "month" and not game.presentation()["failure"]:
+        game.start("open")
     try:
-        print(json.dumps({"night": str(audience.open())}), flush=True)
+        night = game.presentation()["night"]
+        print(json.dumps({"night": night["id"] if night else None}), flush=True)
         while line := await asyncio.to_thread(sys.stdin.readline):
             request = json.loads(line)
-            action = request["action"]
+            action = request.pop("action")
             scene = None
-            if action == "say":
-                scene = await audience.say(request["words"])
-            elif action in {"dismiss", "open"}:
-                {"dismiss": audience.dismiss, "open": audience.open}[action]()
-            elif action == "month":
-                if advancing is None or advancing.done():
-                    advancing = asyncio.create_task(month.advance())
-            elif action == "choose":
-                await month.choose(
-                    UUID(request["petition"]),
-                    request["option"],
-                    background=advancing is None
-                    or (
-                        advancing.done()
-                        and advancing.exception() is None
-                    ),
-                )
-            elif action == "drain":
-                await audience.drain()
-                await asyncio.gather(*background)
-                if advancing is not None:
-                    await asyncio.gather(advancing, return_exceptions=True)
+            if action == "drain":
+                await game.drain()
             elif action != "state":
-                raise ValueError(f"unknown audience action: {action}")
-            if court.night(audience.night_id).closed and action in {"say", "dismiss"}:
-                background.append(asyncio.create_task(precompute(audience, month)))
-            error = (
-                advancing.exception()
-                if advancing is not None and advancing.done()
-                else None
-            )
+                task = game.start(action, request, repeat=True)
+                if task is not None and action != "month":
+                    scene = await asyncio.shield(task)
+            state = game.presentation()
+            failure = state["failure"]
             print(
                 json.dumps(
                     {
                         "scene": scene,
-                        "night": court.night(audience.night_id).model_dump(mode="json"),
-                        "month_running": advancing is not None and not advancing.done(),
+                        "night": state["night"],
+                        "month_running": state["running"]
+                        and state["pending"]["action"] in {"month", "choose"},
                         "month_error": {
-                            "type": type(error).__name__,
-                            "message": str(error),
-                            "log": str(court.db_path.with_suffix(".errors.log")),
+                            key: failure["payload"][key]
+                            for key in ("type", "message", "log")
                         }
-                        if error
+                        if failure
                         else None,
-                        "petitions": [
-                            p.model_dump(mode="json") for p in court.petitions()
-                        ],
-                        "date": court.calendar().data,
+                        "petitions": state["petitions"],
+                        "date": state["date"],
                     },
                     ensure_ascii=False,
                 ),
                 flush=True,
             )
     finally:
-        await audience.drain()
-        await asyncio.gather(*background)
-        if advancing is not None:
-            await asyncio.gather(advancing, return_exceptions=True)
+        await game.drain()
 
 
 async def month_action(court: Court, args: argparse.Namespace) -> None:
-    month = Month(court, resolve_model(args.model))
-    if args.command == "choose":
-        await month.choose(args.petition, args.option)
-    else:
-        await month.advance()
+    game = Game(court, args.model)
+    pending = game.presentation()["pending"]
+    failure = game.presentation()["failure"]
+    game.resume()
+    await game.drain()
+    if pending is None or failure:
+        task = game.start(
+            args.command,
+            {"petition": str(args.petition), "option": args.option}
+            if args.command == "choose"
+            else {},
+            repeat=True,
+        )
+        if task is not None:
+            await asyncio.shield(task)
+    await game.drain()
+    state = game.presentation()
     print(
         json.dumps(
-            {
-                "date": court.calendar().data,
-                "petitions": [p.model_dump(mode="json") for p in court.petitions()],
-            },
-            ensure_ascii=False,
+            {"date": state["date"], "petitions": state["petitions"]}, ensure_ascii=False
         )
     )
+    if state["failure"]:
+        raise SystemExit(1)
 
 
 def main(argv: list[str] | None = None) -> None:
     args = parser().parse_args(argv)
-    model = resolve_model(args.translation_model)
+    model = args.translation_model
     court = (
         Court.new_game(args.directory, model, args.content)
         if args.command == "new"
@@ -171,7 +139,7 @@ def main(argv: list[str] | None = None) -> None:
             asyncio.run(month_action(court, args))
             return
         if args.command == "audience":
-            asyncio.run(conversation(court, resolve_model(args.scene_model)))
+            asyncio.run(conversation(court, args.scene_model))
             return
         print(
             json.dumps(

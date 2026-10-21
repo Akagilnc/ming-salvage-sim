@@ -1,18 +1,23 @@
 """Claude's native MCP and stream-json transport; Pydantic AI owns declarations.
 
-No SDK shutdown, signals, host-session persistence or second validation retry.
+No SDK shutdown, host-session persistence or second validation retry.
+Explicit replacement terminates only the superseded native call.
 """
 
 import asyncio
 import json
 import socket
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
+import sys
+from collections.abc import AsyncGenerator, AsyncIterator, Sequence
+from functools import partial
 from contextlib import asynccontextmanager
 from tempfile import TemporaryDirectory, TemporaryFile
 from typing import Any
 
 import uvicorn
 from mcp.server.mcpserver import MCPServer
+from pydantic_ai import Tool
+from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -23,12 +28,13 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 
 class ClaudeCliModel(FunctionModel):
-    def __init__(
-        self, name: str = "haiku", tools: Sequence[Callable[..., Any]] = ()
-    ) -> None:
+    def __init__(self, name: str = "", tools: Sequence[Tool[Any]] = ()) -> None:
         self.tools = tools
+        self.cli_name = name
         super().__init__(
-            function=self._request, stream_function=self._stream, model_name=name
+            function=self._request,
+            stream_function=self._stream,
+            model_name=name or "claude-cli",
         )
 
     @property
@@ -41,8 +47,13 @@ class ClaudeCliModel(FunctionModel):
             yield {"mcpServers": {}}
             return
         mcp = MCPServer("court")
+        context = get_current_run_context()
         for tool in self.tools:
-            mcp.add_tool(tool)
+            function = tool.function
+            if tool.takes_ctx:
+                function = partial(function, context)
+                setattr(function, "__name__", tool.name)
+            mcp.add_tool(function, name=tool.name, description=tool.description)
         with socket.socket() as listener:
             listener.bind(("127.0.0.1", 0))
             server = uvicorn.Server(
@@ -91,8 +102,7 @@ class ClaudeCliModel(FunctionModel):
                 proc = await asyncio.create_subprocess_exec(
                     "claude",
                     "-p",
-                    "--model",
-                    self.model_name,
+                    *(["--model", self.cli_name] if self.cli_name else []),
                     "--tools",
                     "",
                     "--no-session-persistence",
@@ -104,7 +114,7 @@ class ClaudeCliModel(FunctionModel):
                     *(
                         [
                             "--allowedTools",
-                            *[f"mcp__court__{tool.__name__}" for tool in self.tools],
+                            *[f"mcp__court__{tool.name}" for tool in self.tools],
                         ]
                         if self.tools
                         else []
@@ -120,6 +130,8 @@ class ClaudeCliModel(FunctionModel):
                     stdin=prompt,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=errors,
+                    # Native JSONL tool results can contain the entire ledger.
+                    limit=sys.maxsize,
                 )
                 assert proc.stdout is not None
                 result: dict[str, Any] | None = None
@@ -138,9 +150,12 @@ class ClaudeCliModel(FunctionModel):
                                     yield delta["text"]
                         elif message["type"] == "result":
                             result = message
+                except asyncio.CancelledError:
+                    # Only an explicit replacement cancels accepted work, not HTTP disconnects.
+                    if proc.returncode is None:
+                        proc.terminate()
+                    raise
                 finally:
-                    # Even on a reader/consumer error, drain pipes and wait naturally.
-                    # Browser disconnects never cancel this accepted scene action.
                     await asyncio.shield(proc.communicate())
                 if proc.returncode or result is None or result.get("is_error"):
                     errors.seek(0)

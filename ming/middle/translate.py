@@ -3,7 +3,6 @@
 import json
 from typing import TypeVar
 
-from pydantic import BaseModel
 from pydantic_ai import (
     Agent,
     ModelRetry,
@@ -12,12 +11,11 @@ from pydantic_ai import (
 )
 from pydantic_ai.exceptions import ToolRetryError, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelResponse
-from pydantic_ai.models import Model
 
 from ming.ledger import Ledger
-from ming.middle.declaration import Declaration, NightDeclaration
+from ming.middle.declaration import Declaration, NightDeclaration, Unhandled
 from ming.middle.rules import check_rules
-from ming.middle.invoke import invoke, transport_model
+from ming.middle.invoke import ModelSource, build_agent, invoke
 
 T = TypeVar("T", bound=Declaration)
 INSTRUCTIONS = """你是御前召对的转译官。退朝后通读整夜已落账的全部轮次，一夜只交一次声明。
@@ -34,11 +32,6 @@ text 保留皇帝认可的圣旨定稿全文，不改写、不摘要。origin �
 在场进出归场景名单工具，退朝归场景退朝工具；不声明进出、退朝、说话人分段、可闻性或御前主角。
 没有的项目交空列表，不凭空增添。
 """
-
-
-class Unhandled(BaseModel):
-    model_text: str
-    failure_point: str
 
 
 def catalogue(ledger: Ledger) -> dict[str, dict[str, list[str]]]:
@@ -120,11 +113,15 @@ def check(ledger: Ledger, out: Declaration) -> None:
                     fail("decrees.people", person, names["person"])
 
 
-def build_agent(
-    model: Model, ledger: Ledger, output_type: type[T], instructions: str = INSTRUCTIONS
+def declaration_agent(
+    model: ModelSource,
+    ledger: Ledger,
+    output_type: type[T],
+    instructions: str = INSTRUCTIONS,
 ) -> Agent[None, T]:
-    agent = Agent(
-        transport_model(model),
+    agent = build_agent(
+        model,
+        name=output_type.__name__,
         output_type=PromptedOutput(output_type),
         instructions=instructions,
         retries=1,
@@ -153,14 +150,11 @@ def build_agent(
 async def translate(
     agent: Agent[None, T],
     prompt: str,
-    background: bool = False,
 ) -> T | Unhandled:
     with capture_run_messages() as messages:
         try:
             return (
-                await invoke(
-                    agent, "请按 JSON schema 提交完整声明。\n" + prompt, background
-                )
+                await invoke(agent, "请按 JSON schema 提交完整声明。\n" + prompt)
             ).output
         except UnexpectedModelBehavior as exhausted:
             if not isinstance(exhausted.__cause__, ToolRetryError):

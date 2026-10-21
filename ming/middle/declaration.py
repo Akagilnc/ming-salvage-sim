@@ -6,6 +6,11 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class Unhandled(BaseModel):
+    model_text: str
+    failure_point: str
+
+
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

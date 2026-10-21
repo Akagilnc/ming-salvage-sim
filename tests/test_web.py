@@ -1,27 +1,36 @@
-"""Deterministic HTTP acceptance; models replay the existing live recordings."""
+"""Medium: HTTP/CLI entry acceptance with per-step recorded model overrides."""
 
+import asyncio
 import json
 from pathlib import Path
 from uuid import uuid4
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
-
+from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
+from pydantic_ai.messages import (
+    ModelMessagesTypeAdapter,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
 from pydantic_ai.models.test import TestModel
 from starlette.testclient import TestClient
 
 from ming.web import Settings, create_app
 from tests.test_court import replaying
 
+RECORDED = Path(__file__).parent / "recorded"
+
 
 def test_menu_creates_distinct_games_and_opens_only_existing_saves(
     tmp_path: Path,
 ) -> None:
-    app = create_app(tmp_path, model_factory=lambda _settings: TestModel())
-    with TestClient(app) as client:
+    with TestClient(create_app(tmp_path)) as client:
         menu = client.get("/state").json()
-        assert menu["saves"] == []
-        assert menu["save"] is None
-        assert menu["game"] is None
+        assert (menu["saves"], menu["save"], menu["game"]) == ([], None, None)
         assert client.post("/actions", json={"action": "continue"}).status_code == 404
         assert (
             client.post(
@@ -60,116 +69,199 @@ def test_menu_creates_distinct_games_and_opens_only_existing_saves(
             ).status_code
             == 400
         )
-    with TestClient(
-        create_app(tmp_path, model_factory=lambda _settings: TestModel())
-    ) as client:
-        menu = client.get("/state").json()
-        assert set(menu["saves"]) == {first, second}
-        assert menu["save"] is None
-        assert menu["game"] is None
+    with TestClient(create_app(tmp_path)) as client:
+        assert set(client.get("/state").json()["saves"]) == {first, second}
+        assert client.get("/state").json()["game"] is None
         assert (
             client.post("/actions", json={"action": "continue"}).json()["save"]
             == second
         )
 
 
-@pytest.mark.parametrize("path", ["complete", "petition", "gazette-error"])
+@pytest.mark.parametrize(
+    "path",
+    [
+        "complete",
+        "petition",
+        "choice-error",
+        "decree",
+        "precompute-error",
+    ],
+)
 def test_http_month_dispatches_choices_and_retries_missing_step(
-    tmp_path: Path,
-    path: str,
+    tmp_path: Path, path: str, steps, audit, clock
 ) -> None:
-    recorded = Path(__file__).parent / "recorded"
-    empty = (recorded / "month_empty.txt").read_text()
-    petition = (recorded / "month_petition.txt").read_text()
-    money = (recorded / "month_money_300000.txt").read_text()
-    gazette = json.loads((recorded / "night_invalid.json").read_text())["cases"][
-        "missing_fields"
-    ]["scene"]
-    replies = (
-        [petition, petition, money, money, gazette]
-        if path == "petition"
-        else [
-            empty,
-            empty,
-            *([RuntimeError("gazette unavailable")] if path == "gazette-error" else []),
-            gazette,
-        ]
-    )
-    with TestClient(
-        create_app(tmp_path, model_factory=lambda _: replaying(replies))
-    ) as client:
-        client.post("/actions", json={"action": "new"})
-        before = client.get("/records").json()["entities"]
+    money = (RECORDED / "month_money_300000.txt").read_text()
+    received = {name: [] for name in ("deliberation", "simulation", "gazette")}
+    if path in {"petition", "choice-error"}:
+        steps["Declaration"] = replaying(
+            [(RECORDED / "month_petition.txt").read_text(), money]
+        )
+    with TestClient(create_app(tmp_path)) as client:
+        save = client.post("/actions", json={"action": "new"}).json()["save"]
+        db = tmp_path / save
+        if path in {"decree", "precompute-error"}:
+            for name in received:
+                text = (RECORDED / f"{name}.txt").read_text()
+                steps[name] = replaying(
+                    lambda messages, text=text: (
+                        ModelResponse(parts=[TextPart(text)])
+                        if any(
+                            isinstance(part, ToolReturnPart)
+                            for m in messages
+                            for part in m.parts
+                        )
+                        else ModelResponse(parts=[ToolCallPart("read_records", {})])
+                    ),
+                    received[name],
+                )
+            case = json.loads((RECORDED / "night_approved.json").read_text())
+            steps["scene"] = replaying(
+                [
+                    m
+                    for m in ModelMessagesTypeAdapter.validate_python(
+                        case["scene_responses"]
+                    )
+                    if isinstance(m, ModelResponse)
+                ]
+            )
+            steps["NightDeclaration"] = replaying(case["replies"])
+            steps["Declaration"] = (
+                replaying([money, (RECORDED / "month_petition.txt").read_text(), money])
+                if path == "decree"
+                else TestModel(call_tools=[], custom_output_text=money)
+            )
+            if path == "precompute-error":
+                steps["deliberation"] = replaying(
+                    [
+                        *[ModelHTTPError(500, "recording") for _ in range(3)],
+                        (RECORDED / "deliberation.txt").read_text(),
+                    ]
+                )
+            client.post("/actions", json={"action": "open"})
+            for words in case["words"]:
+                assert (
+                    client.post(
+                        "/actions", json={"action": "say", "words": words}
+                    ).status_code
+                    == 204
+                )
+            client.post("/actions", json={"action": "load", "save": save})
+            assert client.get("/state").json()["game"]["failure"] is None
+            if path == "precompute-error":
+                assert clock == [5, 5]
+                assert not [
+                    f
+                    for f in audit(db)["facts"]
+                    if f["kind"] == "interaction" and f["detail"]["status"] == "failed"
+                ]
         assert (
             client.post(
                 "/actions", json={"action": "choose", "petition": str(uuid4())}
             ).status_code
             == 400
         )
-        response = client.post("/actions", json={"action": "month"})
-        assert response.status_code == 204
-        assert response.content == b""
+        assert client.post("/actions", json={"action": "month"}).status_code == 204
         game = client.get("/state").json()["game"]
-        if path == "petition":
-            assert game["date"]["month"] == 10
-            choice = {
-                "action": "choose",
-                "petition": game["petitions"][0]["id"],
-                "option": 0,
-            }
-            assert (
-                client.post("/actions", json={**choice, "option": -1}).status_code
-                == 400
+        if path in {"petition", "choice-error", "decree"}:
+            assert (game["date"]["month"], game["face"], game["running"]) == (
+                10,
+                "month",
+                False,
             )
-            response = client.post("/actions", json=choice)
-            assert response.status_code == 204
-            assert response.content == b""
-            assert client.post("/actions", json=choice).status_code == 400
-        elif path == "gazette-error":
-            assert game["failure"]["action"] == "month"
-            assert game["failure"]["payload"]["type"] == "RuntimeError"
-            assert game["date"]["month"] == 10
-            assert client.get("/records").json()["entities"] == before
-            response = client.post("/actions", json={"action": "retry"})
-            assert response.status_code == 204
-            assert response.content == b""
+            before = audit(db)
+            client.get("/state")
+            client.get("/records")
+            assert audit(db) == audit(db, True) == before
+            for petition in game["petitions"]:
+                choice = {"action": "choose", "petition": petition["id"], "option": 0}
+                assert (
+                    client.post("/actions", json={**choice, "option": -1}).status_code
+                    == 400
+                )
+                if path == "choice-error":
+                    steps["simulation"] = replaying(
+                        [
+                            RuntimeError("continuation unavailable"),
+                            (RECORDED / "simulation.txt").read_text(),
+                        ]
+                    )
+                assert client.post("/actions", json=choice).status_code == 204
+                if path == "choice-error":
+                    failure = client.get("/state").json()["game"]["failure"]
+                    assert failure["action"] == "choose"
+                    assert failure["payload"]["petition"] == choice["petition"]
+                    assert failure["payload"]["option"] == 0
+                    assert (
+                        client.post("/actions", json={"action": "retry"}).status_code
+                        == 204
+                    )
+                assert client.post("/actions", json=choice).status_code == 400
         game = client.get("/state").json()["game"]
-        assert game["date"]["month"] == 11
-        assert game["face"] == "desk"
-        assert game["running"] is False
-        assert game["failure"] is None
-        assert game["petitions"] == []
         assert (
-            len(
-                [
-                    f
-                    for f in client.get("/records").json()["facts"]
-                    if f["kind"] == "gazette"
+            game["date"]["month"],
+            game["face"],
+            game["running"],
+            game["failure"],
+            game["petitions"],
+        ) == (11, "desk", False, None, [])
+        ledger = audit(db)
+        assert ledger == audit(db, True)
+        assert len([f for f in ledger["facts"] if f["kind"] == "gazette"]) == 1
+        if path == "decree":
+            decree = next(e for e in ledger["entities"] if e["kind"] == "decree")
+            assert {
+                f["kind"] for f in ledger["facts"] if f["entity_id"] == decree["id"]
+            } >= {
+                "deliberation",
+                "simulation",
+                "declaration",
+                "landed",
+            }
+            assert [
+                f
+                for f in ledger["facts"]
+                if f["kind"] == "changed" and f["detail"]["origin_ref"] == decree["id"]
+            ]
+            materials = {
+                name: [
+                    part.model_response_object()
+                    for m in messages
+                    for part in m.parts
+                    if isinstance(part, ToolReturnPart)
                 ]
+                for name, messages in received.items()
+            }
+            assert all(materials.values())
+            assert all(
+                not [e for e in data["entities"] if e["kind"] == "account"]
+                for name in ("deliberation", "gazette")
+                for data in materials[name]
             )
-            == 1
-        )
+            assert {
+                e["key"]: e["data"]["taels"]
+                for e in materials["simulation"][0]["entities"]
+                if e["kind"] == "account"
+            } == {"国库": 3200000, "内库": 4400000}
+        before = audit(db)
+        client.get("/state")
+        client.get("/records")
+        assert audit(db) == before
 
 
 def test_http_audience_records_unhandled_night_and_resumes_after_reopening(
-    tmp_path: Path,
+    tmp_path: Path, steps
 ) -> None:
-    case = json.loads(
-        (Path(__file__).parent / "recorded/night_invalid.json").read_text()
-    )
-    sample = case["cases"]["missing_fields"]
-
-    def models(_settings: Settings):
-        return replaying([sample["scene"], sample["reply"], sample["reply"]])
-
-    with TestClient(create_app(tmp_path, model_factory=models)) as client:
+    case = json.loads((RECORDED / "night_invalid.json").read_text())
+    with TestClient(create_app(tmp_path)) as client:
         save = client.post("/actions", json={"action": "new"}).json()["save"]
         assert client.post("/actions", json={"action": "open"}).status_code == 200
-        response = client.post(
-            "/actions", json={"action": "say", "words": case["emperor_words"]}
+        assert (
+            client.post(
+                "/actions", json={"action": "say", "words": case["emperor_words"]}
+            ).status_code
+            == 204
         )
-        assert response.status_code == 204
-        assert response.content == b""
         state = client.get("/state").json()["game"]
         assert state["face"] == "audience"
         assert len(state["night"]["turns"]) == 1
@@ -181,9 +273,7 @@ def test_http_audience_records_unhandled_night_and_resumes_after_reopening(
         assert state["night"]["result"] == "unhandled"
         assert state["failure"] is None
         assert client.post("/actions", json={"action": "open"}).status_code == 200
-    with TestClient(
-        create_app(tmp_path, model_factory=lambda _settings: TestModel())
-    ) as client:
+    with TestClient(create_app(tmp_path)) as client:
         assert client.get("/state").json()["game"] is None
         client.post("/actions", json={"action": "continue"})
         state = client.get("/state").json()["game"]
@@ -192,41 +282,38 @@ def test_http_audience_records_unhandled_night_and_resumes_after_reopening(
         assert client.post("/actions", json={"action": "month"}).status_code == 409
 
 
-@pytest.mark.parametrize("step", ["say", "translation", "month-translation", "month"])
-def test_settings_survive_reopening_and_failed_scene_retries_in_place(
-    tmp_path: Path,
-    step: str,
-) -> None:
-    case = json.loads(
-        (Path(__file__).parent / "recorded/night_invalid.json").read_text()
-    )
-
-    sample = case["cases"]["missing_fields"]
-    empty = (Path(__file__).parent / "recorded/month_empty.txt").read_text()
-
-    def models(settings: Settings):
-        if settings.api_key == "broken":
-            return replaying(
-                [
-                    *(
-                        [sample["scene"]]
-                        if step in {"translation", "month-translation"}
-                        else []
-                    ),
-                    RuntimeError("external backend unavailable"),
-                    RuntimeError("external backend unavailable"),
-                ]
-            )
-        return replaying(
-            [sample["scene"]]
-            if step == "say"
-            else [sample["reply"], sample["reply"], empty, empty, sample["scene"]]
-            if step in {"translation", "month-translation"}
-            else [empty, empty, sample["scene"]]
+@pytest.mark.parametrize(
+    ("step", "failure"),
+    [
+        (step, RuntimeError)
+        for step in (
+            "say",
+            "translation",
+            "month-translation",
+            "translation-then-month",
+            "month",
         )
-
-    settings = Settings(api_key="broken")
-    with TestClient(create_app(tmp_path, model_factory=models)) as client:
+    ]
+    + [
+        ("translation", ConnectionError),
+        ("translation", UnexpectedModelBehavior),
+    ],
+)
+def test_settings_survive_reopening_and_failed_scene_retries_in_place(
+    tmp_path: Path, step: str, failure: type[Exception], steps
+) -> None:
+    case = json.loads((RECORDED / "night_invalid.json").read_text())
+    name = (
+        "scene"
+        if step == "say"
+        else "NightDeclaration"
+        if "translation" in step
+        else "simulation"
+    )
+    working = steps[name]
+    steps[name] = replaying([failure("external backend unavailable")] * 2)
+    settings = Settings(backend="claude-cli")
+    with TestClient(create_app(tmp_path)) as client:
         assert (
             client.post(
                 "/actions",
@@ -237,7 +324,7 @@ def test_settings_survive_reopening_and_failed_scene_retries_in_place(
         client.post(
             "/actions", json={"action": "settings", "settings": settings.model_dump()}
         )
-        client.post("/actions", json={"action": "new"})
+        save = client.post("/actions", json={"action": "new"}).json()["save"]
         if step == "month":
             client.post("/actions", json={"action": "month"})
         else:
@@ -247,33 +334,36 @@ def test_settings_survive_reopening_and_failed_scene_retries_in_place(
             )
             if step != "say":
                 client.post("/actions", json={"action": "dismiss"})
-                # Selecting waits for the live worker, without fabricating a failure.
-                save = client.get("/state").json()["save"]
                 client.post("/actions", json={"action": "load", "save": save})
                 if step == "month-translation":
                     client.post("/actions", json={"action": "month"})
         game = client.get("/state").json()["game"]
-        failed_action = "translation" if step.endswith("translation") else step
-        assert game["failure"]["action"] == failed_action
-        assert game["failure"]["payload"]["type"] == "RuntimeError"
-        assert game["date"]["month"] == 10
-        if step == "say":
-            assert game["night"]["turns"] == []
+        if step == "translation-then-month":
+            assert game["failure"]["action"] == "translation"
+            steps[name] = working
+            client.post("/actions", json={"action": "month"})
+            state = client.get("/state").json()["game"]
+            assert state["failure"] is None
+            assert state["date"]["month"] == 11
+            assert state["running"] is False
+            return
+        assert game["failure"]["action"] == (
+            "translation" if step.endswith("translation") else step
+        )
+        assert game["failure"]["payload"]["type"] == failure.__name__
         assert not [
             f
             for f in client.get("/records").json()["facts"]
             if f["kind"] == "unhandled"
         ]
-    with TestClient(create_app(tmp_path, model_factory=models)) as client:
-        menu = client.get("/state").json()
-        assert menu["settings"] == settings.model_dump()
-        assert menu["game"] is None
+        assert game["date"]["month"] == 10
+        if step == "say":
+            assert game["night"]["turns"] == []
+    steps[name] = working
+    with TestClient(create_app(tmp_path)) as client:
+        assert client.get("/state").json()["settings"] == settings.model_dump()
         client.post("/actions", json={"action": "continue"})
         assert client.get("/state").json()["game"]["failure"] == game["failure"]
-        settings.api_key = "fixed"
-        client.post(
-            "/actions", json={"action": "settings", "settings": settings.model_dump()}
-        )
         client.post("/actions", json={"action": "retry"})
         game = client.get("/state").json()["game"]
         assert game["failure"] is None
@@ -285,3 +375,91 @@ def test_settings_survive_reopening_and_failed_scene_retries_in_place(
         else:
             assert game["date"]["month"] == 11
         assert game["running"] is False
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        (500, 1, [5], "simulation"),
+        (500, 3, [5, 5], "simulation"),
+        (429, 1, [], "simulation"),
+        (500, 3, [5, 5], "gazette"),
+    ],
+)
+def test_month_transport_retry_is_bounded_and_persistent(
+    tmp_path: Path, case, steps, clock, audit
+) -> None:
+    status, failures, waits, name = case
+    steps[name] = replaying(
+        [
+            *[ModelHTTPError(status, "recording") for _ in range(failures)],
+            (RECORDED / f"{name}.txt").read_text(),
+        ]
+    )
+    with TestClient(create_app(tmp_path)) as client:
+        client.post("/actions", json={"action": "new"})
+        client.post("/actions", json={"action": "month"})
+        state = client.get("/state").json()["game"]
+        assert clock == waits
+        if failures == 3 or status == 429:
+            assert state["failure"]["payload"]["type"] == "ModelHTTPError"
+            assert state["date"]["month"] == 10
+            client.post("/actions", json={"action": "continue"})
+            assert client.get("/state").json()["game"]["failure"] == state["failure"]
+            client.post("/actions", json={"action": "retry"})
+        state = client.get("/state").json()["game"]
+        assert state["date"]["month"] == 11
+        assert state["failure"] is None
+        ledger = audit(tmp_path / client.get("/state").json()["save"])
+        assert len([f for f in ledger["facts"] if f["kind"] == "landed"]) == 1
+
+
+@pytest.mark.parametrize("model", ["", "sonnet"])
+def test_cli_backend_leaves_the_default_model_to_the_host(
+    tmp_path: Path, model: str, monkeypatch
+) -> None:
+    calls = []
+    reply = json.loads((RECORDED / "night_invalid.json").read_text())["cases"][
+        "missing_fields"
+    ]["reply"]
+
+    async def spawn(*args, **kwargs):
+        calls.append(args)
+        output = asyncio.StreamReader()
+        for event in [
+            {
+                "type": "stream_event",
+                "event": {
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": reply},
+                },
+            },
+            {"type": "result", "is_error": False},
+        ]:
+            output.feed_data(json.dumps(event).encode() + b"\n")
+        output.feed_eof()
+        return SimpleNamespace(
+            stdout=output, returncode=0, communicate=AsyncMock(return_value=(b"", b""))
+        )
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+    with TestClient(create_app(tmp_path)) as client:
+        client.post(
+            "/actions",
+            json={
+                "action": "settings",
+                "settings": {"backend": "claude-cli", "model": model},
+            },
+        )
+        save = client.post("/actions", json={"action": "new"}).json()["save"]
+        client.post("/actions", json={"action": "open"})
+        client.post("/actions", json={"action": "dismiss"})
+        client.post("/actions", json={"action": "load", "save": save})
+        assert client.get("/state").json()["game"]["failure"] is None
+    assert calls
+    for args in calls:
+        assert args[0] == "claude"
+        if model:
+            assert args[args.index("--model") + 1] == model
+        else:
+            assert "--model" not in args
