@@ -29,6 +29,7 @@ text 保留皇帝认可的圣旨定稿全文，不改写、不摘要。origin �
 人名、账户、官衔、地区都写账本正名。官职只写官衔，任职地区另写 office_region。
 人在外地也可以当场起复或任职，不核在任与否，location 不因此改变。新建实体明确 create=true，已有实体用 false。
 无字段变化可以只记文字；对象模型之外的伤情等记入所涉实体履历，不长新字段。
+奏报与公开说法单列 reports，只交实体、文字和 audience；facts 只记物理实况。
 在场进出归场景名单工具，退朝归场景退朝工具；不声明进出、退朝、说话人分段、可闻性或御前主角。
 没有的项目交空列表，不凭空增添。
 """
@@ -47,12 +48,15 @@ def catalogue(ledger: Ledger) -> dict[str, dict[str, list[str]]]:
 
 def allowed_fields(ledger: Ledger) -> dict[str, set[str]]:
     fields: dict[str, set[str]] = {
-        "affair": {"text", "closed", "petition"},
-        "decree": {"text", "origin", "people", "petition"},
+        "affair": {"text"},
+        "decree": {"text", "origin", "people"},
     }
     for row in ledger.entities():
         if row["source"]:
             fields.setdefault(row["kind"], set()).update(row["data"])
+    fields.get("person", set()).difference_update(
+        {"transit_to", "remaining_distance", "waiting_audience"}
+    )
     return fields
 
 
@@ -98,7 +102,7 @@ def check(ledger: Ledger, out: Declaration) -> None:
                 "location",
             }:
                 kind = "office" if change.field == "office" else "region"
-                if change.value != "" and (
+                if (change.field == "location" or change.value != "") and (
                     not isinstance(change.value, str)
                     or change.value not in names.get(kind, {})
                 ):
@@ -106,6 +110,15 @@ def check(ledger: Ledger, out: Declaration) -> None:
                         f"{path}.changes[{j}].value", change.value, names.get(kind, {})
                     )
     check_rules(out, set(names.get("affair", {})))
+    check_references(out, names)
+
+
+def check_references(out: Declaration, names: dict[str, dict[str, list[str]]]) -> None:
+    for i, report in enumerate(out.reports):
+        if report.entity not in names.get(report.entity_type, {}):
+            fail(
+                f"reports[{i}].entity", report.entity, names.get(report.entity_type, {})
+            )
     if isinstance(out, NightDeclaration):
         for decree in out.decrees:
             for person in decree.people:

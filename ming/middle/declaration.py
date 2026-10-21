@@ -29,7 +29,9 @@ class PendingPetition(Petition):
     id: UUID
     route_id: UUID
     entity_id: UUID
-    round: int
+    segment_id: UUID
+    available: dict[str, Any]
+    blocking: bool
 
 
 class Change(StrictModel):
@@ -50,14 +52,19 @@ class Fact(StrictModel):
         description="本条后果所属事务的正名；可指同份声明新建的 affair，无所属事务可省略。",
     )
     changes: list[Change]
-    audience: Literal["world", "public", "official"] = "world"
     text: str = Field(
         description="发生的事实，原文记在这个实体上；没有字段变化也可以只记文字"
     )
 
 
+class Report(EntityRef):
+    text: str
+    audience: Literal["public", "official"]
+
+
 class Declaration(StrictModel):
     facts: list[Fact]
+    reports: list[Report] = Field(default_factory=list[Report])
 
 
 class Decree(StrictModel):

@@ -10,6 +10,7 @@ from pydantic_ai import Agent
 
 from ming.ledger import Entity, Item, Ledger
 from ming.middle.dispatch import dispatch
+from ming.middle.calendar import advance_month
 from ming.middle.declaration import Declaration, Unhandled
 from ming.middle.invoke import ModelSource
 from ming.middle.opening import CONTENT, import_opening
@@ -79,6 +80,11 @@ class Court:
                 gazette = fact.detail["text"]
         return {
             "date": self.calendar().data,
+            "waiting_audience": [
+                e.key
+                for e in rows
+                if e.kind == "person" and e.data.get("waiting_audience")
+            ],
             "gazette": gazette,
             "unhandled": [
                 {"kind": "unhandled", "entity_id": str(f.entity_id)}
@@ -86,6 +92,9 @@ class Court:
                 if f.kind == "unhandled"
             ],
         }
+
+    def advance_month(self) -> None:
+        advance_month(self._ledger)
 
     def calendar(self) -> EntityView:
         return next(e for e in self.entities("audit") if e.kind == "calendar")
@@ -110,6 +119,22 @@ class Court:
             target.record(kind, words, detail, changes)
         self._ledger.commit([target])
         return target.id
+
+    def products(
+        self, entity_id: UUID, *, current: bool = True, kind: str | None = None
+    ) -> list[FactView]:
+        date = self.calendar().data
+        return [
+            FactView(entity_id=entity_id, **event)
+            for event in self._ledger.get(entity_id).events
+            if (not current or event["detail"].get("date") == date)
+            and (kind is None or event["kind"] == kind)
+        ]
+
+    def record_product(
+        self, entity_id: UUID, kind: str, detail: dict[str, object]
+    ) -> None:
+        self.record(entity_id, [(kind, {**detail, "date": self.calendar().data})])
 
     def translation_agent(
         self, output_type: type[T], instructions: str = INSTRUCTIONS

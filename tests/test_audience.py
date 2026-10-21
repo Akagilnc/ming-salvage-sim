@@ -124,7 +124,7 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
     assert returned["present"]["ok"] is True
     assert returned["absent"]["ok"] is False
     assert returned["leave"]["ok"] is True
-    assert returned["person"]["person"]["location"] == "nanzhili"
+    assert returned["person"]["person"]["location"] == "南直隶 / 南京"
     assert returned["person"]["person"]["status"] == "offstage"
     assert not {"loyalty", "ability", "integrity", "courage", "intrigue"}.intersection(
         returned["person"]["person"]

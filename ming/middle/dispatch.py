@@ -59,6 +59,8 @@ def dispatch(
             detail = field_values(fact, entity.data, amounts.get(i))
             detail.update(association)
             changes = detail["changes"]
+            if entity.kind == "person":
+                move_person(entity, changes, existing, record)
             record(entity, "changed", detail, changes)
             if (
                 entity.kind == "person"
@@ -66,24 +68,13 @@ def dispatch(
                 and entity.data.get("office")
             ):
                 displace(entity, existing, known, record, association)
-        for i, fact in enumerate(result.facts):
-            for change in fact.changes:
-                if change.counterpart and change.counterpart.entity_type != "account":
-                    record(
-                        known(
-                            change.counterpart.entity_type, change.counterpart.entity
-                        ),
-                        "received",
-                        {
-                            "nominal": -change.value,
-                            "actual": -amounts[i],
-                            "source": fact.entity,
-                            "affair_id": str(known("affair", fact.affair).id)
-                            if fact.affair is not None
-                            else None,
-                            "audience": "world",
-                        },
-                    )
+        record_receipts(result, amounts, known, record)
+        for report in result.reports:
+            record(
+                known(report.entity_type, report.entity),
+                "reported",
+                report.model_dump(),
+            )
     if isinstance(result, NightDeclaration):
         for decree in result.decrees:
             data = decree.model_dump()
@@ -96,6 +87,12 @@ def dispatch(
                     "decreed",
                     {"decree_id": str(entity.id)},
                 )
+    if (
+        monthly
+        and owner.kind == "decree"
+        and (mark := interim_mark(ledger, owner, date)) is not None
+    ):
+        record(known(owner.kind, owner.key), "interim", {"text": mark})
     record(
         known(owner.kind, owner.key),
         "unhandled"
@@ -104,6 +101,91 @@ def dispatch(
         {"result": result.model_dump()},
     )
     ledger.commit(list(changed.values()))
+
+
+def record_receipts(
+    result: Declaration,
+    amounts: dict[int, float],
+    known: Callable[[str, str], Entity],
+    record: Callable[..., None],
+) -> None:
+    for i, fact in enumerate(result.facts):
+        for change in fact.changes:
+            if change.counterpart and change.counterpart.entity_type != "account":
+                record(
+                    known(change.counterpart.entity_type, change.counterpart.entity),
+                    "received",
+                    {
+                        "nominal": -change.value,
+                        "actual": -amounts[i],
+                        "source": fact.entity,
+                        "affair_id": str(known("affair", fact.affair).id)
+                        if fact.affair is not None
+                        else None,
+                        "audience": "world",
+                    },
+                )
+
+
+def interim_mark(ledger: Ledger, decree: Entity, date: Item) -> str | None:
+    verdict = next(
+        (
+            e["detail"]
+            for e in decree.events
+            if e["kind"] == "deliberation" and e["detail"]["date"] == date
+        ),
+        None,
+    )
+    forced = next(
+        (
+            e["detail"]
+            for e in decree.events
+            if e["kind"] == "choice"
+            and e["detail"]["date"] == date
+            and e["detail"]["text"] == "强颁"
+        ),
+        None,
+    )
+    if forced and verdict:
+        route = ledger.get(UUID(verdict["route_id"]))
+        return next(
+            e["detail"]["output"]["text"]
+            for e in route.events
+            if e["kind"] == "simulation"
+            and e["detail"].get("petition_id") == forced["petition_id"]
+        )
+    return None
+
+
+def move_person(
+    person: Entity,
+    changes: dict[str, object],
+    existing: dict[tuple[str, str], Item],
+    record: Callable[[Entity, str, Item, Item], None],
+) -> None:
+    # A first location is a fact, not a journey from an invented origin.
+    if not person.data.get("location"):
+        return
+    destination = changes.pop("location", person.data["location"])
+    if changes.get("status") == "offstage":
+        changes.update(transit_to="", remaining_distance=0, waiting_audience=False)
+    elif destination != person.data.get("location") and not person.data.get(
+        "transit_to"
+    ):
+        distance = existing[("distance", person.data["location"])]["data"][destination]
+        record(
+            person,
+            "departed",
+            {"destination": destination, "distance": distance},
+            {
+                "transit_to": destination,
+                "remaining_distance": distance,
+                "waiting_audience": False,
+            },
+        )
+        changes["status"] = "active"
+    elif person.data.get("transit_to"):
+        changes["status"] = "active"
 
 
 # This rule is shared by immediate and monthly landing, not a second dispatch path.
@@ -127,5 +209,11 @@ def displace(
                     known(kind, key),
                     "displaced",
                     {"successor": appointee.key, **association},
-                    {"office": "", "status": "offstage"},
+                    {
+                        "office": "",
+                        "status": "offstage",
+                        "transit_to": "",
+                        "remaining_distance": 0,
+                        "waiting_audience": False,
+                    },
                 )

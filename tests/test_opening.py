@@ -18,6 +18,14 @@ def test_new_game_imports_complete_world_records_and_separates_identities(
 ) -> None:
     court = Court.new_game(tmp_path, TestModel())
     entities = court.entities("audit")
+    indexed = {(e.kind, e.key): e.data for e in entities}
+    assert indexed[("army", "关宁军 / 宁锦防线")]["station_region"] == "辽东 / 宁锦"
+    assert indexed[("class", "北直隶 / 京师·农民")]["region_id"] == "北直隶 / 京师"
+    assert indexed[("person", "徐光启")]["location"] == "南直隶 / 南京"
+    assert indexed[("army", "关宁军 / 宁锦防线")]["owner_power"] == "大明"
+    assert indexed[("region", "北直隶 / 京师")]["controlled_by"] == "大明"
+    assert indexed[("world", "天下")]["imperial_prestige"] == 20
+    assert indexed[("world", "天下")]["public_support"] == 50
     for filename, collection in [
         ("characters", "characters"),
         ("characters", "factions"),
@@ -35,7 +43,23 @@ def test_new_game_imports_complete_world_records_and_separates_identities(
     ]:
         source = f"{filename}.json/{collection}"
         expected = json.loads((CONTENT / f"{filename}.json").read_text())[collection]
-        assert [e.data for e in entities if e.source == source] == expected
+        imported = [e.data for e in entities if e.source == source]
+        assert len(imported) == len(expected)
+        reference_fields = {
+            "id",
+            "region_id",
+            "station_region",
+            "location",
+            "office_region",
+            "power_id",
+            "owner_power",
+            "controller",
+            "controlled_by",
+        }
+        for original, actual in zip(expected, imported, strict=True):
+            assert {k: v for k, v in actual.items() if k not in reference_fields} == {
+                k: v for k, v in original.items() if k not in reference_fields
+            }
     dossiers = json.loads((CONTENT / "minister_dossiers.json").read_text())
     assert {e.key: e.data for e in entities if e.kind == "dossier"} == dossiers
     assert [e.key for e in entities if e.kind == "gazette"] == ["opening"]
@@ -60,14 +84,14 @@ def test_new_game_imports_complete_world_records_and_separates_identities(
     )
     for name in ["史可法", "徐光启", "黄道周", "练国事", "郭允厚"]:
         assert shown[name] == {
-            k: v for k, v in characters[name].items() if k in visible_fields
+            k: v for k, v in indexed[("person", name)].items() if k in visible_fields
         }
     assert court.facts("audit") == []
     court.close()
 
 
 def test_cli_new_games_never_overwrite_and_missing_game_is_not_created(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], steps
 ) -> None:
     args = ["new", "--directory", str(tmp_path)]
     main(args)

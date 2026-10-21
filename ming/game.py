@@ -279,14 +279,11 @@ class Game:
         await self.translate()
         if self.court.pending_nights():
             return
-        results = await asyncio.gather(
-            *(self.month.prepare(e.id, speculative=True) for e in self.month.decrees()),
-            return_exceptions=True,
-        )
-        for result in results:
-            if isinstance(result, BaseException):
-                # Speculation alone has a documented non-blocking failure contract.
-                self.court.log.error("night precomputation failed", exc_info=result)
+        try:
+            await self.month.resume(speculative=True)
+        except Exception:
+            # Night speculation has a documented non-blocking failure contract.
+            self.court.log.exception("night precomputation failed")
 
     async def execute(self, action: str, payload: dict[str, Any]) -> str | None:
         try:
@@ -331,11 +328,10 @@ class Game:
             self.settle_month(payload["date"])
             return None  # The prior month committed before the process stopped.
         if action == "choose":
-            await self.month.prepare(UUID(payload["route"]))
-            if self.busy() and self.active is not asyncio.current_task():
-                return None
-            if not self.month.opened():
-                return None
+            await self.month.resume()
+            if payload["date"] != self.court.calendar().data:
+                self.settle_month(payload["date"])
+            return None
         await self.translate()
         if not self.court.pending_nights():
             await self.month.advance()
@@ -349,6 +345,7 @@ class Game:
             await asyncio.gather(*self.background)
         if self.translation is not None:
             await asyncio.shield(self.translation)
+        await self.month.simulations.drain()
 
     async def close(self) -> None:
         try:

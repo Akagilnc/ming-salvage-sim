@@ -81,26 +81,27 @@ def physical_state(court: Court, replay: bool = False) -> list[dict[str, object]
         ("洪承畴", [{"office": "巡抚"}], "offstage", "offstage"),
         (
             "洪承畴",
-            [{"office": "巡抚", "office_region": "shaanxi", "status": "active"}],
+            [{"office": "巡抚", "office_region": "陕西", "status": "active"}],
             "offstage",
             "active",
         ),
-        ("李待问", [{"office_region": "shaanxi"}], "offstage", "active"),
+        ("李待问", [{"office_region": "陕西"}], "offstage", "active"),
         (
             "李待问",
-            [{"office": "巡抚"}, {"office_region": "shaanxi"}],
+            [{"office": "巡抚"}, {"office_region": "陕西"}],
             "offstage",
             "active",
         ),
         (
             "李待问",
-            [{"office_region": "shaanxi"}, {"office": "巡抚"}],
+            [{"office_region": "陕西"}, {"office": "巡抚"}],
             "offstage",
             "active",
         ),
-        ("李待问", [{"office": "", "office_region": "shaanxi"}], "active", "active"),
-        ("李待问", [{"office": ""}, {"office_region": "shaanxi"}], "active", "active"),
-        ("洪承畴", [{"location": "beizhili"}], "active", "active"),
+        ("李待问", [{"office": "", "office_region": "陕西"}], "active", "active"),
+        ("李待问", [{"office": ""}, {"office_region": "陕西"}], "active", "active"),
+        ("洪承畴", [{"location": "北直隶 / 京师"}], "active", "active"),
+        ("李待问", [{"location": "北直隶 / 京师"}], "active", "active"),
     ],
     ids=[
         "office-only",
@@ -112,6 +113,7 @@ def physical_state(court: Court, replay: bool = False) -> list[dict[str, object]
         "clear-office",
         "empty-office-then-region",
         "location-only",
+        "first-known-location",
     ],
 )
 def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
@@ -155,7 +157,7 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
                     "entity_type": "person",
                     "entity": "徐光启",
                     "create": False,
-                    "changes": [{"field": "office_region", "value": "shaanxi"}],
+                    "changes": [{"field": "office_region", "value": "陕西"}],
                     "text": "任职地区变更。",
                 },
                 {
@@ -177,7 +179,7 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
                 },
                 {
                     "entity_type": "army",
-                    "entity": "jingying",
+                    "entity": "京营",
                     "affair": "陕西赈灾",
                     "create": False,
                     "changes": [
@@ -211,6 +213,13 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
     expected = dict(court.read_person(appointee).person)
     for fields in changes:
         expected.update(fields)
+    if appointee == "洪承畴" and any("location" in fields for fields in changes):
+        expected.update(
+            location="陕西",
+            transit_to="北直隶 / 京师",
+            status="active",
+            waiting_audience=False,
+        )
     scene = json.loads(
         (Path(__file__).parent / "recorded/night_invalid.json").read_text()
     )["cases"]["unknown_field"]["scene"]
@@ -242,12 +251,17 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
             )
     people = {e.key: e for e in court.entities("audit") if e.kind == "person"}
     assert court.read_person(appointee).person == expected
+    if any("location" in fields for fields in changes):
+        if appointee == "洪承畴":
+            assert people[appointee].data["remaining_distance"] == 2.4
+        else:
+            assert "transit_to" not in people[appointee].data
     assert people["练国事"].data["status"] == incumbent_status
     assert people["练国事"].data["office"] == (
         "" if incumbent_status == "offstage" else "巡抚"
     )
     assert people["徐光启"].data["status"] == office_status
-    assert people["徐光启"].data["location"] == "nanzhili"
+    assert people["徐光启"].data["location"] == "南直隶 / 南京"
     assert people["郭允厚"].data["office"] == ""
     assert people["郭允厚"].data["status"] == "offstage"
     for identity, names in (
@@ -264,7 +278,7 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
         ] == names
     assert people["张瑞图"].data["office"] == "内阁大学士"
     army = next(
-        e for e in court.entities("audit") if e.kind == "army" and e.key == "jingying"
+        e for e in court.entities("audit") if e.kind == "army" and e.key == "京营"
     )
     assert (army.data["firearm_equipment"], army.data["cannon_equipment"]) == (100, 0)
     assert [e.key for e in court.entities("audit") if e.kind == "affair"] == [
