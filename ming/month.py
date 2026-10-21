@@ -1,7 +1,9 @@
 """Month user: resume the first missing ledger product, including after choices."""
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine
+from functools import partial
+from typing import Any
 from uuid import UUID
 
 from ming.middle.court import Court
@@ -29,6 +31,7 @@ class Month:
         self.landing = Landing(court)
         self.gazette = Gazette(court, model, on_delta)
         self.lock = asyncio.Lock()
+        self.originals: dict[UUID, asyncio.Task[bool]] = {}
 
     def opened(self) -> bool:
         return any(
@@ -119,7 +122,12 @@ class Month:
                     for f in self.court.facts("audit")
                     if f.kind == "petition" and f.detail["id"] == petition_id
                 )
-                self.simulations.progress(UUID(petition["route_id"]), petition_id)
+                route = UUID(petition["route_id"])
+                if petition["date"] == self.court.calendar().data and not (
+                    self.court.products(route, kind="simulation")
+                ):
+                    await self.produce_original(route)
+                self.simulations.progress(route, petition_id)
                 pending = self.petitions()
             if date != self.court.calendar().data:
                 return pending
@@ -176,6 +184,79 @@ class Month:
         ]
         return waiting, continuing
 
+    def original(
+        self, route: UUID, produce: Callable[[], Coroutine[Any, Any, bool]]
+    ) -> asyncio.Task[bool]:
+        """One shared in-flight production of a route's original segment.
+
+        A finished task is replaced on the next call so every pass re-checks
+        the ledger; a failed one is rerun only when a caller enters again.
+        """
+        task = self.originals.get(route)
+        if task is None or task.done():
+            task = self.originals[route] = asyncio.create_task(produce())
+        return task
+
+    async def produce_original(self, route: UUID) -> None:
+        """Produce the one original segment this question's forecast continues."""
+        entity = next(e for e in self.court.entities("audit") if e.id == route)
+        decrees = self.current_decrees()
+        if entity.kind == "night":
+            produce = partial(
+                self.night,
+                entity,
+                [d for d in decrees if d.data["night_id"] == str(route)],
+            )
+        else:
+            nights = [
+                e
+                for e in self.court.entities("audit")
+                if e.kind == "night"
+                and any(d.data["night_id"] == str(e.id) for d in decrees)
+            ]
+            produce = partial(self.world, nights, decrees)
+        await self.original(route, produce)
+
+    async def world(self, nights: list[EntityView], decrees: list[EntityView]) -> bool:
+        """Verdicts on held decrees, then this month's world simulation."""
+        calendar = self.court.calendar()
+        old = [d for d in self.deliberations.due() if d not in decrees]
+        results = await asyncio.gather(
+            *(self.deliberations.run(d, calendar.id) for d in old),
+            return_exceptions=True,
+        )
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
+        return await self.simulations.run(
+            calendar,
+            {
+                "scope": "世界推演",
+                "nights": [
+                    {
+                        "night_id": str(n.id),
+                        "segments": [
+                            f.detail["output"]
+                            for f in self.court.products(n.id)
+                            if f.kind == "simulation"
+                        ],
+                    }
+                    for n in nights
+                ],
+                "reconsidered": [
+                    {"decree": d.model_dump(mode="json"), "deliberation": f.detail}
+                    for d in old
+                    for f in self.court.products(d.id)
+                    if f.kind == "deliberation" and f.detail["verdict"] == "准"
+                ],
+                "prior_choices": [
+                    f.detail
+                    for f in self.court.facts("audit")
+                    if f.kind == "choice" and f.detail["date"] == self.court.calendar().data
+                ],
+            },
+        )
+
     async def _resume(self, *, speculative: bool) -> list[PendingPetition]:
         date = self.court.calendar().data
         async with self.lock:
@@ -190,10 +271,19 @@ class Month:
             ]
             results = await asyncio.gather(
                 *(
-                    self.night(
-                        n, [d for d in decrees if d.data["night_id"] == str(n.id)]
+                    self.original(
+                        night.id,
+                        partial(
+                            self.night,
+                            night,
+                            [
+                                d
+                                for d in decrees
+                                if d.data["night_id"] == str(night.id)
+                            ],
+                        ),
                     )
-                    for n in nights
+                    for night in nights
                 ),
                 return_exceptions=True,
             )
@@ -214,42 +304,8 @@ class Month:
                 for p in self.petitions()
             ):
                 return self.petitions()
-            calendar = self.court.calendar()
-            old = [d for d in self.deliberations.due() if d not in decrees]
-            results = await asyncio.gather(
-                *(self.deliberations.run(d, calendar.id) for d in old),
-                return_exceptions=True,
-            )
-            for result in results:
-                if isinstance(result, BaseException):
-                    raise result
-            ready = await self.simulations.run(
-                calendar,
-                {
-                    "scope": "世界推演",
-                    "nights": [
-                        {
-                            "night_id": str(n.id),
-                            "segments": [
-                                f.detail["output"]
-                                for f in self.court.products(n.id)
-                                if f.kind == "simulation"
-                            ],
-                        }
-                        for n in nights
-                    ],
-                    "reconsidered": [
-                        {"decree": d.model_dump(mode="json"), "deliberation": f.detail}
-                        for d in old
-                        for f in self.court.products(d.id)
-                        if f.kind == "deliberation" and f.detail["verdict"] == "准"
-                    ],
-                    "prior_choices": [
-                        f.detail
-                        for f in self.court.facts("audit")
-                        if f.kind == "choice" and f.detail["date"] == date
-                    ],
-                },
+            ready = await self.original(
+                self.court.calendar().id, partial(self.world, nights, decrees)
             )
             pending = self.petitions()
             if not ready or pending:

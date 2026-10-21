@@ -141,8 +141,14 @@ class Game:
             return
         elif self.court.pending_nights():
             self.start_background()
-        elif self.month.opened() and not self.month.petitions():
+        elif self.month.opened() and not (
+            self.month.petitions() and self.presentation()["face"] == "audience"
+        ):
+            # Same gap-filling entry as advancing: with pending petitions it
+            # restarts only their missing option forecasts from the ledger.
             self.start("month")
+        elif self.month.petitions():
+            self.start_background()
 
     async def _resume(self, pending: list[dict[str, Any]]) -> None:
         for item in pending:
@@ -159,7 +165,7 @@ class Game:
         )
         if self.presentation()["failure"]:
             return
-        if not self.month.opened():
+        if not self.month.opened() or self.month.petitions():
             self.start_background()
 
     async def command(self, action: str, payload: dict[str, Any]) -> None:
@@ -207,14 +213,16 @@ class Game:
         ):
             action, failure = "retry", repeated
         if action == "retry":
-            if self.busy():
-                raise InvalidAction("这一步还在进行")
             if not failure:
                 raise InvalidAction("没有待重试的动作")
             action, payload = failure["action"], dict(failure["payload"])
             pending = self.presentation()["pending"]
             if action == "translation" and pending and pending["action"] == "month":
                 action, payload = "month", dict(pending["payload"])
+            # A retry redoes its own failed call; per-question work keeps the
+            # same rule as a fresh start instead of waiting for unrelated work.
+            if action != "choose" and self.busy():
+                raise InvalidAction("这一步还在进行")
             # Replay accepted parameters, not a second choice event.
             self.interaction(action, "running", payload)
         else:

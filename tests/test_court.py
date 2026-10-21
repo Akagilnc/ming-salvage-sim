@@ -2,8 +2,11 @@
 
 import asyncio
 import json
+import threading
+import time
 from pathlib import Path
 from collections.abc import AsyncIterator, Callable, Sequence
+from typing import cast
 
 import pytest
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
@@ -72,6 +75,39 @@ def physical_state(court: Court, replay: bool = False) -> list[dict[str, object]
         }
         for e in court.entities("audit", replay)
     ]
+
+
+BLOCKED = object()
+
+
+def gating(
+    replies: Sequence[object],
+    release: threading.Event,
+    received: list[list[ModelMessage]],
+    fallback: str,
+) -> FunctionModel:
+    """Scripted calls in order; BLOCKED calls hold until release, then answer fallback."""
+    remaining = iter(replies)
+
+    async def reply(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        received.append(messages)
+        item = next(remaining, fallback)
+        if item is BLOCKED:
+            while not release.is_set():
+                await asyncio.sleep(0.01)
+            item = fallback
+        if isinstance(item, Exception):
+            raise item
+        return ModelResponse(parts=[TextPart(cast(str, item))])
+
+    return FunctionModel(reply)
+
+
+def wait_for(condition: Callable[[], bool], timeout: float = 10) -> None:
+    deadline = time.monotonic() + timeout
+    while not condition():
+        assert time.monotonic() < deadline, "timed out waiting for condition"
+        time.sleep(0.02)
 
 
 @pytest.mark.parametrize(

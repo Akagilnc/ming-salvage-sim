@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+import threading
 from pathlib import Path
 
 import pytest
@@ -9,7 +10,7 @@ from pydantic_ai.models.test import TestModel
 from starlette.testclient import TestClient
 
 from ming.web import create_app
-from tests.test_court import replaying
+from tests.test_court import BLOCKED, gating, replaying, wait_for
 
 RECORDED = Path(__file__).parent / "recorded"
 
@@ -82,6 +83,50 @@ def test_month_without_decrees_advances_and_replays_after_reopening(
             state = client.get("/state").json()["game"]
             client.post("/actions", json={"action": "load", "save": save})
             assert client.get("/state").json()["game"] == state
+
+
+def test_reopening_with_pending_petitions_resumes_only_missing_forecasts(
+    tmp_path: Path, steps, audit
+) -> None:
+    """Loading a save whose option forecasts were interrupted restarts the missing."""
+    release = threading.Event()
+    received: list = []
+    case = (RECORDED / "month_petition.txt").read_text()
+    options = len(json.loads(case)["petitions"][0]["options"])
+    steps["simulation"] = gating(
+        [
+            case,
+            (RECORDED / "simulation.txt").read_text(),
+            *([BLOCKED] * (options - 1)),
+        ],
+        release,
+        received,
+        (RECORDED / "simulation.txt").read_text(),
+    )
+    with TestClient(create_app(tmp_path)) as client:
+        save = client.post("/actions", json={"action": "new"}).json()["save"]
+        assert client.post("/actions", json={"action": "month"}).status_code == 204
+        # One forecast is done; the rest are still in flight at snapshot time.
+        wait_for(lambda: len(received) == 1 + options)
+        with sqlite3.connect(tmp_path / save) as source, sqlite3.connect(
+            tmp_path / "snapshot.sqlite"
+        ) as target:
+            source.backup(target)
+        release.set()
+    with TestClient(create_app(tmp_path)) as client:
+        assert (
+            client.post(
+                "/actions", json={"action": "load", "save": "snapshot.sqlite"}
+            ).status_code
+            == 200
+        )
+        client.portal.call(client.app.state.web.game.drain)
+        ledger = audit(tmp_path / "snapshot.sqlite")
+        assert len([f for f in ledger["facts"] if f["kind"] == "forecast"]) == options
+        assert len(received) == 1 + options + (options - 1)
+        game = client.get("/state").json()["game"]
+        assert game["failure"] is None
+        assert len(game["petitions"]) == 1
 
 
 @pytest.mark.parametrize(
