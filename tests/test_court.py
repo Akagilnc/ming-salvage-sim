@@ -101,6 +101,12 @@ def physical_state(court: Court, replay: bool = False) -> list[dict[str, object]
         ("李待问", [{"office": "", "office_region": "陕西"}], "active", "active"),
         ("李待问", [{"office": ""}, {"office_region": "陕西"}], "active", "active"),
         ("洪承畴", [{"location": "北直隶 / 京师"}], "active", "active"),
+        (
+            "洪承畴",
+            [{"location": "北直隶 / 京师", "travel_speed": 1.5}],
+            "active",
+            "active",
+        ),
         ("李待问", [{"location": "北直隶 / 京师"}], "active", "active"),
     ],
     ids=[
@@ -113,13 +119,14 @@ def physical_state(court: Court, replay: bool = False) -> list[dict[str, object]
         "clear-office",
         "empty-office-then-region",
         "location-only",
+        "expedited-journey",
         "first-known-location",
     ],
 )
 def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
     tmp_path: Path,
     appointee: str,
-    changes: list[dict[str, str]],
+    changes: list[dict[str, str | float]],
     incumbent_status: str,
     office_status: str,
 ) -> None:
@@ -214,11 +221,17 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
     for fields in changes:
         expected.update(fields)
     if appointee == "洪承畴" and any("location" in fields for fields in changes):
+        speed = expected.pop("travel_speed", 1)
         expected.update(
             location="陕西",
             transit_to="北直隶 / 京师",
             status="active",
             waiting_audience=False,
+            journey={
+                "elapsed_months": 0,
+                "total_months": 2.4 / speed,
+                **({"pace": "加急"} if speed > 1 else {}),
+            },
         )
     scene = json.loads(
         (Path(__file__).parent / "recorded/night_invalid.json").read_text()
@@ -254,6 +267,15 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
     if any("location" in fields for fields in changes):
         if appointee == "洪承畴":
             assert people[appointee].data["remaining_distance"] == 2.4
+            assert people[appointee].data["travel_speed"] == speed
+            assert [
+                (
+                    e.data["journey"],
+                    {"remaining_distance", "travel_speed"} & e.data.keys(),
+                )
+                for e in court.entities("world")
+                if e.id == people[appointee].id
+            ] == [(expected["journey"], set())]
         else:
             assert "transit_to" not in people[appointee].data
     assert people["练国事"].data["status"] == incumbent_status

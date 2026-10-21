@@ -129,11 +129,16 @@ class Game:
 
     def resume(self) -> None:
         self.settle_month()
-        if self.presentation()["failure"]:
-            return
-        pending = [i for i in self.interactions().values() if i["status"] == "running"]
+        pending = [
+            i
+            for i in self.interactions().values()
+            if i["status"] == "running"
+            and (not self.failures() or i["action"] == "choose")
+        ]
         if pending:
             self.active = asyncio.create_task(self._resume(pending))
+        elif self.presentation()["failure"]:
+            return
         elif self.court.pending_nights():
             self.start_background()
         elif self.month.opened() and not self.month.petitions():
@@ -236,8 +241,10 @@ class Game:
 
     def accept(self, action: str, payload: dict[str, Any]) -> dict[str, Any]:
         state = self.presentation()
-        if state["failure"] and not (
-            action == "month" and state["failure"]["action"] == "translation"
+        if (
+            state["failure"]
+            and action != "choose"
+            and not (action == "month" and state["failure"]["action"] == "translation")
         ):
             raise InvalidAction("请重试未完成的动作")
         if action == "month" and state["face"] == "audience":
@@ -301,6 +308,21 @@ class Game:
             if action == "month" and self.court.pending_nights():
                 return None
             self.interaction(action, "done", payload)
+            # The choice is complete before shared month work resumes. Reuse the
+            # normal month action so its waiting and failures cannot belong to it.
+            if (
+                action == "choose"
+                and self.month.opened()
+                and not self.month.petitions()
+                and not self.failures()
+                and not any(
+                    i["status"] == "running" for i in self.interactions().values()
+                )
+            ):
+                self.active = None
+                task = self.start("month")
+                if task is not None:
+                    self.track(task)
             return output
         except Exception as error:
             self.court.log.exception("action=%s", action)

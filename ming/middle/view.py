@@ -39,7 +39,16 @@ def character_input(value: Any) -> Any:
         return [character_input(item) for item in cast(list[Any], value)]
     if not isinstance(value, dict):
         return value
-    result = {key: character_input(item) for key, item in cast(Item, value).items()}
+    result = {
+        key: character_input(item)
+        for key, item in cast(Item, value).items()
+        if key not in {"remaining_distance", "travel_speed"}
+    }
+    if result.get("field") == "travel_speed":
+        return {
+            "field": "travel_pace",
+            "value": "加急" if value["value"] > 1 else "常速",
+        }
     fields = [(key, key) for key in CHARACTER_BANDS if key in result]
     if result.get("field") in CHARACTER_BANDS and "value" in result:
         fields.append(("value", result["field"]))
@@ -49,6 +58,22 @@ def character_input(value: Any) -> Any:
                 sum(int(result[key]) >= cutoff for cutoff in (20, 40, 60, 80))
             ]
     return result
+
+
+def journey(data: Item, events: list[Item]) -> Item:
+    """Derive elapsed/total months from the existing departure and monthly ticks."""
+    if not data.get("transit_to"):
+        return {}
+    departure = max(i for i, e in enumerate(events) if e["kind"] == "departed")
+    detail = events[departure]["detail"]
+    speed = detail.get("travel_speed", 1)
+    return {
+        "elapsed_months": sum(
+            e["kind"] == "travelled" for e in events[departure + 1 :]
+        ),
+        "total_months": detail["distance"] / speed,
+        **({"pace": "加急"} if speed > 1 else {}),
+    }
 
 
 class EntityView(BaseModel):
@@ -137,6 +162,15 @@ def entities(
                 }
             elif row["kind"] not in {"gazette", "calendar"}:
                 continue
+        if identity == "world" and row["kind"] == "person":
+            travel = journey(row["data"], row["events"])
+            row["data"] = {
+                k: v
+                for k, v in row["data"].items()
+                if k not in {"remaining_distance", "travel_speed"}
+            }
+            if travel:
+                row["data"]["journey"] = travel
         result.append(EntityView.model_validate(row))
     return result
 
@@ -172,6 +206,16 @@ def project(ledger: Ledger, identity: Identity, replay: bool = False) -> list[Fa
                 )
             ):
                 continue
+            if identity == "world" and fact.kind in {
+                "departed",
+                "travelled",
+                "arrived",
+            }:
+                fact.detail = {
+                    k: v
+                    for k, v in fact.detail.items()
+                    if k not in {"distance", "remaining_distance", "travel_speed"}
+                }
             if identity == "world" and fact.kind == "simulation":
                 fact.detail = {k: v for k, v in fact.detail.items() if k != "messages"}
             if identity not in ("audit", "world"):

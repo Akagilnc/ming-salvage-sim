@@ -1,7 +1,7 @@
 """Month user: resume the first missing ledger product, including after choices."""
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from uuid import UUID
 
 from ming.middle.court import Court
@@ -100,22 +100,46 @@ class Month:
         self, *, speculative: bool = False, petition_id: str | None = None
     ) -> list[PendingPetition]:
         date = self.court.calendar().data
+        # A failed task is not missing work. Only its owner entering recovery
+        # may discard it; never discard it while reporting the fresh failure.
+        if not speculative:
+            chain = self.simulations.chain(petition_id)
+            for key, task in list(self.simulations.continuations.items()):
+                owned = (
+                    key[1] in chain if petition_id is not None else key[1] not in chain
+                )
+                if owned and task.done() and task.exception() is not None:
+                    del self.simulations.continuations[key]
         while date == self.court.calendar().data:
-            pending = await self._resume(speculative=speculative)
+            if petition_id is None:
+                pending = await self._resume(speculative=speculative)
+            else:
+                petition = next(
+                    f.detail
+                    for f in self.court.facts("audit")
+                    if f.kind == "petition" and f.detail["id"] == petition_id
+                )
+                self.simulations.progress(UUID(petition["route_id"]), petition_id)
+                pending = self.petitions()
             if date != self.court.calendar().data:
                 return pending
             waiting, continuing = self.gaps(petition_id)
             if not waiting and not continuing:
                 return pending
             # Only the caller's selected work waits here, outside the month lock.
-            results = await asyncio.gather(
-                *(self.simulations.wait_for_choice(key) for key in waiting),
+            jobs: list[Awaitable[object]] = [
                 *(
-                    self.simulations.wait_for_continuation(key, rerun=speculative)
+                    self.simulations.wait_for_choice(key)
+                    if petition_id is not None
+                    else asyncio.shield(self.simulations.tasks[key])
+                    for key in waiting
+                ),
+                *(
+                    asyncio.shield(self.simulations.continuations[key])
                     for key in continuing
                 ),
-                return_exceptions=True,
-            )
+            ]
+            results = await asyncio.gather(*jobs, return_exceptions=True)
             for result in results:
                 if isinstance(result, BaseException):
                     raise result
@@ -143,12 +167,7 @@ class Month:
         ]
         chain: set[str] | None = None
         if petition_id is not None:
-            segments = [f.detail for f in facts if f.kind == "simulation"]
-            chain = {s["id"] for s in segments if s.get("petition_id") == petition_id}
-            while any(
-                s.get("after") in chain and s["id"] not in chain for s in segments
-            ):
-                chain |= {s["id"] for s in segments if s.get("after") in chain}
+            chain = self.simulations.chain(petition_id)
         continuing = [
             key
             for key, task in self.simulations.continuations.items()

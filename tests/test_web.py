@@ -257,6 +257,8 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
                 assert {
                     p["id"] for p in client.get("/state").json()["game"]["petitions"]
                 } == {p["id"] for p in game["petitions"]}
+        # Choice completion no longer waits for the shared month action.
+        client.portal.call(app.state.web.game.drain)
         game = client.get("/state").json()["game"]
         assert (
             game["date"]["month"],

@@ -55,7 +55,8 @@ def allowed_fields(ledger: Ledger) -> dict[str, set[str]]:
     for row in ledger.entities():
         if row["source"] and row["kind"] != "calendar":
             fields.setdefault(row["kind"], set()).update(row["data"])
-    fields.get("person", set()).difference_update(
+    fields.setdefault("person", set()).add("travel_speed")
+    fields["person"].difference_update(
         {"transit_to", "remaining_distance", "waiting_audience"}
     )
     return fields

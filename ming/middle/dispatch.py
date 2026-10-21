@@ -174,13 +174,19 @@ def move_person(
         "transit_to"
     ):
         distance = existing[("distance", person.data["location"])]["data"][destination]
+        changes["travel_speed"] = changes.get("travel_speed", 1)
         record(
             person,
             "departed",
-            {"destination": destination, "distance": distance},
+            {
+                "destination": destination,
+                "distance": distance,
+                "travel_speed": changes["travel_speed"],
+            },
             {
                 "transit_to": destination,
                 "remaining_distance": distance,
+                "travel_speed": changes["travel_speed"],
                 "waiting_audience": False,
             },
         )

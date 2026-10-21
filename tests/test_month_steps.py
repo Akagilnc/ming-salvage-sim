@@ -115,6 +115,7 @@ def test_rejected_decree_is_forced_withdrawn_or_reconsidered(
         if option == 0 and not new_night:
             assert client.get("/state").json()["game"]["date"]["month"] == 10
             client.post("/actions", json={"action": "month"})
+        client.portal.call(client.app.state.web.game.drain)
         assert client.get("/state").json()["game"]["date"]["month"] == 11
         ledger = audit(tmp_path / save)
         decree = next(e for e in ledger["entities"] if e["kind"] == "decree")
@@ -157,6 +158,7 @@ def test_rejected_decree_is_forced_withdrawn_or_reconsidered(
                 "/actions",
                 json={"action": "choose", "petition": petition["id"], "option": 0},
             )
+            client.portal.call(client.app.state.web.game.drain)
             assert client.get("/state").json()["game"]["date"]["month"] == 12
             ledger = audit(tmp_path / save)
             world = next(e for e in ledger["entities"] if e["kind"] == "world")

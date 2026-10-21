@@ -151,33 +151,29 @@ class Simulations:
             task.add_done_callback(self.log_failure)
         return self.continuations[key]
 
-    async def wait_for_continuation(
-        self, key: tuple[UUID, str], *, rerun: bool
-    ) -> None:
-        task = self.continuations[key]
-        try:
-            await asyncio.shield(task)
-        except Exception:
-            if self.continuations[key] is task:
-                del self.continuations[key]
-            if not rerun:
-                # Formal failures stop for an explicit retry, which re-creates the task.
-                raise
-            # A failed night speculation may be rerun once along the same entry.
-            segment = next(
-                f.detail
-                for f in self.court.products(key[0], kind="simulation")
-                if f.detail["id"] == key[1]
-            )
-            await asyncio.shield(self.start_continuation(key[0], segment))
-
     async def run(self, route: EntityView, context: dict[str, Any]) -> bool:
         if not self.court.products(route.id, kind="simulation"):
             self.publish(route.id, await self.call(context, []))
+        return self.progress(route.id)
+
+    def chain(self, petition_id: str | None) -> set[str]:
+        segments = [
+            f.detail for f in self.court.facts("audit") if f.kind == "simulation"
+        ]
+        chain = {
+            s["id"]
+            for s in segments
+            if s.get("petition_id")
+            and (petition_id is None or s["petition_id"] == petition_id)
+        }
+        while any(s.get("after") in chain and s["id"] not in chain for s in segments):
+            chain |= {s["id"] for s in segments if s.get("after") in chain}
+        return chain
+
+    def progress(self, route: UUID, petition_id: str | None = None) -> bool:
+        """Publish ready products without awaiting unrelated model work."""
         while True:
-            segments = [
-                f.detail for f in self.court.products(route.id, kind="simulation")
-            ]
+            segments = [f.detail for f in self.court.products(route, kind="simulation")]
             choices = {
                 f.detail["petition_id"]: f.detail
                 for f in self.court.facts("audit")
@@ -189,16 +185,19 @@ class Simulations:
                 )
                 for f in self.court.facts("audit")
                 if f.kind == "petition"
-                and f.detail["route_id"] == str(route.id)
+                and f.detail["route_id"] == str(route)
                 and f.detail["date"] == self.court.calendar().data
                 and f.detail["blocking"]
             ]
             progressed = False
             ready = True
             for petition in petitions:
+                choice = choices.get(str(petition.id))
+                if choice is not None and petition_id not in (None, str(petition.id)):
+                    continue
                 options = (
                     range(len(petition.options))
-                    if petition.entity_id == route.id
+                    if petition.entity_id == route
                     else (
                         [petition.options.index("强颁")]
                         if "强颁" in petition.options
@@ -207,7 +206,6 @@ class Simulations:
                 )
                 for option in options:
                     self.start_forecast(petition, option)
-                choice = choices.get(str(petition.id))
                 if (
                     choice is None
                     or choice["option"] not in options
@@ -218,17 +216,18 @@ class Simulations:
                 if not task.done() or task.exception() is not None:
                     ready = False
                     continue
-                self.publish(route.id, task.result())
+                self.publish(route, task.result())
                 progressed = True
             for segment in segments:
                 if (
-                    not segment["output"]["month_end"]
+                    (petition_id is None or segment["id"] in self.chain(petition_id))
+                    and not segment["output"]["month_end"]
                     and not segment["output"]["petitions"]
                     and not any(s.get("after") == segment["id"] for s in segments)
                 ):
                     # Continuation runs off the month lock and publishes itself;
                     # the caller waits for it in resume, outside the lock.
-                    task = self.start_continuation(route.id, segment)
+                    task = self.start_continuation(route, segment)
                     if not task.done() or task.exception() is not None:
                         ready = False
                     else:

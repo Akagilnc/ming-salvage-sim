@@ -19,6 +19,7 @@ def check_rules(out: Declaration, affairs: set[str]) -> None:
         for change in fact.changes:
             if (fact.entity_type, change.field) in {
                 ("account", "taels"),
+                ("person", "travel_speed"),
                 ("army", "firearm_equipment"),
                 ("army", "cannon_equipment"),
                 ("world", "imperial_prestige"),
@@ -32,6 +33,12 @@ def check_rules(out: Declaration, affairs: set[str]) -> None:
                 raise ModelRetry(
                     f"{fact.entity}.{change.field}: {change.value!r}; 期望有限数字，重交整份。"
                 )
+            if (
+                (fact.entity_type, change.field) == ("person", "travel_speed")
+                and change.value != 1
+                and not 1.5 <= change.value <= 2
+            ):
+                raise ModelRetry("行速须为常速1，或加急1.5至2；重交整份。")
     for fact in out.facts:
         check_money(fact, out)
 

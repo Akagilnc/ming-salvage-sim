@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from ming.ledger import Ledger
 from ming.middle.calendar import CAPITAL
+from ming.middle.view import journey
 
 
 class PersonView(BaseModel):
@@ -43,6 +44,8 @@ def read_person(ledger: Ledger, name: str) -> PersonView:
     if person is None:
         return PersonView(found=False)
     data = {k: v for k, v in person["data"].items() if k in PERSON_FIELDS}
+    if travel := journey(person["data"], person["events"]):
+        data["journey"] = travel
     for row in rows:
         if row["kind"] == "dossier" and row["key"] == name:
             data.update(row["data"])
