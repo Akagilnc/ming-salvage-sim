@@ -19,6 +19,7 @@ class Simulations:
     def __init__(self, court: Court, model: ModelSource) -> None:
         self.court = court
         self.tasks: dict[tuple[UUID, str, int], asyncio.Task[dict[str, Any]]] = {}
+        self.continuations: dict[tuple[UUID, str], asyncio.Task[None]] = {}
         self.agent = build_agent(
             model,
             name="simulation",
@@ -111,9 +112,9 @@ class Simulations:
             task.add_done_callback(self.log_failure)
         return self.tasks[key]
 
-    def log_failure(self, task: asyncio.Task[dict[str, Any]]) -> None:
+    def log_failure(self, task: asyncio.Task[Any]) -> None:
         if not task.cancelled() and (error := task.exception()) is not None:
-            self.court.log.error("option forecast failed", exc_info=error)
+            self.court.log.error("background simulation failed", exc_info=error)
 
     async def wait_for_choice(self, key: tuple[UUID, str, int]) -> None:
         task = self.tasks[key]
@@ -131,6 +132,39 @@ class Simulations:
             if self.tasks[key] is task:
                 del self.tasks[key]
             await asyncio.shield(self.start_forecast(petition, key[2]))
+
+    async def continue_segment(self, route: UUID, segment: dict[str, Any]) -> None:
+        result = await self.call(
+            {"instruction": "接着写本月余下部分。"}, segment["messages"]
+        )
+        result["after"] = segment["id"]
+        self.publish(route, result)
+
+    def start_continuation(
+        self, route: UUID, segment: dict[str, Any]
+    ) -> asyncio.Task[None]:
+        key = route, segment["id"]
+        if key not in self.continuations:
+            task = self.continuations[key] = asyncio.create_task(
+                self.continue_segment(route, segment)
+            )
+            task.add_done_callback(self.log_failure)
+        return self.continuations[key]
+
+    async def wait_for_continuation(self, key: tuple[UUID, str]) -> None:
+        task = self.continuations[key]
+        try:
+            await asyncio.shield(task)
+        except Exception:
+            # A failed continuation may be rerun once along the same gap-filling entry.
+            segment = next(
+                f.detail
+                for f in self.court.products(key[0], kind="simulation")
+                if f.detail["id"] == key[1]
+            )
+            if self.continuations[key] is task:
+                del self.continuations[key]
+            await asyncio.shield(self.start_continuation(key[0], segment))
 
     async def run(self, route: EntityView, context: dict[str, Any]) -> bool:
         if not self.court.products(route.id, kind="simulation"):
@@ -187,16 +221,21 @@ class Simulations:
                     and not segment["output"]["petitions"]
                     and not any(s.get("after") == segment["id"] for s in segments)
                 ):
-                    result = await self.call(
-                        {"instruction": "接着写本月余下部分。"}, segment["messages"]
-                    )
-                    result["after"] = segment["id"]
-                    self.publish(route.id, result)
-                    progressed = True
+                    # Continuation runs off the month lock and publishes itself;
+                    # the caller waits for it in resume, outside the lock.
+                    task = self.start_continuation(route.id, segment)
+                    if not task.done() or task.exception() is not None:
+                        ready = False
+                    else:
+                        progressed = True
             if not progressed:
                 return ready
 
     async def drain(self) -> None:
-        if self.tasks:
+        tasks: list[asyncio.Task[Any]] = [
+            *self.tasks.values(),
+            *self.continuations.values(),
+        ]
+        if tasks:
             # Candidate failures are logged by log_failure; they are not formal work.
-            await asyncio.gather(*self.tasks.values(), return_exceptions=True)
+            await asyncio.gather(*tasks, return_exceptions=True)

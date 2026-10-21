@@ -99,8 +99,8 @@ def set_hall(
     night.record("hall", "", {"add": add, "remove": remove}, {"hall": hall})
     admitted = [
         ledger.get(people[name]["id"])
-        for name in add
-        if people[name]["data"].get("waiting_audience")
+        for name in dict.fromkeys(add)
+        if name in hall and people[name]["data"].get("waiting_audience")
     ]
     for person in admitted:
         person.record(

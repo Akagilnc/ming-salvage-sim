@@ -120,11 +120,28 @@ class Month:
                 and key[1] not in published
                 and (petition_id is None or key[1] == petition_id)
             ]
-            if not waiting:
+            routes = {
+                f.detail["id"]: f.detail["route_id"]
+                for f in facts
+                if f.kind == "petition"
+            }
+            scope = (
+                None
+                if petition_id is None
+                else {routes.get(petition_id), str(self.court.calendar().id)}
+            )
+            continuing = [
+                key
+                for key, task in self.simulations.continuations.items()
+                if not (task.done() and task.exception() is None)
+                and (scope is None or str(key[0]) in scope)
+            ]
+            if not waiting and not continuing:
                 return pending
             # Only the caller's selected work waits here, outside the month lock.
             results = await asyncio.gather(
                 *(self.simulations.wait_for_choice(key) for key in waiting),
+                *(self.simulations.wait_for_continuation(key) for key in continuing),
                 return_exceptions=True,
             )
             for result in results:

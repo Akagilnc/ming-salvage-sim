@@ -36,7 +36,9 @@ class Landing:
         calendar = self.court.calendar()
         return sources + [(calendar, calendar.id)]
 
-    async def translate(self, source: EntityView, route: UUID) -> None:
+    async def translate(
+        self, source: EntityView, route: UUID, others: list[EntityView]
+    ) -> None:
         if any(
             f.kind in {"declaration", "landed", "unhandled"}
             for f in self.court.products(source.id)
@@ -61,6 +63,17 @@ class Landing:
                         for f in self.court.products(source.id)
                         if f.kind in {"deliberation", "choice"}
                     ],
+                    "others": [
+                        {
+                            "decree": other.model_dump(mode="json"),
+                            "deliberation": [
+                                f.model_dump(mode="json")
+                                for f in self.court.products(other.id)
+                                if f.kind in {"deliberation", "choice"}
+                            ],
+                        }
+                        for other in others
+                    ],
                     "simulation": [
                         f.detail["output"]
                         for f in self.court.products(route)
@@ -82,7 +95,18 @@ class Landing:
     async def run(self) -> None:
         sources = self.sources()
         results = await asyncio.gather(
-            *(self.translate(source, route) for source, route in sources),
+            *(
+                self.translate(
+                    source,
+                    route,
+                    [
+                        other
+                        for other, other_route in sources
+                        if other.id != source.id and other_route == route
+                    ],
+                )
+                for source, route in sources
+            ),
             return_exceptions=True,
         )
         for result in results:
