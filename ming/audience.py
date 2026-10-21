@@ -1,13 +1,12 @@
-"""Audience user: persistent scene rounds, one background translation after dismissal."""
+"""Audience user: scene rounds and the sole whole-night translation path."""
 
 import asyncio
 import json
 from collections.abc import Callable
 from functools import partial
-
 from uuid import UUID
 
-from pydantic_ai import Agent
+from pydantic_ai import RunContext
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -15,44 +14,47 @@ from pydantic_ai.messages import (
     TextPart,
     UserPromptPart,
 )
-from pydantic_ai.models import Model
 
 from ming.middle.court import Court
-from ming.middle.invoke import invoke, stream_text, transport_model
+from ming.middle.declaration import NightDeclaration
+from ming.middle.invoke import ModelSource, build_agent, invoke, stream_text
 from ming.middle.opening import CONTENT
 from ming.middle.scene import HallResult, PersonView
 
 
 class Audience:
-    def __init__(self, court: Court, scene_model: Model) -> None:
+    def __init__(self, court: Court, model: ModelSource) -> None:
         self.court = court
         self._night_id: UUID | None = None
-        self._worker: asyncio.Task[bool] | None = None
         self._turn: asyncio.Task[str] | None = None
         self._dismiss_requested: UUID | None = None
+        self.translation = court.translation_agent(NightDeclaration)
 
-        async def read_person(name: str) -> PersonView:
+        async def read_person(ctx: RunContext[Audience], name: str) -> PersonView:
             """查某人的档案，姓名取账本正名。"""
-            return self.court.read_person(name)
+            return ctx.deps.court.read_person(name)
 
-        async def get_hall() -> list[str]:
+        async def get_hall(ctx: RunContext[Audience]) -> list[str]:
             """看今夜殿上名单。"""
-            return self.court.night(self.night_id).hall
+            return ctx.deps.court.night(ctx.deps.night_id).hall
 
-        async def set_hall(add: list[str], remove: list[str]) -> HallResult:
+        async def set_hall(
+            ctx: RunContext[Audience], add: list[str], remove: list[str]
+        ) -> HallResult:
             """有人入殿或退下时先改名单；不在京师的人加不进殿。"""
-            return self.court.set_hall(self.night_id, add, remove)
+            return ctx.deps.court.set_hall(ctx.deps.night_id, add, remove)
 
-        async def dismiss() -> None:
+        async def dismiss(ctx: RunContext[Audience]) -> None:
             """退朝：本轮回话落账后收夜，不等后台转译。"""
-            self.dismiss()
+            ctx.deps.dismiss()
 
-        tools = [read_person, get_hall, set_hall, dismiss]
-        self._scene = Agent(
-            transport_model(scene_model, tools),
+        self.scene = build_agent(
+            model,
+            name="scene",
             output_type=str,
+            deps_type=Audience,
             instructions=(CONTENT / "prompts/scene_agent.md").read_text(),
-            tools=tools,
+            tools=[read_person, get_hall, set_hall, dismiss],
         )
 
     @property
@@ -61,80 +63,58 @@ class Audience:
             raise ValueError("open an audience night first")
         return self._night_id
 
-    def open(self) -> UUID:
-        self._start_worker()
-        self._night_id = self.court.open_night()
+    def open(self, night_id: UUID | None = None) -> UUID:
+        self._night_id = night_id or self.court.open_night()
+        if not self.court.night(self.night_id).closed and any(
+            f.kind == "dismiss_requested" and f.entity_id == self.night_id
+            for f in self.court.facts("audit")
+        ):
+            self._dismiss_requested = self.night_id
         return self.night_id
 
-    def dismiss(self, night_id: UUID | None = None) -> None:
-        night_id = night_id or self.night_id
-        self._dismiss_requested = night_id
+    def dismiss(self) -> None:
+        if (
+            self._turn is not None
+            and not self._turn.done()
+            and self._dismiss_requested is None
+        ):
+            self.court.record(self.night_id, [("dismiss_requested", {})])
+        self._dismiss_requested = self.night_id
         if self._turn is None or self._turn.done():
-            self._finish_dismiss(night_id)
+            self._finish_dismiss()
 
-    def _finish_dismiss(self, night_id: UUID) -> None:
-        if self._dismiss_requested == night_id:
-            self.court.dismiss(night_id)
+    def _finish_dismiss(self) -> None:
+        if self._dismiss_requested is not None:
+            self.court.dismiss(self._dismiss_requested)
             self._dismiss_requested = None
-            self._start_worker()
 
-    def _start_worker(self) -> None:
-        # A recorded failure belongs to its retry line, not to later scene actions.
-        translation = self.court.interactions().get("translation")
-        if translation and translation["status"] == "failed":
-            return
-        if self._worker is None or (self._worker.done() and self._worker.result()):
-            self._worker = asyncio.create_task(self._translate_pending())
-
-    async def _translate_pending(self) -> bool:
-        try:
-            while pending := self.court.pending_nights():
-                for night_id in pending:
-                    await self.court.translate_night(night_id)
-        except Exception as error:
-            self.court.log.exception("translation worker")
-            self.court.interaction(
-                "translation",
-                "failed",
-                {
-                    "type": type(error).__name__,
-                    "log": str(self.court.db_path.with_suffix(".errors.log")),
-                },
+    async def translate_pending(self) -> None:
+        while pending := self.court.pending_nights():
+            night_id = pending[0]
+            night = self.court.night(night_id)
+            result = await self.court.translate(
+                self.translation, night.model_dump_json()
             )
-            return False
-        else:
-            translation = self.court.interactions().get("translation")
-            if translation and translation["status"] != "done":
-                self.court.interaction("translation", "done")
-            return True
+            self.court.land(result, night_id)
 
     async def say(
-        self, emperor_words: str, on_delta: Callable[[str], None] | None = None
+        self, words: str, turn_id: str, on_delta: Callable[[str], None] | None = None
     ) -> str:
-        self._start_worker()
-        night_id = self.night_id
-        night = self.court.night(night_id)
+        night = self.court.night(self.night_id)
+        for turn in night.turns:
+            if turn.id == turn_id:
+                self._finish_dismiss()
+                return turn.scene
         if night.closed:
             raise ValueError("night already closed")
-        if self._turn is not None and not self._turn.done():
-            raise ValueError("a scene round is already generating")
-        self.court.interaction(
-            "say", "running", {"words": emperor_words, "night_id": str(night_id)}
-        )
-        self._turn = asyncio.create_task(
-            self._generate(night_id, emperor_words, on_delta)
-        )
-        return await asyncio.shield(self._turn)
+        self._turn = asyncio.create_task(self._generate(words, turn_id, on_delta))
+        return await self._turn
 
     async def _generate(
-        self,
-        night_id: UUID,
-        emperor_words: str,
-        on_delta: Callable[[str], None] | None = None,
+        self, words: str, turn_id: str, on_delta: Callable[[str], None] | None
     ) -> str:
-        night = self.court.night(night_id)
         history: list[ModelMessage] = []
-        for turn in night.turns:
+        for turn in self.court.night(self.night_id).turns:
             history.extend(
                 [
                     ModelRequest(parts=[UserPromptPart(turn.emperor_words)]),
@@ -143,53 +123,19 @@ class Audience:
             )
         try:
             result = await invoke(
-                self._scene,
-                [
-                    json.dumps(self.court.scene_material(), ensure_ascii=False),
-                    emperor_words,
-                ],
+                self.scene,
+                [json.dumps(self.court.scene_material(), ensure_ascii=False), words],
+                deps=self,
                 message_history=history,
                 event_stream_handler=partial(stream_text, on_delta)
                 if on_delta
                 else None,
             )
-        except Exception as error:
-            self.court.interaction(
-                "say",
-                "failed",
-                {
-                    "words": emperor_words,
-                    "night_id": str(night_id),
-                    "type": type(error).__name__,
-                    "log": str(self.court.db_path.with_suffix(".errors.log")),
-                },
+            self.court.record(
+                self.night_id,
+                [("turn", {"id": turn_id, "scene": result.output})],
+                words=words,
             )
-            self.court.log.exception("audience night=%s", night_id)
-            # Model failure is still raised; only the requested dismissal proceeds.
-            self._finish_dismiss(night_id)
-            raise
-        self.court.append_turn(night_id, emperor_words, result.output)
-        self._finish_dismiss(night_id)
-        return result.output
-
-    def retry_translation(self) -> None:
-        """Retry missing nights, on request or before month advancement."""
-        if self._worker is not None and self._worker.done():
-            self._worker = None
-        self.court.interaction("translation", "running")
-        self._start_worker()
-
-    async def drain(self) -> None:
-        try:
-            if self._turn is not None and not self._turn.done():
-                await asyncio.shield(self._turn)
+            return result.output
         finally:
-            self._start_worker()
-            if self._worker is not None:
-                await asyncio.shield(self._worker)
-
-    async def close(self) -> None:
-        try:
-            await self.drain()
-        finally:
-            self.court.close()
+            self._finish_dismiss()

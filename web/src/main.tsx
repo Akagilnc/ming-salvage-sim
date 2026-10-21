@@ -15,6 +15,7 @@ export function App() {
   const [liveGazette, setLiveGazette] = React.useState('');
   const [reading, setReading] = React.useState<number | 'latest' | null>('latest');
   const gazetteStreaming = React.useRef(false);
+  const choosingNow = React.useRef(new Set<string>());
   const [choosing, setChoosing] = React.useState<Set<string>>(new Set());
   const [pendingWords, setPendingWords] = React.useState('');
   const [input, setInput] = React.useState('');
@@ -59,16 +60,23 @@ export function App() {
 
   async function action(value: Action) {
     setError('');
-    if (value.action === 'choose' && value.petition) setChoosing(ids => new Set(ids).add(value.petition!));
+    if (value.action === 'choose' && value.petition) {
+      if (choosingNow.current.has(value.petition)) return;
+      choosingNow.current.add(value.petition);
+      setChoosing(new Set(choosingNow.current));
+    }
     else if (value.action !== 'dismiss') setBusy(true);
     if (value.action === 'say') { setPendingWords(value.words ?? ''); setLive(''); follow.current = true; }
     try {
-      if (await act(value) === 200) await refresh();
+      if (await act(value) === 200 || value.action === 'choose') await refresh();
       if (value.action === 'open') follow.current = true;
       if (value.action === 'new' || value.action === 'continue' || value.action === 'load') { setPanel(null); setReading('latest'); }
     } catch (reason) { setError(String(reason)); }
     finally {
-      if (value.action === 'choose') setChoosing(ids => { const next = new Set(ids); next.delete(value.petition!); return next; });
+      if (value.action === 'choose') {
+        choosingNow.current.delete(value.petition!);
+        setChoosing(new Set(choosingNow.current));
+      }
       else if (value.action !== 'dismiss') setBusy(false);
     }
   }
@@ -124,7 +132,6 @@ export function App() {
           </> : <>
             <h2>{game.face === 'month' ? '核账期' : '案头'}</h2>
             {failure}
-            {game.face === 'month' && !game.running && !game.failure && game.petitions.length === 0 && <button disabled={busy} onClick={() => void action({ action: 'month' })}>接续核账</button>}
           </>}
           {reading !== null && (!audience || typeof reading === 'number') && <article className="gazette">
             <h2>邸报</h2><div>{gazette}</div>

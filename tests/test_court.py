@@ -3,24 +3,29 @@
 import asyncio
 import json
 from pathlib import Path
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 
 import pytest
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel, DeltaToolCall
 
-from ming.audience import Audience
+from starlette.testclient import TestClient
+from ming.web import create_app
 from ming.middle.court import Court
 from ming.middle.view import Officials
 
 
 def replaying(
-    replies: Sequence[str | ModelResponse | Exception],
+    replies: Sequence[str | ModelResponse | Exception]
+    | Callable[[list[ModelMessage]], ModelResponse],
+    received: list[ModelMessage] | None = None,
 ) -> FunctionModel:
-    remaining = iter(replies)
+    remaining = iter(replies) if not callable(replies) else iter(())
 
     def reply(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        result = next(remaining)
+        if received is not None:
+            received.extend(_messages)
+        result = replies(_messages) if callable(replies) else next(remaining)
         if isinstance(result, Exception):
             raise result
         return (
@@ -210,19 +215,31 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
         (Path(__file__).parent / "recorded/night_invalid.json").read_text()
     )["cases"]["unknown_field"]["scene"]
 
-    async def play() -> None:
-        audience = Audience(court, replaying([scene]))
-        night = audience.open()
-        before = physical_state(court)
-        await audience.say("任命洪承畴为陕西巡抚，调银三十万两赈灾。")
-        assert [e for e in physical_state(court) if e["kind"] != "night"] == [
-            e for e in before if e["kind"] != "night"
-        ]
-        audience.dismiss()
-        await audience.drain()
-        assert court.night(night).result == "translated"
-
-    asyncio.run(play())
+    app = create_app(tmp_path)
+    with TestClient(app) as client:
+        client.post("/actions", json={"action": "load", "save": court.db_path.name})
+        audience = app.state.web.game.audience
+        with (
+            audience.scene.override(model=replaying([scene])),
+            audience.translation.override(model=replaying([reply, reply])),
+        ):
+            client.post("/actions", json={"action": "open"})
+            before = physical_state(court)
+            client.post(
+                "/actions",
+                json={
+                    "action": "say",
+                    "words": "任命洪承畴为陕西巡抚，调银三十万两赈灾。",
+                },
+            )
+            assert [e for e in physical_state(court) if e["kind"] != "night"] == [
+                e for e in before if e["kind"] != "night"
+            ]
+            client.post("/actions", json={"action": "dismiss"})
+            client.post("/actions", json={"action": "load", "save": court.db_path.name})
+            assert (
+                client.get("/state").json()["game"]["night"]["result"] == "translated"
+            )
     people = {e.key: e for e in court.entities("audit") if e.kind == "person"}
     assert court.read_person(appointee).person == expected
     assert people["练国事"].data["status"] == incumbent_status

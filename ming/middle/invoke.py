@@ -1,11 +1,12 @@
 """One transport retry policy, independent of declaration validation retries."""
 
 from collections.abc import AsyncIterable, Callable, Sequence
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar, cast
 
 from httpx2 import TimeoutException
 from openai import APIConnectionError
-from pydantic_ai import Agent, AgentRunResult, RunContext
+from pydantic import BaseModel
+from pydantic_ai import Agent, AgentRunResult, RunContext, Tool
 from pydantic_ai.messages import (
     AgentStreamEvent,
     PartStartEvent,
@@ -14,7 +15,8 @@ from pydantic_ai.messages import (
     TextPartDelta,
 )
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
-from pydantic_ai.models import Model
+from pydantic_ai.models import Model, infer_model
+from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 from tenacity import AsyncRetrying, retry_if_exception, stop_after_attempt, wait_fixed
 
@@ -24,14 +26,45 @@ T = TypeVar("T")
 D = TypeVar("D")
 
 
-def transport_model(
-    model: Model, tools: Sequence[Callable[..., Any]] | None = None
-) -> Model:
-    if isinstance(model, ClaudeCliModel) and tools is not None:
-        return ClaudeCliModel(model.model_name, tools=tools)
+class Settings(BaseModel):
+    backend: Literal["api", "claude-cli"] = "api"
+    model: str = ""
+    base_url: str = "https://api.openai.com/v1"
+    api_key: str = ""
+
+
+ModelSource = Model | Settings | str
+
+
+def build_agent(
+    model: ModelSource,
+    *,
+    tools: Sequence[Callable[..., Any] | Tool[Any]] = (),
+    **kwargs: Any,
+) -> Agent[Any, Any]:
+    """Declare a call once, including its native transport and callable tools."""
+    if isinstance(model, Settings):
+        model = (
+            ClaudeCliModel(model.model)
+            if model.backend == "claude-cli"
+            else OpenAIChatModel(
+                model.model or "gpt-4.1",
+                provider=OpenAIProvider(
+                    base_url=model.base_url, api_key=model.api_key or "not-configured"
+                ),
+            )
+        )
+    elif isinstance(model, str):
+        model = ClaudeCliModel() if model == "claude-cli" else infer_model(model)
+    declared: list[Tool[Any]] = [
+        cast(Tool[Any], tool) if isinstance(tool, Tool) else Tool[Any](tool)
+        for tool in tools
+    ]
+    if isinstance(model, ClaudeCliModel):
+        model = ClaudeCliModel(model.cli_name, declared)
     if isinstance(model, (OpenAIChatModel, OpenAIResponsesModel)):
         model.client.max_retries = 0
-    return model
+    return Agent(model, tools=declared, **kwargs)
 
 
 def transient(error: BaseException) -> bool:
@@ -47,7 +80,7 @@ def transient(error: BaseException) -> bool:
 
 async def stream_text(
     on_delta: Callable[[str], None],
-    _ctx: RunContext[None],
+    _ctx: RunContext[Any],
     stream: AsyncIterable[AgentStreamEvent],
 ) -> None:
     """Forward native text events without exposing tools or reasoning."""
@@ -61,10 +94,10 @@ async def stream_text(
 
 
 async def invoke(
-    agent: Agent[D, T], prompt: str | list[str], background: bool = False, **kwargs: Any
+    agent: Agent[D, T], prompt: str | list[str], **kwargs: Any
 ) -> AgentRunResult[T]:
     async for attempt in AsyncRetrying(
-        stop=stop_after_attempt(1 if background else 3),
+        stop=stop_after_attempt(3),
         wait=wait_fixed(5),
         retry=retry_if_exception(transient),
         reraise=True,
