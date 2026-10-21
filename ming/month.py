@@ -41,7 +41,7 @@ class Month:
     ) -> None:
         self.court = court
         self.on_delta = on_delta
-        self.tasks: dict[UUID, asyncio.Task[None]] = {}
+        self.tasks: dict[UUID, tuple[asyncio.Task[None], bool]] = {}
         self.translation = court.translation_agent(
             Declaration, (CONTENT / "prompts/month_translate.md").read_text()
         )
@@ -188,9 +188,9 @@ class Month:
                 "text": petition.options[option],
             },
         )
-        task = self.tasks.get(petition.route_id)
-        if task is not None and not task.done():
-            task.cancel()
+        work = self.tasks.get(petition.route_id)
+        if work is not None and not work[0].done():
+            work[0].cancel()
         return petition.route_id
 
     def store_declaration(
@@ -253,13 +253,15 @@ class Month:
         self.court.log.info("model output: %s", result.output)
         return result.output
 
-    async def prepare(self, route_id: UUID) -> None:
+    async def prepare(self, route_id: UUID, *, speculative: bool = False) -> None:
         while True:
-            task = self.tasks.get(route_id)
-            if task is None or task.done():
-                task = self.tasks[route_id] = asyncio.create_task(
-                    self._prepare(route_id)
+            work = self.tasks.get(route_id)
+            if work is None or work[0].done():
+                work = self.tasks[route_id] = (
+                    asyncio.create_task(self._prepare(route_id)),
+                    speculative,
                 )
+            task, was_speculative = work
             try:
                 await asyncio.shield(task)
                 return
@@ -268,6 +270,10 @@ class Month:
                 if current is None or current.cancelling() or not task.cancelled():
                     raise
                 # A newer recorded choice replaced this route's in-flight call.
+            except Exception:
+                if speculative or not was_speculative:
+                    raise
+                # The night caller logs its failure; month fills the missing products.
 
     async def _prepare(self, route_id: UUID) -> None:
         route = next(e for e in self.court.entities("audit") if e.id == route_id)

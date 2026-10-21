@@ -101,21 +101,12 @@ async def conversation(court: Court, scene_model: ModelSource) -> None:
 
 async def month_action(court: Court, args: argparse.Namespace) -> None:
     game = Game(court, args.model)
-    pending = game.presentation()["pending"]
-    failure = game.presentation()["failure"]
-    game.resume()
-    await game.drain()
-    if pending is None or failure:
-        task = game.start(
-            args.command,
-            {"petition": str(args.petition), "option": args.option}
-            if args.command == "choose"
-            else {},
-            repeat=True,
-        )
-        if task is not None:
-            await asyncio.shield(task)
-    await game.drain()
+    await game.command(
+        args.command,
+        {"petition": str(args.petition), "option": args.option}
+        if args.command == "choose"
+        else {},
+    )
     state = game.presentation()
     print(
         json.dumps(
