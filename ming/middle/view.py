@@ -144,7 +144,7 @@ def entities(
 def project(ledger: Ledger, identity: Identity, replay: bool = False) -> list[FactView]:
     rows = ledger.entities(replay)
     opening = month_open(rows) if identity == "emperor" else None
-    date = next(r["data"] for r in rows if r["kind"] == "calendar")
+    date = next((r["data"] for r in rows if r["kind"] == "calendar"), dict[str, Any]())
     controls = {"interaction", "petition", "choice", "gazette"}
     accounts = owned_accounts(rows, identity)
     result: list[FactView] = (
@@ -165,6 +165,7 @@ def project(ledger: Ledger, identity: Identity, replay: bool = False) -> list[Fa
                 or (identity == "world" and fact.kind == "forecast")
                 or (
                     identity != "audit"
+                    and date
                     and fact.kind == "petition"
                     and (available["year"], available["month"])
                     > (date["year"], date["month"])
