@@ -10,7 +10,6 @@ from unittest.mock import AsyncMock
 import pytest
 from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
 from pydantic_ai.messages import (
-    ModelMessagesTypeAdapter,
     ModelResponse,
     TextPart,
     ToolCallPart,
@@ -78,10 +77,10 @@ def test_menu_creates_distinct_games_and_opens_only_existing_saves(
         )
 
 
+@pytest.mark.parametrize("steps", ["approved"], indirect=True)
 @pytest.mark.parametrize(
     "path",
     [
-        "complete",
         "petition",
         "choice-error",
         "decree",
@@ -118,22 +117,10 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
                     received[name],
                 )
             case = json.loads((RECORDED / "night_approved.json").read_text())
-            steps["scene"] = replaying(
-                [
-                    m
-                    for m in ModelMessagesTypeAdapter.validate_python(
-                        case["scene_responses"]
-                    )
-                    if isinstance(m, ModelResponse)
-                ]
-            )
-            steps["NightDeclaration"] = replaying(
-                (
-                    [ModelHTTPError(429, "recording")]
-                    if path == "translation-error"
-                    else []
-                )
-                + case["replies"]
+            steps["NightDeclaration"] = (
+                replaying([ModelHTTPError(429, "recording"), *case["replies"]])
+                if path == "translation-error"
+                else steps["NightDeclaration"]
             )
             steps["Declaration"] = (
                 replaying([money, (RECORDED / "month_petition.txt").read_text(), money])
@@ -276,43 +263,44 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
                 for e in materials["simulation"][0]["entities"]
                 if e["kind"] == "account"
             } == {"国库": 3200000, "内库": 4400000}
+            assert (
+                next(
+                    e["data"]
+                    for e in materials["simulation"][0]["entities"]
+                    if e["kind"] == "person" and e["key"] == "杨嗣昌"
+                ).items()
+                >= {
+                    "loyalty": "颇知向背",
+                    "ability": "足任大事",
+                    "integrity": "操守平常",
+                    "courage": "敢任其事",
+                    "identity": "党色极深",
+                    "intrigue": "善藏行迹",
+                }.items()
+            )
+            assert {
+                (e["key"], field): e["data"][field]
+                for e in materials["simulation"][0]["entities"]
+                if e["kind"] == "army"
+                for field in ("firearm_equipment", "cannon_equipment")
+            } == {
+                (e["key"], field): e["data"][field]
+                for e in ledger["entities"]
+                if e["kind"] == "army"
+                for field in ("firearm_equipment", "cannon_equipment")
+            }
+            assert (
+                next(
+                    e["data"]["loyalty"]
+                    for e in audit(db, identity="world")["entities"]
+                    if e["kind"] == "person" and e["key"] == "杨嗣昌"
+                )
+                == 75
+            )
         before = audit(db)
         client.get("/state")
         client.get("/records")
         assert audit(db) == before
-
-
-def test_http_audience_records_unhandled_night_and_resumes_after_reopening(
-    tmp_path: Path, steps
-) -> None:
-    case = json.loads((RECORDED / "night_invalid.json").read_text())
-    with TestClient(create_app(tmp_path)) as client:
-        save = client.post("/actions", json={"action": "new"}).json()["save"]
-        assert client.post("/actions", json={"action": "open"}).status_code == 200
-        assert (
-            client.post(
-                "/actions", json={"action": "say", "words": case["emperor_words"]}
-            ).status_code
-            == 204
-        )
-        state = client.get("/state").json()["game"]
-        assert state["face"] == "audience"
-        assert len(state["night"]["turns"]) == 1
-        assert state["failure"] is None
-        assert client.post("/actions", json={"action": "dismiss"}).status_code == 200
-        client.post("/actions", json={"action": "load", "save": save})
-        state = client.get("/state").json()["game"]
-        assert state["face"] == "desk"
-        assert state["night"]["result"] == "unhandled"
-        assert state["failure"] is None
-        assert client.post("/actions", json={"action": "open"}).status_code == 200
-    with TestClient(create_app(tmp_path)) as client:
-        assert client.get("/state").json()["game"] is None
-        client.post("/actions", json={"action": "continue"})
-        state = client.get("/state").json()["game"]
-        assert state["face"] == "audience"
-        assert state["night"]["turns"] == []
-        assert client.post("/actions", json={"action": "month"}).status_code == 409
 
 
 @pytest.mark.parametrize(

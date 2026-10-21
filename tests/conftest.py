@@ -8,15 +8,17 @@ from pathlib import Path
 
 import pytest
 from pydantic_ai import Agent, models
+from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelResponse
 from pydantic_ai.models.test import TestModel
 
 from ming.__main__ import main
+from tests.test_court import replaying
 
 RECORDED = Path(__file__).parent / "recorded"
 
 
 @pytest.fixture
-def steps(monkeypatch):
+def steps(monkeypatch, request):
     monkeypatch.setattr(models, "ALLOW_MODEL_REQUESTS", False)
     invalid = json.loads((RECORDED / "night_invalid.json").read_text())["cases"][
         "missing_fields"
@@ -36,6 +38,18 @@ def steps(monkeypatch):
             for name in ("deliberation", "simulation", "gazette")
         },
     }
+    if getattr(request, "param", None) == "approved":
+        case = json.loads((RECORDED / "night_approved.json").read_text())
+        replies["scene"] = replaying(
+            [
+                m
+                for m in ModelMessagesTypeAdapter.validate_python(
+                    case["scene_responses"]
+                )
+                if isinstance(m, ModelResponse)
+            ]
+        )
+        replies["NightDeclaration"] = replaying(case["replies"])
     run = Agent.run
 
     async def recorded(agent, *args, **kwargs):

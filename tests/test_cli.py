@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 
 import pytest
-from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelResponse
 from pydantic_ai.models.test import TestModel
 
 from ming.__main__ import main
@@ -14,18 +13,11 @@ from tests.test_court import replaying
 RECORDED = Path(__file__).parent / "recorded"
 
 
+@pytest.mark.parametrize("steps", ["approved"], indirect=True)
 def test_cli_preserves_jsonl_and_resumes_failed_month(
     tmp_path: Path, steps, monkeypatch, capsys
 ) -> None:
     case = json.loads((RECORDED / "night_approved.json").read_text())
-    steps["scene"] = replaying(
-        [
-            m
-            for m in ModelMessagesTypeAdapter.validate_python(case["scene_responses"])
-            if isinstance(m, ModelResponse)
-        ]
-    )
-    steps["NightDeclaration"] = replaying(case["replies"])
     steps["Declaration"] = replaying(
         [
             (RECORDED / name).read_text()

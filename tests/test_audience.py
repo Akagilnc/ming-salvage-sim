@@ -3,8 +3,8 @@
 import json
 from pathlib import Path
 
+import pytest
 from pydantic_ai.messages import (
-    ModelMessagesTypeAdapter,
     ModelResponse,
     ToolCallPart,
     ToolReturnPart,
@@ -17,18 +17,11 @@ from tests.test_court import replaying
 RECORDED = Path(__file__).parent / "recorded"
 
 
+@pytest.mark.parametrize("steps", ["approved"], indirect=True)
 def test_nights_are_persistent_and_translate_only_after_dismissal(
     tmp_path: Path, steps, audit
 ) -> None:
     case = json.loads((RECORDED / "night_approved.json").read_text())
-    steps["scene"] = replaying(
-        [
-            m
-            for m in ModelMessagesTypeAdapter.validate_python(case["scene_responses"])
-            if isinstance(m, ModelResponse)
-        ]
-    )
-    steps["NightDeclaration"] = replaying(case["replies"])
     with TestClient(create_app(tmp_path)) as client:
         save = client.post("/actions", json={"action": "new"}).json()["save"]
         client.post("/actions", json={"action": "open"})
@@ -152,13 +145,24 @@ def test_failed_night_translation_is_terminal_and_reaches_following_nights(
         before = audit(tmp_path / save)["entities"]
         nights = []
         for _ in cases:
-            client.post("/actions", json={"action": "open"})
-            client.post(
-                "/actions", json={"action": "say", "words": recording["emperor_words"]}
+            assert client.post("/actions", json={"action": "open"}).status_code == 200
+            assert (
+                client.post(
+                    "/actions",
+                    json={"action": "say", "words": recording["emperor_words"]},
+                ).status_code
+                == 204
             )
-            client.post("/actions", json={"action": "dismiss"})
+            state = client.get("/state").json()["game"]
+            assert state["face"] == "audience"
+            assert len(state["night"]["turns"]) == 1
+            assert state["failure"] is None
+            assert (
+                client.post("/actions", json={"action": "dismiss"}).status_code == 200
+            )
             client.post("/actions", json={"action": "load", "save": save})
             state = client.get("/state").json()["game"]
+            assert state["face"] == "desk"
             assert state["night"]["result"] == "unhandled"
             assert state["failure"] is None
             nights.append(state["night"]["id"])
@@ -175,4 +179,12 @@ def test_failed_night_translation_is_terminal_and_reaches_following_nights(
             for f in client.get("/records").json()["facts"]
             if f["kind"] == "unhandled"
         )
+        assert client.post("/actions", json={"action": "open"}).status_code == 200
+    with TestClient(create_app(tmp_path)) as client:
+        assert client.get("/state").json()["game"] is None
+        client.post("/actions", json={"action": "continue"})
+        state = client.get("/state").json()["game"]
+        assert state["face"] == "audience"
+        assert state["night"]["turns"] == []
+        assert client.post("/actions", json={"action": "month"}).status_code == 409
     assert audit(tmp_path / save) == audit(tmp_path / save, True)

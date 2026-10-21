@@ -2,7 +2,7 @@
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal
@@ -19,7 +19,7 @@ from starlette.staticfiles import StaticFiles
 
 from ming.game import Game, InvalidAction
 from ming.middle.court import Court
-from ming.middle.invoke import ModelSource, Settings as Settings
+from ming.middle.invoke import Settings as Settings
 
 
 class Action(BaseModel):
@@ -43,11 +43,8 @@ class Action(BaseModel):
 
 
 class Web:
-    def __init__(
-        self, directory: Path, model_factory: Callable[[Settings], ModelSource]
-    ) -> None:
+    def __init__(self, directory: Path) -> None:
         self.directory = directory
-        self.model_factory = model_factory
         self.game: Game | None = None
         self.listeners: set[asyncio.Queue[dict[str, Any]]] = set()
 
@@ -114,7 +111,7 @@ class Web:
             if not (self.directory / save).is_file():
                 raise HTTPException(404, "存档不存在")
         await self.close(shutdown=False)
-        model = self.model_factory(self.settings())
+        model = self.settings()
         court = (
             Court.new_game(self.directory, model)
             if action == "new"
@@ -193,10 +190,9 @@ class Web:
 
 def create_app(
     directory: Path,
-    model_factory: Callable[[Settings], ModelSource] = lambda settings: settings,
     static: Path | None = None,
 ) -> Starlette:
-    web = Web(directory, model_factory)
+    web = Web(directory)
 
     @asynccontextmanager
     async def lifespan(app: Starlette):
