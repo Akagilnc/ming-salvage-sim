@@ -218,8 +218,10 @@ class Game:
         task = asyncio.create_task(self.execute(action, payload))
         if action == "choose" and self.busy():
             self.track(task)
-        else:
-            self.active = task
+            return task
+        self.active = task
+        if action == "translation":
+            self.start_background()
         return task
 
     def accept(self, action: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -236,7 +238,9 @@ class Game:
             payload.update(night_id=str(self.audience.night_id), turn_id=str(uuid4()))
         elif action == "choose":
             try:
-                route = self.month.choose(UUID(payload["petition"]), payload["option"])
+                route = self.month.choose(
+                    UUID(str(payload["petition"])), payload["option"]
+                )
             except (ValueError, KeyError) as error:
                 raise InvalidAction("无效的批红选项", 400) from error
             payload["route"] = str(route)

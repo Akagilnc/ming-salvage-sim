@@ -86,6 +86,7 @@ def test_menu_creates_distinct_games_and_opens_only_existing_saves(
         "choice-error",
         "decree",
         "precompute-error",
+        "translation-error",
     ],
 )
 def test_http_month_dispatches_choices_and_retries_missing_step(
@@ -97,10 +98,11 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
         steps["Declaration"] = replaying(
             [(RECORDED / "month_petition.txt").read_text(), money]
         )
-    with TestClient(create_app(tmp_path)) as client:
+    app = create_app(tmp_path)
+    with TestClient(app) as client:
         save = client.post("/actions", json={"action": "new"}).json()["save"]
         db = tmp_path / save
-        if path in {"decree", "precompute-error"}:
+        if path in {"decree", "precompute-error", "translation-error"}:
             for name in received:
                 text = (RECORDED / f"{name}.txt").read_text()
                 steps[name] = replaying(
@@ -125,7 +127,14 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
                     if isinstance(m, ModelResponse)
                 ]
             )
-            steps["NightDeclaration"] = replaying(case["replies"])
+            steps["NightDeclaration"] = replaying(
+                (
+                    [ModelHTTPError(429, "recording")]
+                    if path == "translation-error"
+                    else []
+                )
+                + case["replies"]
+            )
             steps["Declaration"] = (
                 replaying([money, (RECORDED / "month_petition.txt").read_text(), money])
                 if path == "decree"
@@ -147,7 +156,30 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
                     == 204
                 )
             client.post("/actions", json={"action": "load", "save": save})
+            if path == "translation-error":
+                assert (
+                    client.get("/state").json()["game"]["failure"]["action"]
+                    == "translation"
+                )
+                assert (
+                    client.post("/actions", json={"action": "retry"}).status_code == 204
+                )
+                assert client.portal is not None
+                client.portal.call(app.state.web.game.drain)
             assert client.get("/state").json()["game"]["failure"] is None
+            ledger = audit(db)
+            decree = next(e for e in ledger["entities"] if e["kind"] == "decree")
+            products = [
+                f["kind"] for f in ledger["facts"] if f["entity_id"] == decree["id"]
+            ]
+            assert {
+                kind: products.count(kind)
+                for kind in ("deliberation", "simulation", "declaration")
+            } == dict.fromkeys(
+                ("deliberation", "simulation", "declaration"),
+                int(path != "precompute-error"),
+            )
+            assert client.get("/state").json()["game"]["date"]["month"] == 10
             if path == "precompute-error":
                 assert clock == [5, 5]
                 assert not [
@@ -155,12 +187,13 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
                     for f in audit(db)["facts"]
                     if f["kind"] == "interaction" and f["detail"]["status"] == "failed"
                 ]
-        assert (
-            client.post(
-                "/actions", json={"action": "choose", "petition": str(uuid4())}
-            ).status_code
-            == 400
-        )
+        before = audit(db)
+        assert [
+            client.post("/actions", json={"action": "choose", **parameters}).status_code
+            for parameters in ({}, {"petition": None}, {"petition": str(uuid4())})
+        ] == [400, 400, 400]
+        assert client.get("/state").json()["game"]["failure"] is None
+        assert audit(db) == before
         assert client.post("/actions", json={"action": "month"}).status_code == 204
         game = client.get("/state").json()["game"]
         if path in {"petition", "choice-error", "decree"}:
