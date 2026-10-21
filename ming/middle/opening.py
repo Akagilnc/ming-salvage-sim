@@ -24,6 +24,20 @@ COLLECTIONS = [
     ("offices", "priority", "office_type", ("type",)),
 ]
 
+# Scalar entity references, shared by import and declaration validation.
+# Army controller/commander and historical relationship names are prose, not keys.
+REFERENCES = {
+    ("person", "office"): "office",
+    ("person", "office_region"): "region",
+    ("person", "location"): "region",
+    ("person", "power_id"): "power",
+    ("army", "station_region"): "region",
+    ("army", "owner_power"): "power",
+    ("building", "region_id"): "region",
+    ("class", "region_id"): "region",
+    ("region", "controlled_by"): "power",
+}
+
 
 def import_opening(ledger: Ledger, content: Path) -> None:
     entities: list[Entity] = []
@@ -34,16 +48,6 @@ def import_opening(ledger: Ledger, content: Path) -> None:
         }
         for kind, filename in (("region", "regions"), ("power", "powers"))
     }
-    references = {
-        "region_id": "region",
-        "station_region": "region",
-        "location": "region",
-        "office_region": "region",
-        "power_id": "power",
-        "owner_power": "power",
-        "controller": "power",
-        "controlled_by": "power",
-    }
     for filename, collection, kind, fields in COLLECTIONS:
         path = content / f"{filename}.json"
         try:
@@ -52,9 +56,11 @@ def import_opening(ledger: Ledger, content: Path) -> None:
             raise ValueError(f"{path}: {exc}") from exc
         for index, record in enumerate(records):
             try:
-                for field, target in references.items():
-                    if field in record:
-                        record[field] = names[target].get(record[field], record[field])
+                for (source, field), target in REFERENCES.items():
+                    if source == kind and field in record:
+                        record[field] = names.get(target, {}).get(
+                            record[field], record[field]
+                        )
                 if "id" in record and "name" in record:
                     record["id"] = record["name"]
                 parts = [record[field] for field in fields]

@@ -141,9 +141,19 @@ class Game:
 
     async def _resume(self, pending: list[dict[str, Any]]) -> None:
         for item in pending:
-            await self.execute(item["action"], item["payload"])
-            if self.presentation()["failure"]:
-                return
+            if item["action"] not in {"month", "choose"}:
+                await self.execute(item["action"], item["payload"])
+                if self.presentation()["failure"]:
+                    return
+        await asyncio.gather(
+            *(
+                self.execute(item["action"], item["payload"])
+                for item in pending
+                if item["action"] in {"month", "choose"}
+            )
+        )
+        if self.presentation()["failure"]:
+            return
         if not self.month.opened():
             self.start_background()
 
@@ -328,7 +338,7 @@ class Game:
             self.settle_month(payload["date"])
             return None  # The prior month committed before the process stopped.
         if action == "choose":
-            await self.month.resume()
+            await self.month.resume(petition_id=payload["petition"])
             if payload["date"] != self.court.calendar().data:
                 self.settle_month(payload["date"])
             return None

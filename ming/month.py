@@ -66,7 +66,7 @@ class Month:
             and any(f.kind == "decreed" for f in self.court.products(e.id))
         ]
 
-    async def night(self, night: EntityView, decrees: list[EntityView]) -> None:
+    async def night(self, night: EntityView, decrees: list[EntityView]) -> bool:
         results = await asyncio.gather(
             *(self.deliberations.run(d, night.id) for d in decrees),
             return_exceptions=True,
@@ -82,7 +82,7 @@ class Month:
                 for f in self.court.products(d.id)
             )
         ]
-        await self.simulations.run(
+        return await self.simulations.run(
             night,
             {
                 "scope": "旨意推演",
@@ -96,7 +96,43 @@ class Month:
             },
         )
 
-    async def resume(self, *, speculative: bool = False) -> list[PendingPetition]:
+    async def resume(
+        self, *, speculative: bool = False, petition_id: str | None = None
+    ) -> list[PendingPetition]:
+        date = self.court.calendar().data
+        while date == self.court.calendar().data:
+            pending = await self._resume(speculative=speculative)
+            if speculative or date != self.court.calendar().data:
+                return pending
+            facts = self.court.facts("audit")
+            choices = {
+                (f.detail["petition_id"], f.detail["option"])
+                for f in facts
+                if f.kind == "choice"
+            }
+            published = {
+                f.detail.get("petition_id") for f in facts if f.kind == "simulation"
+            }
+            waiting = [
+                key
+                for key in self.simulations.tasks
+                if key[1:] in choices
+                and key[1] not in published
+                and (petition_id is None or key[1] == petition_id)
+            ]
+            if not waiting:
+                return pending
+            # Only the caller's selected work waits here, outside the month lock.
+            results = await asyncio.gather(
+                *(self.simulations.wait_for_choice(key) for key in waiting),
+                return_exceptions=True,
+            )
+            for result in results:
+                if isinstance(result, BaseException):
+                    raise result
+        return self.petitions()
+
+    async def _resume(self, *, speculative: bool) -> list[PendingPetition]:
         date = self.court.calendar().data
         async with self.lock:
             if date != self.court.calendar().data:
@@ -120,7 +156,7 @@ class Month:
             for result in results:
                 if isinstance(result, BaseException):
                     raise result
-            if speculative or not self.opened():
+            if not all(results) or speculative or not self.opened():
                 return self.petitions()
             if any(
                 p.route_id in {n.id for n in nights}
@@ -143,7 +179,7 @@ class Month:
             for result in results:
                 if isinstance(result, BaseException):
                     raise result
-            await self.simulations.run(
+            ready = await self.simulations.run(
                 calendar,
                 {
                     "scope": "世界推演",
@@ -171,7 +207,8 @@ class Month:
                     ],
                 },
             )
-            if pending := self.petitions():
+            pending = self.petitions()
+            if not ready or pending:
                 return pending
             await self.landing.run()
             await self.gazette.run()

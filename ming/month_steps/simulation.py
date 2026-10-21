@@ -115,7 +115,24 @@ class Simulations:
         if not task.cancelled() and (error := task.exception()) is not None:
             self.court.log.error("option forecast failed", exc_info=error)
 
-    async def run(self, route: EntityView, context: dict[str, Any]) -> None:
+    async def wait_for_choice(self, key: tuple[UUID, str, int]) -> None:
+        task = self.tasks[key]
+        try:
+            await asyncio.shield(task)
+        except Exception:
+            # Failed speculation alone may be rerun on an actual selection.
+            petition = next(
+                PendingPetition.model_validate(
+                    {k: v for k, v in f.detail.items() if k != "date"}
+                )
+                for f in self.court.facts("audit")
+                if f.kind == "petition" and f.detail["id"] == key[1]
+            )
+            if self.tasks[key] is task:
+                del self.tasks[key]
+            await asyncio.shield(self.start_forecast(petition, key[2]))
+
+    async def run(self, route: EntityView, context: dict[str, Any]) -> bool:
         if not self.court.products(route.id, kind="simulation"):
             self.publish(route.id, await self.call(context, []))
         while True:
@@ -138,6 +155,7 @@ class Simulations:
                 and f.detail["blocking"]
             ]
             progressed = False
+            ready = True
             for petition in petitions:
                 options = (
                     range(len(petition.options))
@@ -158,16 +176,10 @@ class Simulations:
                 ):
                     continue
                 task = self.start_forecast(petition, choice["option"])
-                try:
-                    result = await asyncio.shield(task)
-                except Exception:
-                    # Failed speculation alone may be rerun on an actual selection.
-                    key = petition.route_id, str(petition.id), choice["option"]
-                    del self.tasks[key]
-                    result = await asyncio.shield(
-                        self.start_forecast(petition, choice["option"])
-                    )
-                self.publish(route.id, result)
+                if not task.done() or task.exception() is not None:
+                    ready = False
+                    continue
+                self.publish(route.id, task.result())
                 progressed = True
             for segment in segments:
                 if (
@@ -182,7 +194,7 @@ class Simulations:
                     self.publish(route.id, result)
                     progressed = True
             if not progressed:
-                return
+                return ready
 
     async def drain(self) -> None:
         if self.tasks:

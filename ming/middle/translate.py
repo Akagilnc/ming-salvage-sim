@@ -1,7 +1,7 @@
 """One retry owner for declarations. Exhaustion alone becomes an unhandled fact."""
 
 import json
-from typing import TypeVar
+from typing import Any, TypeVar, cast
 
 from pydantic_ai import (
     Agent,
@@ -14,6 +14,7 @@ from pydantic_ai.messages import ModelResponse
 
 from ming.ledger import Ledger
 from ming.middle.declaration import Declaration, NightDeclaration, Unhandled
+from ming.middle.opening import REFERENCES
 from ming.middle.rules import check_rules
 from ming.middle.invoke import ModelSource, build_agent, invoke
 
@@ -52,7 +53,7 @@ def allowed_fields(ledger: Ledger) -> dict[str, set[str]]:
         "decree": {"text", "origin", "people"},
     }
     for row in ledger.entities():
-        if row["source"]:
+        if row["source"] and row["kind"] != "calendar":
             fields.setdefault(row["kind"], set()).update(row["data"])
     fields.get("person", set()).difference_update(
         {"transit_to", "remaining_distance", "waiting_audience"}
@@ -96,34 +97,42 @@ def check(ledger: Ledger, out: Declaration) -> None:
                     change.field,
                     sorted(fields[fact.entity_type]),
                 )
-            if fact.entity_type == "person" and change.field in {
-                "office",
-                "office_region",
-                "location",
-            }:
-                kind = "office" if change.field == "office" else "region"
-                if (change.field == "location" or change.value != "") and (
-                    not isinstance(change.value, str)
-                    or change.value not in names.get(kind, {})
-                ):
-                    fail(
-                        f"{path}.changes[{j}].value", change.value, names.get(kind, {})
-                    )
     check_rules(out, set(names.get("affair", {})))
     check_references(out, names)
 
 
 def check_references(out: Declaration, names: dict[str, dict[str, list[str]]]) -> None:
+    people: list[tuple[str, Any]] = []
+    for i, fact in enumerate(out.facts):
+        for j, change in enumerate(fact.changes):
+            kind = REFERENCES.get((fact.entity_type, change.field))
+            if kind is not None and (change.field == "location" or change.value != ""):
+                if not isinstance(change.value, str) or change.value not in names.get(
+                    kind, {}
+                ):
+                    fail(
+                        f"facts[{i}].changes[{j}].value",
+                        change.value,
+                        names.get(kind, {}),
+                    )
+            if (fact.entity_type, change.field) == ("decree", "people"):
+                people.append((f"facts[{i}].changes[{j}].value", change.value))
     for i, report in enumerate(out.reports):
         if report.entity not in names.get(report.entity_type, {}):
             fail(
                 f"reports[{i}].entity", report.entity, names.get(report.entity_type, {})
             )
     if isinstance(out, NightDeclaration):
-        for decree in out.decrees:
-            for person in decree.people:
-                if person not in names["person"]:
-                    fail("decrees.people", person, names["person"])
+        people.extend(("decrees.people", decree.people) for decree in out.decrees)
+    for path, value in people:
+        if not isinstance(value, list):
+            fail(path, value, names.get("person", {}))
+        members = cast(list[Any], value)
+        if any(
+            not isinstance(person, str) or person not in names.get("person", {})
+            for person in members
+        ):
+            fail(path, members, names.get("person", {}))
 
 
 def declaration_agent(
