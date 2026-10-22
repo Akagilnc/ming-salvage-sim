@@ -29,7 +29,6 @@ LANDING = (
 def test_month_without_decrees_advances_after_reopening(
     game_db: Path, steps, audit, first: str, extra: int
 ) -> None:
-    tmp_path = game_db.parent
     received = []
     steps["simulation"] = replaying(
         [
@@ -38,7 +37,7 @@ def test_month_without_decrees_advances_after_reopening(
         ],
         received,
     )
-    with TestClient(create_app(tmp_path)) as client:
+    with TestClient(create_app(game_db.parent)) as client:
         save = client.post(
             "/actions", json={"action": "load", "save": game_db.name}
         ).json()["save"]
@@ -66,7 +65,7 @@ def test_month_without_decrees_advances_after_reopening(
                 )
                 assert len(received) == calls
                 assert client.get("/state").json()["game"]["date"] == state["date"]
-            ledger = audit(tmp_path / save)
+            ledger = audit(game_db.parent / save)
             assert not [e for e in ledger["entities"] if e["kind"] == "affair"]
             assert not [f for f in ledger["facts"] if f["kind"] == "forecast"]
             assert (
@@ -105,9 +104,8 @@ def test_month_without_decrees_advances_after_reopening(
     ],
 )
 def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
-    game_db: Path, case, steps, audit
+    tmp_path: Path, game_db: Path, case, steps, audit
 ) -> None:
-    tmp_path = game_db.parent
     nominal, actual, interrupt = case
     steps["Declaration"] = TestModel(
         call_tools=[],
@@ -192,9 +190,8 @@ def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
 
 
 def test_exhausted_month_declaration_is_unhandled_not_a_stopped_month(
-    game_db: Path, steps, audit
+    tmp_path: Path, game_db: Path, steps, audit
 ) -> None:
-    tmp_path = game_db.parent
     reply = (RECORDED / "month_invalid.txt").read_text()
     steps["Declaration"] = replaying([reply, reply])
     with TestClient(create_app(tmp_path)) as client:

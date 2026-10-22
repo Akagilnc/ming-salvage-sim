@@ -129,11 +129,6 @@ def rejected_night(first_night, tmp_path_factory):
     return path
 
 
-@pytest.fixture(scope="session")
-def history(request):
-    return request.param
-
-
 def extend_history(source, directory, actions):
     path = directory / source.name
     copyfile(source, path)
@@ -151,46 +146,20 @@ def extend_history(source, directory, actions):
 
 
 @pytest.fixture(scope="session")
-def history_one(request, tmp_path_factory, history):
-    source = request.getfixturevalue(
+def pending_histories(request, tmp_path_factory):
+    history = request.param
+    actions = HISTORY_ACTIONS[history]
+    node = request.getfixturevalue(
         "opening_db" if history == "month" else "first_night"
     )
-    return extend_history(
-        source,
-        tmp_path_factory.mktemp("history-one"),
-        HISTORY_ACTIONS[history][-1:],
-    )
-
-
-@pytest.fixture(scope="session")
-def history_two(history_one, tmp_path_factory, history):
-    return extend_history(
-        history_one,
-        tmp_path_factory.mktemp("history-two"),
-        HISTORY_ACTIONS[history],
-    )
-
-
-@pytest.fixture(scope="session")
-def history_four(history_two, tmp_path_factory, history):
-    return extend_history(
-        history_two,
-        tmp_path_factory.mktemp("history-four"),
-        HISTORY_ACTIONS[history] * 2,
-    )
-
-
-@pytest.fixture(scope="session")
-def pending_histories(
-    history_one, history_two, history_four, history, tmp_path_factory
-):
     paths = {}
-    for size, source in zip((1, 2, 4), (history_one, history_two, history_four)):
+    for size, added in ((1, actions[-1:]), (2, actions), (4, actions * 2)):
+        node = extend_history(node, tmp_path_factory.mktemp("history"), added)
         directory = tmp_path_factory.mktemp("pending-history")
         path = (
-            extend_history(source, directory, HISTORY_ACTIONS["night"])
+            extend_history(node, directory, HISTORY_ACTIONS["night"])
             if history == "month"
-            else copyfile(source, directory / source.name)
+            else copyfile(node, directory / node.name)
         )
         with recorded_steps() as replies, TestClient(create_app(directory)) as client:
             petitions = (RECORDED / "month_multiple_petitions.txt").read_text()

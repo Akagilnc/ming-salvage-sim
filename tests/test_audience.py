@@ -20,9 +20,8 @@ RECORDED = Path(__file__).parent / "recorded"
 @pytest.mark.parametrize("steps", ["approved"], indirect=True)
 @pytest.mark.parametrize("game_db", ["first_night"], indirect=True)
 def test_nights_are_persistent_and_translate_only_after_dismissal(
-    game_db: Path, steps, audit
+    tmp_path: Path, game_db: Path, steps, audit
 ) -> None:
-    tmp_path = game_db.parent
     case = json.loads((RECORDED / "night_approved.json").read_text())
     with TestClient(create_app(tmp_path)) as client:
         save = client.post(
@@ -71,9 +70,8 @@ def test_nights_are_persistent_and_translate_only_after_dismissal(
 
 @pytest.mark.parametrize("game_db", ["first_night"], indirect=True)
 def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
-    game_db: Path, steps
+    tmp_path: Path, game_db: Path, steps
 ) -> None:
-    tmp_path = game_db.parent
     case = json.loads((RECORDED / "night_invalid.json").read_text())
     received = []
     steps["scene"] = replaying(
@@ -135,9 +133,8 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
 
 
 def test_failed_night_translation_is_terminal_and_reaches_following_nights(
-    game_db: Path, steps, audit
+    tmp_path: Path, game_db: Path, steps, audit
 ) -> None:
-    tmp_path = game_db.parent
     recording = json.loads((RECORDED / "night_invalid.json").read_text())
     cases = recording["cases"]
     steps["scene"] = replaying([case["scene"] for case in cases.values()])
