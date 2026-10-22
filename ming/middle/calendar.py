@@ -7,6 +7,13 @@ from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS
 CAPITAL = "北直隶 / 京师"
 
 
+def next_month(date: Item) -> Item:
+    return {
+        "year": date["year"] + (date["month"] == 12),
+        "month": date["month"] % 12 + 1,
+    }
+
+
 def advance_month(ledger: Ledger) -> None:
     rows = ledger.entities(
         kind="person", query=ENTITY_ROWS.where(E.data["transit_to"].as_string() != "")
@@ -38,9 +45,6 @@ def advance_month(ledger: Ledger) -> None:
         "advanced",
         "",
         {"date": date},
-        {
-            "year": date["year"] + (date["month"] == 12),
-            "month": date["month"] % 12 + 1,
-        },
+        next_month(date),
     )
     ledger.commit([*changed, calendar])

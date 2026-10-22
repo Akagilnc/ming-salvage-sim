@@ -140,8 +140,15 @@ export function App() {
           {!audience && night?.result === 'unhandled' && <p className="unhandled">接不住</p>}
           {!audience && book.facts.filter(fact => fact.kind === 'unhandled' && !book.entities.some(entity => entity.id === fact.entity_id && entity.kind === 'night')).map((fact, index) => <p key={`${fact.entity_id}-${index}`} className="unhandled">接不住</p>)}
           {game.petitions.map(petition => <article className="petition" key={petition.id}>
-            <h3>奏疏</h3><p>{petition.text}</p>
+            <h3>奏疏{petition.signer && ` · ${petition.signer}`}</h3>
+            {petition.target && <p>被劾人：{petition.target}</p>}
+            {petition.revision_of && <small>改票</small>}
+            <p>{petition.text}</p>
             {petition.options.map((option, index) => <button disabled={choosing.has(petition.id)} key={index} onClick={() => void action({ action: 'choose', petition: petition.id, option: index })}>{option}</button>)}
+          </article>)}
+          {game.returned_petitions.map(({ petition, awaiting_drafter }) => <article className="petition" key={petition.id}>
+            <h3>待改票 · {petition.signer}</h3><p>{petition.text}</p>
+            <small>{awaiting_drafter ? '无人改票，待补任后再呈' : '已发回，待改票再呈'}</small>
           </article>)}
         </div>
         {audience ? <form className="composer" onSubmit={event => {

@@ -35,6 +35,14 @@ CATALOGUE = ENTITY_ROWS.where(
     )
 )
 
+IN_OFFICE = and_(
+    or_(
+        E.data["status"].as_string().is_(None),
+        E.data["status"].as_string() == "active",
+    ),
+    E.data["office"].as_string() != "",
+)
+
 
 def available_on(date: Item) -> ColumnElement[bool]:
     """A petition's availability, shared by identity reads and the inbox."""
@@ -52,13 +60,46 @@ def available_on(date: Item) -> ColumnElement[bool]:
 
 def pending_petitions(date: Item) -> Select[Any]:
     choice = F.position.table.alias().c
+    return (
+        FACT_ROWS.where(
+            F.kind == "petition",
+            available_on(date),
+            ~select(choice.position)
+            .where(
+                choice.kind == "choice",
+                choice.detail["petition_id"].as_string() == F.detail["id"].as_string(),
+            )
+            .exists(),
+        )
+        .order_by(None)
+        .order_by(
+            F.detail["available"]["year"].as_integer(),
+            F.detail["available"]["month"].as_integer(),
+            F.detail["ordinal"].as_integer(),
+            F.position,
+        )
+    )
+
+
+def returned_petitions(date: Item | None = None) -> Select[Any]:
+    choice = F.position.table.alias().c
+    revision = F.position.table.alias().c
     return FACT_ROWS.where(
         F.kind == "petition",
-        available_on(date),
-        ~select(choice.position)
+        F.detail["source"].as_string() == "urgent",
+        select(choice.position)
         .where(
             choice.kind == "choice",
             choice.detail["petition_id"].as_string() == F.detail["id"].as_string(),
+            choice.detail["option"].as_integer()
+            == func.json_array_length(F.detail["options"]) - 1,
+            *([choice.date != date] if date is not None else []),
+        )
+        .exists(),
+        ~select(revision.position)
+        .where(
+            revision.kind == "petition",
+            revision.detail["revision_of"].as_string() == F.detail["id"].as_string(),
         )
         .exists(),
     )

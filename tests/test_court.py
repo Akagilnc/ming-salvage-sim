@@ -17,7 +17,7 @@ from ming.middle.view import Officials
 
 def replaying(
     replies: Sequence[str | ModelResponse | Exception]
-    | Callable[[list[ModelMessage]], ModelResponse],
+    | Callable[[list[ModelMessage]], str | ModelResponse | Exception],
     received: list[ModelMessage] | None = None,
 ) -> FunctionModel:
     remaining = iter(replies) if not callable(replies) else iter(())

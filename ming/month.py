@@ -13,6 +13,7 @@ from ming.month_steps.simulation import Simulations, continuing_options
 from ming.month_steps.petitions import Inbox
 from ming.month_steps.landing import Landing
 from ming.month_steps.gazette import Gazette
+from ming.month_steps.sources import Sources
 
 
 class Month:
@@ -28,6 +29,7 @@ class Month:
         self.inbox = Inbox(court)
         self.landing = Landing(court)
         self.gazette = Gazette(court, model, on_delta)
+        self.sources = Sources(court, model)
         self.lock = asyncio.Lock()
         self.originals: dict[UUID, asyncio.Task[bool]] = {}
 
@@ -226,6 +228,8 @@ class Month:
         for result in results:
             if isinstance(result, BaseException):
                 raise result
+        # World simulation precedes this month's sources: returned originals are unrevised.
+        returned = {str(f.detail["id"]) for f in self.court.returned_petitions()}
         return await self.simulations.run(
             calendar,
             {
@@ -247,10 +251,14 @@ class Month:
                     if f.detail["verdict"] == "准"
                 ],
                 "prior_choices": [
-                    f.detail
+                    {
+                        **f.detail,
+                        "petition": self.court.petition(f.detail["petition_id"]).detail,
+                    }
                     for f in self.court.facts(
                         "audit", kind="choice", date=self.court.calendar().data
                     )
+                    if f.detail["petition_id"] not in returned
                 ],
             },
         )
@@ -286,7 +294,18 @@ class Month:
             if not ready or pending:
                 return pending
             await self.landing.run()
-            await self.gazette.run()
+            results = await asyncio.gather(
+                self.gazette.run(),
+                self.sources.urgent(),
+                *(
+                    self.sources.impeach(f)
+                    for f in self.court.entities("audit", kind="faction")
+                ),
+                return_exceptions=True,
+            )
+            for result in results:
+                if isinstance(result, BaseException):
+                    raise result
             self.court.advance_month()
             return self.petitions()
 

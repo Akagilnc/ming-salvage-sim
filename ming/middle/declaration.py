@@ -32,6 +32,11 @@ class PendingPetition(Petition):
     segment_id: UUID
     available: dict[str, Any]
     blocking: bool
+    source: str
+    signer: str | None = None
+    target: str | None = None
+    revision_of: UUID | None = None
+    ordinal: int = 0
 
 
 class Change(StrictModel):

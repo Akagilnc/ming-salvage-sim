@@ -3,13 +3,16 @@
 import json
 import sqlite3
 from pathlib import Path
+from uuid import UUID
 
 import pytest
+from pydantic_ai.messages import RetryPromptPart
 from pydantic_ai.models.test import TestModel
 from sqlalchemy import event, text
 from sqlalchemy.orm import Session
 from starlette.testclient import TestClient
 
+from ming.middle.declaration import PendingPetition
 from ming.web import create_app
 from tests.test_court import replaying
 
@@ -24,15 +27,28 @@ LANDING = (
 
 @pytest.mark.parametrize(
     ("first", "extra"),
-    [("simulation.txt", 0), ("month_deferred.txt", 0), ("month_zero.txt", 1)],
+    [
+        ("simulation.txt", 0),
+        ("month_deferred.txt", 0),
+        ("month_zero.txt", 1),
+        ("sources", 0),
+    ],
 )
 def test_month_without_decrees_advances_after_reopening(
     game_db: Path, steps, audit, first: str, extra: int
 ) -> None:
     received = []
+    if first == "sources":
+        for name in ("urgent", "impeachment"):
+            steps[name] = TestModel(
+                call_tools=[],
+                custom_output_text=(RECORDED / f"sources_{name}.txt").read_text(),
+            )
     steps["simulation"] = replaying(
         [
-            (RECORDED / first).read_text(),
+            (
+                RECORDED / ("simulation.txt" if first == "sources" else first)
+            ).read_text(),
             *[(RECORDED / "simulation.txt").read_text()] * (2 + extra),
         ],
         received,
@@ -50,6 +66,23 @@ def test_month_without_decrees_advances_after_reopening(
                 None,
                 None,
             )
+            if first == "sources":
+                urgent = [p for p in state["petitions"] if p["source"] == "urgent"]
+                assert [p["signer"] for p in urgent] == ["王体乾", "黄立极"]
+                assert all(not p["blocking"] for p in state["petitions"])
+                people = {
+                    e["key"]: e["id"]
+                    for e in audit(game_db)["entities"]
+                    if e["kind"] == "person"
+                }
+                assert all(
+                    p["entity_id"] == people[p["signer"]] for p in state["petitions"]
+                )
+                assert all(
+                    p["target"] in people
+                    for p in state["petitions"]
+                    if p["source"] == "impeachment"
+                )
             for petition in state["petitions"]:
                 calls = len(received)
                 assert (
@@ -58,7 +91,7 @@ def test_month_without_decrees_advances_after_reopening(
                         json={
                             "action": "choose",
                             "petition": petition["id"],
-                            "option": 0,
+                            "option": 2 if petition["source"] == "impeachment" else 0,
                         },
                     ).status_code
                     == 204
@@ -66,6 +99,11 @@ def test_month_without_decrees_advances_after_reopening(
                 assert len(received) == calls
                 assert client.get("/state").json()["game"]["date"] == state["date"]
             ledger = audit(game_db.parent / save)
+            months = (year - 1627) * 12 + month - 10
+            assert len([f for f in ledger["facts"] if f["kind"] == "urgent"]) == months
+            assert len(
+                [f for f in ledger["facts"] if f["kind"] == "impeachment"]
+            ) == months * len([e for e in ledger["entities"] if e["kind"] == "faction"])
             assert not [e for e in ledger["entities"] if e["kind"] == "affair"]
             assert not [f for f in ledger["facts"] if f["kind"] == "forecast"]
             assert (
@@ -80,6 +118,10 @@ def test_month_without_decrees_advances_after_reopening(
                 for f in ledger["facts"]
                 if f["kind"] == "choice" and f["detail"]["date"] == material["date"]
             }
+            assert all(
+                c["petition"]["id"] == c["petition_id"]
+                for c in material["context"]["prior_choices"]
+            )
             calendar = next(
                 e["id"] for e in ledger["entities"] if e["kind"] == "calendar"
             )
@@ -91,6 +133,99 @@ def test_month_without_decrees_advances_after_reopening(
             state = client.get("/state").json()["game"]
             client.post("/actions", json={"action": "load", "save": save})
             assert client.get("/state").json()["game"] == state
+
+
+@pytest.mark.parametrize("valid_revision", [True, False])
+def test_returned_urgent_waits_through_vacancy(
+    game_db: Path, steps, monkeypatch, valid_revision: bool
+) -> None:
+    revision = (RECORDED / "sources_revision.txt").read_text()
+    received = []
+    steps["simulation"] = replaying(
+        [(RECORDED / "simulation.txt").read_text()] * 5, received
+    )
+    steps["urgent"] = replaying([(RECORDED / "sources_urgent.txt").read_text()])
+    drafting = []
+    with TestClient(create_app(game_db.parent)) as client:
+        client.post("/actions", json={"action": "load", "save": game_db.name})
+        if valid_revision:
+
+            def identify_original(**fields):
+                # Align only this original's generated ID, regardless of scheduling.
+                if fields["source"] == "urgent" and fields["ordinal"] == 0:
+                    fields["id"] = UUID(
+                        json.loads(revision)["petitions"][0]["revision_of"]
+                    )
+                return PendingPetition(**fields)
+
+            monkeypatch.setattr(
+                "ming.month_steps.sources.PendingPetition", identify_original
+            )
+        client.post("/actions", json={"action": "month"})
+        monkeypatch.undo()
+        petitions = client.get("/state").json()["game"]["petitions"]
+        original = petitions[0]
+        for index, petition in enumerate(petitions):
+            client.post(
+                "/actions",
+                json={
+                    "action": "choose",
+                    "petition": petition["id"],
+                    "option": len(petition["options"]) - 1 if index == 0 else 0,
+                },
+            ).raise_for_status()
+        assert client.get("/state").json()["game"]["returned_petitions"] == []
+        for phase, month in (("vacancy", 12), ("appointment", 1)):
+            case = json.loads((RECORDED / f"sources_{phase}.json").read_text())
+            steps["scene"] = replaying(case["scenes"])
+            steps["NightDeclaration"] = replaying([case["declaration"]])
+            if phase == "appointment":
+                steps["urgent"] = replaying([revision] * 2, drafting)
+            client.post("/actions", json={"action": "open"})
+            for words in case["words"]:
+                client.post("/actions", json={"action": "say", "words": words})
+            client.post("/actions", json={"action": "dismiss"})
+            client.post("/actions", json={"action": "month"})
+            state = client.get("/state").json()["game"]
+            if phase == "appointment" and not valid_revision:
+                assert state["failure"] is not None
+                assert state["failure"]["payload"]["type"] == "UnexpectedModelBehavior"
+                assert state["date"]["month"] == 12
+                assert state["petitions"] == []
+                assert [p["petition"]["id"] for p in state["returned_petitions"]] == [
+                    original["id"]
+                ]
+                assert [
+                    (json.loads(p.content)["field"], json.loads(p.content)["expected"])
+                    for m in drafting
+                    for p in m.parts
+                    if isinstance(p, RetryPromptPart)
+                ] == [("revision_of", [original["id"]])]
+            else:
+                assert state["failure"] is None
+                assert state["date"]["month"] == month
+                if phase == "vacancy":
+                    assert state["petitions"] == []
+                    assert [
+                        (p["petition"]["id"], p["awaiting_drafter"])
+                        for p in state["returned_petitions"]
+                    ] == [(original["id"], True)]
+                else:
+                    assert [
+                        (p["signer"], p["revision_of"])
+                        for p in state["petitions"]
+                        if p["revision_of"]
+                    ] == [("曹化淳", original["id"])]
+                    assert state["returned_petitions"] == []
+            material = json.loads(received[-1].parts[0].content)["context"]
+            assert {p["petition_id"] for p in material["prior_choices"]} == (
+                {petitions[1]["id"]} if phase == "vacancy" else set()
+            )
+            client.post("/actions", json={"action": "load", "save": game_db.name})
+            assert client.get("/state").json()["game"] == state
+        material = json.loads(drafting[0].parts[0].content)["context"]
+        assert [p["name"] for p in material["drafters"]] == ["曹化淳"]
+        assert [p["id"] for p in material["returned"]] == [original["id"]]
 
 
 @pytest.mark.parametrize(

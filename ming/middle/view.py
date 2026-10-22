@@ -9,7 +9,7 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from ming.ledger import Item, Ledger
 from ming.ledger import ENTITY_COLUMNS as E, FACT_COLUMNS as F, ENTITY_ROWS, FACT_ROWS
-from ming.middle.queries import available_on
+from ming.middle.queries import IN_OFFICE, available_on
 from ming.middle.night import read_night
 
 PublicIdentity = Literal["emperor", "audit", "world", "public"]
@@ -99,7 +99,7 @@ def owned_accounts(ledger: Ledger, identity: Identity) -> set[UUID]:
     if not isinstance(identity, Officials):
         return set()
     rows = ledger.entities(kind=("office_type", "account")) + ledger.entities(
-        kind="person", query=ENTITY_ROWS.where(E.key.in_(identity.people))
+        kind="person", query=ENTITY_ROWS.where(E.key.in_(identity.people), IN_OFFICE)
     )
     # Resolve the current formal title through the imported office catalogue,
     # never a person's stale office_type or an umbrella-office exception.
@@ -115,8 +115,6 @@ def owned_accounts(ledger: Ledger, identity: Identity) -> set[UUID]:
         )
         for r in rows
         if r["kind"] == "person"
-        and r["data"].get("office")
-        and r["data"].get("status", "active") == "active"
     } - {None, "内阁", "司礼监"}
     return {
         r["id"]

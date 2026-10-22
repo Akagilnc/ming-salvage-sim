@@ -31,9 +31,7 @@ class Landing:
                     "date": self.court.calendar().data,
                     "source": source.model_dump(mode="json"),
                     "entities": [e.model_dump(mode="json") for e in entities],
-                    "scope": "只交本旨后果"
-                    if source.kind == "decree"
-                    else "只交世界其余变化，别重复各道旨的后果",
+                    "scope": "decree" if source.kind == "decree" else "world",
                     "deliberation": [
                         f.model_dump(mode="json")
                         for f in self.court.products(

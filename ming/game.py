@@ -103,6 +103,13 @@ class Game:
             "failure": failure,
             "pending": pending,
             "petitions": [p.model_dump(mode="json") for p in self.month.petitions()],
+            "returned_petitions": [
+                {
+                    "petition": f.detail,
+                    "awaiting_drafter": not self.court.petition_officials(),
+                }
+                for f in self.court.returned_petitions(visible=True)
+            ],
         }
 
     def settle_month(self, date: dict[str, Any] | None = None) -> None:
