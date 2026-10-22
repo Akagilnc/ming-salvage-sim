@@ -14,7 +14,7 @@ from pydantic_ai.exceptions import ToolRetryError, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelResponse
 
 from ming.ledger import Ledger
-from ming.middle.fiscal import OUTPUT_METRICS
+from ming.middle.fiscal import OUTPUT_METRICS, levers
 from ming.middle.declaration import (
     Declaration,
     NightDeclaration,
@@ -120,16 +120,29 @@ def check(ledger: Ledger, out: Declaration) -> None:
 
 
 def check_fiscal(ledger: Ledger, out: Declaration) -> None:
+    config = ledger.entities(kind="fiscal")
     expenses = {
         r["key"]: r["data"]["account"]
-        for r in ledger.entities(kind="fiscal")
+        for r in config
         if r["data"].get("direction") == "expense"
+    }
+    # A fiscal lever only on an entity the month accounts read it from.
+    targets = {
+        ("fiscal", "value"): levers(config),
+        ("fiscal", "payment_policy"): list(expenses),
+        ("account", "army_order"): ["国库"],
+        ("region", "fiscal_surcharge"): [
+            r["key"]
+            for r in ledger.entities(kind="region")
+            if "settle" in r["data"].get("fiscal", {})
+        ],
     }
     for fact in out.facts:
         for change in fact.changes:
+            allowed = targets.get((fact.entity_type, change.field))
+            if allowed is not None and fact.entity not in allowed:
+                fail(f"{fact.entity_type}.{change.field}的对象", fact.entity, allowed)
             if change.field == "payment_policy":
-                if fact.entity_type == "fiscal" and fact.entity not in expenses:
-                    fail("payment_policy义务科目", fact.entity, list(expenses))
                 try:
                     PaymentPolicy.model_validate(change.value)
                 except ValidationError as error:

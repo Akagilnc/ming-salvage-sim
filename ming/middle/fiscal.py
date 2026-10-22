@@ -9,6 +9,19 @@ WAN = 10_000
 # Building output goes to an account or a 0-100 world scale; "" yields nothing.
 OUTPUT_SCALES = {"皇威": "imperial_prestige", "民心": "public_support"}
 OUTPUT_METRICS = ["国库", "内库", *OUTPUT_SCALES, ""]
+# Provincial taxes collected at a national rate, and the estate's own route.
+REGION_TAXES = {"salt_tax": "盐税", "commerce_tax": "商税"}
+ESTATE = "皇庄"
+
+
+def levers(config: list[Item]) -> list[str]:
+    """Fiscal values the month accounts read; no other value is a decree lever."""
+    return [
+        *(row["key"] for row in config if row["data"]["budget_role"] == "fixed"),
+        *(f"{category}_rate" for category in REGION_TAXES.values()),
+        f"{ESTATE}_base",
+        f"{ESTATE}_rate",
+    ]
 
 
 def active_policy(data: Item, date: Item) -> PaymentPolicy:
@@ -169,7 +182,7 @@ class Accounts:
             fiscal = region.data.get("fiscal", {})
             if "settle" in fiscal:
                 self.income(region, "国库", fiscal["settle"]["p"]["起运定额"], "起运")
-            for field, category in (("salt_tax", "盐税"), ("commerce_tax", "商税")):
+            for field, category in REGION_TAXES.items():
                 if field in fiscal:
                     self.income(
                         region,
@@ -180,10 +193,10 @@ class Accounts:
                         category,
                     )
         self.income(
-            self.config["皇庄_base"],
+            self.config[f"{ESTATE}_base"],
             "内库",
-            obligation(("fiscal", "皇庄_base"), self.existing),
-            "皇庄",
+            obligation(("fiscal", f"{ESTATE}_base"), self.existing),
+            ESTATE,
         )
         for item in self.config.values():
             if (
