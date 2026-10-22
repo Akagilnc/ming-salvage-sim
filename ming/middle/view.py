@@ -261,13 +261,8 @@ def fact_exposure(
     ]
     rules.extend(
         [
-            (E.id.in_(access["known"]) & (F.kind == "decreed"), "text"),
-            (
-                F.detail["decree_id"].as_string().in_([str(i) for i in access["known"]])
-                & (F.kind == "decreed"),
-                "full",
-            ),
-            (E.id.in_(access["handled"]) & (F.kind == "secret_report"), "report"),
+            (E.id.in_(access["known"]) & (F.kind == "decreed"), "dated"),
+            (E.id.in_(access["handled"]) & (F.kind == "secret_report"), "dated"),
             (
                 (E.kind == "person")
                 & F.kind.in_(
@@ -280,7 +275,7 @@ def fact_exposure(
                         "audience_admitted",
                     )
                 ),
-                "optional_text",
+                "dated",
             ),
         ]
     )
@@ -290,9 +285,7 @@ def fact_exposure(
     if identity == "emperor":
         rules.append((F.kind == "unhandled", "empty"))
     if isinstance(identity, Officials):
-        rules.append(
-            (E.id.in_(accounts) & F.kind.in_(("changed", "received")), "optional_text")
-        )
+        rules.append((E.id.in_(accounts) & F.kind.in_(("changed", "received")), "text"))
     return case(*rules)
 
 
@@ -368,17 +361,17 @@ def project(
         if identity == "world" and fact.kind == "simulation":
             fact.detail = {k: v for k, v in fact.detail.items() if k != "messages"}
         if identity not in ("audit", "world"):
-            if item["exposure"] in ("text", "report"):
+            if item["exposure"] in ("text", "dated"):
                 fact.detail = {
-                    k: v
-                    for k, v in fact.detail.items()
-                    if k
-                    in ({"text", "date"} if item["exposure"] == "report" else {"text"})
+                    "text": fact.detail.get("text", ""),
+                    **{
+                        k: v
+                        for k, v in fact.detail.items()
+                        if item["exposure"] == "dated" and k in {"date", "successor"}
+                    },
                 }
             elif item["exposure"] == "empty":
                 fact.detail = {}
-            elif item["exposure"] == "optional_text":
-                fact.detail = {"text": fact.detail.get("text", "")}
             fact.emperor_words = ""
         result.append(fact)
     return result

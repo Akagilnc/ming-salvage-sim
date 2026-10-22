@@ -69,9 +69,11 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
             assert {
                 d.id for d in court.entities(Officials(people=[person]), kind="decree")
             } == expected
-            assert len(
-                [e for e in court.read_person(person).events if e["kind"] == "decreed"]
-            ) == len(expected)
+            assert [
+                e["date"]
+                for e in court.read_person(person).events
+                if e["kind"] == "decreed"
+            ] == [court.calendar().data] * len(expected)
         assert not court.entities("public", kind="decree")
         assert {
             d.id
@@ -188,6 +190,11 @@ def test_discoveries_stay_private_and_completion_stops_only_reports(
                 if f.detail.get("origin_ref") == str(secret.id)
             ]
             assert len(changed) == 2
+            assert [
+                e["date"]
+                for e in court.read_person("王承恩").events
+                if e["kind"] == "changed"
+            ] == [f.detail["date"] for f in changed if not f.detail["discovered"]]
             assert (
                 court.entities("audit", kind="person", key="韩爌")[0].data["intrigue"]
                 == 75

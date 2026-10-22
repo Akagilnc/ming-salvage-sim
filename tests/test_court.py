@@ -288,6 +288,11 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
     assert people["徐光启"].data["location"] == "南直隶 / 南京"
     assert people["郭允厚"].data["office"] == ""
     assert people["郭允厚"].data["status"] == "offstage"
+    assert [
+        (e["date"], e["successor"])
+        for e in court.read_person("郭允厚").events
+        if e["kind"] == "displaced"
+    ] == [(court.calendar().data, "徐光启")]
     for identity, names in (
         (Officials(people=["徐光启"]), ["国库"] if office_status == "active" else []),
         (Officials(people=["郭允厚"]), []),

@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from ming.ledger import Ledger
 from ming.middle.calendar import CAPITAL
+from ming.middle.night import change_hall
 from ming.middle.view import Officials, entities, journey, project
 
 
@@ -57,7 +58,6 @@ def read_person(ledger: Ledger, name: str) -> PersonView:
             **{k: v for k, v in e.detail.items() if k in {"date", "text", "successor"}},
         }
         for e in project(ledger, identity, {"entity_id": [person["id"], *decrees]})
-        if not (e.kind == "decreed" and e.entity_id == person["id"])
     ]
     return PersonView(found=True, person=data, events=events)
 
@@ -90,7 +90,7 @@ def set_hall(
             )
     if failures or night.data["closed"]:
         return HallResult(ok=False, hall=night.data["hall"], failures=failures)
-    hall = list(dict.fromkeys(p for p in night.data["hall"] + add if p not in remove))
+    hall = change_hall(night.data["hall"], add, remove)
     night.record("hall", "", {"add": add, "remove": remove}, {"hall": hall})
     admitted = [
         ledger.get(people[name]["id"])

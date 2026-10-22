@@ -27,6 +27,10 @@ class NightView(BaseModel):
     result: Literal["translated", "unhandled"] | None = None
 
 
+def change_hall(hall: list[str], add: list[str], remove: list[str]) -> list[str]:
+    return list(dict.fromkeys(p for p in hall + add if p not in remove))
+
+
 def read_night(ledger: Ledger, night_id: UUID) -> NightView:
     night = ledger.entities(entity_id=night_id, query=NIGHT_ROWS)[0]
     date = ledger.entities(kind="calendar")[0]["data"]
@@ -35,11 +39,7 @@ def read_night(ledger: Ledger, night_id: UUID) -> NightView:
     for item in ledger.facts(entity_id=night_id, kind=("turn", "hall")):
         detail = item["detail"]
         if item["kind"] == "hall":
-            hall = list(
-                dict.fromkeys(
-                    p for p in hall + detail["add"] if p not in detail["remove"]
-                )
-            )
+            hall = change_hall(hall, detail["add"], detail["remove"])
         else:
             turns.append(
                 TurnView(**detail, emperor_words=item["emperor_words"], hall=hall)
