@@ -15,29 +15,38 @@ from ming.middle.month_work import COST_RULES, Materials, Simulation, prompt, re
 from ming.middle.view import EntityView
 
 
+def push_verdict(petition: PendingPetition, court: Court) -> dict[str, Any] | None:
+    """This petition's landed imperial-push reconsideration, or None."""
+    option = next(
+        (i for i, name in enumerate(petition.options) if name == "御笔强推"), None
+    )
+    if option is None:
+        return None
+    decision = {"petition_id": str(petition.id), "option": option}
+    return next(
+        (
+            f.detail
+            for f in court.products(petition.entity_id, kind="deliberation")
+            if f.detail.get("decision_key") == decision
+        ),
+        None,
+    )
+
+
 def push_pending(
     petition: PendingPetition, court: Court, choice: dict[str, Any] | None
 ) -> bool:
     """Selected imperial push whose reconsideration has not yet landed."""
     if choice is None or choice.get("text") != "御笔强推":
         return False
-    decision = {"petition_id": str(petition.id), "option": choice["option"]}
-    return not any(
-        f.detail.get("decision_key") == decision
-        for f in court.products(petition.entity_id, kind="deliberation")
-    )
+    return push_verdict(petition, court) is None
 
 
 def continuing_options(petition: PendingPetition, court: Court) -> range | list[int]:
     """Forks continue; imperial backing waits for its own renewed approval."""
     if petition.entity_id == petition.route_id:
         return range(len(petition.options))
-    approved = any(
-        f.detail["verdict"] == "准"
-        and f.detail["decision_key"]["petition_id"] == str(petition.id)
-        for f in court.products(petition.entity_id, kind="deliberation")
-        if f.detail.get("decision_key")
-    )
+    approved = (verdict := push_verdict(petition, court)) is not None and verdict["verdict"] == "准"
     return [
         i for i, option in enumerate(petition.options)
         if option == "强颁" or (option == "御笔强推" and approved)

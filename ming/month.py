@@ -58,39 +58,20 @@ class Month:
 
     def choose(self, petition_id: UUID, option: int) -> None:
         self.inbox.choose(petition_id, option)
-        # The choice action owns the reconsideration before it yields, so a
-        # month started while that action is in flight can wait on the same task.
-        self.ensure_reconsideration(str(petition_id))
 
-    def ensure_reconsideration(self, petition_id: str) -> asyncio.Task[dict[str, Any]] | None:
-        """One in-flight push reconsideration for this petition; not the segment's."""
-        choice = next(
-            (f.detail for f in self.court.petition_products([petition_id], "choice")),
-            None,
-        )
-        if choice is None or choice.get("text") != "御笔强推":
-            return None
-        task = self.reconsiderations.get(petition_id)
-        if task is not None and not (task.done() and task.exception() is not None):
-            return task
-        detail = self.court.petition(petition_id).detail
-        petition = PendingPetition.model_validate(
-            {k: v for k, v in detail.items() if k != "date"}
-        )
-        task = self.reconsiderations[petition_id] = asyncio.create_task(
-            self.deliberations.run(
-                self.court.entity(petition.entity_id),
-                petition.route_id,
-                {"petition_id": petition_id, "option": choice["option"]},
+    async def reconsider(self, petition: PendingPetition, option: int) -> None:
+        """Lazy push reconsideration for this petition; original segments never call it."""
+        key = str(petition.id)
+        task = self.reconsiderations.get(key)
+        if task is None or (task.done() and task.exception() is not None):
+            task = self.reconsiderations[key] = asyncio.create_task(
+                self.deliberations.run(
+                    self.court.entity(petition.entity_id),
+                    petition.route_id,
+                    {"petition_id": key, "option": option},
+                )
             )
-        )
-        task.add_done_callback(self.simulations.log_failure)
-        return task
-
-    async def reconsider(self, petition_id: str) -> None:
-        task = self.ensure_reconsideration(petition_id)
-        if task is not None:
-            await task
+        await task
 
     async def night(self, night: EntityView, decrees: list[EntityView]) -> bool:
         verdicts = await self.verdicts(decrees, night.id)
@@ -152,7 +133,7 @@ class Month:
                     None,
                 )
                 if choice is not None and choice["text"] == "御笔强推":
-                    await self.reconsider(petition_id)
+                    await self.reconsider(petition, choice["option"])
                 # Only a choice that continues the segment depends on its parent
                 # original; 收回/留中 consume no continuation and never wait for it.
                 if (
