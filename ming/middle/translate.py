@@ -117,7 +117,9 @@ def check_decrees(ledger: Ledger, out: Declaration, source: UUID) -> None:
     for item in [*out.facts, *out.decree_events]:
         ref = item.decree
         if ref is not None:
-            if not isinstance(out, NightDeclaration) or not 0 <= ref < len(out.decrees):
+            if not isinstance(out, NightDeclaration) and owner["kind"] == "decree":
+                fail("decree", ref, "省略 decree，月末本旨的来源就是本旨")
+            elif not isinstance(out, NightDeclaration) or not 0 <= ref < len(out.decrees):
                 fail("decree", ref, "本份 decrees 的零基下标")
         elif owner["kind"] != "decree" and (
             isinstance(item, DecreeEvent) or item.discovered
