@@ -22,6 +22,8 @@ COLLECTIONS = [
     ("opening", "world", "world", ("name",)),
     ("multiple_offices", "offices", "office", ("name",)),
     ("offices", "priority", "office_type", ("type",)),
+    ("fiscal_config", "items", "fiscal", ("key",)),
+    ("events", "", "event", ("title",)),
 ]
 
 # Scalar entity references, shared by import and declaration validation.
@@ -51,7 +53,9 @@ def import_opening(ledger: Ledger, content: Path) -> None:
     for filename, collection, kind, fields in COLLECTIONS:
         path = content / f"{filename}.json"
         try:
-            records = json.loads(path.read_text())[collection]
+            records = json.loads(path.read_text())
+            if collection:
+                records = records[collection]
         except (OSError, ValueError, KeyError) as exc:
             raise ValueError(f"{path}: {exc}") from exc
         for index, record in enumerate(records):

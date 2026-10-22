@@ -3,6 +3,7 @@
 import json
 from typing import Any, TypeVar, cast
 
+from pydantic import ValidationError
 from pydantic_ai import (
     Agent,
     ModelRetry,
@@ -13,7 +14,12 @@ from pydantic_ai.exceptions import ToolRetryError, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelResponse
 
 from ming.ledger import Ledger
-from ming.middle.declaration import Declaration, NightDeclaration, Unhandled
+from ming.middle.declaration import (
+    Declaration,
+    NightDeclaration,
+    PaymentPolicy,
+    Unhandled,
+)
 from ming.middle.queries import CATALOGUE
 from ming.middle.opening import REFERENCES
 from ming.middle.rules import check_rules
@@ -56,6 +62,11 @@ def allowed_fields(ledger: Ledger) -> dict[str, set[str]]:
     for row in ledger.read(CATALOGUE):
         if row["source"] and row["kind"] != "calendar":
             fields.setdefault(row["kind"], set()).update(row["data"])
+    fields.setdefault("region", set()).add("fiscal_surcharge")
+    fields.setdefault("event", set()).add("terminal_reason")
+    for kind in ("army", "fiscal"):
+        fields.setdefault(kind, set()).add("payment_policy")
+        fields[kind].difference_update({"arrears", "month_paid"})
     fields.setdefault("person", set()).add("travel_speed")
     fields["person"].difference_update(
         {"transit_to", "remaining_distance", "waiting_audience"}
@@ -99,8 +110,67 @@ def check(ledger: Ledger, out: Declaration) -> None:
                     change.field,
                     sorted(fields[fact.entity_type]),
                 )
+    check_fiscal(ledger, out)
     check_rules(out, set(names.get("affair", {})))
     check_references(out, names)
+
+
+def check_fiscal(ledger: Ledger, out: Declaration) -> None:
+    expenses = {
+        r["key"]: r["data"]["account"]
+        for r in ledger.entities(kind="fiscal")
+        if r["data"].get("direction") == "expense"
+    }
+    for fact in out.facts:
+        for change in fact.changes:
+            if change.field == "payment_policy":
+                if fact.entity_type == "fiscal" and fact.entity not in expenses:
+                    fail("payment_policy义务科目", fact.entity, list(expenses))
+                try:
+                    PaymentPolicy.model_validate(change.value)
+                except ValidationError as error:
+                    raise ModelRetry(str(error)) from error
+            if (
+                change.purpose == "当月饷"
+                and change.counterpart
+                and change.counterpart.entity_type == "fiscal"
+                and change.counterpart.entity not in expenses
+            ):
+                fail("当月饷义务科目", change.counterpart.entity, list(expenses))
+            if (fact.entity_type, change.field) == ("event", "terminal_reason"):
+                row = ledger.entities(kind="event", key=fact.entity)[0]
+                if change.value not in row["data"].get("terminal_reason_labels", []):
+                    fail(
+                        fact.entity + ".terminal_reason",
+                        change.value,
+                        row["data"].get("terminal_reason_labels", []),
+                    )
+            if fact.entity_type == "account" and change.field in {
+                "payment_order",
+                "army_order",
+            }:
+                choices = (
+                    [
+                        r["key"]
+                        for r in ledger.entities(kind="army")
+                        if "salary_rate" in r["data"]
+                    ]
+                    if change.field == "army_order"
+                    else [
+                        key
+                        for key, account in expenses.items()
+                        if account == fact.entity
+                    ]
+                    + (["军饷"] if fact.entity == "国库" else [])
+                )
+                value = change.value
+                if not isinstance(value, list):
+                    fail(fact.entity + "." + change.field, value, choices)
+                values = cast(list[Any], value)
+                if any(not isinstance(v, str) or v not in choices for v in values):
+                    fail(fact.entity + "." + change.field, values, choices)
+                if len(values) != len(set(values)) or set(values) != set(choices):
+                    fail(fact.entity + "." + change.field, values, choices)
 
 
 def check_references(out: Declaration, names: dict[str, dict[str, list[str]]]) -> None:
@@ -158,6 +228,12 @@ def declaration_agent(
         return json.dumps(
             {
                 "names_and_aliases": catalogue(ledger),
+                "field_schemas": {"payment_policy": PaymentPolicy.model_json_schema()},
+                "fiscal_units": {
+                    "taels": "两增减",
+                    "fiscal_surcharge": "省加派月额万两，设为目标值",
+                    "payment_policy": "见field_schemas。欠额与month_paid只有引擎写。payment_order及army_order为完整正名顺序。",
+                },
                 "allowed_fields": {
                     k: sorted(v) for k, v in allowed_fields(ledger).items()
                 },

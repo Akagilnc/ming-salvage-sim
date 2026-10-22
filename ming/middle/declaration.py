@@ -34,9 +34,34 @@ class PendingPetition(Petition):
     blocking: bool
 
 
+class FiscalEnd(StrictModel):
+    year: int
+    month: int = Field(ge=1, le=12)
+
+
+class PaymentPolicy(StrictModel):
+    factor: float = Field(
+        default=1,
+        ge=0,
+        le=1,
+        strict=True,
+        description="应付保留比例；折半为0.5，减去部分不记欠。",
+    )
+    defer: float = Field(
+        default=0, ge=0, le=1, strict=True, description="应付中暂欠的比例，未付仍记欠。"
+    )
+    until: FiscalEnd | None = Field(
+        default=None, description="止期含当月；过期回原额，无止期一直有效。"
+    )
+
+
 class Change(StrictModel):
     field: str
     value: Any
+    purpose: Literal["补欠", "当月饷", "犒赏", "专项"] | None = Field(
+        default=None,
+        description="账户付给军队或财政科目的款须写名目；value仍为带符号的两数。",
+    )
     counterpart: EntityRef | None = Field(
         default=None,
         description="钱粮另一边；必须也在本份 facts 中，两边带符号增减成对。无出处收入可不填。",

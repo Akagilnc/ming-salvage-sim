@@ -493,6 +493,18 @@ def test_month_transport_retry_is_bounded_and_persistent(
                 "UnexpectedModelBehavior" if status == "structure" else "ModelHTTPError"
             )
             assert state["date"]["month"] == 10
+            if name == "gazette":
+                before = audit(game_db)
+                assert (
+                    len([f for f in before["facts"] if f["kind"] == "month_accounts"])
+                    == 1
+                )
+                balances = {
+                    e["key"]: e["data"]["taels"]
+                    for e in before["entities"]
+                    if e["kind"] == "account"
+                }
+                client.post("/actions", json={"action": "load", "save": game_db.name})
             client.post("/actions", json={"action": "continue"})
             assert client.get("/state").json()["game"]["failure"] == state["failure"]
             client.post("/actions", json={"action": "retry"})
@@ -501,6 +513,13 @@ def test_month_transport_retry_is_bounded_and_persistent(
         assert state["failure"] is None
         ledger = audit(game_db.parent / client.get("/state").json()["save"])
         assert len([f for f in ledger["facts"] if f["kind"] == "landed"]) == 1
+        assert len([f for f in ledger["facts"] if f["kind"] == "month_accounts"]) == 1
+        if name == "gazette":
+            assert {
+                e["key"]: e["data"]["taels"]
+                for e in ledger["entities"]
+                if e["kind"] == "account"
+            } == balances
 
 
 @pytest.mark.parametrize("model", ["", "sonnet"])

@@ -94,7 +94,7 @@ def test_rejected_decree_is_forced_withdrawn_or_reconsidered(
             ]
             assert not [f for f in ledger["facts"] if f["kind"] == "interim"]
             world = next(e for e in ledger["entities"] if e["kind"] == "world")
-            assert world["data"]["imperial_prestige"] == 20
+            assert world["data"]["imperial_prestige"] == 40
             return
         declarations = (
             ("month_empty.txt", "month_force.txt", "month_empty.txt")
@@ -129,9 +129,8 @@ def test_rejected_decree_is_forced_withdrawn_or_reconsidered(
         ledger = audit(tmp_path / save)
         decree = next(e for e in ledger["entities"] if e["kind"] == "decree")
         world = next(e for e in ledger["entities"] if e["kind"] == "world")
-        assert world["data"]["public_support"] == 50
-        assert (world["data"]["imperial_prestige"] < 20) == (option == 0)
-        assert (world["data"]["imperial_prestige"] == 20) == (option != 0)
+        assert world["data"]["public_support"] == pytest.approx(59.5)
+        assert world["data"]["imperial_prestige"] == (27 if option == 0 else 30)
         assert len(
             [
                 f
@@ -171,7 +170,7 @@ def test_rejected_decree_is_forced_withdrawn_or_reconsidered(
             assert client.get("/state").json()["game"]["date"]["month"] == 12
             ledger = audit(tmp_path / save)
             world = next(e for e in ledger["entities"] if e["kind"] == "world")
-            assert world["data"]["imperial_prestige"] < 20
+            assert world["data"]["imperial_prestige"] == 27
             assert len(
                 [
                     f

@@ -230,6 +230,7 @@ class Month:
             calendar,
             {
                 "scope": "世界推演",
+                "fiscal_events": self.court.fiscal_events(),
                 "nights": [
                     {
                         "night_id": str(n.id),
@@ -286,6 +287,7 @@ class Month:
             if not ready or pending:
                 return pending
             await self.landing.run()
+            self.court.settle_accounts()
             await self.gazette.run()
             self.court.advance_month()
             return self.petitions()

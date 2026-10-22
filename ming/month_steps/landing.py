@@ -33,7 +33,7 @@ class Landing:
                     "entities": [e.model_dump(mode="json") for e in entities],
                     "scope": "只交本旨后果"
                     if source.kind == "decree"
-                    else "只交世界其余变化，别重复各道旨的后果",
+                    else "交本世界段及其请旨、批红续写的后果；只排除others列出的独立decree后果",
                     "deliberation": [
                         f.model_dump(mode="json")
                         for f in self.court.products(

@@ -50,12 +50,16 @@ def test_new_game_imports_complete_world_records_and_separates_identities(
         ("opening", "world"),
         ("multiple_offices", "offices"),
         ("offices", "priority"),
+        ("fiscal_config", "items"),
     ]:
         source = f"{filename}.json/{collection}"
         expected = json.loads((CONTENT / f"{filename}.json").read_text())[collection]
         assert [e.data for e in entities if e.source == source] == [
             canonical(r) for r in expected
         ]
+    assert [e.data for e in entities if e.kind == "event"] == json.loads(
+        (CONTENT / "events.json").read_text()
+    )
     dossiers = json.loads((CONTENT / "minister_dossiers.json").read_text())
     assert {e.key: e.data for e in entities if e.kind == "dossier"} == dossiers
     assert [e.key for e in entities if e.kind == "gazette"] == ["opening"]
