@@ -150,7 +150,15 @@ class Game:
             self.start_background()
 
     def recover_month(self) -> None:
-        """Ledger-driven month gap-fill; the 请先退朝 gate only guards user clicks."""
+        """The one ledger-driven month gap-fill after a reopen, a recovery or a
+        choice; the 请先退朝 gate only guards user clicks. Running or failed work
+        keeps it from starting, so it never runs twice or silently retries."""
+        if (
+            not self.month.opened()
+            or self.failures()
+            or any(i["status"] == "running" for i in self.interactions().values())
+        ):
+            return
         payload = {"date": self.court.calendar().data}
         self.interaction("month", "running", payload)
         self.active = asyncio.create_task(self.execute("month", payload))
@@ -181,13 +189,13 @@ class Game:
         )
         if self.presentation()["failure"]:
             return
-        if self.month.opened():
-            # After the recovered interaction, missing products are filled by the
-            # same ledger-driven month entry as any other reopen; the speculative
-            # path stops before world products and would leave them missing.
-            self.recover_month()
-        else:
+        if not self.month.opened():
             self.start_background()
+        elif all(item["action"] != "month" for item in pending):
+            # Missing products are filled by the same ledger-driven month entry
+            # as any other reopen (a recovered month already was that entry); the
+            # speculative path stops before world products and would leave them.
+            self.recover_month()
 
     async def command(self, action: str, payload: dict[str, Any]) -> None:
         date = self.court.calendar().data
@@ -345,15 +353,7 @@ class Game:
             self.interaction(action, "done", payload)
             # The choice is complete before shared month work resumes. Reuse the
             # normal month action so its waiting and failures cannot belong to it.
-            if (
-                action == "choose"
-                and self.month.opened()
-                and not self.month.petitions()
-                and not self.failures()
-                and not any(
-                    i["status"] == "running" for i in self.interactions().values()
-                )
-            ):
+            if action == "choose" and not self.month.petitions():
                 self.recover_month()
             return output
         except Exception as error:
