@@ -138,17 +138,22 @@ def check_decrees(
     names: dict[str, dict[str, list[str]]],
 ) -> None:
     owner = ledger.entities(entity_id=source)[0]
+    # Only a night has a decrees list to index. Month shares omit the source.
     for item in [*out.facts, *out.decree_events]:
         ref = item.decree
-        if ref is not None:
-            if not isinstance(out, NightDeclaration) and owner["kind"] == "decree":
-                fail("decree", ref, "省略 decree，月末本旨的来源就是本旨")
-            elif not isinstance(out, NightDeclaration) or not 0 <= ref < len(out.decrees):
+        if isinstance(out, NightDeclaration):
+            if ref is not None and not 0 <= ref < len(out.decrees):
                 fail("decree", ref, "本份 decrees 的零基下标")
-        elif owner["kind"] != "decree" and (
-            isinstance(item, DecreeEvent) or item.discovered
-        ):
-            fail("decree", ref, "指定所属旨意；只有月末本旨声明可省略来源")
+            elif ref is None and (isinstance(item, DecreeEvent) or item.discovered):
+                fail("decree", ref, "指定所属旨意；只有月末本旨声明可省略来源")
+        elif ref is not None:
+            fail(
+                "decree",
+                ref,
+                "省略 decree，月末本旨的来源就是本旨"
+                if owner["kind"] == "decree"
+                else "省略 decree",
+            )
     if isinstance(out, NightDeclaration) and out.decrees:
         turns = read_night(ledger, source).turns
         for decree in out.decrees:
