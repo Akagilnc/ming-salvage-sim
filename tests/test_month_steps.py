@@ -1,10 +1,12 @@
 """Medium: the new month branches through the same HTTP/CLI boundaries."""
 
+import asyncio
 import json
 from pathlib import Path
 
 import pytest
-from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelResponse
+from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelResponse, TextPart
+from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.test import TestModel
 from starlette.testclient import TestClient
 
@@ -232,10 +234,46 @@ def test_rejected_decree_is_forced_withdrawn_or_reconsidered(
             ) == next(e["id"] for e in ledger["entities"] if e["kind"] == "calendar")
 
 
+async def _month_during_push(client, petition_id: str, steps, received: list) -> bool:
+    """Busy choose of a push; month starts before that reconsideration lands."""
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow(messages, _info):
+        received.extend(messages)
+        entered.set()
+        await release.wait()
+        return ModelResponse(parts=[TextPart((RECORDED / "deliberation.txt").read_text())])
+
+    game = client.app.state.web.game
+    await game.drain()
+    steps["deliberation"] = FunctionModel(slow)
+    hold = asyncio.Event()
+
+    async def busy():
+        await hold.wait()
+
+    game.active = asyncio.create_task(busy())
+    choose = game.start("choose", {"petition": petition_id, "option": 3})
+    await entered.wait()
+    hold.set()
+    await asyncio.sleep(0)
+    month = game.start("month")
+    for _ in range(100):
+        if month.done():
+            break
+        await asyncio.sleep(0)
+    waited = not month.done()
+    release.set()
+    await asyncio.gather(month, choose)
+    await game.drain()
+    return waited
+
+
 @pytest.mark.parametrize("steps", ["approved"], indirect=True)
 @pytest.mark.parametrize(
     ("case", "game_db"),
-    [(case, "rejected_night") for case in ("approved", "rejected", "retry")]
+    [(case, "rejected_night") for case in ("approved", "rejected", "retry", "in_flight")]
     + [(case, "first_night") for case in ("original_retry", "original_reopen")],
     indirect=["game_db"],
 )
@@ -265,8 +303,12 @@ def test_imperial_backing_reconsiders_the_original_decree(game_db, steps, audit,
             {"petition": petition["id"], "words": "朕另下手敕，照此办理。"},
         ):
             assert client.post("/actions", json={"action": "choose", **invalid}).status_code == 400
-        client.post("/actions", json={"action": "choose", "petition": petition["id"], "option": 3}).raise_for_status()
-        client.portal.call(client.app.state.web.game.drain)
+        if case == "in_flight":
+            # J3: busy choose of 御笔强推, month starts while that reconsideration is in flight.
+            assert client.portal.call(_month_during_push, client, petition["id"], steps, received)
+        else:
+            client.post("/actions", json={"action": "choose", "petition": petition["id"], "option": 3}).raise_for_status()
+            client.portal.call(client.app.state.web.game.drain)
         if case.endswith("retry") or case == "original_reopen":
             assert client.get("/state").json()["game"]["failure"]["action"] == "choose"
             assert len([f for f in audit(game_db)["facts"] if f["kind"] == "deliberation"]) == 1 + unsimulated
@@ -303,11 +345,17 @@ def test_imperial_backing_reconsiders_the_original_decree(game_db, steps, audit,
             client.post("/actions", json={"action": "choose", "petition": state["petitions"][0]["id"], "option": 1}).raise_for_status()
         else:
             assert state["petitions"] == []
-        client.post("/actions", json={"action": "month"}).raise_for_status()
-        client.portal.call(client.app.state.web.game.drain)
+        if case != "in_flight":
+            client.post("/actions", json={"action": "month"}).raise_for_status()
+            client.portal.call(client.app.state.web.game.drain)
         ledger = audit(game_db)
         assert client.get("/state").json()["game"]["date"]["month"] == 11
         assert len([f for f in ledger["facts"] if f["kind"] == "landed" and f["entity_id"] == decree["id"]]) == int(case != "rejected")
+        assert next(
+            f["detail"]["date"]["month"]
+            for f in ledger["facts"]
+            if f["kind"] == "deliberation" and f["detail"].get("decision_key")
+        ) == 10
         assert len([
             f for f in ledger["facts"]
             if f["kind"] == "simulation" and f["entity_id"] == decree["data"]["night_id"]

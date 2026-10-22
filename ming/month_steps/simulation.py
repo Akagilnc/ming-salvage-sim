@@ -15,6 +15,19 @@ from ming.middle.month_work import COST_RULES, Materials, Simulation, prompt, re
 from ming.middle.view import EntityView
 
 
+def push_pending(
+    petition: PendingPetition, court: Court, choice: dict[str, Any] | None
+) -> bool:
+    """Selected imperial push whose reconsideration has not yet landed."""
+    if choice is None or choice.get("text") != "御笔强推":
+        return False
+    decision = {"petition_id": str(petition.id), "option": choice["option"]}
+    return not any(
+        f.detail.get("decision_key") == decision
+        for f in court.products(petition.entity_id, kind="deliberation")
+    )
+
+
 def continuing_options(petition: PendingPetition, court: Court) -> range | list[int]:
     """Forks continue; imperial backing waits for its own renewed approval."""
     if petition.entity_id == petition.route_id:
@@ -230,6 +243,8 @@ class Simulations:
                     or choice["option"] not in options
                     or any(s.get("petition_id") == str(petition.id) for s in segments)
                 ):
+                    # Unjudged imperial push is selected work, not a finished 收回/留中.
+                    ready = not push_pending(petition, self.court, choice) and ready
                     continue
                 task = self.start_forecast(petition, choice["option"])
                 if not task.done() or task.exception() is not None:

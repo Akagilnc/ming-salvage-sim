@@ -268,6 +268,9 @@ class Game:
             payload = self.accept(action, payload)
         task = asyncio.create_task(self.execute(action, payload))
         if action == "choose" and self.busy():
+            # Retry does not pass through Month.choose; the task must exist
+            # before this returns so a month started in the same turn can wait.
+            self.month.ensure_reconsideration(str(payload["petition"]))
             self.track(task)
             return task
         self.active = task

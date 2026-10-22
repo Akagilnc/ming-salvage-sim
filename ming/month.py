@@ -31,6 +31,8 @@ class Month:
         self.gazette = Gazette(court, model, on_delta)
         self.lock = asyncio.Lock()
         self.originals: dict[UUID, asyncio.Task[bool]] = {}
+        # Petition-chain reconsiderations. Original segments never start these.
+        self.reconsiderations: dict[str, asyncio.Task[dict[str, Any]]] = {}
 
     def opened(self) -> bool:
         return bool(self.court.products(self.court.calendar().id, kind="month_open"))
@@ -56,6 +58,39 @@ class Month:
 
     def choose(self, petition_id: UUID, option: int) -> None:
         self.inbox.choose(petition_id, option)
+        # The choice action owns the reconsideration before it yields, so a
+        # month started while that action is in flight can wait on the same task.
+        self.ensure_reconsideration(str(petition_id))
+
+    def ensure_reconsideration(self, petition_id: str) -> asyncio.Task[dict[str, Any]] | None:
+        """One in-flight push reconsideration for this petition; not the segment's."""
+        choice = next(
+            (f.detail for f in self.court.petition_products([petition_id], "choice")),
+            None,
+        )
+        if choice is None or choice.get("text") != "御笔强推":
+            return None
+        task = self.reconsiderations.get(petition_id)
+        if task is not None and not (task.done() and task.exception() is not None):
+            return task
+        detail = self.court.petition(petition_id).detail
+        petition = PendingPetition.model_validate(
+            {k: v for k, v in detail.items() if k != "date"}
+        )
+        task = self.reconsiderations[petition_id] = asyncio.create_task(
+            self.deliberations.run(
+                self.court.entity(petition.entity_id),
+                petition.route_id,
+                {"petition_id": petition_id, "option": choice["option"]},
+            )
+        )
+        task.add_done_callback(self.simulations.log_failure)
+        return task
+
+    async def reconsider(self, petition_id: str) -> None:
+        task = self.ensure_reconsideration(petition_id)
+        if task is not None:
+            await task
 
     async def night(self, night: EntityView, decrees: list[EntityView]) -> bool:
         verdicts = await self.verdicts(decrees, night.id)
@@ -117,10 +152,7 @@ class Month:
                     None,
                 )
                 if choice is not None and choice["text"] == "御笔强推":
-                    await self.deliberations.run(
-                        self.court.entity(petition.entity_id), petition.route_id,
-                        {"petition_id": petition_id, "option": choice["option"]},
-                    )
+                    await self.reconsider(petition_id)
                 # Only a choice that continues the segment depends on its parent
                 # original; 收回/留中 consume no continuation and never wait for it.
                 if (
@@ -134,10 +166,11 @@ class Month:
                 pending = self.petitions()
             if date != self.court.calendar().data:
                 return pending
-            waiting, continuing = self.gaps(petition_id)
-            if not waiting and not continuing:
+            waiting, continuing, reconsidering = self.gaps(petition_id)
+            if not waiting and not continuing and not reconsidering:
                 return pending
             # Only the caller's selected work waits here, outside the month lock.
+            # An in-flight push reconsideration waits with the selected continuations.
             jobs: list[Awaitable[object]] = [
                 *(
                     self.simulations.wait_for_choice(key)
@@ -149,6 +182,7 @@ class Month:
                     asyncio.shield(self.simulations.continuations[key])
                     for key in continuing
                 ),
+                *(asyncio.shield(self.reconsiderations[pid]) for pid in reconsidering),
             ]
             for result in await asyncio.gather(*jobs, return_exceptions=True):
                 if isinstance(result, BaseException):
@@ -157,7 +191,7 @@ class Month:
 
     def gaps(
         self, petition_id: str | None
-    ) -> tuple[list[tuple[UUID, str, int]], list[tuple[UUID, str]]]:
+    ) -> tuple[list[tuple[UUID, str, int]], list[tuple[UUID, str]], list[str]]:
         """Unfinished selected work; one question waits only for its own chain."""
         facts = (
             self.court.petition_products(
@@ -192,7 +226,13 @@ class Month:
             if not (task.done() and task.exception() is None)
             and (chain is None or key[1] in chain)
         ]
-        return waiting, continuing
+        reconsidering = [
+            pid
+            for pid, task in self.reconsiderations.items()
+            if not (task.done() and task.exception() is None)
+            and (petition_id is None or pid == petition_id)
+        ]
+        return waiting, continuing, reconsidering
 
     def nights(self, decrees: list[EntityView]) -> list[EntityView]:
         return [
