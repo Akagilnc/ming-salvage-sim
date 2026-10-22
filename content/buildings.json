@@ -566,6 +566,9 @@
       "output_metric": "",
       "output_amount": 0,
       "status": "天启六年大捷后城防尚固，红夷炮在城，墙垛需岁修。"
-    }
+    },
+    {"id": "royal_gold_mine", "region_id": "beizhili", "name": "皇家天佑金矿", "category": "财政", "level": 5, "condition": 100, "maintenance": 0, "risk": 0, "output_metric": "国库", "output_amount": 800},
+    {"id": "imperial_bank", "region_id": "beizhili", "name": "大明中央银行", "category": "财政", "level": 5, "condition": 100, "maintenance": 0, "risk": 0, "output_metric": "内库", "output_amount": 300},
+    {"id": "imperial_airlines", "region_id": "beizhili", "name": "帝国航空", "category": "交通", "level": 5, "condition": 100, "maintenance": 0, "risk": 0, "output_metric": "皇威", "output_amount": 10}
   ]
 }

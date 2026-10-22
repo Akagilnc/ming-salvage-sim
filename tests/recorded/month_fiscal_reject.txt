@@ -1,0 +1,1 @@
+{"facts":[{"entity_type":"event","entity":"辽饷升至一分二厘","create":false,"affair":null,"changes":[{"field":"terminal_reason","value":"已驳"}],"text":"皇帝批红驳回辽饷加派。本月征收仍按旧额，不改三饷应征，欠额、偿还顺序与账户余额均不因此事变动。"}],"reports":[]}

@@ -17,6 +17,50 @@ from ming.web import create_app
 from tests.test_court import replaying
 
 RECORDED = Path(__file__).parent / "recorded"
+GUOKU_ORDER = [
+    "军饷",
+    "官俸_base",
+    "宗室禄米_base",
+    "赈灾_base",
+    "工程_base",
+    "建筑维护_base",
+]
+ARMY_ORDER = [
+    "京营",
+    "关宁军 / 宁锦防线",
+    "山海关守军",
+    "宣大边军",
+    "蓟镇兵",
+    "登莱兵与水师",
+    "东江镇",
+    "陕西边军",
+    "南京守备军",
+    "福建水师",
+    "广东水师",
+    "西南土司兵",
+]
+BORDER_ORDER = [
+    "军饷",
+    "宗室禄米_base",
+    "官俸_base",
+    "赈灾_base",
+    "建筑维护_base",
+    "工程_base",
+]
+BORDER_ARMIES = [
+    "关宁军 / 宁锦防线",
+    "宣大边军",
+    "蓟镇兵",
+    "山海关守军",
+    "陕西边军",
+    "登莱兵与水师",
+    "东江镇",
+    "京营",
+    "南京守备军",
+    "福建水师",
+    "广东水师",
+    "西南土司兵",
+]
 # Event log, read rows, and tracking: one landing commit lands all three.
 LANDING = (
     "SELECT max(id) FROM ledger_events",
@@ -104,6 +148,21 @@ def test_month_without_decrees_advances_after_reopening(
             assert len(
                 [f for f in ledger["facts"] if f["kind"] == "impeachment"]
             ) == months * len([e for e in ledger["entities"] if e["kind"] == "faction"])
+            budgets = [f for f in ledger["facts"] if f["kind"] == "month_accounts"]
+            assert len(budgets) == months
+            assert [
+                f["kind"]
+                for f in ledger["facts"]
+                if f["kind"] in {"month_accounts", "gazette"}
+            ] == ["month_accounts", "gazette"] * len(budgets)
+            assert (
+                next(
+                    e["data"]["arrears"]
+                    for e in ledger["entities"]
+                    if e["kind"] == "army" and e["key"] == "关宁军 / 宁锦防线"
+                )
+                == 60
+            )
             assert not [e for e in ledger["entities"] if e["kind"] == "affair"]
             assert not [f for f in ledger["facts"] if f["kind"] == "forecast"]
             assert (
@@ -297,7 +356,9 @@ def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
             e["key"]: e["data"]["taels"]
             for e in ledger["entities"]
             if e["kind"] == "account"
-        } == {"国库": 3200000 - actual, "内库": 4400000 + actual}
+        } == pytest.approx(
+            {"国库": 11940269.2869425 - actual, "内库": 7657600 + actual}
+        )
         transfers = [
             f["detail"]
             for f in ledger["facts"]
@@ -324,10 +385,500 @@ def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
         assert state["date"]["month"] == 11
 
 
-def test_exhausted_month_declaration_is_unhandled_not_a_stopped_month(
-    tmp_path: Path, game_db: Path, steps, audit
+DEBT = {
+    "recording": "month_fiscal_payments.txt",
+    "army_arrears": 60,
+    "salary_arrears": (0,),
+    "dues": (66,),
+    "receipts": [],
+    "quota": 2.1969011325,
+    "prior_paid": 0,
+    "stipend_arrears": 0,
+    "court_arrears": 0,
+    "payment_order": GUOKU_ORDER,
+    "army_order": ARMY_ORDER,
+}
+
+
+@pytest.mark.parametrize(
+    ("opening_db", "case"),
+    [
+        (
+            None,
+            {
+                "recording": "month_fiscal_policy.txt",
+                "army_arrears": 40,
+                "salary_arrears": (25, 25, 25, 25),
+                "dues": (33, 33, 33, 66),
+                "receipts": [("补欠", 200000, 200000, None)],
+                "quota": 5.1969011325,
+            },
+        ),
+        (
+            None,
+            {
+                "army_arrears": 0,
+                "salary_arrears": (0, 0),
+                "dues": (66, 66),
+                "receipts": [
+                    ("补欠", 5000000, 600000, "obligation"),
+                    ("当月饷", 5000000, 144000, "obligation"),
+                    ("犒赏", 50000, 50000, None),
+                    ("专项", 60000, 60000, None),
+                ],
+                "prior_paid": 14.4,
+            },
+        ),
+        (
+            "shortage",
+            {
+                "salary_arrears": (992.97307130575, 1985.9461426115),
+                "dues": (66, 66),
+                "receipts": [
+                    ("补欠", 5000000, 0, "balance"),
+                    ("当月饷", 5000000, 0, "balance"),
+                    ("犒赏", 50000, 0, "balance"),
+                    ("专项", 60000, 0, "balance"),
+                ],
+                "stipend_arrears": 66,
+                "court_arrears": 667.24,
+            },
+        ),
+        pytest.param(
+            None,
+            {
+                "recording": "month_fiscal_reorder.txt",
+                "payment_order": BORDER_ORDER,
+                "army_order": BORDER_ARMIES,
+            },
+            id="reorder",
+        ),
+        pytest.param(
+            None,
+            {
+                "recording": "month_fiscal_building.txt",
+                "building": "钦定银矿",
+            },
+            id="building",
+        ),
+        pytest.param(
+            "prestige",
+            {
+                "recording": "month_empty.txt",
+                "prestige": 100,
+            },
+            id="prestige",
+        ),
+    ],
+    indirect=["opening_db"],
+)
+def test_month_keeps_debt_separate_from_reduction_and_temporary_deferral(
+    opening_db, game_db: Path, steps, audit, case
 ) -> None:
-    reply = (RECORDED / "month_invalid.txt").read_text()
+    case = {**DEBT, **case}
+    steps["Declaration"] = replaying([(RECORDED / case["recording"]).read_text()])
+    with TestClient(create_app(game_db.parent)) as client:
+        client.post("/actions", json={"action": "load", "save": game_db.name})
+        for index, due in enumerate(case["dues"]):
+            assert client.post("/actions", json={"action": "month"}).status_code == 204
+            assert client.get("/state").json()["game"]["failure"] is None
+            ledger = audit(game_db)
+            rows = {(e["kind"], e["key"]): e["data"] for e in ledger["entities"]}
+            assert rows[("army", "关宁军 / 宁锦防线")]["arrears"] == case["army_arrears"]
+            assert rows[("fiscal", "官俸_base")]["arrears"] == pytest.approx(
+                case["salary_arrears"][index]
+            )
+            assert rows[("fiscal", "宗室禄米_base")]["arrears"] == case["stipend_arrears"] * (index + 1)
+            assert rows[("fiscal", "宫廷_base")]["arrears"] == pytest.approx(
+                case["court_arrears"] * (index + 1)
+            )
+            assert (
+                rows[("fiscal", "内廷俸_base")]["arrears"]
+                == rows[("fiscal", "妃嫔_base")]["arrears"]
+                == 0
+            )
+            assert all(
+                e["data"]["taels"] >= 0
+                for e in ledger["entities"]
+                if e["kind"] == "account"
+            )
+            assert rows[("region", "陕西")]["fiscal"]["settle"]["p"][
+                "起运定额"
+            ] == pytest.approx(case["quota"])
+            stipends = [
+                f["detail"]
+                for f in ledger["facts"]
+                if f["kind"] == "monthly_payment"
+                and f["detail"]["recipient"] == "宗室禄米_base"
+            ]
+            assert (stipends[-1]["due"], stipends[-1]["paid"]) == (due, due - case["stipend_arrears"])
+            receipts = [f["detail"] for f in ledger["facts"] if f["kind"] == "received"]
+            assert [
+                (r["purpose"], r["nominal"], r["actual"], r["limit_reason"])
+                for r in receipts
+            ] == case["receipts"]
+            army_payments = [
+                f["detail"]
+                for f in ledger["facts"]
+                if f["kind"] == "monthly_payment"
+                and f["detail"]["recipient"] == "关宁军 / 宁锦防线"
+            ]
+            assert army_payments[-1]["prior_paid"] == (case["prior_paid"] if index == 0 else 0)
+            assert army_payments[-1]["paid"] + army_payments[-1][
+                "prior_paid"
+            ] == pytest.approx(14.4)
+            account = rows[("account", "国库")]
+            assert account["payment_order"] == case["payment_order"]
+            assert account["army_order"] == case["army_order"]
+            paid = [
+                f["detail"]["recipient"]
+                for f in ledger["facts"]
+                if f["kind"] == "monthly_payment"
+                and f["entity_id"]
+                == next(e["id"] for e in ledger["entities"] if e["key"] == "国库")
+            ]
+            expected = [
+                name
+                for category in case["payment_order"]
+                for name in (case["army_order"] if category == "军饷" else (category,))
+            ]
+            assert paid[-len(expected) :] == expected
+            if case.get("building"):
+                building = rows[("building", case["building"])]
+                assert next(
+                    f["detail"]["amount"]
+                    for f in ledger["facts"]
+                    if f["kind"] == "monthly_income"
+                    and f["detail"].get("source") == case["building"]
+                ) == pytest.approx(
+                    building["output_amount"] * building["condition"] / 100
+                )
+                assert building["condition"] != 100
+            if "prestige" in case:
+                assert (
+                    rows[("world", "天下")]["imperial_prestige"] == case["prestige"]
+                )
+                assert (
+                    next(
+                        f["detail"]["actual"]
+                        for f in ledger["facts"]
+                        if f["kind"] == "monthly_output"
+                        and f["detail"]["source"] == "帝国航空"
+                    )
+                    == 0
+                )
+            steps["Declaration"] = TestModel(
+                call_tools=[],
+                custom_output_text=(RECORDED / "month_empty.txt").read_text(),
+            )
+
+
+@pytest.mark.parametrize(
+    ("opening_db", "case"),
+    [
+        (
+            1631,
+            (
+                "month_fiscal_1631-haiku.json",
+                "辽饷升至一分二厘",
+                None,
+                51.79786519425,
+                0,
+                None,
+            ),
+        ),
+        (
+            1631,
+            ("month_fiscal_1631.json", "辽饷升至一分二厘", "已准", 69.063820259, 0, None),
+        ),
+        (
+            1640,
+            ("month_fiscal_1640.json", "剿饷议停", "已停", 51.79786519425, 0, None),
+        ),
+        pytest.param(
+            1631,
+            (
+                "month_fiscal_1631.json",
+                "辽饷升至一分二厘",
+                None,
+                51.79786519425,
+                2,
+                "month_empty.txt",
+            ),
+            id="retained",
+        ),
+        pytest.param(
+            1631,
+            (
+                "month_fiscal_1631.json",
+                "辽饷升至一分二厘",
+                "已驳",
+                51.79786519425,
+                1,
+                "month_fiscal_reject.txt",
+            ),
+            id="rejected",
+        ),
+    ],
+    indirect=["opening_db"],
+)
+def test_fiscal_petition_lands_only_declared_outcome_without_readding_levies(
+    opening_db, game_db: Path, steps, audit, case: tuple
+) -> None:
+    recording = json.loads((RECORDED / case[0]).read_text())
+    for name, replies in recording.items():
+        steps[name] = replaying(replies)
+    if case[5] is not None:
+        steps["Declaration"] = replaying([(RECORDED / case[5]).read_text()])
+    with TestClient(create_app(game_db.parent)) as client:
+        client.post("/actions", json={"action": "load", "save": game_db.name})
+        client.post("/actions", json={"action": "month"})
+        client.portal.call(client.app.state.web.game.drain)
+        state = client.get("/state").json()["game"]
+        assert state["failure"] is None
+        assert state["date"]["month"] == 1
+        assert state["petitions"][0]["blocking"] is True
+        client.post(
+            "/actions",
+            json={
+                "action": "choose",
+                "petition": state["petitions"][0]["id"],
+                "option": case[4],
+            },
+        )
+        client.portal.call(client.app.state.web.game.drain)
+        for month in (2, 3, 4):
+            state = client.get("/state").json()["game"]
+            assert state["failure"] is None
+            assert state["date"]["month"] == month
+            ledger = audit(game_db)
+            assert (
+                next(
+                    e["data"].get("terminal_reason")
+                    for e in ledger["entities"]
+                    if (e["kind"], e["key"]) == ("event", case[1])
+                )
+                == case[2]
+            )
+            assert sum(
+                e["data"]["fiscal"]["settle"]["p"]["三饷应征"]
+                for e in ledger["entities"]
+                if e["kind"] == "region" and "settle" in e["data"].get("fiscal", {})
+            ) == pytest.approx(case[3])
+            if month < 4:
+                received = []
+                for name, filename in (
+                    ("simulation", "simulation.txt"),
+                    ("Declaration", "month_empty.txt"),
+                ):
+                    steps[name] = replaying(
+                        [(RECORDED / filename).read_text()],
+                        received if name == "simulation" else None,
+                    )
+                client.post("/actions", json={"action": "month"})
+                assert (
+                    json.loads(received[-1].parts[0].content)["context"][
+                        "fiscal_events"
+                    ]
+                    == []
+                )
+
+
+@pytest.mark.parametrize(
+    "declared",
+    [
+        pytest.param((RECORDED / "month_invalid.txt").read_text(), id="invalid_shape"),
+        pytest.param(
+            [
+                {
+                    "entity_type": "event",
+                    "entity": "辽饷升至一分二厘",
+                    "create": False,
+                    "changes": [{"field": "terminal_reason", "value": "不准"}],
+                    "text": "结局不在该事件的闭集里",
+                }
+            ],
+            id="terminal_reason",
+        ),
+        pytest.param(
+            [
+                {
+                    "entity_type": "region",
+                    "entity": "陕西",
+                    "create": False,
+                    "changes": [{"field": "fiscal_surcharge", "value": "三"}],
+                    "text": "加派额不是数字",
+                }
+            ],
+            id="surcharge_type",
+        ),
+        pytest.param(
+            [
+                {
+                    "entity_type": "region",
+                    "entity": "不存在省",
+                    "create": True,
+                    "changes": [{"field": "fiscal_surcharge", "value": 3}],
+                    "text": "加派写到账本里没有的地区",
+                }
+            ],
+            id="surcharge_region",
+        ),
+        pytest.param(
+            [
+                {
+                    "entity_type": "account",
+                    "entity": "国库",
+                    "create": False,
+                    "changes": [
+                        {
+                            "field": "payment_order",
+                            "value": [
+                                "军饷",
+                                "官俸_base",
+                                "宗室禄米_base",
+                                "赈灾_base",
+                                "工程_base",
+                                "边饷",
+                            ],
+                        }
+                    ],
+                    "text": "改序写入不在科目里的名字",
+                }
+            ],
+            id="payment_order",
+        ),
+        pytest.param(
+            [
+                {
+                    "entity_type": "fiscal",
+                    "entity": "宗室禄米_base",
+                    "create": False,
+                    "changes": [
+                        {
+                            "field": "payment_policy",
+                            "value": {"factor": -0.5, "defer": 0.0},
+                        }
+                    ],
+                    "text": "减额比例为负",
+                }
+            ],
+            id="factor_negative",
+        ),
+        pytest.param(
+            [
+                {
+                    "entity_type": "fiscal",
+                    "entity": "宗室禄米_base",
+                    "create": False,
+                    "changes": [
+                        {
+                            "field": "payment_policy",
+                            "value": {"factor": 1.5, "defer": 0.0},
+                        }
+                    ],
+                    "text": "减额比例大于一",
+                }
+            ],
+            id="factor_high",
+        ),
+        pytest.param(
+            [
+                {
+                    "entity_type": "account",
+                    "entity": "国库",
+                    "create": False,
+                    "changes": [
+                        {
+                            "field": "taels",
+                            "value": -10000,
+                            "counterpart": {
+                                "entity_type": "army",
+                                "entity": "关宁军 / 宁锦防线",
+                            },
+                        }
+                    ],
+                    "text": "付给军队的款没写名目",
+                },
+                {
+                    "entity_type": "army",
+                    "entity": "关宁军 / 宁锦防线",
+                    "create": False,
+                    "changes": [],
+                    "text": "收到没写名目的拨付",
+                },
+            ],
+            id="purpose_missing",
+        ),
+        pytest.param(
+            [
+                {
+                    "entity_type": "account",
+                    "entity": "国库",
+                    "create": False,
+                    "changes": [
+                        {
+                            "field": "taels",
+                            "value": -10000,
+                            "purpose": "赏赐",
+                            "counterpart": {
+                                "entity_type": "army",
+                                "entity": "关宁军 / 宁锦防线",
+                            },
+                        }
+                    ],
+                    "text": "名目不在四类之内",
+                },
+                {
+                    "entity_type": "army",
+                    "entity": "关宁军 / 宁锦防线",
+                    "create": False,
+                    "changes": [],
+                    "text": "收到名目不在四类的拨付",
+                },
+            ],
+            id="purpose_unknown",
+        ),
+        pytest.param(
+            [
+                {
+                    "entity_type": "account",
+                    "entity": "国库",
+                    "create": False,
+                    "changes": [
+                        {
+                            "field": "taels",
+                            "value": 10000,
+                            "purpose": "犒赏",
+                        }
+                    ],
+                    "text": "名目用在非军队非科目的款上",
+                }
+            ],
+            id="purpose_misplaced",
+        ),
+        pytest.param(
+            [
+                {
+                    "entity_type": "army",
+                    "entity": "关宁军 / 宁锦防线",
+                    "create": False,
+                    "changes": [{"field": "arrears", "value": 0}],
+                    "text": "直接声明欠额",
+                }
+            ],
+            id="arrears",
+        ),
+    ],
+)
+def test_exhausted_month_declaration_is_unhandled_not_a_stopped_month(
+    tmp_path: Path, game_db: Path, steps, audit, declared
+) -> None:
+    reply = (
+        declared
+        if isinstance(declared, str)
+        else json.dumps({"facts": declared}, ensure_ascii=False)
+    )
     steps["Declaration"] = replaying([reply, reply])
     with TestClient(create_app(tmp_path)) as client:
         save = client.post(
@@ -346,8 +897,20 @@ def test_exhausted_month_declaration_is_unhandled_not_a_stopped_month(
             "gazette",
         }
         assert all(not f["detail"] for f in facts if f["kind"] == "unhandled")
+        ledger = audit(tmp_path / save)
         assert {
             e["key"]: e["data"]["taels"]
-            for e in audit(tmp_path / save)["entities"]
+            for e in ledger["entities"]
             if e["kind"] == "account"
-        } == {"国库": 3200000, "内库": 4400000}
+        } == pytest.approx({"国库": 11940269.2869425, "内库": 7657600})
+        rows = {(e["kind"], e["key"]): e["data"] for e in ledger["entities"]}
+        assert rows[("event", "辽饷升至一分二厘")].get("terminal_reason") is None
+        assert rows[("army", "关宁军 / 宁锦防线")]["arrears"] == 60
+        assert rows[("account", "国库")]["payment_order"] == GUOKU_ORDER
+        assert "fiscal_surcharge" not in rows[("region", "陕西")]
+        assert "payment_policy" not in rows[("fiscal", "宗室禄米_base")]
+        assert not any(e["key"] == "不存在省" for e in ledger["entities"])
+        assert not any(f["kind"] == "received" for f in ledger["facts"])
+        settled = [f for f in ledger["facts"] if f["kind"] == "month_accounts"]
+        assert settled[-1]["detail"]["date"]["year"] == 1627
+        assert settled[-1]["detail"]["date"]["month"] == 10

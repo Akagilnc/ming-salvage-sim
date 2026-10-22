@@ -17,6 +17,7 @@ from ming.middle import queries
 
 from ming.ledger import Entity, Item, Ledger
 from ming.middle.dispatch import dispatch
+from ming.middle.fiscal import Accounts, due_levies
 from ming.middle.calendar import advance_month
 from ming.middle.declaration import Declaration, PendingPetition, Unhandled
 from ming.middle.invoke import ModelSource
@@ -110,6 +111,12 @@ class Court:
                 for f in self.facts("emperor", kind="unhandled")
             ],
         }
+
+    def fiscal_events(self) -> list[Item]:
+        return due_levies(self._ledger)
+
+    def settle_accounts(self) -> None:
+        Accounts(self._ledger).run()
 
     def advance_month(self) -> None:
         advance_month(self._ledger)

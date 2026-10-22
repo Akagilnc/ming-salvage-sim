@@ -1,0 +1,1 @@
+{"facts": [{"entity_type": "account", "entity": "国库", "create": false, "changes": [{"field": "payment_order", "value": ["军饷", "宗室禄米_base", "官俸_base", "赈灾_base", "建筑维护_base", "工程_base"]}, {"field": "army_order", "value": ["关宁军 / 宁锦防线", "宣大边军", "蓟镇兵", "山海关守军", "陕西边军", "登莱兵与水师", "东江镇", "京营", "南京守备军", "福建水师", "广东水师", "西南土司兵"]}], "text": "本月皇帝下旨边饷优先，改定国库偿还顺序与各军拨付顺序。"}], "reports": []}

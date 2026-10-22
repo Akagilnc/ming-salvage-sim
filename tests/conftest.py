@@ -5,7 +5,7 @@ import io
 import json
 from contextlib import contextmanager, redirect_stdout
 from pathlib import Path
-from shutil import copyfile
+from shutil import copyfile, copytree
 
 import pytest
 from pydantic_ai import Agent, models
@@ -14,6 +14,8 @@ from pydantic_ai.models.test import TestModel
 from starlette.testclient import TestClient
 
 from ming.__main__ import main
+from ming.middle.court import Court
+from ming.middle.opening import CONTENT
 from ming.web import create_app
 from tests.test_court import replaying
 
@@ -83,8 +85,33 @@ def steps(request):
 
 
 @pytest.fixture(scope="session")
-def opening_db(tmp_path_factory):
+def opening_db(request, tmp_path_factory):
     directory = tmp_path_factory.mktemp("opening")
+    if getattr(request, "param", None) is not None:
+        content = copytree(CONTENT, directory / "content")
+        opening = json.loads((content / "opening.json").read_text())
+        if request.param == "shortage":
+            for account in opening["accounts"]:
+                account["taels"] = 0
+            config = json.loads((content / "fiscal_config.json").read_text())
+            for item in config["items"]:
+                if item["key"] in {"官俸_base", "宫廷_base"}:
+                    item["value"] = {"官俸_base": 2000, "宫廷_base": 1000}[item["key"]]
+            (content / "fiscal_config.json").write_text(json.dumps(config))
+        elif request.param == "prestige":
+            opening["world"][0]["imperial_prestige"] = 100
+        else:
+            opening["calendar"][0].update(year=request.param, month=1)
+        (content / "opening.json").write_text(json.dumps(opening))
+        if request.param == 1640:
+            events = json.loads((content / "events.json").read_text())
+            next(e for e in events if e["id"] == "jiao_levy_start_1637")[
+                "terminal_reason"
+            ] = "已准"
+            (content / "events.json").write_text(json.dumps(events))
+        court = Court.new_game(directory, TestModel(), content)
+        court.close()
+        return court.db_path
     with TestClient(create_app(directory)) as client:
         save = client.post("/actions", json={"action": "new"}).json()["save"]
         fresh = client.get("/state").json()["game"]

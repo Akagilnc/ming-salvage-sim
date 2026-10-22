@@ -3,6 +3,7 @@
 import json
 from typing import Any, TypeVar, cast
 
+from pydantic import ValidationError
 from pydantic_ai import (
     Agent,
     ModelRetry,
@@ -13,7 +14,13 @@ from pydantic_ai.exceptions import ToolRetryError, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelResponse
 
 from ming.ledger import Ledger
-from ming.middle.declaration import Declaration, NightDeclaration, Unhandled
+from ming.middle.fiscal import OUTPUT_METRICS, levers, payable_army
+from ming.middle.declaration import (
+    Declaration,
+    NightDeclaration,
+    PaymentPolicy,
+    Unhandled,
+)
 from ming.middle.queries import CATALOGUE
 from ming.middle.opening import REFERENCES
 from ming.middle.rules import check_rules
@@ -48,6 +55,11 @@ def catalogue(ledger: Ledger) -> dict[str, dict[str, list[str]]]:
     return result
 
 
+# Content catalogues the month accounts and levy timeline iterate: only the
+# imported rows exist, so a declaration may change them but never add one.
+CATALOGUES = {"event", "fiscal"}
+
+
 def allowed_fields(ledger: Ledger) -> dict[str, set[str]]:
     fields: dict[str, set[str]] = {
         "affair": {"text"},
@@ -56,6 +68,14 @@ def allowed_fields(ledger: Ledger) -> dict[str, set[str]]:
     for row in ledger.read(CATALOGUE):
         if row["source"] and row["kind"] != "calendar":
             fields.setdefault(row["kind"], set()).update(row["data"])
+    # Fiscal settlement, arrears and the content catalogues are engine-owned;
+    # translation writes only the levers the month accounts read.
+    fields["region"] = (fields.get("region", set()) - {"fiscal"}) | {"fiscal_surcharge"}
+    fields["event"] = {"terminal_reason"}
+    fields["fiscal"] = {"value", "payment_policy"}
+    fields["army"] = (fields.get("army", set()) - {"arrears", "month_paid"}) | {
+        "payment_policy"
+    }
     fields.setdefault("person", set()).add("travel_speed")
     fields["person"].difference_update(
         {"transit_to", "remaining_distance", "waiting_audience"}
@@ -84,6 +104,8 @@ def check(ledger: Ledger, out: Declaration) -> None:
         known = names.setdefault(fact.entity_type, {})
         if fact.entity_type not in fields:
             fail(path + ".entity_type", fact.entity_type, list(fields))
+        if fact.create and fact.entity_type in CATALOGUES:
+            fail(path + ".create", True, {"create": False, "entities": list(known)})
         if (fact.entity in known) == fact.create:
             fail(
                 path + ".entity",
@@ -99,8 +121,83 @@ def check(ledger: Ledger, out: Declaration) -> None:
                     change.field,
                     sorted(fields[fact.entity_type]),
                 )
+    check_fiscal(ledger, out)
     check_rules(out, set(names.get("affair", {})))
     check_references(out, names)
+
+
+def check_fiscal(ledger: Ledger, out: Declaration) -> None:
+    config = ledger.entities(kind="fiscal")
+    expenses = {
+        r["key"]: r["data"]["account"]
+        for r in config
+        if r["data"].get("direction") == "expense"
+    }
+    # A fiscal lever only on an entity the month accounts read it from.
+    targets = {
+        ("fiscal", "value"): levers(config),
+        ("fiscal", "payment_policy"): list(expenses),
+        ("account", "army_order"): ["国库"],
+        ("region", "fiscal_surcharge"): [
+            r["key"]
+            for r in ledger.entities(kind="region")
+            if "settle" in r["data"].get("fiscal", {})
+        ],
+    }
+    for fact in out.facts:
+        for change in fact.changes:
+            allowed = targets.get((fact.entity_type, change.field))
+            if allowed is not None and fact.entity not in allowed:
+                fail(f"{fact.entity_type}.{change.field}的对象", fact.entity, allowed)
+            if change.field == "payment_policy":
+                try:
+                    PaymentPolicy.model_validate(change.value)
+                except ValidationError as error:
+                    raise ModelRetry(str(error)) from error
+            if (
+                change.purpose == "当月饷"
+                and change.counterpart
+                and change.counterpart.entity_type == "fiscal"
+                and change.counterpart.entity not in expenses
+            ):
+                fail("当月饷义务科目", change.counterpart.entity, list(expenses))
+            if (fact.entity_type, change.field) == ("building", "output_metric"):
+                if change.value not in OUTPUT_METRICS:
+                    fail(fact.entity + ".output_metric", change.value, OUTPUT_METRICS)
+            if (fact.entity_type, change.field) == ("event", "terminal_reason"):
+                labels = [
+                    label
+                    for row in ledger.entities(kind="event", key=fact.entity)
+                    for label in row["data"].get("terminal_reason_labels", [])
+                ]
+                if change.value not in labels:
+                    fail(fact.entity + ".terminal_reason", change.value, labels)
+            if fact.entity_type == "account" and change.field in {
+                "payment_order",
+                "army_order",
+            }:
+                choices = (
+                    [
+                        r["key"]
+                        for r in ledger.entities(kind="army")
+                        if payable_army(r["data"])
+                    ]
+                    if change.field == "army_order"
+                    else [
+                        key
+                        for key, account in expenses.items()
+                        if account == fact.entity
+                    ]
+                    + (["军饷"] if fact.entity == "国库" else [])
+                )
+                # A complete order: every choice exactly once.
+                value = change.value
+                if not (
+                    isinstance(value, list)
+                    and all(isinstance(v, str) for v in cast(list[Any], value))
+                    and sorted(cast(list[str], value)) == sorted(choices)
+                ):
+                    fail(fact.entity + "." + change.field, change.value, choices)
 
 
 def check_references(out: Declaration, names: dict[str, dict[str, list[str]]]) -> None:
@@ -158,6 +255,7 @@ def declaration_agent(
         return json.dumps(
             {
                 "names_and_aliases": catalogue(ledger),
+                "field_schemas": {"payment_policy": PaymentPolicy.model_json_schema()},
                 "allowed_fields": {
                     k: sorted(v) for k, v in allowed_fields(ledger).items()
                 },

@@ -10,6 +10,7 @@ from ming.ledger import Entity, Item, Ledger
 from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS, FACT_COLUMNS as F, FACT_ROWS
 from ming.middle.declaration import Declaration, NightDeclaration, Unhandled
 from ming.middle.rules import field_values, money_amounts
+from ming.middle.fiscal import WAN, current_paid
 
 
 def landing_entities(
@@ -30,6 +31,17 @@ def landing_entities(
     }
     if isinstance(result, Unhandled):
         return found
+    if any(
+        c.counterpart
+        and c.counterpart.entity_type == "fiscal"
+        and c.purpose == "当月饷"
+        for f in result.facts
+        for c in f.changes
+    ):
+        found.update(
+            ((e["kind"], e["key"]), e)
+            for e in ledger.entities(kind=("fiscal", "building"))
+        )
     # Only a location change can start a journey (from the current or a first
     # location), and only an office/region change can displace its incumbents.
     origins: set[str] = set()
@@ -95,7 +107,6 @@ def dispatch(
         existing[(entity.kind, entity.key)] = entity.snapshot()
 
     if not isinstance(result, Unhandled):
-        amounts = money_amounts(result.facts, existing)
         # A share declares post-values from the reading it saw. Shares landed
         # since then shift the whole share once: none overwrites another, and
         # its own successive facts stay the progression it declared.
@@ -110,6 +121,7 @@ def dispatch(
                 entity = Entity(*pair, "", {})
                 changed[pair] = entity
                 existing[pair] = entity.snapshot()
+        amounts, reasons = money_amounts(result.facts, existing)
         for i, fact in enumerate(result.facts):
             entity = known(fact.entity_type, fact.entity)
             association = (
@@ -119,6 +131,8 @@ def dispatch(
             )
             detail = field_values(fact, entity.data, amounts.get(i), offsets)
             detail.update(association)
+            if i in reasons:
+                detail["limit_reason"] = reasons[i]
             changes = detail["changes"]
             if entity.kind == "person":
                 move_person(entity, changes, existing, record)
@@ -129,7 +143,7 @@ def dispatch(
                 and entity.data.get("office")
             ):
                 displace(entity, existing, known, record, association)
-        record_receipts(result, amounts, known, record)
+        record_receipts(result, amounts, known, record, reasons)
         for report in result.reports:
             record(
                 known(report.entity_type, report.entity),
@@ -169,22 +183,40 @@ def record_receipts(
     amounts: dict[int, float],
     known: Callable[[str, str], Entity],
     record: Callable[..., None],
+    reasons: dict[int, str | None],
 ) -> None:
     for i, fact in enumerate(result.facts):
         for change in fact.changes:
             if change.counterpart and change.counterpart.entity_type != "account":
+                recipient = known(
+                    change.counterpart.entity_type, change.counterpart.entity
+                )
+                changes: Item = {}
+                if change.purpose == "补欠":
+                    changes["arrears"] = max(
+                        0, recipient.data.get("arrears", 0) + amounts[i] / WAN
+                    )
+                elif change.purpose == "当月饷":
+                    date = known("calendar", "world").data
+                    changes["month_paid"] = {
+                        "date": date,
+                        "amount": current_paid(recipient.data, date) - amounts[i] / WAN,
+                    }
                 record(
-                    known(change.counterpart.entity_type, change.counterpart.entity),
+                    recipient,
                     "received",
                     {
                         "nominal": -change.value,
                         "actual": -amounts[i],
                         "source": fact.entity,
+                        "purpose": change.purpose,
+                        "limit_reason": reasons[i],
                         "affair_id": str(known("affair", fact.affair).id)
                         if fact.affair is not None
                         else None,
                         "audience": "world",
                     },
+                    changes,
                 )
 
 
