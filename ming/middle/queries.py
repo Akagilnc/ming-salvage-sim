@@ -6,6 +6,7 @@ Ledger executes selections; it has no night, inbox, identity or workflow modes.
 from typing import Any
 from sqlalchemy import JSON, Select, and_, func, or_, select, true, tuple_, type_coerce
 from sqlalchemy.sql.elements import ColumnElement
+from sqlalchemy.sql.functions import Function
 from ming.ledger import (
     Item,
     ENTITY_COLUMNS as E,
@@ -92,7 +93,7 @@ def returned_petitions(date: Item | None = None) -> Select[Any]:
             choice.kind == "choice",
             choice.detail["petition_id"].as_string() == F.detail["id"].as_string(),
             choice.detail["option"].as_integer()
-            == func.json_array_length(F.detail["options"]) - 1,
+            == Function("json_array_length", F.detail["options"]) - 1,
             *([choice.date != date] if date is not None else []),
         )
         .exists(),
