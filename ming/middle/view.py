@@ -25,6 +25,7 @@ CHARACTER_BANDS = {
     "courage": ("临事易退", "多有顾忌", "进退审慎", "敢任其事", "临难不屈"),
     "identity": ("几乎不染党色", "党色较淡", "党色不显", "党色较深", "党色极深"),
     "intrigue": ("毫无城府", "心思疏浅", "善藏行迹", "机权深沉", "鬼蜮难测"),
+    "imperial_prestige": ("威令未立", "威福旁落", "威令渐行", "威权深重", "威压朝野"),
 }
 
 
@@ -38,7 +39,16 @@ def character_input(value: Any) -> Any:
         return [character_input(item) for item in cast(list[Any], value)]
     if not isinstance(value, dict):
         return value
-    result = {key: character_input(item) for key, item in cast(Item, value).items()}
+    result = {
+        key: character_input(item)
+        for key, item in cast(Item, value).items()
+        if key not in {"remaining_distance", "travel_speed"}
+    }
+    if result.get("field") == "travel_speed":
+        return {
+            "field": "travel_pace",
+            "value": "加急" if value["value"] > 1 else "常速",
+        }
     fields = [(key, key) for key in CHARACTER_BANDS if key in result]
     if result.get("field") in CHARACTER_BANDS and "value" in result:
         fields.append(("value", result["field"]))
@@ -48,6 +58,22 @@ def character_input(value: Any) -> Any:
                 sum(int(result[key]) >= cutoff for cutoff in (20, 40, 60, 80))
             ]
     return result
+
+
+def journey(data: Item, events: list[Item]) -> Item:
+    """Derive elapsed/total months from the existing departure and monthly ticks."""
+    if not data.get("transit_to"):
+        return {}
+    departure = max(i for i, e in enumerate(events) if e["kind"] == "departed")
+    detail = events[departure]["detail"]
+    speed = detail.get("travel_speed", 1)
+    return {
+        "elapsed_months": sum(
+            e["kind"] == "travelled" for e in events[departure + 1 :]
+        ),
+        "total_months": detail["distance"] / speed,
+        **({"pace": "加急"} if speed > 1 else {}),
+    }
 
 
 class EntityView(BaseModel):
@@ -136,6 +162,15 @@ def entities(
                 }
             elif row["kind"] not in {"gazette", "calendar"}:
                 continue
+        if identity == "world" and row["kind"] == "person":
+            travel = journey(row["data"], row["events"])
+            row["data"] = {
+                k: v
+                for k, v in row["data"].items()
+                if k not in {"remaining_distance", "travel_speed"}
+            }
+            if travel:
+                row["data"]["journey"] = travel
         result.append(EntityView.model_validate(row))
     return result
 
@@ -143,6 +178,7 @@ def entities(
 def project(ledger: Ledger, identity: Identity, replay: bool = False) -> list[FactView]:
     rows = ledger.entities(replay)
     opening = month_open(rows) if identity == "emperor" else None
+    date = next((r["data"] for r in rows if r["kind"] == "calendar"), dict[str, Any]())
     controls = {"interaction", "petition", "choice", "gazette"}
     accounts = owned_accounts(rows, identity)
     result: list[FactView] = (
@@ -156,9 +192,32 @@ def project(ledger: Ledger, identity: Identity, replay: bool = False) -> list[Fa
     )
     for row in rows:
         for item in row["events"]:
-            if opening and item["kind"] not in controls:
-                continue
             fact = FactView(entity_id=row["id"], **item)
+            available = fact.detail.get("available", date)
+            if (
+                (opening and fact.kind not in controls)
+                or (identity == "world" and fact.kind == "forecast")
+                or (
+                    identity != "audit"
+                    and date
+                    and fact.kind == "petition"
+                    and (available["year"], available["month"])
+                    > (date["year"], date["month"])
+                )
+            ):
+                continue
+            if identity == "world" and fact.kind in {
+                "departed",
+                "travelled",
+                "arrived",
+            }:
+                fact.detail = {
+                    k: v
+                    for k, v in fact.detail.items()
+                    if k not in {"distance", "remaining_distance", "travel_speed"}
+                }
+            if identity == "world" and fact.kind == "simulation":
+                fact.detail = {k: v for k, v in fact.detail.items() if k != "messages"}
             if identity not in ("audit", "world"):
                 if (
                     fact.kind == "gazette"

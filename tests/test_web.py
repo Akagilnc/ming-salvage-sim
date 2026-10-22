@@ -82,9 +82,11 @@ def test_menu_creates_distinct_games_and_opens_only_existing_saves(
     "path",
     [
         "petition",
+        "multiple-petitions",
         "choice-error",
         "decree",
         "precompute-error",
+        "precompute-structure",
         "translation-error",
     ],
 )
@@ -93,15 +95,38 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
 ) -> None:
     money = (RECORDED / "month_money_300000.txt").read_text()
     received = {name: [] for name in ("deliberation", "simulation", "gazette")}
-    if path in {"petition", "choice-error"}:
-        steps["Declaration"] = replaying(
-            [(RECORDED / "month_petition.txt").read_text(), money]
+    if path in {"petition", "multiple-petitions", "choice-error"}:
+        case = (
+            RECORDED
+            / (
+                "month_multiple_petitions.txt"
+                if path == "multiple-petitions"
+                else "month_petition.txt"
+            )
+        ).read_text()
+        steps["simulation"] = replaying(
+            [
+                case,
+                *(
+                    [
+                        RuntimeError("forecast unavailable")
+                        if path == "choice-error"
+                        else (RECORDED / "simulation.txt").read_text()
+                    ]
+                    * sum(len(p["options"]) for p in json.loads(case)["petitions"])
+                ),
+            ]
         )
     app = create_app(tmp_path)
     with TestClient(app) as client:
         save = client.post("/actions", json={"action": "new"}).json()["save"]
         db = tmp_path / save
-        if path in {"decree", "precompute-error", "translation-error"}:
+        if path in {
+            "decree",
+            "precompute-error",
+            "precompute-structure",
+            "translation-error",
+        }:
             for name in received:
                 text = (RECORDED / f"{name}.txt").read_text()
                 steps[name] = replaying(
@@ -122,15 +147,16 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
                 if path == "translation-error"
                 else steps["NightDeclaration"]
             )
-            steps["Declaration"] = (
-                replaying([money, (RECORDED / "month_petition.txt").read_text(), money])
-                if path == "decree"
-                else TestModel(call_tools=[], custom_output_text=money)
-            )
-            if path == "precompute-error":
+            steps["Declaration"] = TestModel(call_tools=[], custom_output_text=money)
+            if path in {"precompute-error", "precompute-structure"}:
                 steps["deliberation"] = replaying(
                     [
-                        *[ModelHTTPError(500, "recording") for _ in range(3)],
+                        *(
+                            [ModelHTTPError(500, "recording")] * 3
+                            if path == "precompute-error"
+                            else [(RECORDED / "deliberation_invalid.txt").read_text()]
+                            * 4
+                        ),
                         (RECORDED / "deliberation.txt").read_text(),
                     ]
                 )
@@ -159,21 +185,24 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
             products = [
                 f["kind"] for f in ledger["facts"] if f["entity_id"] == decree["id"]
             ]
+            assert products.count("deliberation") == int(
+                path not in {"precompute-error", "precompute-structure"}
+            )
+            assert not set(products).intersection({"simulation", "declaration"})
             assert {
-                kind: products.count(kind)
-                for kind in ("deliberation", "simulation", "declaration")
-            } == dict.fromkeys(
-                ("deliberation", "simulation", "declaration"),
-                int(path != "precompute-error"),
+                f["entity_id"] for f in ledger["facts"] if f["kind"] == "simulation"
+            } == (
+                {decree["data"]["night_id"]}
+                if path not in {"precompute-error", "precompute-structure"}
+                else set()
             )
             assert client.get("/state").json()["game"]["date"]["month"] == 10
-            if path == "precompute-error":
-                assert clock == [5, 5]
-                assert not [
-                    f
-                    for f in audit(db)["facts"]
-                    if f["kind"] == "interaction" and f["detail"]["status"] == "failed"
-                ]
+            assert clock == ([5, 5] if path == "precompute-error" else [])
+            assert {
+                f["detail"]["action"]
+                for f in audit(db)["facts"]
+                if f["kind"] == "interaction" and f["detail"]["status"] == "failed"
+            } == ({"translation"} if path == "translation-error" else set())
         before = audit(db)
         assert [
             client.post("/actions", json={"action": "choose", **parameters}).status_code
@@ -183,7 +212,14 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
         assert audit(db) == before
         assert client.post("/actions", json={"action": "month"}).status_code == 204
         game = client.get("/state").json()["game"]
-        if path in {"petition", "choice-error", "decree"}:
+        if path == "precompute-structure":
+            assert game["date"]["month"] == 10
+            assert game["failure"]["payload"]["type"] == "UnexpectedModelBehavior"
+            assert not [f for f in audit(db)["facts"] if f["kind"] == "unhandled"]
+            client.post("/actions", json={"action": "retry"})
+            game = client.get("/state").json()["game"]
+        if path in {"petition", "multiple-petitions", "choice-error"}:
+            client.portal.call(app.state.web.game.drain)
             assert (game["date"]["month"], game["face"], game["running"]) == (
                 10,
                 "month",
@@ -193,7 +229,7 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
             client.get("/state")
             client.get("/records")
             assert audit(db) == audit(db, True) == before
-            for petition in game["petitions"]:
+            for petition in game["petitions"][:]:
                 choice = {"action": "choose", "petition": petition["id"], "option": 0}
                 assert (
                     client.post("/actions", json={**choice, "option": -1}).status_code
@@ -217,6 +253,12 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
                         == 204
                     )
                 assert client.post("/actions", json=choice).status_code == 400
+                game["petitions"].remove(petition)
+                assert {
+                    p["id"] for p in client.get("/state").json()["game"]["petitions"]
+                } == {p["id"] for p in game["petitions"]}
+        # Choice completion no longer waits for the shared month action.
+        client.portal.call(app.state.web.game.drain)
         game = client.get("/state").json()["game"]
         assert (
             game["date"]["month"],
@@ -234,7 +276,6 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
                 f["kind"] for f in ledger["facts"] if f["entity_id"] == decree["id"]
             } >= {
                 "deliberation",
-                "simulation",
                 "declaration",
                 "landed",
             }
@@ -405,6 +446,7 @@ def test_settings_survive_reopening_and_failed_scene_retries_in_place(
         (500, 3, [5, 5], "simulation"),
         (429, 1, [], "simulation"),
         (500, 3, [5, 5], "gazette"),
+        ("structure", 2, [], "simulation"),
     ],
 )
 def test_month_transport_retry_is_bounded_and_persistent(
@@ -413,7 +455,12 @@ def test_month_transport_retry_is_bounded_and_persistent(
     status, failures, waits, name = case
     steps[name] = replaying(
         [
-            *[ModelHTTPError(status, "recording") for _ in range(failures)],
+            *[
+                (RECORDED / "simulation_invalid.txt").read_text()
+                if status == "structure"
+                else ModelHTTPError(status, "recording")
+                for _ in range(failures)
+            ],
             (RECORDED / f"{name}.txt").read_text(),
         ]
     )
@@ -422,8 +469,10 @@ def test_month_transport_retry_is_bounded_and_persistent(
         client.post("/actions", json={"action": "month"})
         state = client.get("/state").json()["game"]
         assert clock == waits
-        if failures == 3 or status == 429:
-            assert state["failure"]["payload"]["type"] == "ModelHTTPError"
+        if failures == 3 or status in (429, "structure"):
+            assert state["failure"]["payload"]["type"] == (
+                "UnexpectedModelBehavior" if status == "structure" else "ModelHTTPError"
+            )
             assert state["date"]["month"] == 10
             client.post("/actions", json={"action": "continue"})
             assert client.get("/state").json()["game"]["failure"] == state["failure"]

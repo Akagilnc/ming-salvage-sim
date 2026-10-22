@@ -6,6 +6,8 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from ming.ledger import Ledger
+from ming.middle.calendar import CAPITAL
+from ming.middle.view import journey
 
 
 class PersonView(BaseModel):
@@ -31,6 +33,8 @@ PERSON_FIELDS = {
     "personal_skills",
     "style",
     "status_reason",
+    "transit_to",
+    "waiting_audience",
 }
 
 
@@ -40,6 +44,8 @@ def read_person(ledger: Ledger, name: str) -> PersonView:
     if person is None:
         return PersonView(found=False)
     data = {k: v for k, v in person["data"].items() if k in PERSON_FIELDS}
+    if travel := journey(person["data"], person["events"]):
+        data["journey"] = travel
     for row in rows:
         if row["kind"] == "dossier" and row["key"] == name:
             data.update(row["data"])
@@ -77,18 +83,35 @@ def set_hall(
     failures: list[dict[str, Any]] = []
     for name in add:
         person = people.get(name)
-        if person is None or person["data"].get("location") != "beizhili":
+        if (
+            person is None
+            # ADR 0096: an empty location counts as in the capital (fail-open).
+            or (person["data"].get("location") or CAPITAL) != CAPITAL
+            or person["data"].get("transit_to")
+        ):
             failures.append(
                 {
                     "name": name,
                     "found": person is not None,
                     "location": person["data"].get("location") if person else None,
-                    "required_location": "beizhili",
+                    "required_location": CAPITAL,
                 }
             )
     if failures or night.data["closed"]:
         return HallResult(ok=False, hall=night.data["hall"], failures=failures)
     hall = list(dict.fromkeys(p for p in night.data["hall"] + add if p not in remove))
     night.record("hall", "", {"add": add, "remove": remove}, {"hall": hall})
-    ledger.commit([night])
+    admitted = [
+        ledger.get(people[name]["id"])
+        for name in dict.fromkeys(add)
+        if name in hall and people[name]["data"].get("waiting_audience")
+    ]
+    for person in admitted:
+        person.record(
+            "audience_admitted",
+            "",
+            {"night_id": str(night_id)},
+            {"waiting_audience": False},
+        )
+    ledger.commit([night, *admitted])
     return HallResult(ok=True, hall=hall)

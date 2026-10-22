@@ -18,6 +18,23 @@ def test_new_game_imports_complete_world_records_and_separates_identities(
 ) -> None:
     court = Court.new_game(tmp_path, TestModel())
     entities = court.entities("audit")
+    # Pinyin keys between content records become the Chinese name they key.
+    names = {
+        r["id"]: r["name"]
+        for filename in ("regions", "powers")
+        for r in json.loads((CONTENT / f"{filename}.json").read_text())[filename]
+    }
+
+    def canonical(record: dict[str, object]) -> dict[str, object]:
+        return {
+            k: record["name"]
+            if k == "id" and "name" in record
+            else names.get(v, v)
+            if isinstance(v, str)
+            else v
+            for k, v in record.items()
+        }
+
     for filename, collection in [
         ("characters", "characters"),
         ("characters", "factions"),
@@ -30,12 +47,15 @@ def test_new_game_imports_complete_world_records_and_separates_identities(
         ("relation_seed", "summaries"),
         ("opening", "accounts"),
         ("opening", "calendar"),
+        ("opening", "world"),
         ("multiple_offices", "offices"),
         ("offices", "priority"),
     ]:
         source = f"{filename}.json/{collection}"
         expected = json.loads((CONTENT / f"{filename}.json").read_text())[collection]
-        assert [e.data for e in entities if e.source == source] == expected
+        assert [e.data for e in entities if e.source == source] == [
+            canonical(r) for r in expected
+        ]
     dossiers = json.loads((CONTENT / "minister_dossiers.json").read_text())
     assert {e.key: e.data for e in entities if e.kind == "dossier"} == dossiers
     assert [e.key for e in entities if e.kind == "gazette"] == ["opening"]
@@ -60,14 +80,14 @@ def test_new_game_imports_complete_world_records_and_separates_identities(
     )
     for name in ["史可法", "徐光启", "黄道周", "练国事", "郭允厚"]:
         assert shown[name] == {
-            k: v for k, v in characters[name].items() if k in visible_fields
+            k: v for k, v in canonical(characters[name]).items() if k in visible_fields
         }
     assert court.facts("audit") == []
     court.close()
 
 
 def test_cli_new_games_never_overwrite_and_missing_game_is_not_created(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], steps
 ) -> None:
     args = ["new", "--directory", str(tmp_path)]
     main(args)

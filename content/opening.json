@@ -3,5 +3,6 @@
     {"name": "国库", "taels": 3200000, "department": "户部"},
     {"name": "内库", "taels": 4400000, "department": "内廷"}
   ],
+  "world": [{"name": "天下", "imperial_prestige": 20, "public_support": 50}],
   "calendar": [{"id": "world", "year": 1627, "month": 10}]
 }

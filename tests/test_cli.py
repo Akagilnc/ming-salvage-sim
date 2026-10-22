@@ -18,14 +18,14 @@ def test_cli_preserves_jsonl_and_resumes_failed_month(
     tmp_path: Path, steps, monkeypatch, capsys
 ) -> None:
     case = json.loads((RECORDED / "night_approved.json").read_text())
-    steps["Declaration"] = replaying(
+    steps["Declaration"] = TestModel(
+        call_tools=[],
+        custom_output_text=(RECORDED / "month_money_300000.txt").read_text(),
+    )
+    steps["simulation"] = replaying(
         [
-            (RECORDED / name).read_text()
-            for name in (
-                "month_money_300000.txt",
-                "month_petition.txt",
-                "month_money_300000.txt",
-            )
+            (RECORDED / "month_petition.txt").read_text(),
+            *[(RECORDED / "simulation.txt").read_text()] * 4,
         ]
     )
     main(["new", "--directory", str(tmp_path)])
@@ -70,10 +70,10 @@ def test_cli_preserves_jsonl_and_resumes_failed_month(
             assert result["petitions"] == []
             assert result["date"]["month"] == 11
         else:
-            steps["Declaration"] = replaying(
+            steps["simulation"] = replaying(
                 [
-                    (RECORDED / name).read_text()
-                    for name in ("month_petition.txt", "month_money_300000.txt")
+                    (RECORDED / "month_petition.txt").read_text(),
+                    *[(RECORDED / "simulation.txt").read_text()] * 3,
                 ]
             )
             main(["month", "--db", db, "--model", "claude-cli"])
@@ -99,7 +99,6 @@ def test_cli_preserves_jsonl_and_resumes_failed_month(
     decree = next(e for e in ledger["entities"] if e["kind"] == "decree")
     assert {f["kind"] for f in ledger["facts"] if f["entity_id"] == decree["id"]} >= {
         "deliberation",
-        "simulation",
         "declaration",
         "landed",
     }
@@ -168,13 +167,10 @@ def test_cli_preserves_jsonl_and_resumes_failed_month(
     # A world-only month can also be continued through JSONL before any audience exists.
     main(["new", "--directory", str(tmp_path)])
     db = json.loads(capsys.readouterr().out)["db"]
-    steps["simulation"] = TestModel(
-        call_tools=[], custom_output_text=(RECORDED / "simulation.txt").read_text()
-    )
-    steps["Declaration"] = replaying(
+    steps["simulation"] = replaying(
         [
-            (RECORDED / name).read_text()
-            for name in ("month_petition.txt", "month_money_300000.txt")
+            (RECORDED / "month_petition.txt").read_text(),
+            *[(RECORDED / "simulation.txt").read_text()] * 3,
         ]
     )
     main(["month", "--db", db, "--model", "claude-cli"])

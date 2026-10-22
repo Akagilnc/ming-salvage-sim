@@ -129,23 +129,73 @@ class Game:
 
     def resume(self) -> None:
         self.settle_month()
-        if self.presentation()["failure"]:
-            return
-        pending = [i for i in self.interactions().values() if i["status"] == "running"]
+        pending = [
+            i
+            for i in self.interactions().values()
+            if i["status"] == "running"
+            and (not self.failures() or i["action"] == "choose")
+        ]
         if pending:
             self.active = asyncio.create_task(self._resume(pending))
+        elif self.presentation()["failure"]:
+            return
+        elif self.month.opened():
+            # Missing products are decided by the ledger, not the showing face:
+            # reopening fills them even while an audience is open, and the month
+            # work itself translates any pending nights before advancing.
+            self.recover_month()
         elif self.court.pending_nights():
             self.start_background()
-        elif self.month.opened() and not self.month.petitions():
-            self.start("month")
+        elif self.month.petitions():
+            self.start_background()
+
+    def recover_month(self) -> None:
+        """The one ledger-driven month gap-fill after a reopen, a recovery or a
+        choice; the 请先退朝 gate only guards user clicks. Running or failed work
+        keeps it from starting, so it never runs twice or silently retries."""
+        if (
+            not self.month.opened()
+            or self.failures()
+            or any(i["status"] == "running" for i in self.interactions().values())
+        ):
+            return
+        payload = {"date": self.court.calendar().data}
+        self.interaction("month", "running", payload)
+        self.active = asyncio.create_task(self.execute("month", payload))
+        # Started from inside other work, it replaces the task a drain is already
+        # awaiting; tracking it keeps every drain waiting for the gap-fill too.
+        self.track(self.active)
 
     async def _resume(self, pending: list[dict[str, Any]]) -> None:
-        for item in pending:
-            await self.execute(item["action"], item["payload"])
-            if self.presentation()["failure"]:
-                return
+        async def ordered() -> None:
+            for item in pending:
+                if item["action"] not in {"month", "choose"}:
+                    await self.execute(item["action"], item["payload"])
+                    if self.presentation()["failure"]:
+                        return
+            for item in pending:
+                if item["action"] == "month":
+                    await self.execute(item["action"], item["payload"])
+
+        # Each question resumes on its own chain; it never waits for an audience
+        # turn, a night translation or the month work recovered beside it.
+        await asyncio.gather(
+            ordered(),
+            *(
+                self.execute(item["action"], item["payload"])
+                for item in pending
+                if item["action"] == "choose"
+            ),
+        )
+        if self.presentation()["failure"]:
+            return
         if not self.month.opened():
             self.start_background()
+        elif all(item["action"] != "month" for item in pending):
+            # Missing products are filled by the same ledger-driven month entry
+            # as any other reopen (a recovered month already was that entry); the
+            # speculative path stops before world products and would leave them.
+            self.recover_month()
 
     async def command(self, action: str, payload: dict[str, Any]) -> None:
         date = self.court.calendar().data
@@ -156,6 +206,12 @@ class Game:
             for item in self.interactions().values()
         )
         self.resume()
+        # A question — fresh or retrying its own failed call — is accepted at
+        # once; draining unrelated in-flight work first would block it.
+        if action == "choose" and not accepted:
+            self.start(action, payload, repeat=True)
+            await self.drain()
+            return
         await self.drain()
         if not self.presentation()["failure"] and (
             accepted or (action == "month" and self.court.calendar().data != date)
@@ -192,14 +248,16 @@ class Game:
         ):
             action, failure = "retry", repeated
         if action == "retry":
-            if self.busy():
-                raise InvalidAction("这一步还在进行")
             if not failure:
                 raise InvalidAction("没有待重试的动作")
             action, payload = failure["action"], dict(failure["payload"])
             pending = self.presentation()["pending"]
             if action == "translation" and pending and pending["action"] == "month":
                 action, payload = "month", dict(pending["payload"])
+            # A retry redoes its own failed call; per-question work keeps the
+            # same rule as a fresh start instead of waiting for unrelated work.
+            if action != "choose" and self.busy():
+                raise InvalidAction("这一步还在进行")
             # Replay accepted parameters, not a second choice event.
             self.interaction(action, "running", payload)
         else:
@@ -226,8 +284,10 @@ class Game:
 
     def accept(self, action: str, payload: dict[str, Any]) -> dict[str, Any]:
         state = self.presentation()
-        if state["failure"] and not (
-            action == "month" and state["failure"]["action"] == "translation"
+        if (
+            state["failure"]
+            and action != "choose"
+            and not (action == "month" and state["failure"]["action"] == "translation")
         ):
             raise InvalidAction("请重试未完成的动作")
         if action == "month" and state["face"] == "audience":
@@ -238,12 +298,9 @@ class Game:
             payload.update(night_id=str(self.audience.night_id), turn_id=str(uuid4()))
         elif action == "choose":
             try:
-                route = self.month.choose(
-                    UUID(str(payload["petition"])), payload["option"]
-                )
+                self.month.choose(UUID(str(payload["petition"])), payload["option"])
             except (ValueError, KeyError) as error:
                 raise InvalidAction("无效的批红选项", 400) from error
-            payload["route"] = str(route)
         elif action != "month":
             raise InvalidAction("无效的动作", 400)
         payload["date"] = self.court.calendar().data
@@ -279,14 +336,11 @@ class Game:
         await self.translate()
         if self.court.pending_nights():
             return
-        results = await asyncio.gather(
-            *(self.month.prepare(e.id, speculative=True) for e in self.month.decrees()),
-            return_exceptions=True,
-        )
-        for result in results:
-            if isinstance(result, BaseException):
-                # Speculation alone has a documented non-blocking failure contract.
-                self.court.log.error("night precomputation failed", exc_info=result)
+        try:
+            await self.month.resume(speculative=True)
+        except Exception:
+            # Night speculation has a documented non-blocking failure contract.
+            self.court.log.exception("night precomputation failed")
 
     async def execute(self, action: str, payload: dict[str, Any]) -> str | None:
         try:
@@ -294,6 +348,10 @@ class Game:
             if action == "month" and self.court.pending_nights():
                 return None
             self.interaction(action, "done", payload)
+            # The choice is complete before shared month work resumes. Reuse the
+            # normal month action so its waiting and failures cannot belong to it.
+            if action == "choose" and not self.month.petitions():
+                self.recover_month()
             return output
         except Exception as error:
             self.court.log.exception("action=%s", action)
@@ -331,11 +389,10 @@ class Game:
             self.settle_month(payload["date"])
             return None  # The prior month committed before the process stopped.
         if action == "choose":
-            await self.month.prepare(UUID(payload["route"]))
-            if self.busy() and self.active is not asyncio.current_task():
-                return None
-            if not self.month.opened():
-                return None
+            await self.month.resume(petition_id=payload["petition"])
+            if payload["date"] != self.court.calendar().data:
+                self.settle_month(payload["date"])
+            return None
         await self.translate()
         if not self.court.pending_nights():
             await self.month.advance()
@@ -349,6 +406,7 @@ class Game:
             await asyncio.gather(*self.background)
         if self.translation is not None:
             await asyncio.shield(self.translation)
+        await self.month.simulations.drain()
 
     async def close(self) -> None:
         try:

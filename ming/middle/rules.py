@@ -3,10 +3,11 @@
 import math
 from typing import Any
 
-from pydantic import ValidationError
 from pydantic_ai import ModelRetry
 
-from ming.middle.declaration import Change, Declaration, Fact, Petition
+from ming.middle.declaration import Change, Declaration, Fact
+
+SCALE_FIELDS = ("imperial_prestige", "public_support", "satisfaction")
 
 
 def check_rules(out: Declaration, affairs: set[str]) -> None:
@@ -20,8 +21,13 @@ def check_rules(out: Declaration, affairs: set[str]) -> None:
         for change in fact.changes:
             if (fact.entity_type, change.field) in {
                 ("account", "taels"),
+                ("person", "travel_speed"),
                 ("army", "firearm_equipment"),
                 ("army", "cannon_equipment"),
+                ("world", "imperial_prestige"),
+                ("world", "public_support"),
+                ("faction", "satisfaction"),
+                ("class", "satisfaction"),
             } and (
                 type(change.value) not in (int, float)
                 or (type(change.value) is float and not math.isfinite(change.value))
@@ -29,13 +35,12 @@ def check_rules(out: Declaration, affairs: set[str]) -> None:
                 raise ModelRetry(
                     f"{fact.entity}.{change.field}: {change.value!r}; 期望有限数字，重交整份。"
                 )
-            if change.field == "petition":
-                try:
-                    Petition.model_validate(change.value)
-                except ValidationError as exc:
-                    raise ModelRetry(str(exc)) from exc
-        if fact.audience != "world" and fact.changes:
-            raise ModelRetry("奏报与公开说法只记文字，不带核算字段；重交整份。")
+            if (
+                (fact.entity_type, change.field) == ("person", "travel_speed")
+                and change.value != 1
+                and not 1.5 <= change.value <= 2
+            ):
+                raise ModelRetry("行速须为常速1，或加急1.5至2；重交整份。")
     for fact in out.facts:
         check_money(fact, out)
 
@@ -111,7 +116,9 @@ def money_amounts(
                     j for j in money_mirrors(facts, fact, change) if j not in amounts
                 )
                 # Either edge establishes the whole transfer, exactly once.
-                source, destination = (pair, other) if change.value <= 0 else (other, pair)
+                source, destination = (
+                    (pair, other) if change.value <= 0 else (other, pair)
+                )
                 actual = min(abs(change.value), max(0, balances.get(source, 0)))
                 amounts[i] = -actual if change.value <= 0 else actual
                 amounts[j] = -amounts[i]
@@ -128,15 +135,22 @@ def money_amounts(
 
 
 def field_values(
-    fact: Fact, data: dict[str, Any], amount: float | None
+    fact: Fact,
+    data: dict[str, Any],
+    amount: float | None,
+    offsets: dict[tuple[str, str, str], Any],
 ) -> dict[str, Any]:
-    nominal = {c.field: c.value for c in fact.changes if c.field != "petition"}
+    nominal = {c.field: c.value for c in fact.changes}
     actual = dict(nominal)
     if amount is not None:
         actual["taels"] = amount
     for field, cap in (("firearm_equipment", 100), ("cannon_equipment", 12)):
         if fact.entity_type == "army" and field in actual:
             actual[field] = min(cap, max(0, actual[field]))
+    for field in SCALE_FIELDS:
+        if field in actual and fact.entity_type in {"world", "faction", "class"}:
+            key = fact.entity_type, fact.entity, field
+            actual[field] = min(100, max(0, actual[field] + offsets.get(key, 0)))
     changes = dict(actual)
     if "taels" in changes and fact.entity_type == "account":
         changes["taels"] += data.get("taels", 0)
@@ -145,5 +159,5 @@ def field_values(
         "changes": changes,
         "nominal": nominal,
         "actual": actual,
-        "audience": fact.audience,
+        "audience": "world",
     }

@@ -14,9 +14,21 @@ from tests.test_court import replaying
 RECORDED = Path(__file__).parent / "recorded"
 
 
+@pytest.mark.parametrize(
+    ("first", "extra"),
+    [("simulation.txt", 0), ("month_deferred.txt", 0), ("month_zero.txt", 1)],
+)
 def test_month_without_decrees_advances_and_replays_after_reopening(
-    tmp_path: Path, steps, audit
+    tmp_path: Path, steps, audit, first: str, extra: int
 ) -> None:
+    received = []
+    steps["simulation"] = replaying(
+        [
+            (RECORDED / first).read_text(),
+            *[(RECORDED / "simulation.txt").read_text()] * (2 + extra),
+        ],
+        received,
+    )
     with TestClient(create_app(tmp_path)) as client:
         save = client.post("/actions", json={"action": "new"}).json()["save"]
         for year, month in [(1627, 11), (1627, 12), (1628, 1)]:
@@ -28,7 +40,46 @@ def test_month_without_decrees_advances_and_replays_after_reopening(
                 None,
                 None,
             )
-            assert audit(tmp_path / save) == audit(tmp_path / save, True)
+            for petition in state["petitions"]:
+                calls = len(received)
+                assert (
+                    client.post(
+                        "/actions",
+                        json={
+                            "action": "choose",
+                            "petition": petition["id"],
+                            "option": 0,
+                        },
+                    ).status_code
+                    == 204
+                )
+                assert len(received) == calls
+                assert client.get("/state").json()["game"]["date"] == state["date"]
+            ledger = audit(tmp_path / save)
+            assert ledger == audit(tmp_path / save, True)
+            assert not [e for e in ledger["entities"] if e["kind"] == "affair"]
+            assert not [f for f in ledger["facts"] if f["kind"] == "forecast"]
+            assert (
+                len([f for f in ledger["facts"] if f["kind"] == "simulation"])
+                == (year - 1627) * 12 + month - 10 + extra
+            )
+            material = json.loads(
+                received[0 if month == 11 and extra else -1].parts[0].content
+            )
+            assert {c["petition_id"] for c in material["context"]["prior_choices"]} == {
+                f["detail"]["petition_id"]
+                for f in ledger["facts"]
+                if f["kind"] == "choice" and f["detail"]["date"] == material["date"]
+            }
+            calendar = next(
+                e["id"] for e in ledger["entities"] if e["kind"] == "calendar"
+            )
+            assert all(
+                f["entity_id"] == calendar
+                for f in ledger["facts"]
+                if f["kind"] == "simulation"
+            )
+            state = client.get("/state").json()["game"]
             client.post("/actions", json={"action": "load", "save": save})
             assert client.get("/state").json()["game"] == state
 
@@ -97,7 +148,7 @@ def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
             for f in public["facts"]
         )
         if nominal == 5000000:
-            reports = [f for f in public["facts"] if f["kind"] == "changed"]
+            reports = [f for f in public["facts"] if f["kind"] == "reported"]
             assert reports
             assert all(set(f["detail"]) == {"text"} for f in reports)
             treasury = next(e["id"] for e in ledger["entities"] if e["key"] == "国库")

@@ -81,7 +81,7 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
                     ),
                     ToolCallPart(
                         "set_hall",
-                        {"add": ["杨嗣昌", "韩爌"], "remove": []},
+                        {"add": ["杨嗣昌", "韩爌", "李待问"], "remove": []},
                         tool_call_id="present",
                     ),
                 ]
@@ -114,7 +114,7 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
         client.post("/actions", json={"action": "say", "words": case["emperor_words"]})
         game = client.get("/state").json()["game"]
         assert game["failure"] is None
-        assert set(game["night"]["hall"]) == {"王承恩", "杨嗣昌"}
+        assert set(game["night"]["hall"]) == {"王承恩", "杨嗣昌", "李待问"}
     returned = {
         part.tool_call_id: part.model_response_object()
         for message in received
@@ -124,7 +124,7 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
     assert returned["present"]["ok"] is True
     assert returned["absent"]["ok"] is False
     assert returned["leave"]["ok"] is True
-    assert returned["person"]["person"]["location"] == "nanzhili"
+    assert returned["person"]["person"]["location"] == "南直隶 / 南京"
     assert returned["person"]["person"]["status"] == "offstage"
     assert not {"loyalty", "ability", "integrity", "courage", "intrigue"}.intersection(
         returned["person"]["person"]

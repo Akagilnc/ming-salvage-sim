@@ -1,0 +1,38 @@
+"""Public gazette after landing (and, when added, the fiscal month's product)."""
+
+from collections.abc import Callable
+from functools import partial
+
+from ming.middle.court import Court
+from ming.middle.invoke import ModelSource, build_agent, invoke, stream_text
+from ming.middle.month_work import Materials, prompt, read_records
+
+
+class Gazette:
+    def __init__(
+        self, court: Court, model: ModelSource, on_delta: Callable[[str], None] | None
+    ) -> None:
+        self.court, self.on_delta = court, on_delta
+        self.agent = build_agent(
+            model,
+            name="gazette",
+            output_type=str,
+            deps_type=Materials,
+            tools=[read_records],
+            instructions="全部月末后果已落账。按输入账本本月日期，以朝廷公开口径写本月邸报。用 read_records() 读各衙门奏报文字，保留官员奏报说法，不套模板，不把奏报当核算数。",
+        )
+
+    async def run(self) -> None:
+        calendar = self.court.calendar()
+        if any(f.kind == "gazette" for f in self.court.products(calendar.id)):
+            return
+        result = await invoke(
+            self.agent,
+            prompt(self.court, "public", calendar.model_dump(mode="json")),
+            deps=Materials(self.court, "public"),
+            event_stream_handler=partial(stream_text, self.on_delta)
+            if self.on_delta
+            else None,
+        )
+        self.court.log.info("model output: %s", result.output)
+        self.court.record_product(calendar.id, "gazette", {"text": result.output})
