@@ -8,7 +8,7 @@ from sqlalchemy import and_, or_
 
 from ming.ledger import Entity, Item, Ledger
 from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS, FACT_COLUMNS as F, FACT_ROWS
-from ming.middle.declaration import Declaration, NightDeclaration, Unhandled
+from ming.middle.declaration import Declaration, LandingMode, NightDeclaration, Unhandled
 from ming.middle.rules import field_values, money_amounts
 
 
@@ -23,6 +23,7 @@ def landing_entities(
         pairs.update(("affair", f.affair) for f in result.facts if f.affair is not None)
     if isinstance(result, NightDeclaration):
         pairs.update(("person", p) for d in result.decrees for p in d.people)
+        pairs.update(("person", e.endorser) for d in result.decrees for e in d.endorsements if e.endorser != "御笔")
     found = {
         (e["kind"], e["key"]): e
         for kind, key in sorted(pairs)
@@ -62,7 +63,7 @@ def dispatch(
     ledger: Ledger,
     result: Declaration | Unhandled,
     night_id: UUID,
-    monthly: bool = False,
+    monthly: LandingMode | None = None,
     baselines: dict[tuple[str, str, str], Any] | None = None,
 ) -> None:
     owner = ledger.get(night_id)
@@ -94,8 +95,8 @@ def dispatch(
         changed[(entity.kind, entity.key)] = entity
         existing[(entity.kind, entity.key)] = entity.snapshot()
 
-    if not isinstance(result, Unhandled):
-        amounts = money_amounts(result.facts, existing)
+    def record_facts(output: Declaration) -> None:
+        amounts = money_amounts(output.facts, existing)
         # A share declares post-values from the reading it saw. Shares landed
         # since then shift the whole share once: none overwrites another, and
         # its own successive facts stay the progression it declared.
@@ -104,13 +105,13 @@ def dispatch(
             for key, value in (baselines or {}).items()
             if key[:2] in existing
         }
-        for fact in result.facts:
+        for fact in output.facts:
             pair = fact.entity_type, fact.entity
             if fact.create and pair not in existing:
                 entity = Entity(*pair, "", {})
                 changed[pair] = entity
                 existing[pair] = entity.snapshot()
-        for i, fact in enumerate(result.facts):
+        for i, fact in enumerate(output.facts):
             entity = known(fact.entity_type, fact.entity)
             association = (
                 {"affair_id": str(known("affair", fact.affair).id)}
@@ -129,25 +130,17 @@ def dispatch(
                 and entity.data.get("office")
             ):
                 displace(entity, existing, known, record, association)
-        record_receipts(result, amounts, known, record)
-        for report in result.reports:
+        record_receipts(output, amounts, known, record)
+        for report in output.reports:
             record(
                 known(report.entity_type, report.entity),
                 "reported",
                 report.model_dump(),
             )
+    if not isinstance(result, Unhandled):
+        record_facts(result)
     if isinstance(result, NightDeclaration):
-        for decree in result.decrees:
-            data = decree.model_dump()
-            data["night_id"] = str(night_id)
-            entity = Entity("decree", "", "", data)
-            record(entity, "decreed", data)
-            for person in decree.people:
-                record(
-                    known("person", person),
-                    "decreed",
-                    {"decree_id": str(entity.id)},
-                )
+        record_decrees(result, night_id, known, record)
     if (
         monthly
         and owner.kind == "decree"
@@ -158,10 +151,29 @@ def dispatch(
         known(owner.kind, owner.key),
         "unhandled"
         if isinstance(result, Unhandled)
-        else ("landed" if monthly else "translated"),
-        {"result": result.model_dump()},
+        else (monthly or "translated"),
+        {"result": result.model_dump(), "monthly": monthly},
     )
     ledger.commit(list(changed.values()))
+
+
+def record_decrees(
+    result: NightDeclaration,
+    night_id: UUID,
+    known: Callable[[str, str], Entity],
+    record: Callable[..., None],
+) -> None:
+    for decree in result.decrees:
+        data = {**decree.model_dump(), "night_id": str(night_id)}
+        entity = Entity("decree", "", "", data)
+        record(entity, "decreed", data)
+        for endorsement in decree.endorsements:
+            if endorsement.endorser != "御笔":
+                record(known("person", endorsement.endorser), "endorsed", {
+                    "decree_id": str(entity.id), **endorsement.model_dump(),
+                })
+        for person in decree.people:
+            record(known("person", person), "decreed", {"decree_id": str(entity.id)})
 
 
 def record_receipts(
@@ -189,6 +201,10 @@ def record_receipts(
 
 
 def interim_mark(ledger: Ledger, decree: Entity, date: Item) -> str | None:
+    if ledger.facts(entity_id=decree.id, kind="interim"):
+        return None
+    if decree.data.get("interim"):
+        return decree.data["text"]
     verdict = next(
         (
             e["detail"]

@@ -18,7 +18,8 @@ RECORDED = Path(__file__).parent / "recorded"
 @pytest.mark.parametrize(
     ("case", "game_db"),
     [
-        (case, "first_night" if case[2] == ("vital",) else "rejected_night")
+        ({"option": case[0], "new_night": case[1], "verdicts": case[2]},
+         "first_night" if case[2] == ("vital",) else "rejected_night")
         for case in (
             (0, False, ("rejected", "approved")),
             (0, True, ("rejected", "approved")),
@@ -32,23 +33,17 @@ RECORDED = Path(__file__).parent / "recorded"
     indirect=["game_db"],
 )
 def test_rejected_decree_is_forced_withdrawn_or_reconsidered(
-    tmp_path: Path, game_db: Path, steps, audit, case: tuple
+    tmp_path: Path, game_db: Path, steps, audit, case: dict
 ) -> None:
-    option, new_night, verdicts = case
-    names = {
-        "rejected": "deliberation_rejected.txt",
-        "approved": "deliberation.txt",
-        "vital": "deliberation_vital.txt",
-    }
-    vital = verdicts[0] == "vital"
+    vital = case["verdicts"][0] == "vital"
     # The shared rejected node has already consumed the first verdict.
     steps["deliberation"] = replaying(
         [
-            (RECORDED / names[v]).read_text()
-            for v in (verdicts if vital else verdicts[1:])
+            (RECORDED / {"rejected": "deliberation_rejected.txt", "approved": "deliberation.txt", "vital": "deliberation_vital.txt"}[v]).read_text()
+            for v in (case["verdicts"] if vital else case["verdicts"][1:])
         ]
     )
-    reforced = len(verdicts) == 2 and verdicts[-1] == "rejected"
+    reforced = len(case["verdicts"]) == 2 and case["verdicts"][-1] == "rejected"
     with TestClient(create_app(tmp_path)) as client:
         save = client.post(
             "/actions", json={"action": "load", "save": game_db.name}
@@ -59,10 +54,9 @@ def test_rejected_decree_is_forced_withdrawn_or_reconsidered(
             ]:
                 client.post("/actions", json={"action": "say", "words": words})
             client.post("/actions", json={"action": "load", "save": save})
-        state = client.get("/state").json()["game"]
-        petition = state["petitions"][0]
+        petition = client.get("/state").json()["game"]["petitions"][0]
         assert petition["options"] == (
-            ["收回", "留中"] if vital else ["强颁", "收回", "留中"]
+            ["收回", "留中"] if vital else ["强颁", "收回", "留中", "御笔强推"]
         )
         ledger = audit(tmp_path / save)
         assert len([f for f in ledger["facts"] if f["kind"] == "simulation"]) == 1
@@ -93,19 +87,16 @@ def test_rejected_decree_is_forced_withdrawn_or_reconsidered(
                 if f["kind"] == "landed" and f["entity_id"] == decree["id"]
             ]
             assert not [f for f in ledger["facts"] if f["kind"] == "interim"]
-            world = next(e for e in ledger["entities"] if e["kind"] == "world")
-            assert world["data"]["imperial_prestige"] == 20
+            assert next(e for e in ledger["entities"] if e["kind"] == "world")["data"]["imperial_prestige"] == 20
             return
-        declarations = (
-            ("month_empty.txt", "month_force.txt", "month_empty.txt")
-            if reforced
-            else ("month_force.txt", "month_empty.txt")
-        )
-        if option == 0 or reforced:
+        if case["option"] == 0 or reforced:
             steps["Declaration"] = replaying(
-                [(RECORDED / name).read_text() for name in declarations]
+                [(RECORDED / name).read_text() for name in (
+                    ("month_empty.txt", "month_force.txt", "month_empty.txt") if reforced
+                    else ("month_force.txt", "month_empty.txt")
+                )]
             )
-        if option != 0 or new_night:
+        if case["option"] != 0 or case["new_night"]:
             client.post("/actions", json={"action": "month"})
             assert (
                 len(
@@ -119,30 +110,29 @@ def test_rejected_decree_is_forced_withdrawn_or_reconsidered(
             )
         client.post(
             "/actions",
-            json={"action": "choose", "petition": petition["id"], "option": option},
+            json={"action": "choose", "petition": petition["id"], "option": case["option"]},
         )
-        if option == 0 and not new_night:
+        if case["option"] == 0 and not case["new_night"]:
             assert client.get("/state").json()["game"]["date"]["month"] == 10
             client.post("/actions", json={"action": "month"})
         client.portal.call(client.app.state.web.game.drain)
         assert client.get("/state").json()["game"]["date"]["month"] == 11
         ledger = audit(tmp_path / save)
         decree = next(e for e in ledger["entities"] if e["kind"] == "decree")
-        world = next(e for e in ledger["entities"] if e["kind"] == "world")
-        assert world["data"]["public_support"] == 50
-        assert (world["data"]["imperial_prestige"] < 20) == (option == 0)
-        assert (world["data"]["imperial_prestige"] == 20) == (option != 0)
+        assert [(e["data"]["public_support"], e["data"]["imperial_prestige"] < 20,
+                 e["data"]["imperial_prestige"] == 20)
+                for e in ledger["entities"] if e["kind"] == "world"] == [(50, case["option"] == 0, case["option"] != 0)]
         assert len(
             [
                 f
                 for f in ledger["facts"]
                 if f["kind"] == "landed" and f["entity_id"] == decree["id"]
             ]
-        ) == int(option == 0)
+        ) == int(case["option"] == 0)
         assert len([f for f in ledger["facts"] if f["kind"] == "interim"]) == int(
-            option == 0
+            case["option"] == 0
         )
-        if option == 0:
+        if case["option"] == 0:
             assert any(
                 "satisfaction" in f["detail"]["actual"]
                 for f in ledger["facts"]
@@ -159,10 +149,9 @@ def test_rejected_decree_is_forced_withdrawn_or_reconsidered(
             assert len(segments[1]["messages"]) > len(segments[0]["messages"])
         if reforced:
             client.post("/actions", json={"action": "month"})
-            state = client.get("/state").json()["game"]
-            assert state["date"]["month"] == 11
-            petition = state["petitions"][0]
-            assert petition["options"] == ["强颁", "收回", "留中"]
+            assert client.get("/state").json()["game"]["date"]["month"] == 11
+            petition = client.get("/state").json()["game"]["petitions"][0]
+            assert petition["options"] == ["强颁", "收回", "留中", "御笔强推"]
             client.post(
                 "/actions",
                 json={"action": "choose", "petition": petition["id"], "option": 0},
@@ -170,8 +159,7 @@ def test_rejected_decree_is_forced_withdrawn_or_reconsidered(
             client.portal.call(client.app.state.web.game.drain)
             assert client.get("/state").json()["game"]["date"]["month"] == 12
             ledger = audit(tmp_path / save)
-            world = next(e for e in ledger["entities"] if e["kind"] == "world")
-            assert world["data"]["imperial_prestige"] < 20
+            assert next(e for e in ledger["entities"] if e["kind"] == "world")["data"]["imperial_prestige"] < 20
             assert len(
                 [
                     f
@@ -192,20 +180,24 @@ def test_rejected_decree_is_forced_withdrawn_or_reconsidered(
         steps["Declaration"] = TestModel(
             call_tools=[], custom_output_text=(RECORDED / "month_empty.txt").read_text()
         )
-        if new_night:
+        if case["new_night"]:
             steps["NightDeclaration"] = TestModel(
                 call_tools=[],
                 custom_output_text=(RECORDED / "night_empty.txt").read_text(),
             )
             client.post("/actions", json={"action": "open"})
+            received = []
+            steps["scene"] = replaying([json.loads((RECORDED / "night_invalid.json").read_text())["cases"]["missing_fields"]["scene"]], received)
+            client.post("/actions", json={"action": "say", "words": "宣徐光启。"}).raise_for_status()
+            assert json.loads(received[0].parts[0].content[0])["imperial_prestige"] == ("威令未立" if case["option"] == 0 else "威福旁落")
             client.post("/actions", json={"action": "dismiss"})
         client.post("/actions", json={"action": "month"})
         ledger = audit(tmp_path / save)
         assert client.get("/state").json()["game"]["date"]["month"] == 12
         assert len(
             [f for f in ledger["facts"] if f["kind"] == "deliberation"]
-        ) == 1 + int(option == 2)
-        if option == 2:
+        ) == 1 + int(case["option"] == 2)
+        if case["option"] == 2:
             assert any(
                 f["kind"] == "landed" and f["entity_id"] == decree["id"]
                 for f in ledger["facts"]
@@ -215,6 +207,96 @@ def test_rejected_decree_is_forced_withdrawn_or_reconsidered(
                 for f in reversed(ledger["facts"])
                 if f["kind"] == "deliberation"
             ) == next(e["id"] for e in ledger["entities"] if e["kind"] == "calendar")
+
+
+@pytest.mark.parametrize("game_db", ["rejected_night"], indirect=True)
+@pytest.mark.parametrize("case", ["approved", "rejected", "retry"])
+def test_imperial_backing_reconsiders_the_original_decree(game_db, steps, audit, clock, case):
+    received = []
+    steps["deliberation"] = replaying(
+        ([TimeoutError()] * 3 if case == "retry" else [])
+        + [(RECORDED / ("deliberation_rejected.txt" if case == "rejected" else "deliberation.txt")).read_text()],
+        received,
+    )
+    with TestClient(create_app(game_db.parent)) as client:
+        client.post("/actions", json={"action": "load", "save": game_db.name})
+        petition = client.get("/state").json()["game"]["petitions"][0]
+        for invalid in (
+            {"petition": "00000000-0000-0000-0000-000000000000", "option": 3},
+            {"petition": petition["id"], "option": 4},
+            {"petition": petition["id"], "words": "朕另下手敕，照此办理。"},
+        ):
+            assert client.post("/actions", json={"action": "choose", **invalid}).status_code == 400
+        client.post("/actions", json={"action": "choose", "petition": petition["id"], "option": 3}).raise_for_status()
+        client.portal.call(client.app.state.web.game.drain)
+        if case == "retry":
+            assert client.get("/state").json()["game"]["failure"]["action"] == "choose"
+            assert len([f for f in audit(game_db)["facts"] if f["kind"] == "deliberation"]) == 1
+            client.post("/actions", json={"action": "retry"}).raise_for_status()
+            client.portal.call(client.app.state.web.game.drain)
+        ledger = audit(game_db)
+        decree = next(e for e in ledger["entities"] if e["kind"] == "decree")
+        assert decree["data"]["endorsements"] == [{
+            "endorser": "御笔", "form": "御笔手敕",
+            "decision_key": {"petition_id": petition["id"], "option": 3},
+        }]
+        assert json.loads(received[-1].parts[0].content)["context"]["decree"]["data"]["endorsements"] == decree["data"]["endorsements"]
+        assert len([e for e in ledger["entities"] if e["kind"] == "decree"]) == 1
+        assert len([f for f in ledger["facts"] if f["kind"] == "deliberation"]) == 2
+        assert len([f for f in ledger["facts"] if f["kind"] == "endorsed"]) == 1
+        state = client.get("/state").json()["game"]
+        assert state["failure"] is None
+        if case == "rejected":
+            assert state["petitions"][0]["options"] == ["强颁", "收回", "留中"]
+            assert client.post("/actions", json={"action": "choose", "petition": state["petitions"][0]["id"], "option": 3}).status_code == 400
+            client.post("/actions", json={"action": "choose", "petition": state["petitions"][0]["id"], "option": 1}).raise_for_status()
+        else:
+            assert state["petitions"] == []
+        client.post("/actions", json={"action": "month"}).raise_for_status()
+        client.portal.call(client.app.state.web.game.drain)
+        ledger = audit(game_db)
+        assert client.get("/state").json()["game"]["date"]["month"] == 11
+        assert len([f for f in ledger["facts"] if f["kind"] == "landed" and f["entity_id"] == decree["id"]]) == int(case != "rejected")
+        assert not [f for f in ledger["facts"] if f["kind"] == "interim"]
+        assert next(e for e in ledger["entities"] if e["kind"] == "world")["data"]["imperial_prestige"] == 20
+        assert not [f for f in ledger["facts"] if f["kind"] == "changed" and "satisfaction" in f["detail"].get("actual", {})]
+
+
+@pytest.mark.usefixtures("backed_night")
+@pytest.mark.parametrize("backed_night", ["interim"], indirect=True)
+@pytest.mark.parametrize("game_db", ["backed_night"], indirect=True)
+@pytest.mark.parametrize("rejected", [False, True])
+def test_interim_costs_follow_promulgation_not_backing(game_db, steps, audit, rejected):
+    steps["NightDeclaration"] = replaying(json.loads((RECORDED / "night_interim.json").read_text())["replies"])
+    received = []
+    steps["deliberation"] = replaying([(RECORDED / ("deliberation_rejected.txt" if rejected else "deliberation.txt")).read_text()], received)
+    declaration = json.loads((RECORDED / f"month_interim_{'rejected' if rejected else 'approved'}.json").read_text())
+    steps["Declaration"] = replaying([*declaration["replies"], (RECORDED / "month_empty.txt").read_text()])
+    with TestClient(create_app(game_db.parent)) as client:
+        client.post("/actions", json={"action": "load", "save": game_db.name})
+        client.post("/actions", json={"action": "dismiss"}).raise_for_status()
+        client.portal.call(client.app.state.web.game.drain)
+        state = client.get("/state").json()["game"]
+        assert state["failure"] is None
+        decree = next(e for e in audit(game_db)["entities"] if e["kind"] == "decree")
+        assert decree["data"]["interim"] is True
+        assert json.loads(received[-1].parts[0].content)["context"]["decree"]["data"]["interim"] is True
+        assert [e["endorser"] for e in decree["data"]["endorsements"]] == ["毕自严", "御笔"]
+        if rejected:
+            assert state["petitions"][0]["options"] == ["强颁", "收回", "留中"]
+            client.post("/actions", json={"action": "choose", "petition": state["petitions"][0]["id"], "option": 1}).raise_for_status()
+        client.post("/actions", json={"action": "month"}).raise_for_status()
+        ledger = audit(game_db)
+        assert client.get("/state").json()["game"]["date"]["month"] == 11
+        assert len([f for f in ledger["facts"] if f["kind"] == "interim" and f["entity_id"] == decree["id"]]) == 1
+        assert len([f for f in ledger["facts"] if f["kind"] == "landed" and f["entity_id"] == decree["id"]]) == int(not rejected)
+        effects = [f for f in ledger["facts"] if f["kind"] == "changed" and f["detail"]["origin_ref"] == decree["id"]]
+        assert len([f for f in effects if "imperial_prestige" in f["detail"]["actual"]]) == int(not rejected)
+        assert any("satisfaction" in f["detail"]["actual"] for f in effects)
+        assert len({f["entity_id"] for f in effects if "satisfaction" in f["detail"]["actual"]}) == len([f for f in effects if "satisfaction" in f["detail"]["actual"]])
+        if rejected:
+            assert next(e for e in ledger["entities"] if e["kind"] == "world")["data"]["imperial_prestige"] == 20
+            assert not [f for f in effects if "taels" in f["detail"]["actual"]]
 
 
 def test_two_nights_feed_world_and_arrivals_wait_for_audience(

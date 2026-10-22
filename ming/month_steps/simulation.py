@@ -11,15 +11,24 @@ from pydantic_ai.messages import ModelMessagesTypeAdapter
 from ming.middle.court import Court
 from ming.middle.declaration import PendingPetition
 from ming.middle.invoke import ModelSource, build_agent, invoke
-from ming.middle.month_work import Materials, Simulation, prompt, read_records
+from ming.middle.month_work import COST_RULES, Materials, Simulation, prompt, read_records
 from ming.middle.view import EntityView
 
 
-def continuing_options(petition: PendingPetition, route: UUID) -> range | list[int]:
-    """Every option of a fork continues its segment; a rejection only 强颁 does."""
-    if petition.entity_id == route:
+def continuing_options(petition: PendingPetition, court: Court) -> range | list[int]:
+    """Forks continue; imperial backing waits for its own renewed approval."""
+    if petition.entity_id == petition.route_id:
         return range(len(petition.options))
-    return [petition.options.index("强颁")] if "强颁" in petition.options else []
+    approved = any(
+        f.detail["verdict"] == "准"
+        and f.detail["decision_key"]["petition_id"] == str(petition.id)
+        for f in court.products(petition.entity_id, kind="deliberation")
+        if f.detail.get("decision_key")
+    )
+    return [
+        i for i, option in enumerate(petition.options)
+        if option == "强颁" or (option == "御笔强推" and approved)
+    ]
 
 
 class Simulations:
@@ -34,7 +43,7 @@ class Simulations:
             deps_type=Materials,
             tools=[read_records],
             retries=1,
-            instructions="你推演真实世界，用 read_records 查账。日期由输入账本给定，只写本月，写到本月底结束。交本段原文、零到多道奏疏及是否已写到月底。未到月底请旨是岔路；交回的每问独立，可各自续写。到月底附带奏疏是下个月开局奏折，不在本月执行。旨意推演只办输入已准各旨，不推其余世界；世界推演读各夜结果，只写其余发展和本月重议已准旨、上月已批奏疏。撤回成命照外廷判词办理，保留其皇威、当事大臣与相关派系反应；收权罢差零毁约代价。强颁付皇威及相关派系或阶级反应，反应可正可负可零，中旨标记写在旨上。民心不是强颁或撤旨的固定代价。人物异地启程按账本距离在途，所在由引擎月末倒数更新，在途不改道；事务办完只写往事，不设了结。奏报与实况分清。续写接同段对话，只写当前这一问的后果，不替其他问选择、不重复已写部分。",
+            instructions="你推演真实世界，用 read_records 查账。日期由输入账本给定，只写本月，写到本月底结束。交本段原文、零到多道奏疏及是否已写到月底。未到月底请旨是岔路；交回的每问独立，可各自续写。到月底附带奏疏是下个月开局奏折，不在本月执行。旨意推演只办输入已准各旨，不推其余世界；世界推演读各夜结果，只写其余发展和本月重议已准旨、上月已批奏疏。人物异地启程按账本距离在途，所在由引擎月末倒数更新，在途不改道；事务办完只写往事，不设了结。奏报与实况分清。续写接同段对话，只写当前这一问的后果，不替其他问选择、不重复已写部分。" + COST_RULES,
         )
 
     def publish(self, route: UUID, segment: dict[str, Any]) -> None:
@@ -99,7 +108,11 @@ class Simulations:
                 "petition": petition.model_dump(mode="json"),
                 "option": option,
                 "choice": petition.options[option],
-                "instruction": "只续写这一问的后果到本月底。其他问保持待批；强颁则续写此旨及其代价。",
+                "decree": self.court.entity(petition.entity_id).model_dump(mode="json")
+                if petition.entity_id != petition.route_id else None,
+                "deliberations": [f.detail for f in self.court.products(petition.entity_id, kind="deliberation")],
+                "prior_interim": [f.detail for f in self.court.products(petition.entity_id, current=False, kind="interim")],
+                "instruction": "只续写这一问的后果到本月底。其他问保持待批；强颁则续写此旨及其代价。御笔强推只追加担名，获外廷准后按正常旨办理。",
             },
             parent["messages"],
         )
@@ -209,7 +222,7 @@ class Simulations:
                     # Without the parent segment no forecast of this route can run;
                     # its production re-enters here through run() once it lands.
                     continue
-                options = continuing_options(petition, route)
+                options = continuing_options(petition, self.court)
                 for option in options:
                     self.start_forecast(petition, option)
                 if (

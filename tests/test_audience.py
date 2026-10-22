@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from pydantic_ai.messages import (
     ModelResponse,
+    RetryPromptPart,
     ToolCallPart,
     ToolReturnPart,
 )
@@ -48,7 +49,7 @@ def test_nights_are_persistent_and_translate_only_after_dismissal(
         assert orders
         assert all(e["data"]["night_id"] == first["id"] for e in orders)
         assert all(
-            set(e["data"]) == {"text", "origin", "people", "night_id"} for e in orders
+            set(e["data"]) == {"text", "origin", "people", "night_id", "endorsements", "interim"} for e in orders
         )
         ids = {e["key"]: e["id"] for e in ledger["entities"] if e["kind"] == "person"}
         for name in ("王承恩", "徐光启"):
@@ -62,6 +63,11 @@ def test_nights_are_persistent_and_translate_only_after_dismissal(
             for f in ledger["facts"]
             if f["entity_id"] == ids["杨嗣昌"] and f["kind"] == "decreed"
         ]
+        assert all(e["data"]["endorsements"] == [] for e in orders)
+        assert client.get("/state").json()["game"]["petitions"] == []
+        client.post("/actions", json={"action": "month"}).raise_for_status()
+        assert client.get("/state").json()["game"]["date"]["month"] == 11
+        assert {f["entity_id"] for f in audit(tmp_path / save)["facts"] if f["kind"] == "landed" and f["entity_id"] in {e["id"] for e in orders}} == {e["id"] for e in orders}
         client.post("/actions", json={"action": "open"})
         second = client.get("/state").json()["game"]["night"]
         assert first["id"] != second["id"]
@@ -114,6 +120,7 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
         client.post("/actions", json={"action": "load", "save": game_db.name})
         client.post("/actions", json={"action": "say", "words": case["emperor_words"]})
         game = client.get("/state").json()["game"]
+        assert json.loads(received[0].parts[0].content[0])["imperial_prestige"] == "威福旁落"
         assert game["failure"] is None
         assert set(game["night"]["hall"]) == {"王承恩", "杨嗣昌", "李待问"}
     returned = {
@@ -130,6 +137,90 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
     assert not {"loyalty", "ability", "integrity", "courage", "intrigue"}.intersection(
         returned["person"]["person"]
     )
+
+
+@pytest.mark.usefixtures("backed_night")
+@pytest.mark.parametrize("game_db", ["backed_night"], indirect=True)
+@pytest.mark.parametrize("backed_night,recording,case", [
+    ("endorsed", "endorsed", case) for case in ["approved", "held", "name", "form", "source", "missing"]
+] + [("double", "double", "approved")], indirect=["backed_night"])
+def test_backing_follows_its_decree_and_signers(game_db, steps, audit, case, recording):
+    multiple = recording == "double"
+    recording = json.loads((RECORDED / f"night_{recording}.json").read_text())
+    reply = json.loads(recording["replies"][-1])
+    received = []
+    if case in {"name", "form", "source", "missing"}:
+        if case == "missing":
+            del reply["decrees"][0]["endorsements"][0]["endorser"]
+        else:
+            reply["decrees"][0]["endorsements"][0][{
+                "name": "endorser", "form": "form", "source": "source_chat_turn_id",
+            }[case]] = {"name": "毕尚书", "form": "力保", "source": "other-night"}[case]
+        steps["NightDeclaration"] = replaying([json.dumps(reply, ensure_ascii=False)] * 2, received)
+    else:
+        steps["NightDeclaration"] = replaying(recording["replies"])
+    steps["deliberation"] = replaying(
+        [(RECORDED / ("deliberation_rejected.txt" if case == "held" else "deliberation.txt")).read_text(),
+         (RECORDED / "deliberation.txt").read_text()], received,
+    )
+    with TestClient(create_app(game_db.parent)) as client:
+        client.post("/actions", json={"action": "load", "save": game_db.name})
+        client.post("/actions", json={"action": "dismiss"}).raise_for_status()
+        client.portal.call(client.app.state.web.game.drain)
+        state = client.get("/state").json()["game"]
+        assert state["failure"] is None
+        if case not in {"approved", "held"}:
+            assert state["night"]["result"] == "unhandled"
+            retries = [p for m in received for p in m.parts if isinstance(p, RetryPromptPart)]
+            assert len(retries) == 1
+            if case == "name":
+                reply = json.loads(retries[0].content)
+                assert reply["field"] == "decrees[0].endorsements[0].endorser"
+                assert reply["current"] == "毕尚书"
+                assert "毕自严" in reply["expected"]
+            elif case in {"form", "missing"}:
+                reply = retries[0].content[0]
+                assert reply["type"] == ("literal_error" if case == "form" else "missing")
+                assert reply["loc"] == ("decrees", 0, "endorsements", 0, "form" if case == "form" else "endorser")
+                assert reply["input"] == ("力保" if case == "form" else {
+                    "form": "当面站台", "source_chat_turn_id": "north-star-backing",
+                })
+                assert "msg" in reply
+            assert len([f for f in audit(game_db)["facts"] if f["kind"] == "unhandled"]) == 1
+            assert [f["detail"] for f in client.get("/records").json()["facts"] if f["kind"] == "unhandled"] == [{}]
+            client.post("/actions", json={"action": "month"}).raise_for_status()
+            client.post("/actions", json={"action": "open"}).raise_for_status()
+            assert client.get("/state").json()["game"]["night"]["turns"] == []
+            return
+        assert state["night"]["result"] == "translated"
+        ledger = audit(game_db)
+        decree = next(e for e in ledger["entities"] if e["kind"] == "decree")
+        expected = [{"endorser": "毕自严", "form": "当面站台", "source_chat_turn_id": "north-star-backing"}]
+        if multiple:
+            expected += [
+                {"endorser": "王绍徽", "form": "会签", "source_chat_turn_id": "north-star-cosign"},
+                {"endorser": "御笔", "form": "御笔手敕", "source_chat_turn_id": "north-star-cosign"},
+            ]
+        assert decree["data"]["endorsements"] == expected
+        assert "毕自严" not in decree["data"]["people"]
+        assert json.loads(received[-1].parts[0].content)["context"]["decree"]["data"]["endorsements"] == decree["data"]["endorsements"]
+        for endorsement in (e for e in expected if e["endorser"] != "御笔"):
+            assert [f["detail"]["decree_id"] for f in ledger["facts"]
+                    if f["kind"] == "endorsed" and f["entity_id"] == next(e["id"] for e in ledger["entities"] if e["key"] == endorsement["endorser"])] == [decree["id"]]
+        if case == "held":
+            assert state["petitions"][0]["options"] == ["强颁", "收回", "留中"]
+            client.post("/actions", json={"action": "choose", "petition": state["petitions"][0]["id"], "option": 2}).raise_for_status()
+        else:
+            assert state["petitions"] == []
+        client.post("/actions", json={"action": "month"}).raise_for_status()
+        if case == "held":
+            client.post("/actions", json={"action": "load", "save": game_db.name})
+            client.post("/actions", json={"action": "month"}).raise_for_status()
+            assert json.loads(received[-1].parts[0].content)["context"]["decree"]["data"]["endorsements"] == decree["data"]["endorsements"]
+        ledger = audit(game_db)
+        assert next(e for e in ledger["entities"] if e["kind"] == "world")["data"]["imperial_prestige"] == 20
+        assert not [f for f in ledger["facts"] if f["kind"] == "interim"]
+        assert not [f for f in ledger["facts"] if f["kind"] == "changed" and "satisfaction" in f["detail"].get("actual", {})]
 
 
 def test_failed_night_translation_is_terminal_and_reaches_following_nights(

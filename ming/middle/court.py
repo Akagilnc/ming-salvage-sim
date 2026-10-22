@@ -18,13 +18,13 @@ from ming.middle import queries
 from ming.ledger import Entity, Item, Ledger
 from ming.middle.dispatch import dispatch
 from ming.middle.calendar import advance_month
-from ming.middle.declaration import Declaration, Unhandled
+from ming.middle.declaration import Declaration, LandingMode, Unhandled
 from ming.middle.invoke import ModelSource
 from ming.middle.opening import CONTENT, import_opening
 from ming.middle.night import NightView, dismiss, open_night, read_night
 from ming.middle.scene import HallResult, PersonView, read_person, set_hall
 from ming.middle.translate import INSTRUCTIONS, declaration_agent, translate
-from ming.middle.view import EntityView, FactView, Identity, entities, project
+from ming.middle.view import EntityView, FactView, Identity, character_input, entities, project
 
 T = TypeVar("T", bound=Declaration)
 
@@ -102,6 +102,9 @@ class Court:
             gazette = fact["detail"]["text"]
         return {
             "date": self.calendar().data,
+            "imperial_prestige": character_input(
+                self.entities("audit", kind="world")[0].data
+            )["imperial_prestige"],
             "waiting_audience": [row["key"] for row in rows],
             "gazette": gazette,
             "unhandled": [
@@ -157,11 +160,13 @@ class Court:
 
     def translation_agent(
         self, output_type: type[T], instructions: str = INSTRUCTIONS
-    ) -> Agent[None, T]:
+    ) -> Agent[UUID | None, T]:
         return declaration_agent(self.model, self._ledger, output_type, instructions)
 
-    async def translate(self, agent: Agent[None, T], prompt: str) -> T | Unhandled:
-        result = await translate(agent, prompt)
+    async def translate(
+        self, agent: Agent[UUID | None, T], prompt: str, source: UUID | None = None
+    ) -> T | Unhandled:
+        result = await translate(agent, prompt, source)
         self.log.info("translation output: %s", result.model_dump_json())
         return result
 
@@ -170,7 +175,7 @@ class Court:
         result: Declaration | Unhandled,
         source: UUID,
         *,
-        monthly: bool = False,
+        monthly: LandingMode | None = None,
         baselines: dict[tuple[str, str, str], Any] | None = None,
     ) -> None:
         dispatch(self._ledger, result, source, monthly, baselines)
@@ -299,21 +304,23 @@ class Court:
             for e in self._ledger.read(queries.due_decrees(self.calendar().data))
         ]
 
-    def landing_sources(self) -> list[tuple[EntityView, UUID]]:
-        sources: list[tuple[EntityView, UUID]] = []
+    def landing_sources(self) -> list[tuple[EntityView, UUID, LandingMode]]:
+        sources: list[tuple[EntityView, UUID, LandingMode]] = []
         for row in self._ledger.read(
             queries.decrees_with("deliberation", self.calendar().data)
         ):
             decree = EntityView.model_validate(row)
             products = self.products(decree.id, kind=("deliberation", "choice"))
-            verdict = next(f.detail for f in products if f.kind == "deliberation")
+            verdict = next(f.detail for f in reversed(products) if f.kind == "deliberation")
             choice = next(
                 (f.detail for f in reversed(products) if f.kind == "choice"), None
             )
             if verdict["verdict"] == "准" or (choice and choice["text"] == "强颁"):
-                sources.append((decree, UUID(verdict["route_id"])))
+                sources.append((decree, UUID(verdict["route_id"]), "landed"))
+            elif decree.data.get("interim"):
+                sources.append((decree, UUID(verdict["route_id"]), "attempted"))
         calendar = self.calendar()
-        return sources + [(calendar, calendar.id)]
+        return sources + [(calendar, calendar.id, "landed")]
 
     def observe(self, on_change: Callable[[], None]) -> None:
         self._ledger.on_commit = on_change

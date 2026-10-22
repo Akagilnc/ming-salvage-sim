@@ -6,6 +6,9 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 
+LandingMode = Literal["landed", "attempted"]
+
+
 class Unhandled(BaseModel):
     model_text: str
     failure_point: str
@@ -67,9 +70,17 @@ class Declaration(StrictModel):
     reports: list[Report] = Field(default_factory=list[Report])
 
 
+class Endorsement(StrictModel):
+    endorser: str = Field(description="背书人账本正名；皇帝亲担写御笔，担名不等于办事")
+    form: Literal["会签", "当面站台", "御笔手敕"]
+    source_chat_turn_id: str = Field(description="本夜实际背书发生的那一轮 id，不是夜 id")
+
+
 class Decree(StrictModel):
     text: str = Field(description="皇帝已经认可的圣旨定稿全文，原样保留")
     origin: Literal["emperor", "minister"]
+    endorsements: list[Endorsement] = Field(default_factory=list[Endorsement])
+    interim: bool = Field(default=False, description="皇帝明说中旨、不经内阁；御笔手敕本身不等于中旨")
     people: list[str] = Field(
         description=(
             "旨意涉及的人：旨意所及对象，以及戏文中实际拟旨、宣读或领旨的经手者；"

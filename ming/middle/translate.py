@@ -2,11 +2,13 @@
 
 import json
 from typing import Any, TypeVar, cast
+from uuid import UUID
 
 from pydantic_ai import (
     Agent,
     ModelRetry,
     PromptedOutput,
+    RunContext,
     capture_run_messages,
 )
 from pydantic_ai.exceptions import ToolRetryError, UnexpectedModelBehavior
@@ -24,7 +26,8 @@ INSTRUCTIONS = """你是御前召对的转译官。退朝后通读整夜已落�
 decrees 只记成了的旨意：领旨的人已经把皇帝的话拟成正式圣旨念出，皇帝认可了那份定稿。
 认可按意思认，不限于“准”字；皇帝没表态的就是默拒，驳了的也不成旨。不要把问话、大臣请示或未认可的拟稿记成旨。
 text 保留皇帝认可的圣旨定稿全文，不改写、不摘要。origin 记原本是皇帝所下还是大臣所请，people 按字段说明填写。
-旨意只记定稿、来历与涉及的人，不带交办或拨款载荷，不预先执行待月末办理的后果。
+背书随成旨声明，三种形式照戏文判断，来源指向实际担名的那一轮；只担名的人不因此计入 people。皇帝明说中旨才标 interim，御笔手敕本身不是中旨。
+旨意记定稿、来历、涉及的人与背书、中旨标记，不带交办或拨款载荷，不预先执行待月末办理的后果。
 当场已经发生的事实用 facts：哪个实体、是否新建、字段变更列表、一段文字。不分类，不设动作枚举。
 只记今夜新发生的实况，不把邸报旧事、档案履历或大臣奏报中的说法当成今夜已经发生的事实。
 是待执行旨意还是当场实况，照整夜戏文判断；未认可的拟旨不能当成已经执行的事实。
@@ -77,7 +80,7 @@ def fail(field: str, value: object, expected: object) -> None:
     )
 
 
-def check(ledger: Ledger, out: Declaration) -> None:
+def check(ledger: Ledger, out: Declaration, source: UUID | None) -> None:
     names, fields = catalogue(ledger), allowed_fields(ledger)
     for i, fact in enumerate(out.facts):
         path = f"facts[{i}]"
@@ -101,6 +104,16 @@ def check(ledger: Ledger, out: Declaration) -> None:
                 )
     check_rules(out, set(names.get("affair", {})))
     check_references(out, names)
+    if isinstance(out, NightDeclaration):
+        turns = {f["detail"]["id"] for f in ledger.facts(entity_id=source, kind="turn")} if source else set[str]()
+        for i, decree in enumerate(out.decrees):
+            for j, endorsement in enumerate(decree.endorsements):
+                path = f"decrees[{i}].endorsements[{j}]"
+                if endorsement.source_chat_turn_id not in turns:
+                    fail(path + ".source_chat_turn_id", endorsement.source_chat_turn_id, sorted(turns))
+                expected = ["御笔"] if endorsement.form == "御笔手敕" else names.get("person", {})
+                if endorsement.endorser not in expected:
+                    fail(path + ".endorser", endorsement.endorser, expected)
 
 
 def check_references(out: Declaration, names: dict[str, dict[str, list[str]]]) -> None:
@@ -142,11 +155,12 @@ def declaration_agent(
     ledger: Ledger,
     output_type: type[T],
     instructions: str = INSTRUCTIONS,
-) -> Agent[None, T]:
+) -> Agent[UUID | None, T]:
     agent = build_agent(
         model,
         name=output_type.__name__,
         output_type=PromptedOutput(output_type),
+        deps_type=UUID | None,
         instructions=instructions,
         retries=1,
     )
@@ -166,21 +180,22 @@ def declaration_agent(
         )
 
     @agent.output_validator
-    def validate(out: T) -> T:
-        check(ledger, out)
+    def validate(ctx: RunContext[UUID | None], out: T) -> T:
+        check(ledger, out, ctx.deps)
         return out
 
     return agent
 
 
 async def translate(
-    agent: Agent[None, T],
+    agent: Agent[UUID | None, T],
     prompt: str,
+    source: UUID | None = None,
 ) -> T | Unhandled:
     with capture_run_messages() as messages:
         try:
             return (
-                await invoke(agent, "请按 JSON schema 提交完整声明。\n" + prompt)
+                await invoke(agent, "请按 JSON schema 提交完整声明。\n" + prompt, deps=source)
             ).output
         except UnexpectedModelBehavior as exhausted:
             if not isinstance(exhausted.__cause__, ToolRetryError):

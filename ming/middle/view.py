@@ -176,7 +176,7 @@ def entities(
                 row["data"] = {
                     k: v
                     for k, v in row["data"].items()
-                    if k in {"text", "origin", "people", "night_id"}
+                    if k in {"text", "origin", "people", "night_id", "endorsements", "interim"}
                 }
         if identity == "world" and row["kind"] == "person":
             travel = (

@@ -58,7 +58,7 @@ class Month:
 
     async def night(self, night: EntityView, decrees: list[EntityView]) -> bool:
         results = await asyncio.gather(
-            *(self.deliberations.run(d, night.id) for d in decrees),
+            *(self.deliberations.start(d, night.id) for d in decrees),
             return_exceptions=True,
         )
         for result in results:
@@ -78,7 +78,8 @@ class Month:
                 "scope": "旨意推演",
                 "decrees": approved,
                 "deliberations": [
-                    f.detail
+                    {"decree": d.model_dump(mode="json"), **f.detail,
+                     "prior_interim": [p.detail for p in self.court.products(d.id, current=False, kind="interim")]}
                     for d in decrees
                     for f in self.court.products(d.id, kind="deliberation")
                 ],
@@ -94,17 +95,16 @@ class Month:
         if not speculative:
             chain = self.simulations.chain(petition_id)
             for key, task in list(self.simulations.continuations.items()):
-                owned = (
-                    key[1] in chain if petition_id is not None else key[1] not in chain
-                )
-                if owned and task.done() and task.exception() is not None:
+                if (
+                    (key[1] in chain if petition_id is not None else key[1] not in chain)
+                    and task.done() and task.exception() is not None
+                ):
                     del self.simulations.continuations[key]
         while date == self.court.calendar().data:
             if petition_id is None:
                 pending = await self._resume(speculative=speculative)
             else:
                 detail = self.court.petition(petition_id).detail
-                route = UUID(detail["route_id"])
                 petition = PendingPetition.model_validate(
                     {k: v for k, v in detail.items() if k != "date"}
                 )
@@ -115,16 +115,18 @@ class Month:
                     ),
                     None,
                 )
+                if choice is not None and choice["text"] == "御笔强推":
+                    await self.deliberations.start(self.court.entity(petition.entity_id), petition.route_id)
                 # Only a choice that continues the segment depends on its parent
                 # original; 收回/留中 consume no continuation and never wait for it.
                 if (
                     choice is not None
-                    and choice["option"] in continuing_options(petition, route)
+                    and choice["option"] in continuing_options(petition, self.court)
                     and detail["date"] == self.court.calendar().data
-                    and not self.court.products(route, kind="simulation")
+                    and not self.court.products(petition.route_id, kind="simulation")
                 ):
-                    await self.original(route)
-                self.simulations.progress(route, petition_id)
+                    await self.original(petition.route_id)
+                self.simulations.progress(petition.route_id, petition_id)
                 pending = self.petitions()
             if date != self.court.calendar().data:
                 return pending
@@ -144,8 +146,7 @@ class Month:
                     for key in continuing
                 ),
             ]
-            results = await asyncio.gather(*jobs, return_exceptions=True)
-            for result in results:
+            for result in await asyncio.gather(*jobs, return_exceptions=True):
                 if isinstance(result, BaseException):
                     raise result
         return self.petitions()
@@ -220,7 +221,7 @@ class Month:
         calendar = self.court.calendar()
         old = [d for d in self.court.due_decrees() if d not in decrees]
         results = await asyncio.gather(
-            *(self.deliberations.run(d, calendar.id) for d in old),
+            *(self.deliberations.start(d, calendar.id) for d in old),
             return_exceptions=True,
         )
         for result in results:
@@ -241,10 +242,10 @@ class Month:
                     for n in nights
                 ],
                 "reconsidered": [
-                    {"decree": d.model_dump(mode="json"), "deliberation": f.detail}
+                    {"decree": d.model_dump(mode="json"), "deliberation": f.detail,
+                     "prior_interim": [p.detail for p in self.court.products(d.id, current=False, kind="interim")]}
                     for d in old
                     for f in self.court.products(d.id, kind="deliberation")
-                    if f.detail["verdict"] == "准"
                 ],
                 "prior_choices": [
                     f.detail

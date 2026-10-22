@@ -50,13 +50,13 @@ def read_person(ledger: Ledger, name: str) -> PersonView:
         data.update(row["data"])
     decrees = {
         str(e["id"]): {
-            k: v for k, v in e["data"].items() if k in {"text", "origin", "people"}
+            k: v for k, v in e["data"].items() if k in {"text", "origin", "people", "endorsements", "interim"}
         }
         for e in ledger.entities(
             entity_id=[
                 UUID(item["detail"]["decree_id"])
                 for item in history
-                if item["kind"] == "decreed"
+                if item["kind"] in {"decreed", "endorsed"}
             ]
         )
     }
@@ -65,13 +65,13 @@ def read_person(ledger: Ledger, name: str) -> PersonView:
             "kind": e["kind"],
             **(
                 {"decree": decrees[e["detail"]["decree_id"]]}
-                if e["kind"] == "decreed"
+                if e["kind"] in {"decreed", "endorsed"}
                 else {}
             ),
             **{
                 k: v
                 for k, v in e["detail"].items()
-                if k in {"date", "text", "decree_id", "successor"}
+                if k in {"date", "text", "decree_id", "successor", "endorser", "form", "source_chat_turn_id"}
             },
         }
         for e in history
