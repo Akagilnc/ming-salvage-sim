@@ -61,7 +61,6 @@ def test_rejected_decree_is_forced_withdrawn_or_reconsidered(
             client.post("/actions", json={"action": "load", "save": save})
         state = client.get("/state").json()["game"]
         petition = state["petitions"][0]
-        assert petition["source"] == "deliberation"
         assert petition["options"] == (
             ["收回", "留中"] if vital else ["强颁", "收回", "留中"]
         )

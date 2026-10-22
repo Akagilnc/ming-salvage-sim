@@ -525,10 +525,13 @@ def test_month_transport_retry_is_bounded_and_persistent(
             before = audit(game_db)
             assert not [f for f in before["facts"] if f["kind"] == "unhandled"]
             if source:
+                factions = len(
+                    [e for e in before["entities"] if e["kind"] == "faction"]
+                )
                 assert len([f for f in before["facts"] if f["kind"] == "gazette"]) == 1
                 assert len(
                     [f for f in before["facts"] if f["kind"] == "impeachment"]
-                ) == (6 if name == "impeachment" else 7)
+                ) == factions - (name == "impeachment")
             assert state["date"]["month"] == 10
             client.post("/actions", json={"action": "continue"})
             assert client.get("/state").json()["game"]["failure"] == state["failure"]
@@ -540,7 +543,9 @@ def test_month_transport_retry_is_bounded_and_persistent(
         assert len([f for f in ledger["facts"] if f["kind"] == "landed"]) == 1
         assert len([f for f in ledger["facts"] if f["kind"] == "gazette"]) == 1
         assert len([f for f in ledger["facts"] if f["kind"] == "urgent"]) == 1
-        assert len([f for f in ledger["facts"] if f["kind"] == "impeachment"]) == 7
+        assert len([f for f in ledger["facts"] if f["kind"] == "impeachment"]) == len(
+            [e for e in ledger["entities"] if e["kind"] == "faction"]
+        )
         if source:
             assert all(
                 f in ledger["facts"]

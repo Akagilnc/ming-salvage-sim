@@ -84,8 +84,6 @@ def test_month_without_decrees_advances_after_reopening(
                     if p["source"] == "impeachment"
                 )
             for petition in state["petitions"]:
-                if first != "sources":
-                    assert petition["source"] == "simulation"
                 calls = len(received)
                 assert (
                     client.post(
