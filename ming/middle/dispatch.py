@@ -4,8 +4,10 @@ from collections.abc import Callable
 from typing import Any
 from uuid import UUID
 
+from sqlalchemy import and_, or_
+
 from ming.ledger import Entity, Item, Ledger
-from ming.ledger import FACT_COLUMNS as F, FACT_ROWS
+from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS, FACT_COLUMNS as F, FACT_ROWS
 from ming.middle.declaration import Declaration, NightDeclaration, Unhandled
 from ming.middle.rules import field_values, money_amounts
 
@@ -21,14 +23,39 @@ def landing_entities(
         pairs.update(("affair", f.affair) for f in result.facts if f.affair is not None)
     if isinstance(result, NightDeclaration):
         pairs.update(("person", p) for d in result.decrees for p in d.people)
-    rows = [
-        e for kind, key in sorted(pairs) for e in ledger.entities(kind=kind, key=key)
-    ]
-    if not isinstance(result, Unhandled) and any(
-        f.entity_type == "person" for f in result.facts
-    ):
-        rows.extend(ledger.entities(kind=("person", "office", "distance")))
-    return {(e["kind"], e["key"]): e for e in rows}
+    found = {
+        (e["kind"], e["key"]): e
+        for kind, key in sorted(pairs)
+        for e in ledger.entities(kind=kind, key=key)
+    }
+    if isinstance(result, Unhandled):
+        return found
+    # Only a location change can start a journey (from the current or a first
+    # location), and only an office/region change can displace its incumbents.
+    origins: set[str] = set()
+    offices: set[str] = set()
+    for fact in result.facts:
+        if fact.entity_type != "person":
+            continue
+        held = found.get(("person", fact.entity), {"data": {}})["data"]
+        changes = {c.field: c.value for c in fact.changes}
+        if "location" in changes:
+            origins.add(held.get("location") or str(changes["location"]))
+        if {"office", "office_region"}.intersection(changes):
+            offices.add(str(changes.get("office", held.get("office", ""))))
+    offices.discard("")
+    if origins or offices:
+        for e in ledger.read(
+            ENTITY_ROWS.where(
+                or_(
+                    and_(E.kind == "distance", E.key.in_(origins)),
+                    and_(E.kind == "office", E.key.in_(offices)),
+                    and_(E.kind == "person", E.data["office"].as_string().in_(offices)),
+                )
+            )
+        ):
+            found.setdefault((e["kind"], e["key"]), e)
+    return found
 
 
 def dispatch(
