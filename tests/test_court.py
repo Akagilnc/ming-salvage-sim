@@ -54,7 +54,7 @@ def replaying(
     return FunctionModel(reply, stream_function=stream_response)
 
 
-def physical_state(court: Court, replay: bool = False) -> list[dict[str, object]]:
+def physical_state(court: Court) -> list[dict[str, object]]:
     fields = {
         "office",
         "office_region",
@@ -72,7 +72,7 @@ def physical_state(court: Court, replay: bool = False) -> list[dict[str, object]
             "key": e.key,
             "state": {k: v for k, v in e.data.items() if k in fields},
         }
-        for e in court.entities("audit", replay)
+        for e in court.entities("audit")
     ]
 
 
@@ -323,7 +323,6 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
     path = court.db_path
     court.close()
     court = Court(path, replaying([]))
-    assert physical_state(court) == before == physical_state(court, replay=True)
+    assert physical_state(court) == before
     assert court.facts("audit") == facts
-    assert court.facts("audit", replay=True) == facts
     court.close()

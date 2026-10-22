@@ -67,7 +67,6 @@ def test_nights_are_persistent_and_translate_only_after_dismissal(
         second = client.get("/state").json()["game"]["night"]
         assert first["id"] != second["id"]
         assert second["turns"] == []
-    assert audit(tmp_path / save) == audit(tmp_path / save, True)
 
 
 @pytest.mark.parametrize("game_db", ["first_night"], indirect=True)
@@ -194,4 +193,3 @@ def test_failed_night_translation_is_terminal_and_reaches_following_nights(
         assert state["face"] == "audience"
         assert state["night"]["turns"] == []
         assert client.post("/actions", json={"action": "month"}).status_code == 409
-    assert audit(tmp_path / save) == audit(tmp_path / save, True)

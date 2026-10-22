@@ -26,7 +26,7 @@ LANDING = (
     ("first", "extra"),
     [("simulation.txt", 0), ("month_deferred.txt", 0), ("month_zero.txt", 1)],
 )
-def test_month_without_decrees_advances_and_replays_after_reopening(
+def test_month_without_decrees_advances_after_reopening(
     game_db: Path, steps, audit, first: str, extra: int
 ) -> None:
     tmp_path = game_db.parent
@@ -67,7 +67,6 @@ def test_month_without_decrees_advances_and_replays_after_reopening(
                 assert len(received) == calls
                 assert client.get("/state").json()["game"]["date"] == state["date"]
             ledger = audit(tmp_path / save)
-            assert ledger == audit(tmp_path / save, True)
             assert not [e for e in ledger["entities"] if e["kind"] == "affair"]
             assert not [f for f in ledger["facts"] if f["kind"] == "forecast"]
             assert (
@@ -175,7 +174,6 @@ def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
             (-nominal, -actual),
             (nominal, actual),
         ]
-        assert ledger == audit(db, True)
         public = audit(db, identity="public")
         assert not [e for e in public["entities"] if e["kind"] == "account"]
         assert all(

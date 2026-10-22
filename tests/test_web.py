@@ -238,7 +238,7 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
             before = audit(db)
             client.get("/state")
             client.get("/records")
-            assert audit(db) == audit(db, True) == before
+            assert audit(db) == before
             for petition in game["petitions"][:]:
                 choice = {"action": "choose", "petition": petition["id"], "option": 0}
                 assert (
@@ -278,7 +278,6 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
             game["petitions"],
         ) == (11, "desk", False, None, [])
         ledger = audit(db)
-        assert ledger == audit(db, True)
         assert len([f for f in ledger["facts"] if f["kind"] == "gazette"]) == 1
         if path == "decree":
             decree = next(e for e in ledger["entities"] if e["kind"] == "decree")

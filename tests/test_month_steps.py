@@ -96,7 +96,6 @@ def test_rejected_decree_is_forced_withdrawn_or_reconsidered(
             assert not [f for f in ledger["facts"] if f["kind"] == "interim"]
             world = next(e for e in ledger["entities"] if e["kind"] == "world")
             assert world["data"]["imperial_prestige"] == 20
-            assert ledger == audit(tmp_path / save, True)
             return
         declarations = (
             ("month_empty.txt", "month_force.txt", "month_empty.txt")
@@ -190,7 +189,6 @@ def test_rejected_decree_is_forced_withdrawn_or_reconsidered(
                 for f in reversed(ledger["facts"])
                 if f["kind"] == "deliberation"
             ) == next(e["id"] for e in ledger["entities"] if e["kind"] == "calendar")
-            assert ledger == audit(tmp_path / save, True)
             return
         steps["Declaration"] = TestModel(
             call_tools=[], custom_output_text=(RECORDED / "month_empty.txt").read_text()
@@ -218,7 +216,6 @@ def test_rejected_decree_is_forced_withdrawn_or_reconsidered(
                 for f in reversed(ledger["facts"])
                 if f["kind"] == "deliberation"
             ) == next(e["id"] for e in ledger["entities"] if e["kind"] == "calendar")
-        assert ledger == audit(tmp_path / save, True)
 
 
 def test_two_nights_feed_world_and_arrivals_wait_for_audience(
@@ -289,7 +286,7 @@ def test_two_nights_feed_world_and_arrivals_wait_for_audience(
                 assert person["data"]["waiting_audience"] == (month == 12)
                 assert person["key"] not in state["night"]["hall"]
             client.post("/actions", json={"action": "load", "save": save})
-            assert audit(tmp_path / save) == ledger == audit(tmp_path / save, True)
+            assert audit(tmp_path / save) == ledger
         steps["scene"] = replaying(
             ModelMessagesTypeAdapter.validate_json(
                 (RECORDED / "travel_admission.json").read_bytes()

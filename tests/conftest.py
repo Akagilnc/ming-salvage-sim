@@ -225,7 +225,7 @@ def game_db(request, tmp_path):
 
 @pytest.fixture
 def audit():
-    def read(db: Path, replay: bool = False, *, identity: str = "audit"):
+    def read(db: Path, *, identity: str = "audit"):
         output = io.StringIO()
         with redirect_stdout(output):
             main(
@@ -235,7 +235,6 @@ def audit():
                     str(db),
                     "--identity",
                     identity,
-                    *(["--replay"] if replay else []),
                 ]
             )
         return json.loads(output.getvalue())

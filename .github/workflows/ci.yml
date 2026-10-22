@@ -31,7 +31,7 @@ jobs:
       - run: git ls-files '*.py' '*.spec' | xargs wc -l | awk '$2 != "total" && $1 > 1000 {print; bad = 1} END {exit bad}'
       - run: lint-imports
       - run: pyright
-      - run: python -m pytest tests/ -q
+      - run: python -m pytest tests/ -q -n auto
 
   web:
     name: Web 构建 + 类型检查 (tsc + vite)

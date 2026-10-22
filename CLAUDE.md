@@ -59,7 +59,7 @@
 - **切片轮次** 推荐逐片 implement / fixer 聚焦测试；不以复跑全量 suite 为必须复核手段。
 - **聚焦测试** 本片触及的测试。
 - **家族/批次收尾**＝在**最终待合并状态**执行一次全量 suite。
-- **CI**（`.github/workflows/ci.yml`）覆盖 **Python 全量 pytest + Web 构建/类型检查**（`tsc` + vite build），**不含 Web vitest**；本政策如实描述既有覆盖面，不改 CI 机制、不把 vitest 加进 CI。
+- **全量跑法**只以 [CI 的 Python pytest 步骤](.github/workflows/ci.yml)为准；聚焦、单条、调试默认串行。CI 另含 Web 构建/类型检查（`tsc` + vite build），不含 Web vitest。
 
 正向口径：切片只跑聚焦；全量在最终待合并状态跑到绿（失败/修复后重跑）
 
