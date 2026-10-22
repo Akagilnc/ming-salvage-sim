@@ -67,8 +67,8 @@ A-full 也推进至十二月，但原场景仍停在询问，整夜译出零道�
 | `sources_impeachment.txt` | `1954-live/005-impeachment-messages.json` |
 | `sources_empty.txt` | `1954-cases/empty/004-urgent-messages.json` |
 | `sources_*-name.json`、`sources_*-structure.json` | `1954-cases/<同名 case>/` 的目标来源 messages；两次完整回复原样取出，不修字段 |
-| `sources_vacancy.json` | `1954-vacancy/001-scene`、`002-scene`、`003-NightDeclaration` messages；原话在 `state.json` |
-| `sources_appointment.json` | `1954-appointment/001-scene`、`002-scene`、`003-NightDeclaration` messages；原话在 `state.json` |
+| `sources_vacancy.json` | `scenes`、`words` 同 `1954-vacancy/001-scene`、`002-scene` messages 与 `state.json`；`declaration` 为合并 #1952 后重录，`~/.ak-roles/books/Ming_LLM/1952/artifacts/merge-1955-rerecord-sources/` `run/001-NightDeclaration-replies.json` |
+| `sources_appointment.json` | `scenes`、`words` 同 `1954-appointment/001-scene`、`002-scene` messages 与 `state.json`；`declaration` 为 `~/.ak-roles/books/Ming_LLM/1952/artifacts/merge-1955-rerecord-sources/` `run/002-NightDeclaration-replies.json`；`landing` 为补任月月末本旨，`landing-r2/001-Declaration-replies.json` |
 | `sources_revision.txt` | `1954-appointment/014-urgent-messages.json` 的完整 `ModelResponse.text`，包含曹化淳改票及原案引用 |
 
 `1954-resume` 是选发回后的下月改票；`1954-retry` 是双缺位后无急务、原案搁置；`1954-appointment` 是曹化淳补任后按原案 id 改票。
@@ -76,6 +76,7 @@ A-full 也推进至十二月，但原场景仍停在询问，整夜译出零道�
 `1954-recovery-cases/*/state.json` 与 `recovered.json` 是两类来源坏正名、坏结构停住及仅补失败来源的真跑。
 `1954-consequences` 与 `1954-consequences-sonnet` 曾漏落奏疏的派系、去留字段：转译范围将奏疏处置误排作另份圣旨。明确只排除 `others` 后，`1954-effects/002-Declaration-output.json` 与最终存档记有皇威、派系满意度及人物去留字段，推进到 1628 年五月。
 缺位测试的补任阶段原样重放 `sources_revision.txt`：正确例只在初始月的奏疏构造处对齐 `source=urgent、ordinal=0` 这一原案的生成 ID，再交给真实 `PendingPetition` 构造器，使其 id 对齐录音的 revision_of；不按并发调用次序分配 UUID，其余 ID 随机，不改回话、不改落账和校验。错误例不对齐原案 id，同一原样录音两次交回，验证引用失败点、停住且原案保留。两例都从 HTTP 入口走任免、发回、改票与重开。
+#1952 起旨意不当夜执行：两夜声明在合并后的 schema 下按原场景原话重录（本机 Claude CLI 逐次 `haiku`，HTTP 入口，仅 `NightDeclaration` 真调，其余原样重放），任命由补任月月末本旨落账生效；测试在补任月把 scope=decree 的 Declaration 交 `landing` 录音，世界份仍用 `month_empty.txt`。录制脚本 `record_1952_sources.py`、`record_1952_landing.py` 同在归档；`landing/` 是 #1952 E1 修复前那次接不住的真跑，`landing-harness-bug/` 是录制脚本解析错误、未发出模型调用的废卷。
 测试只断言结构化输入、状态、引用及落账，不约束这些模型回复的措辞。
 
 #1955 转译边界录音
@@ -91,3 +92,19 @@ A-full 也推进至十二月，但原场景仍停在询问，整夜译出零道�
 | `month_fiscal_building.txt` | `building/reply-1.txt` | 新建「钦定银矿」，按 `condition` 折算产出 |
 
 留中用既有 `month_empty.txt`，不另造结局声明。坏输入在测试参数表里手造，不是录音。
+
+## #1952 密令边界录音
+
+归档：`~/WorkSpace/vault/ak-cc-wiki/raw/ming-llm-runner/2026-10-22/issue-1952-implementation/`。
+
+- `night_approved.json`、`night_travel.json`：保留原场景，整夜声明由 `1952-record-approved-r2/messages.json`、`1952-record-travel/messages.json` 重录，含新的成旨轮次与保密声明；不手补模型字段。`night_travel.json` 的整夜声明（第 2、4 轮成旨）另供 `test_audience` 的合成四轮夜判知情圈。
+- `night_secret.json`：`1952-secret-native/001`–`007` 的原生 CLI JSONL 工具调用和最终场景文字，以及 `008-NightDeclaration-output.txt`。工具名去 MCP transport 前缀后装入原生 `ToolCallPart`；参数、调用 ID、回复原文不改。消息信封时间为冻结时间，不伪称模型原始元数据。
+- `secret_report.txt`：`1952-secret/018-secret_report-output.txt`，仅作为模型文本边界；不锁定内容或要求重放文字符合当前局面。
+- `month_secret_completed.txt`：`1952-boundary-crossing/output.txt`，通过真实 `Court.translate` 录下。`input.json` 明标人为构造的补充验收场景（内部发现、公开伤情、多次经办及办结），不是完整游戏推演；返回原文不改。测试从 HTTP 过月进入，检验身份可读实体、落账数值、曝光与停报，不检查文句。
+
+`1952-secret-native` 真跑到十一月：密令声明接不住仍有当月曝光与密报。
+`1952-secret` 遇真实 CLI 拒答后，显式重试续至十二月；失败与恢复均留卷。
+`1952-B-full` 两夜原话及准旨判断均用真实模型，重开存档日期十二月、无失败；
+runner 曾在后台工作未完时索取空奏疏列表而报错，补读见 `reopened-final-state.json`。
+该局生成两道公开旨，三份月末声明接不住，不能冒称北极星全部语义验收通过。
+完整家族终态真跑及全量仍留给父票 runner / CI。

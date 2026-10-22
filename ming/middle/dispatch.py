@@ -8,7 +8,7 @@ from sqlalchemy import and_, or_
 
 from ming.ledger import Entity, Item, Ledger
 from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS, FACT_COLUMNS as F, FACT_ROWS
-from ming.middle.declaration import Declaration, NightDeclaration, Unhandled
+from ming.middle.declaration import Declaration, Fact, NightDeclaration, Unhandled
 from ming.middle.rules import field_values, money_amounts
 from ming.middle.fiscal import WAN, current_paid
 
@@ -80,12 +80,14 @@ def dispatch(
     owner = ledger.get(night_id)
     existing = landing_entities(ledger, result, owner)
     changed: dict[tuple[str, str], Entity] = {}
+    fact_origin: Item = {}
     date = existing[("calendar", "world")]["data"]
-    origin = (
-        ledger.get(UUID(owner.data["night_id"])) if owner.kind == "decree" else owner
-    )
     words = "\n".join(
-        e["emperor_words"] for e in ledger.facts(entity_id=origin.id, kind="turn")
+        e["emperor_words"]
+        for e in ledger.facts(
+            entity_id=UUID(owner.data["night_id"]) if owner.kind == "decree" else owner.id,
+            kind="turn",
+        )
     )
 
     def known(kind: str, key: str) -> Entity:
@@ -101,11 +103,15 @@ def dispatch(
         changes: dict[str, object] | None = None,
     ) -> None:
         entity.record(
-            kind, words, {**detail, "origin_ref": str(owner.id), "date": date}, changes
+            kind,
+            words,
+            {"origin_ref": str(owner.id), "date": date, **fact_origin, **detail},
+            changes,
         )
         changed[(entity.kind, entity.key)] = entity
         existing[(entity.kind, entity.key)] = entity.snapshot()
 
+    decrees = record_decrees(result, owner, known, record)
     if not isinstance(result, Unhandled):
         # A share declares post-values from the reading it saw. Shares landed
         # since then shift the whole share once: none overwrites another, and
@@ -133,6 +139,9 @@ def dispatch(
             detail.update(association)
             if i in reasons:
                 detail["limit_reason"] = reasons[i]
+            fact_origin = {"discovered": fact.discovered}
+            if fact.decree is not None:
+                fact_origin["origin_ref"] = str(decrees[fact.decree].id)
             changes = detail["changes"]
             if entity.kind == "person":
                 move_person(entity, changes, existing, record)
@@ -143,25 +152,23 @@ def dispatch(
                 and entity.data.get("office")
             ):
                 displace(entity, existing, known, record, association)
-        record_receipts(result, amounts, known, record, reasons)
+            if i in amounts:
+                record_receipts(fact, amounts[i], reasons[i], known, record)
+        fact_origin = {}
         for report in result.reports:
             record(
                 known(report.entity_type, report.entity),
                 "reported",
                 report.model_dump(),
             )
-    if isinstance(result, NightDeclaration):
-        for decree in result.decrees:
-            data = decree.model_dump()
-            data["night_id"] = str(night_id)
-            entity = Entity("decree", "", "", data)
-            record(entity, "decreed", data)
-            for person in decree.people:
-                record(
-                    known("person", person),
-                    "decreed",
-                    {"decree_id": str(entity.id)},
-                )
+        for event in result.decree_events:
+            record(
+                decrees[event.decree]
+                if event.decree is not None
+                else known(owner.kind, owner.key),
+                event.kind,
+                {"text": event.text},
+            )
     if (
         monthly
         and owner.kind == "decree"
@@ -178,46 +185,65 @@ def dispatch(
     ledger.commit(list(changed.values()))
 
 
-def record_receipts(
-    result: Declaration,
-    amounts: dict[int, float],
+def record_decrees(
+    result: Declaration | Unhandled,
+    owner: Entity,
     known: Callable[[str, str], Entity],
     record: Callable[..., None],
-    reasons: dict[int, str | None],
-) -> None:
-    for i, fact in enumerate(result.facts):
-        for change in fact.changes:
-            if change.counterpart and change.counterpart.entity_type != "account":
-                recipient = known(
-                    change.counterpart.entity_type, change.counterpart.entity
-                )
-                changes: Item = {}
-                if change.purpose == "补欠":
-                    changes["arrears"] = max(
-                        0, recipient.data.get("arrears", 0) + amounts[i] / WAN
-                    )
-                elif change.purpose == "当月饷":
-                    date = known("calendar", "world").data
-                    changes["month_paid"] = {
-                        "date": date,
-                        "amount": current_paid(recipient.data, date) - amounts[i] / WAN,
-                    }
+) -> list[Entity]:
+    decrees: list[Entity] = []
+    if isinstance(result, NightDeclaration):
+        for decree in result.decrees:
+            data = {**decree.model_dump(), "night_id": str(owner.id)}
+            if decree.secret:
+                data["exposure"] = {"score": 0, "stage": "密"}
+            entity = Entity("decree", "", "", data)
+            record(entity, "decreed", data)
+            decrees.append(entity)
+            for person in decree.people:
                 record(
-                    recipient,
-                    "received",
-                    {
-                        "nominal": -change.value,
-                        "actual": -amounts[i],
-                        "source": fact.entity,
-                        "purpose": change.purpose,
-                        "limit_reason": reasons[i],
-                        "affair_id": str(known("affair", fact.affair).id)
-                        if fact.affair is not None
-                        else None,
-                        "audience": "world",
-                    },
-                    changes,
+                    known("person", person), "decreed", {"decree_id": str(entity.id)}
                 )
+    return decrees
+
+
+def record_receipts(
+    fact: Fact,
+    amount: float,
+    reason: str | None,
+    known: Callable[[str, str], Entity],
+    record: Callable[..., None],
+) -> None:
+    for change in fact.changes:
+        if change.counterpart and change.counterpart.entity_type != "account":
+            recipient = known(change.counterpart.entity_type, change.counterpart.entity)
+            changes: Item = {}
+            if change.purpose == "补欠":
+                changes["arrears"] = max(
+                    0, recipient.data.get("arrears", 0) + amount / WAN
+                )
+            elif change.purpose == "当月饷":
+                date = known("calendar", "world").data
+                changes["month_paid"] = {
+                    "date": date,
+                    "amount": current_paid(recipient.data, date) - amount / WAN,
+                }
+            record(
+                recipient,
+                "received",
+                {
+                    "nominal": -change.value,
+                    "actual": -amount,
+                    "source": fact.entity,
+                    "purpose": change.purpose,
+                    "limit_reason": reason,
+                    "affair_id": str(known("affair", fact.affair).id)
+                    if fact.affair is not None
+                    else None,
+                    "audience": "world",
+                },
+                changes,
+            )
 
 
 def interim_mark(ledger: Ledger, decree: Entity, date: Item) -> str | None:

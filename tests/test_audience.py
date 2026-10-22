@@ -11,6 +11,7 @@ from pydantic_ai.messages import (
 )
 from starlette.testclient import TestClient
 
+from ming.middle.view import Officials
 from ming.web import create_app
 from tests.test_court import replaying
 
@@ -47,9 +48,8 @@ def test_nights_are_persistent_and_translate_only_after_dismissal(
         orders = [e for e in ledger["entities"] if e["kind"] == "decree"]
         assert orders
         assert all(e["data"]["night_id"] == first["id"] for e in orders)
-        assert all(
-            set(e["data"]) == {"text", "origin", "people", "night_id"} for e in orders
-        )
+        assert all(e["data"].get("secret") is False for e in orders)
+        assert all(e["data"]["turn"] == 4 for e in orders)
         ids = {e["key"]: e["id"] for e in ledger["entities"] if e["kind"] == "person"}
         for name in ("王承恩", "徐光启"):
             assert {
@@ -107,15 +107,46 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
                 ]
             ),
             case["cases"]["missing_fields"]["scene"],
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "set_hall",
+                        {"add": ["韩爌"], "remove": ["杨嗣昌"]},
+                        tool_call_id="swap",
+                    )
+                ]
+            ),
+            *[case["cases"]["missing_fields"]["scene"]] * 3,
         ],
         received,
     )
+    # The travel night's decrees are approved in turns 2 and 4.
+    travel = json.loads((RECORDED / "night_travel.json").read_text())
+    steps["NightDeclaration"] = replaying(travel["replies"])
     with TestClient(create_app(tmp_path)) as client:
         client.post("/actions", json={"action": "load", "save": game_db.name})
         client.post("/actions", json={"action": "say", "words": case["emperor_words"]})
         game = client.get("/state").json()["game"]
         assert game["failure"] is None
         assert set(game["night"]["hall"]) == {"王承恩", "杨嗣昌", "李待问"}
+        for words in travel["words"][1:4]:
+            client.post("/actions", json={"action": "say", "words": words})
+        client.post("/actions", json={"action": "dismiss"})
+        client.portal.call(client.app.state.web.game.drain)
+        court = client.app.state.web.game.court
+        assert court.nights(latest=True)[0].result == "translated"
+        second, fourth = sorted(
+            court.entities("audit", kind="decree"), key=lambda d: d.data["turn"]
+        )
+        # Who knows is the hall when the emperor approves, before that turn's scene.
+        for person, known in (
+            ("杨嗣昌", {second.id}),
+            ("李待问", {second.id, fourth.id}),
+            ("韩爌", {fourth.id}),
+        ):
+            assert {
+                d.id for d in court.entities(Officials(people=[person]), kind="decree")
+            } == known
     returned = {
         part.tool_call_id: part.model_response_object()
         for message in received

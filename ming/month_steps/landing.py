@@ -57,6 +57,7 @@ class Landing:
                 },
                 ensure_ascii=False,
             ),
+            source.id,
         )
         self.court.record_product(
             source.id,
@@ -90,7 +91,9 @@ class Landing:
                     [
                         other
                         for other, other_route in sources
-                        if other.id != source.id and other_route == route
+                        if other.kind == "decree"
+                        and other.id != source.id
+                        and other_route == route
                     ],
                 )
                 for source, route in sources

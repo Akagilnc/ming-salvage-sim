@@ -62,7 +62,20 @@ class Simulations:
     async def call(self, context: dict[str, Any], history: list[Any]) -> dict[str, Any]:
         result = await invoke(
             self.agent,
-            prompt(self.court, "world", context),
+            prompt(
+                self.court,
+                "world",
+                {
+                    **context,
+                    "secret_orders": [
+                        {
+                            "decree": d.model_dump(mode="json"),
+                            "known_people": sorted(self.court.known_people(d)),
+                        }
+                        for d in self.court.secret_decrees()
+                    ],
+                },
+            ),
             deps=Materials(self.court, "world"),
             message_history=ModelMessagesTypeAdapter.validate_python(history),
         )

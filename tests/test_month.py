@@ -15,6 +15,7 @@ from starlette.testclient import TestClient
 from ming.middle.declaration import PendingPetition
 from ming.web import create_app
 from tests.test_court import replaying
+from tests.test_secrets import _declaration_prompt
 
 RECORDED = Path(__file__).parent / "recorded"
 GUOKU_ORDER = [
@@ -240,6 +241,12 @@ def test_returned_urgent_waits_through_vacancy(
             steps["NightDeclaration"] = replaying([case["declaration"]])
             if phase == "appointment":
                 steps["urgent"] = replaying([revision] * 2, drafting)
+                # 曹化淳 takes office when the month lands his appointment decree.
+                steps["Declaration"] = replaying(
+                    lambda messages: case["landing"]
+                    if _declaration_prompt(messages)["source"]["kind"] == "decree"
+                    else (RECORDED / "month_empty.txt").read_text()
+                )
             client.post("/actions", json={"action": "open"})
             for words in case["words"]:
                 client.post("/actions", json={"action": "say", "words": words})

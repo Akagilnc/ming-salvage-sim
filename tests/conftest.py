@@ -51,11 +51,11 @@ def recorded_steps(case=None):
             name: TestModel(
                 call_tools=[], custom_output_text=(RECORDED / f"{name}.txt").read_text()
             )
-            for name in ("deliberation", "simulation", "gazette")
+            for name in ("deliberation", "simulation", "gazette", "secret_report")
         },
     }
-    if case == "approved":
-        case = json.loads((RECORDED / "night_approved.json").read_text())
+    if case in {"approved", "secret"}:
+        case = json.loads((RECORDED / f"night_{case}.json").read_text())
         replies["scene"] = replaying(
             [
                 m
@@ -163,14 +163,28 @@ def rejected_night(first_night, tmp_path_factory):
     return path
 
 
-def extend_history(source, directory, actions):
+@pytest.fixture(scope="session")
+def secret_night(first_night, tmp_path_factory):
+    case = json.loads((RECORDED / "night_secret.json").read_text())
+    return extend_history(
+        first_night,
+        tmp_path_factory.mktemp("secret-night"),
+        tuple({"action": "say", "words": words} for words in case["words"]),
+        "secret",
+    )
+
+
+def extend_history(source, directory, actions, case=None):
     path = directory / source.name
     copyfile(source, path)
-    with recorded_steps() as replies, TestClient(create_app(directory)) as client:
-        replies["NightDeclaration"] = TestModel(
-            call_tools=[],
-            custom_output_text=json.dumps({"facts": [], "reports": [], "decrees": []}),
-        )
+    with recorded_steps(case) as replies, TestClient(create_app(directory)) as client:
+        if case is None:
+            replies["NightDeclaration"] = TestModel(
+                call_tools=[],
+                custom_output_text=json.dumps(
+                    {"facts": [], "reports": [], "decrees": []}
+                ),
+            )
         client.post("/actions", json={"action": "load", "save": path.name})
         for action in actions:
             client.post("/actions", json=action).raise_for_status()

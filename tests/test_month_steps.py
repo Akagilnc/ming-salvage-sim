@@ -141,6 +141,8 @@ def test_rejected_decree_is_forced_withdrawn_or_reconsidered(
         assert len([f for f in ledger["facts"] if f["kind"] == "interim"]) == int(
             option == 0
         )
+        public = audit(tmp_path / save, identity="public")
+        assert (decree["id"] in {e["id"] for e in public["entities"]}) == (option == 0)
         if option == 0:
             assert any(
                 "satisfaction" in f["detail"]["actual"]
