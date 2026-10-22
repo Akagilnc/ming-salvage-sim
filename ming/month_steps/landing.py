@@ -18,36 +18,12 @@ class Landing:
             Declaration, (CONTENT / "prompts/month_translate.md").read_text()
         )
 
-    def sources(self) -> list[tuple[EntityView, UUID]]:
-        sources: list[tuple[EntityView, UUID]] = []
-        for decree in self.court.entities("audit", kind="decree"):
-            if decree.kind != "decree":
-                continue
-            products = self.court.products(decree.id, kind=("deliberation", "choice"))
-            verdict = next(
-                (f.detail for f in products if f.kind == "deliberation"), None
-            )
-            choice = next(
-                (f.detail for f in reversed(products) if f.kind == "choice"), None
-            )
-            if verdict and (
-                verdict["verdict"] == "准" or (choice and choice["text"] == "强颁")
-            ):
-                sources.append((decree, UUID(verdict["route_id"])))
-        calendar = self.court.calendar()
-        return sources + [(calendar, calendar.id)]
-
     async def translate(
         self, source: EntityView, route: UUID, others: list[EntityView]
     ) -> None:
-        if any(
-            f.kind in {"declaration", "landed", "unhandled"}
-            for f in self.court.products(
-                source.id, kind=("declaration", "landed", "unhandled")
-            )
-        ):
+        if self.court.products(source.id, kind=("declaration", "landed", "unhandled")):
             return
-        entities = [e for e in self.court.entities("world", sourced=True) if e.source]
+        entities = self.court.entities("world", sourced=True)
         result = await self.court.translate(
             self.agent,
             json.dumps(
@@ -63,7 +39,6 @@ class Landing:
                         for f in self.court.products(
                             source.id, kind=("deliberation", "choice")
                         )
-                        if f.kind in {"deliberation", "choice"}
                     ],
                     "others": [
                         {
@@ -73,7 +48,6 @@ class Landing:
                                 for f in self.court.products(
                                     other.id, kind=("deliberation", "choice")
                                 )
-                                if f.kind in {"deliberation", "choice"}
                             ],
                         }
                         for other in others
@@ -81,7 +55,6 @@ class Landing:
                     "simulation": [
                         f.detail["output"]
                         for f in self.court.products(route, kind="simulation")
-                        if f.kind == "simulation"
                     ],
                 },
                 ensure_ascii=False,
@@ -110,7 +83,7 @@ class Landing:
         )
 
     async def run(self) -> None:
-        sources = self.sources()
+        sources = self.court.landing_sources()
         results = await asyncio.gather(
             *(
                 self.translate(
@@ -130,12 +103,9 @@ class Landing:
             if isinstance(result, BaseException):
                 raise result
         for source, _route in sources:
-            products = self.court.products(
-                source.id, kind=("declaration", "landed", "unhandled")
-            )
-            if any(f.kind in {"landed", "unhandled"} for f in products):
+            if self.court.products(source.id, kind=("landed", "unhandled")):
                 continue
-            declaration = next(f.detail for f in products if f.kind == "declaration")
+            declaration = self.court.products(source.id, kind="declaration")[0].detail
             self.court.land(
                 (Unhandled if declaration["unhandled"] else Declaration).model_validate(
                     declaration["result"]

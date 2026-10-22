@@ -14,7 +14,6 @@ from ming.ledger.tables import EntityRow, FactRow
 
 
 class Events(Leader[UUID]):
-    # Keep existing event-store names and old event topics resolvable at ming.ledger.
     name = "Ledger"
 
 

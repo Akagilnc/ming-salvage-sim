@@ -7,18 +7,26 @@ matching rows/facts. No caller refreshes tables or carries a parallel event list
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 from eventsourcing.system import SingleThreadedRunner, System
 from eventsourcing.application import LRUCache
 from eventsourcing_sqlalchemy.recorders import SQLAlchemyApplicationRecorder
-from sqlalchemy import Engine, Integer, func, literal_column, or_, select, tuple_
-from sqlalchemy.orm import aliased
+from sqlalchemy import Engine, Select, or_, select
 
 from ming.ledger.domain import Entity as Entity, Item as Item
 from ming.ledger.projection import Events, ReadModel
 from ming.ledger.tables import Base, EntityRow, FactRow
+from ming.ledger.tables import (
+    ENTITY_ROWS as ENTITY_ROWS,
+    FACT_ROWS as FACT_ROWS,
+    ENTITY_ORDER as ENTITY_ORDER,
+)
+
+# Native SQLAlchemy columns for read expressions, not ORM constructors/sessions.
+ENTITY_COLUMNS = EntityRow.__table__.c
+FACT_COLUMNS = FactRow.__table__.c
 
 
 class Ledger:
@@ -86,16 +94,19 @@ class Ledger:
         finally:
             rebuilt.close()
 
+    def read(self, query: Select[Any]) -> list[Item]:
+        """Execute a read-only SQLAlchemy selection; policy remains the writer."""
+        with self.sql.transaction(commit=False) as session:
+            return [dict(row) for row in session.execute(query).mappings()]
+
     def entities(
         self,
         *,
         kind: str | tuple[str, ...] | None = None,
         key: str | None = None,
-        entity_id: UUID | None = None,
-        night: str | None = None,
-        sourced: bool = False,
+        entity_id: UUID | list[UUID] | None = None,
+        query: Select[Any] = ENTITY_ROWS,
     ) -> list[Item]:
-        query = select(EntityRow)
         if kind is not None:
             query = query.where(
                 EntityRow.kind.in_(kind)
@@ -105,42 +116,27 @@ class Ledger:
         if key is not None:
             query = query.where(EntityRow.key == key)
         if entity_id is not None:
-            query = query.where(EntityRow.id == entity_id)
-        if sourced:
-            query = query.where(EntityRow.source != "")
-        if night == "pending":
             query = query.where(
-                EntityRow.data["closed"].as_boolean().is_(True),
-                ~select(FactRow.position)
-                .where(
-                    FactRow.entity_id == EntityRow.id,
-                    FactRow.kind.in_(("translated", "unhandled")),
-                )
-                .exists(),
+                EntityRow.id.in_(entity_id)
+                if isinstance(entity_id, list)
+                else EntityRow.id == entity_id
             )
-        order = literal_column("rowid", type_=Integer())
-        query = query.order_by(order.desc() if night == "latest" else order)
-        if night == "latest":
-            query = query.limit(1)
-        with self.sql.transaction(commit=False) as session:
-            return [r.snapshot() for r in session.scalars(query)]
+        return self.read(query)
 
     def facts(
         self,
         *,
-        entity_id: UUID | None = None,
+        entity_id: UUID | list[UUID] | None = None,
         kind: str | tuple[str, ...] | None = None,
         date: Item | None = None,
-        visibility: tuple[tuple[str, ...], tuple[str, ...]] | None = None,
-        mode: str | None = None,
+        query: Select[Any] = FACT_ROWS,
     ) -> list[Item]:
-        query = (
-            select(FactRow)
-            .join(EntityRow, EntityRow.id == FactRow.entity_id)
-            .order_by(literal_column("entities.rowid"), FactRow.position)
-        )
         if entity_id is not None:
-            query = query.where(FactRow.entity_id == entity_id)
+            query = query.where(
+                FactRow.entity_id.in_(entity_id)
+                if isinstance(entity_id, list)
+                else FactRow.entity_id == entity_id
+            )
         if kind is not None:
             query = query.where(
                 FactRow.kind.in_(kind)
@@ -149,74 +145,19 @@ class Ledger:
             )
         if date is not None:
             query = query.where(FactRow.date == date)
-        if mode == "interactions":
-            query = query.where(
-                FactRow.position.in_(
-                    select(func.max(FactRow.position))
-                    .where(FactRow.kind == "interaction")
-                    .group_by(FactRow.detail["key"].as_string())
-                ),
-                or_(
-                    FactRow.detail["action"].as_string() != "choose",
-                    FactRow.detail["status"].as_string() != "done",
-                ),
-            )
-        if mode == "latest":
-            query = query.order_by(None).order_by(FactRow.position.desc()).limit(1)
-        if visibility is not None:
-            query = query.where(
-                or_(
-                    FactRow.kind.in_(visibility[0]),
-                    FactRow.detail["audience"].as_string().in_(visibility[1]),
-                )
-            )
-        with self.sql.transaction(commit=False) as session:
-            return [r.snapshot() for r in session.scalars(query)]
-
-    def pending_petitions(self, date: Item) -> list[Item]:
-        choice = aliased(FactRow)
-        query = (
-            select(FactRow)
-            .join(EntityRow, EntityRow.id == FactRow.entity_id)
-            .where(
-                FactRow.kind == "petition",
-                tuple_(
-                    FactRow.detail["available"]["year"].as_integer(),
-                    FactRow.detail["available"]["month"].as_integer(),
-                )
-                <= (date["year"], date["month"]),
-                ~select(choice.position)
-                .where(
-                    choice.kind == "choice",
-                    choice.detail["petition_id"].as_string()
-                    == FactRow.detail["id"].as_string(),
-                )
-                .exists(),
-            )
-            .order_by(literal_column("entities.rowid"), FactRow.position)
-        )
-        with self.sql.transaction(commit=False) as session:
-            return [row.snapshot() for row in session.scalars(query)]
+        return self.read(query)
 
     def catalogue(self) -> list[Item]:
-        with self.sql.transaction(commit=False) as session:
-            return [
-                r.snapshot()
-                for r in session.scalars(
-                    select(EntityRow)
-                    .where(
-                        or_(
-                            EntityRow.kind.in_(
-                                select(EntityRow.kind)
-                                .where(EntityRow.source != "")
-                                .distinct()
-                            ),
-                            EntityRow.kind.in_(("affair", "decree")),
-                        )
-                    )
-                    .order_by(literal_column("rowid"))
+        return self.read(
+            ENTITY_ROWS.where(
+                or_(
+                    EntityRow.kind.in_(
+                        select(EntityRow.kind).where(EntityRow.source != "").distinct()
+                    ),
+                    EntityRow.kind.in_(("affair", "decree")),
                 )
-            ]
+            )
+        )
 
     def get(self, entity_id: UUID) -> Entity:
         return self.events.repository.get(entity_id)

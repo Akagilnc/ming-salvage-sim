@@ -5,6 +5,7 @@ from typing import Any
 from uuid import UUID
 
 from ming.ledger import Entity, Item, Ledger
+from ming.ledger import FACT_COLUMNS as F, FACT_ROWS
 from ming.middle.declaration import Declaration, NightDeclaration, Unhandled
 from ming.middle.rules import field_values, money_amounts
 
@@ -165,7 +166,6 @@ def interim_mark(ledger: Ledger, decree: Entity, date: Item) -> str | None:
         (
             e["detail"]
             for e in ledger.facts(entity_id=decree.id, kind="deliberation", date=date)
-            if e["kind"] == "deliberation" and e["detail"]["date"] == date
         ),
         None,
     )
@@ -173,20 +173,19 @@ def interim_mark(ledger: Ledger, decree: Entity, date: Item) -> str | None:
         (
             e["detail"]
             for e in ledger.facts(entity_id=decree.id, kind="choice", date=date)
-            if e["kind"] == "choice"
-            and e["detail"]["date"] == date
-            and e["detail"]["text"] == "强颁"
+            if e["detail"]["text"] == "强颁"
         ),
         None,
     )
     if forced and verdict:
-        route = ledger.get(UUID(verdict["route_id"]))
-        return next(
-            e["detail"]["output"]["text"]
-            for e in ledger.facts(entity_id=route.id, kind="simulation")
-            if e["kind"] == "simulation"
-            and e["detail"].get("petition_id") == forced["petition_id"]
-        )
+        return ledger.facts(
+            entity_id=UUID(verdict["route_id"]),
+            kind="simulation",
+            date=date,
+            query=FACT_ROWS.where(
+                F.detail["petition_id"].as_string() == forced["petition_id"]
+            ),
+        )[0]["detail"]["output"]["text"]
     return None
 
 

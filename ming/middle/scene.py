@@ -52,9 +52,13 @@ def read_person(ledger: Ledger, name: str) -> PersonView:
         str(e["id"]): {
             k: v for k, v in e["data"].items() if k in {"text", "origin", "people"}
         }
-        for item in history
-        if item["kind"] == "decreed"
-        for e in ledger.entities(entity_id=UUID(item["detail"]["decree_id"]))
+        for e in ledger.entities(
+            entity_id=[
+                UUID(item["detail"]["decree_id"])
+                for item in history
+                if item["kind"] == "decreed"
+            ]
+        )
     }
     events = [
         {

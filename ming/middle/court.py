@@ -7,6 +7,14 @@ from typing import Any, TypeVar
 from uuid import UUID, uuid4
 
 from pydantic_ai import Agent
+from ming.ledger import (
+    ENTITY_COLUMNS as E,
+    FACT_COLUMNS as F,
+    ENTITY_ORDER,
+    ENTITY_ROWS,
+    FACT_ROWS,
+)
+from ming.middle import queries
 
 from ming.ledger import Entity, Item, Ledger
 from ming.middle.dispatch import dispatch
@@ -67,35 +75,41 @@ class Court:
         return set_hall(self._ledger, night_id, add, remove)
 
     def nights(self, *, latest: bool = False) -> list[NightView]:
+        query = queries.NIGHT_ROWS
+        if latest:
+            query = query.order_by(None).order_by(ENTITY_ORDER.desc()).limit(1)
+        return [self.night(e["id"]) for e in self._ledger.read(query)]
+
+    def pending_nights(self) -> list[UUID]:
         return [
-            self.night(e["id"])
-            for e in self._ledger.entities(
-                kind="night", night="latest" if latest else None
+            e["id"]
+            for e in self._ledger.read(
+                queries.NIGHT_ROWS.where(
+                    E.data["closed"].as_boolean().is_(True),
+                    queries.NIGHT_RESULT.is_(None),
+                )
             )
         ]
 
-    def pending_nights(self) -> list[UUID]:
-        return [e["id"] for e in self._ledger.entities(kind="night", night="pending")]
-
     def scene_material(self) -> dict[str, object]:
-        rows = self.entities("audit", kind="person")
+        rows = self._ledger.entities(
+            kind="person",
+            query=ENTITY_ROWS.where(E.data["waiting_audience"].as_boolean().is_(True)),
+        )
         gazette = self.entities("audit", kind="gazette")[0].data["text"]
         for fact in self._ledger.facts(
-            entity_id=self.calendar().id, kind="gazette", mode="latest"
+            entity_id=self.calendar().id,
+            kind="gazette",
+            query=FACT_ROWS.order_by(None).order_by(F.position.desc()).limit(1),
         ):
             gazette = fact["detail"]["text"]
         return {
             "date": self.calendar().data,
-            "waiting_audience": [
-                e.key
-                for e in rows
-                if e.kind == "person" and e.data.get("waiting_audience")
-            ],
+            "waiting_audience": [row["key"] for row in rows],
             "gazette": gazette,
             "unhandled": [
                 {"kind": "unhandled", "entity_id": str(f.entity_id)}
                 for f in self.facts("emperor", kind="unhandled")
-                if f.kind == "unhandled"
             ],
         }
 
@@ -181,11 +195,7 @@ class Court:
                 for f in (
                     self.facts(identity)
                     if kind is None and key is None
-                    else [
-                        f
-                        for entity_id in ids
-                        for f in self.facts(identity, entity_id=entity_id)
-                    ]
+                    else self.facts(identity, entity_id=ids)
                 )
             ],
         }
@@ -195,7 +205,7 @@ class Court:
         identity: Identity,
         replay: bool = False,
         *,
-        entity_id: UUID | None = None,
+        entity_id: UUID | list[UUID] | None = None,
         kind: str | tuple[str, ...] | None = None,
         date: Item | None = None,
     ) -> list[FactView]:
@@ -229,14 +239,84 @@ class Court:
 
     def pending_petitions(self) -> list[FactView]:
         return [
-            FactView(**f) for f in self._ledger.pending_petitions(self.calendar().data)
+            FactView(**f)
+            for f in self._ledger.read(queries.pending_petitions(self.calendar().data))
         ]
 
     def interactions(self) -> dict[str, Item]:
         return {
             f["detail"]["key"]: f["detail"]
-            for f in self._ledger.facts(mode="interactions")
+            for f in self._ledger.read(queries.interactions())
         }
+
+    def petition(self, petition_id: str) -> FactView:
+        return FactView(
+            **self._ledger.facts(
+                kind="petition",
+                query=FACT_ROWS.where(F.detail["id"].as_string() == petition_id),
+            )[0]
+        )
+
+    def petition_products(
+        self,
+        petition_ids: list[str],
+        kind: str | tuple[str, ...],
+        *,
+        current: bool = False,
+    ) -> list[FactView]:
+        return [
+            FactView(**f)
+            for f in self._ledger.facts(
+                kind=kind,
+                date=self.calendar().data if current else None,
+                query=FACT_ROWS.where(
+                    F.detail["petition_id"].as_string().in_(petition_ids)
+                ),
+            )
+        ]
+
+    def route_petitions(self, route: UUID) -> list[FactView]:
+        return [
+            FactView(**f)
+            for f in self._ledger.facts(
+                kind="petition",
+                date=self.calendar().data,
+                query=FACT_ROWS.where(
+                    F.detail["route_id"].as_string() == str(route),
+                    F.detail["blocking"].as_boolean().is_(True),
+                ),
+            )
+        ]
+
+    def current_decrees(self) -> list[EntityView]:
+        return [
+            EntityView.model_validate(e)
+            for e in self._ledger.read(
+                queries.decrees_with("decreed", self.calendar().data)
+            )
+        ]
+
+    def due_decrees(self) -> list[EntityView]:
+        return [
+            EntityView.model_validate(e)
+            for e in self._ledger.read(queries.due_decrees(self.calendar().data))
+        ]
+
+    def landing_sources(self) -> list[tuple[EntityView, UUID]]:
+        sources: list[tuple[EntityView, UUID]] = []
+        for row in self._ledger.read(
+            queries.decrees_with("deliberation", self.calendar().data)
+        ):
+            decree = EntityView.model_validate(row)
+            products = self.products(decree.id, kind=("deliberation", "choice"))
+            verdict = next(f.detail for f in products if f.kind == "deliberation")
+            choice = next(
+                (f.detail for f in reversed(products) if f.kind == "choice"), None
+            )
+            if verdict["verdict"] == "准" or (choice and choice["text"] == "强颁"):
+                sources.append((decree, UUID(verdict["route_id"])))
+        calendar = self.calendar()
+        return sources + [(calendar, calendar.id)]
 
     def observe(self, on_change: Callable[[], None]) -> None:
         self._ledger.on_commit = on_change

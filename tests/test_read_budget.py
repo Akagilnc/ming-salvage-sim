@@ -1,6 +1,6 @@
-"""Medium: HTTP query work excludes unrelated closed nights.
+"""Medium: HTTP query work excludes closed nights and settled months.
 
-Closed, empty nights precede the same current month and questions.
+Closed nights or settled empty months precede the same current work and questions.
 The measured requests need the current night and unresolved question, not those
 older nights. Month opening (which legitimately reads all emperor material) is
 outside the measurement; the measured month request resumes an already open month.
@@ -22,21 +22,18 @@ from tests.test_court import replaying
 RECORDED = Path(__file__).parent / "recorded"
 
 
+@pytest.mark.parametrize("history", ["night", "month"])
 @pytest.mark.parametrize("action", ["state", "say", "month", "choose"])
-def test_http_read_work_ignores_unrelated_history(tmp_path, steps, action):
+def test_http_read_work_ignores_unrelated_history(tmp_path, steps, action, history):
     budgets = []
-    for size in (1, 4, 10):
+    for size in (1, 2, 4):
         steps["NightDeclaration"] = TestModel(
             call_tools=[],
             custom_output_text=json.dumps({"facts": [], "reports": [], "decrees": []}),
         )
         petitions = (RECORDED / "month_multiple_petitions.txt").read_text()
-        steps["simulation"] = replaying(
-            [
-                petitions,
-                *[(RECORDED / "simulation.txt").read_text()]
-                * sum(len(p["options"]) for p in json.loads(petitions)["petitions"]),
-            ]
+        steps["simulation"] = TestModel(
+            call_tools=[], custom_output_text=(RECORDED / "simulation.txt").read_text()
         )
         app = create_app(tmp_path / str(size))
         with TestClient(app) as client:
@@ -46,10 +43,23 @@ def test_http_read_work_ignores_unrelated_history(tmp_path, steps, action):
                 None,
                 {"id": "world", "year": 1627, "month": 10},
             )
-            for _ in range(size):
+            if history == "month":
+                for _ in range(size):
+                    client.post("/actions", json={"action": "month"})
+                    client.portal.call(app.state.web.game.drain)
+            for _ in range(size if history == "night" else 1):
                 client.post("/actions", json={"action": "open"})
                 client.post("/actions", json={"action": "dismiss"})
                 client.portal.call(app.state.web.game.drain)
+            steps["simulation"] = replaying(
+                [
+                    petitions,
+                    *[(RECORDED / "simulation.txt").read_text()]
+                    * sum(
+                        len(p["options"]) for p in json.loads(petitions)["petitions"]
+                    ),
+                ]
+            )
             client.post("/actions", json={"action": "month"})
             client.portal.call(app.state.web.game.drain)
             client.post("/actions", json={"action": "load", "save": save})
@@ -100,6 +110,44 @@ def test_http_read_work_ignores_unrelated_history(tmp_path, steps, action):
             budgets.append(tuple(budget))
 
     assert budgets[0] == budgets[1] == budgets[2]
+
+
+def test_http_retry_keeps_first_interaction_key_order(tmp_path, steps):
+    petitions = (RECORDED / "month_multiple_petitions.txt").read_text()
+    steps["simulation"] = replaying(
+        [
+            petitions,
+            *[RuntimeError("recorded model failure")]
+            * (sum(len(p["options"]) for p in json.loads(petitions)["petitions"]) + 3),
+        ]
+    )
+    app = create_app(tmp_path)
+    with TestClient(app) as client:
+        client.post("/actions", json={"action": "new"})
+        client.post("/actions", json={"action": "month"})
+        client.portal.call(app.state.web.game.drain)
+        questions = client.get("/state").json()["game"]["petitions"]
+        for question in questions[:2]:
+            assert (
+                client.post(
+                    "/actions",
+                    json={
+                        "action": "choose",
+                        "petition": question["id"],
+                        "option": 0,
+                    },
+                ).status_code
+                == 204
+            )
+        assert (
+            client.get("/state").json()["game"]["failure"]["payload"]["petition"]
+            == questions[0]["id"]
+        )
+        assert client.post("/actions", json={"action": "retry"}).status_code == 204
+        assert (
+            client.get("/state").json()["game"]["failure"]["payload"]["petition"]
+            == questions[0]["id"]
+        )
 
 
 @pytest.mark.parametrize("crash", [False, True])

@@ -1,7 +1,7 @@
 """Derived query schema. Only the projection policy writes these rows."""
 
 from uuid import UUID
-from sqlalchemy import JSON, Index, Uuid
+from sqlalchemy import JSON, Index, Integer, Uuid, literal_column, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from ming.ledger.domain import Item
 
@@ -19,9 +19,6 @@ class EntityRow(Base):
     source: Mapped[str]
     data: Mapped[Item] = mapped_column(JSON)
 
-    def snapshot(self) -> Item:
-        return {c.name: getattr(self, c.name) for c in self.__table__.columns}
-
 
 class FactRow(Base):
     __tablename__ = "facts"
@@ -33,10 +30,11 @@ class FactRow(Base):
     emperor_words: Mapped[str]
     detail: Mapped[Item] = mapped_column(JSON)
 
-    def snapshot(self) -> Item:
-        return {
-            "entity_id": self.entity_id,
-            "kind": self.kind,
-            "emperor_words": self.emperor_words,
-            "detail": self.detail,
-        }
+
+ENTITY_ORDER = literal_column("entities.rowid", type_=Integer())
+ENTITY_ROWS = select(EntityRow.__table__).order_by(ENTITY_ORDER)
+FACT_ROWS = (
+    select(FactRow.__table__)
+    .join(EntityRow, EntityRow.id == FactRow.entity_id)
+    .order_by(ENTITY_ORDER, FactRow.position)
+)
