@@ -3,8 +3,7 @@
 import json
 import sqlite3
 from pathlib import Path
-from itertools import chain
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import pytest
 from pydantic_ai.messages import RetryPromptPart
@@ -13,6 +12,7 @@ from sqlalchemy import event, text
 from sqlalchemy.orm import Session
 from starlette.testclient import TestClient
 
+from ming.middle.declaration import PendingPetition
 from ming.web import create_app
 from tests.test_court import replaying
 
@@ -151,17 +151,17 @@ def test_returned_urgent_waits_through_vacancy(
     with TestClient(create_app(game_db.parent)) as client:
         client.post("/actions", json={"action": "load", "save": game_db.name})
         if valid_revision:
-            # Freeze only the first batch/petition IDs to the recorded reference.
-            # All subsequent IDs remain random; model replies are untouched.
+
+            def identify_original(**fields):
+                # Align only this original's generated ID, regardless of scheduling.
+                if fields["source"] == "urgent" and fields["ordinal"] == 0:
+                    fields["id"] = UUID(
+                        json.loads(revision)["petitions"][0]["revision_of"]
+                    )
+                return PendingPetition(**fields)
+
             monkeypatch.setattr(
-                "ming.month_steps.sources.uuid4",
-                chain(
-                    [
-                        uuid4(),
-                        UUID(json.loads(revision)["petitions"][0]["revision_of"]),
-                    ],
-                    iter(uuid4, None),
-                ).__next__,
+                "ming.month_steps.sources.PendingPetition", identify_original
             )
         client.post("/actions", json={"action": "month"})
         monkeypatch.undo()

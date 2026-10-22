@@ -75,5 +75,5 @@ A-full 也推进至十二月，但原场景仍停在询问，整夜译出零道�
 初次 vacancy 录制器嵌套 `capture_run_messages` 干扰转译错误处理，留下 `IndexError`；去掉外层 capture 后在同一存档重试成功，原失败卷保留，不算生产来源的失败证据。
 `1954-recovery-cases/*/state.json` 与 `recovered.json` 是两类来源坏正名、坏结构停住及仅补失败来源的真跑。
 `1954-consequences` 与 `1954-consequences-sonnet` 曾漏落奏疏的派系、去留字段：转译范围将奏疏处置误排作另份圣旨。明确只排除 `others` 后，`1954-effects/002-Declaration-output.json` 与最终存档记有皇威、派系满意度及人物去留字段，推进到 1628 年五月。
-缺位测试的补任阶段原样重放 `sources_revision.txt`：正确例只用 pytest monkeypatch 冻结最初来源批次、原案的 UUID 生成值，使原案 id 对齐录音的 revision_of；其余 UUID 随机，不改回话、不改落账和校验。错误例不对齐原案 id，同一原样录音两次交回，验证引用失败点、停住且原案保留。两例都从 HTTP 入口走任免、发回、改票与重开。
+缺位测试的补任阶段原样重放 `sources_revision.txt`：正确例只在初始月的奏疏构造处对齐 `source=urgent、ordinal=0` 这一原案的生成 ID，再交给真实 `PendingPetition` 构造器，使其 id 对齐录音的 revision_of；不按并发调用次序分配 UUID，其余 ID 随机，不改回话、不改落账和校验。错误例不对齐原案 id，同一原样录音两次交回，验证引用失败点、停住且原案保留。两例都从 HTTP 入口走任免、发回、改票与重开。
 测试只断言结构化输入、状态、引用及落账，不约束这些模型回复的措辞。
