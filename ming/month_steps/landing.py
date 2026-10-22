@@ -7,6 +7,7 @@ from uuid import UUID
 from ming.middle.court import Court
 from ming.middle.declaration import Declaration, Unhandled
 from ming.middle.opening import CONTENT
+from ming.middle.month_work import COST_RULES
 from ming.middle.rules import SCALE_FIELDS
 from ming.middle.view import EntityView
 
@@ -15,13 +16,13 @@ class Landing:
     def __init__(self, court: Court) -> None:
         self.court = court
         self.agent = court.translation_agent(
-            Declaration, (CONTENT / "prompts/month_translate.md").read_text()
+            Declaration, (CONTENT / "prompts/month_translate.md").read_text() + COST_RULES
         )
 
     async def translate(
         self, source: EntityView, route: UUID, others: list[EntityView]
     ) -> None:
-        if self.court.products(source.id, kind=("declaration", "landed", "unhandled")):
+        if self.court.products(source.id, kind=("declaration", "landed", "attempted", "unhandled")):
             return
         entities = self.court.entities("world", sourced=True)
         result = await self.court.translate(
@@ -32,6 +33,7 @@ class Landing:
                     "source": source.model_dump(mode="json"),
                     "entities": [e.model_dump(mode="json") for e in entities],
                     "scope": "decree" if source.kind == "decree" else "world",
+                    "prior_interim": [f.model_dump(mode="json") for f in self.court.products(source.id, current=False, kind="interim")],
                     "deliberation": [
                         f.model_dump(mode="json")
                         for f in self.court.products(
@@ -90,21 +92,21 @@ class Landing:
                     route,
                     [
                         other
-                        for other, other_route in sources
+                        for other, other_route, _mode in sources
                         if other.kind == "decree"
                         and other.id != source.id
                         and other_route == route
                     ],
                 )
-                for source, route in sources
+                for source, route, _mode in sources
             ),
             return_exceptions=True,
         )
         for result in results:
             if isinstance(result, BaseException):
                 raise result
-        for source, _route in sources:
-            if self.court.products(source.id, kind=("landed", "unhandled")):
+        for source, _route, mode in sources:
+            if self.court.products(source.id, kind=("landed", "attempted", "unhandled")):
                 continue
             declaration = self.court.products(source.id, kind="declaration")[0].detail
             self.court.land(
@@ -112,7 +114,7 @@ class Landing:
                     declaration["result"]
                 ),
                 source.id,
-                monthly=True,
+                monthly=mode,
                 baselines={
                     (b["entity_type"], b["entity"], b["field"]): b["value"]
                     for b in declaration["baselines"]

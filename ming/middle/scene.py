@@ -55,7 +55,16 @@ def read_person(ledger: Ledger, name: str) -> PersonView:
         {
             "kind": e.kind,
             **({"decree": decrees[e.entity_id]} if e.kind == "decreed" else {}),
-            **{k: v for k, v in e.detail.items() if k in {"date", "text", "successor"}},
+            **(
+                {"decree": decrees[UUID(e.detail["decree_id"])]}
+                if e.kind == "endorsed" and UUID(e.detail["decree_id"]) in decrees
+                else {}
+            ),
+            **{
+                k: v
+                for k, v in e.detail.items()
+                if k in {"date", "text", "successor", "endorser", "form", "source_chat_turn_id"}
+            },
         }
         for e in project(ledger, identity, {"entity_id": [person["id"], *decrees]})
     ]

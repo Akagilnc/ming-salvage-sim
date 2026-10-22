@@ -8,7 +8,13 @@ from sqlalchemy import and_, or_
 
 from ming.ledger import Entity, Item, Ledger
 from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS, FACT_COLUMNS as F, FACT_ROWS
-from ming.middle.declaration import Declaration, Fact, NightDeclaration, Unhandled
+from ming.middle.declaration import (
+    Declaration,
+    Fact,
+    LandingMode,
+    NightDeclaration,
+    Unhandled,
+)
 from ming.middle.rules import field_values, money_amounts
 from ming.middle.fiscal import WAN, current_paid
 
@@ -24,6 +30,7 @@ def landing_entities(
         pairs.update(("affair", f.affair) for f in result.facts if f.affair is not None)
     if isinstance(result, NightDeclaration):
         pairs.update(("person", p) for d in result.decrees for p in d.people)
+        pairs.update(("person", e.endorser) for d in result.decrees for e in d.endorsements if e.endorser != "御笔")
     found = {
         (e["kind"], e["key"]): e
         for kind, key in sorted(pairs)
@@ -74,7 +81,7 @@ def dispatch(
     ledger: Ledger,
     result: Declaration | Unhandled,
     night_id: UUID,
-    monthly: bool = False,
+    monthly: LandingMode | None = None,
     baselines: dict[tuple[str, str, str], Any] | None = None,
 ) -> None:
     owner = ledger.get(night_id)
@@ -179,8 +186,8 @@ def dispatch(
         known(owner.kind, owner.key),
         "unhandled"
         if isinstance(result, Unhandled)
-        else ("landed" if monthly else "translated"),
-        {"result": result.model_dump()},
+        else (monthly or "translated"),
+        {"result": result.model_dump(), "monthly": monthly},
     )
     ledger.commit(list(changed.values()))
 
@@ -200,6 +207,11 @@ def record_decrees(
             entity = Entity("decree", "", "", data)
             record(entity, "decreed", data)
             decrees.append(entity)
+            for endorsement in decree.endorsements:
+                if endorsement.endorser != "御笔":
+                    record(known("person", endorsement.endorser), "endorsed", {
+                        "decree_id": str(entity.id), **endorsement.model_dump(),
+                    })
             for person in decree.people:
                 record(
                     known("person", person), "decreed", {"decree_id": str(entity.id)}
@@ -247,6 +259,10 @@ def record_receipts(
 
 
 def interim_mark(ledger: Ledger, decree: Entity, date: Item) -> str | None:
+    if ledger.facts(entity_id=decree.id, kind="interim"):
+        return None
+    if decree.data.get("interim"):
+        return decree.data["text"]
     verdict = next(
         (
             e["detail"]

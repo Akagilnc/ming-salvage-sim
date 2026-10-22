@@ -19,14 +19,26 @@ from ming.ledger import Entity, Item, Ledger
 from ming.middle.dispatch import dispatch
 from ming.middle.fiscal import Accounts, due_levies
 from ming.middle.calendar import advance_month
-from ming.middle.declaration import Declaration, PendingPetition, Unhandled
+from ming.middle.declaration import (
+    Declaration,
+    LandingMode,
+    PendingPetition,
+    Unhandled,
+)
 from ming.middle.invoke import ModelSource
 from ming.middle.opening import CONTENT, import_opening
 from ming.middle.night import NightView, dismiss, known_people, open_night, read_night
 from ming.middle.scene import HallResult, PersonView, read_person, set_hall
 from ming.middle.translate import INSTRUCTIONS, declaration_agent, translate
 from ming.middle.translate import catalogue as names_and_aliases
-from ming.middle.view import EntityView, FactView, Identity, entities, project
+from ming.middle.view import (
+    EntityView,
+    FactView,
+    Identity,
+    character_input,
+    entities,
+    project,
+)
 
 T = TypeVar("T", bound=Declaration)
 
@@ -104,6 +116,9 @@ class Court:
             gazette = fact["detail"]["text"]
         return {
             "date": self.calendar().data,
+            "imperial_prestige": character_input(
+                self.entities("audit", kind="world")[0].data
+            )["imperial_prestige"],
             "waiting_audience": [row["key"] for row in rows],
             "gazette": gazette,
             "unhandled": [
@@ -158,6 +173,18 @@ class Court:
             )
         ]
 
+    def deliberation(
+        self, entity_id: UUID, decision: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        return next(
+            (
+                f.detail
+                for f in self.products(entity_id, kind="deliberation")
+                if f.detail["decision_key"] == decision
+            ),
+            None,
+        )
+
     def record_product(
         self,
         entity_id: UUID,
@@ -196,7 +223,7 @@ class Court:
         result: Declaration | Unhandled,
         source: UUID,
         *,
-        monthly: bool = False,
+        monthly: LandingMode | None = None,
         baselines: dict[tuple[str, str, str], Any] | None = None,
     ) -> None:
         dispatch(self._ledger, result, source, monthly, baselines)
@@ -379,13 +406,13 @@ class Court:
             )
         ]
 
-    def landing_sources(self) -> list[tuple[EntityView, UUID]]:
+    def landing_sources(self) -> list[tuple[EntityView, UUID, LandingMode]]:
         # A secret errand lands each month until done: in its decree month from
         # its night's simulation, afterwards from the world's.
         calendar = self.calendar()
         current = {d.id for d in self.current_decrees()}
-        sources = [
-            (d, UUID(d.data["night_id"]) if d.id in current else calendar.id)
+        sources: list[tuple[EntityView, UUID, LandingMode]] = [
+            (d, UUID(d.data["night_id"]) if d.id in current else calendar.id, "landed")
             for d in self.errands()
         ]
         for row in self._ledger.read(
@@ -393,19 +420,21 @@ class Court:
         ):
             decree = EntityView.model_validate(row)
             products = self.products(decree.id, kind=("deliberation", "choice"))
-            verdict = next(f.detail for f in products if f.kind == "deliberation")
+            verdict = next(f.detail for f in reversed(products) if f.kind == "deliberation")
             choice = next(
                 (f.detail for f in reversed(products) if f.kind == "choice"), None
             )
             if verdict["verdict"] == "准" or (choice and choice["text"] == "强颁"):
-                sources.append((decree, UUID(verdict["route_id"])))
+                sources.append((decree, UUID(verdict["route_id"]), "landed"))
+            elif decree.data.get("interim"):
+                sources.append((decree, UUID(verdict["route_id"]), "attempted"))
         # Completion order is entities.rowid, the order ENTITY_ROWS already uses.
         order = {
             row["id"]: index
             for index, row in enumerate(self._ledger.entities(kind="decree"))
         }
         sources.sort(key=lambda item: order[item[0].id])
-        return sources + [(calendar, calendar.id)]
+        return sources + [(calendar, calendar.id, "landed")]
 
     def observe(self, on_change: Callable[[], None]) -> None:
         self._ledger.on_commit = on_change

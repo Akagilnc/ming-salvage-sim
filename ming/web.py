@@ -38,7 +38,7 @@ class Action(BaseModel):
     save: str = ""
     words: str = ""
     petition: UUID | None = None
-    option: int = 0
+    option: int = -1
     settings: Settings | None = None
 
 

@@ -4,7 +4,7 @@ scope=decree：每道旨独立一份声明，读它所在推演的全部原文�
 除钱粮字段表示本次增减外，字段值是变化后的状态。未知字段不得添加，伤情等只记人物履历文字。跨月事务用 affair 记来龙去脉，办完只写往事，不设了结字段。
 任职 office 只写官衔，地区用 office_region。新官上任会罢同官同地原任，人物是否罢居不影响起复。人名、地区、军队等只取账本中文正名。
 人物启程声明 location 目的地，引擎据距离矩阵记在途、月末倒数，抵达才改所在，在途不改道。起复与启程是两件事，分别声明 status 和 location。启程的行速用 travel_speed 声明：常速为1，旨意要求加急时据行速语意交1.5到2；不声明则本程常速。
-强颁扣皇威，并交相关派系／阶级满意度反应（可正可负可零）。撤回成命交皇威、当事大臣与相关派系反应；收权罢差零毁约代价。收回被驳的旨不生效、零皇威代价；留中中性。本月民心变化照推演，不作强颁或撤旨的固定代价。皇威、民心、满意度是0到100量表，据输入实体的现值与推演后果交变化后值，引擎只夹范围；皇威落 world.imperial_prestige，派系落 faction.satisfaction，阶级落 class.satisfaction，不用履历文字代替字段。
+皇威、民心、满意度是0到100量表，据输入实体的现值与推演后果交变化后值，引擎只夹范围；皇威落 world.imperial_prestige，派系落 faction.satisfaction，阶级落 class.satisfaction，不用履历文字代替字段。中旨标记由落账记录，不声明新字段，也不再给旨意自身另记中旨事实。
 钱粮 taels 交带正负号的增减，不交最终余额。一笔有出处的钱粮须指明 counterpart（同份 facts 里的另一实体类型与正名），双方各交相反且等额的增减，各自 counterpart 指向对方。无存量的去处只交该实体文字事实，来源一方 counterpart 指向它。没有出处存量的税银等收入，正数 taels 可不带 counterpart；有出处不可省。代码按出处实有封顶并两边同数落账。
 财政：例行月收支、欠额、建筑月产由引擎核算，不再以taels重复申报。专项实际拨款照前条声明，付给军队或财政科目时用change.purpose注明补欠、当月饷、犒赏或专项，value仍为两数；不得直接声明arrears或month_paid。减额、暂欠在义务实体上声明payment_policy，形状与语义见字段schema；有期限交until，不把暂欠当减额。账户payment_order、army_order以账本正名交完整顺序。省加派月额用region.fiscal_surcharge（万两目标值，不逐月累加），不写进三饷应征。饷率亲裁结局写到event.terminal_reason，只取该事件terminal_reason_labels；留中不声明结局。
 军队 firearm_equipment 范围0到100，cannon_equipment 0到12；引擎夹范围并保存名义数。没有后果交空 facts/reports。失败点会带回要求重交整份，不丢项或改成零躲校验。

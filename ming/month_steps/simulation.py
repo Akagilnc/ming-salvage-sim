@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from collections.abc import Callable, Coroutine
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -12,22 +13,52 @@ from ming.middle.calendar import next_month
 from ming.middle.court import Court
 from ming.middle.declaration import PendingPetition
 from ming.middle.invoke import ModelSource, build_agent, invoke
-from ming.middle.month_work import Materials, Simulation, prompt, read_records
+from ming.middle.month_work import COST_RULES, Materials, Simulation, prompt, read_records
 from ming.middle.view import EntityView
 
 
-def continuing_options(petition: PendingPetition, route: UUID) -> range | list[int]:
-    """Every option of a fork continues its segment; a rejection only 强颁 does."""
-    if petition.entity_id == route:
+def push_key(petition_id: str, option: int) -> dict[str, Any]:
+    return {"petition_id": petition_id, "option": option}
+
+
+def push_verdict(petition: PendingPetition, court: Court) -> dict[str, Any] | None:
+    """This petition's landed imperial-push reconsideration, or None."""
+    option = next(
+        (i for i, name in enumerate(petition.options) if name == "御笔强推"), None
+    )
+    if option is None:
+        return None
+    return court.deliberation(
+        petition.entity_id, push_key(str(petition.id), option)
+    )
+
+
+def continuing_options(petition: PendingPetition, court: Court) -> range | list[int]:
+    """Forks continue; imperial backing waits for its own renewed approval."""
+    if petition.entity_id == petition.route_id:
         return range(len(petition.options))
-    return [petition.options.index("强颁")] if "强颁" in petition.options else []
+    approved = (verdict := push_verdict(petition, court)) is not None and verdict["verdict"] == "准"
+    return [
+        i for i, option in enumerate(petition.options)
+        if option == "强颁" or (option == "御笔强推" and approved)
+    ]
 
 
 class Simulations:
-    def __init__(self, court: Court, model: ModelSource) -> None:
+    def __init__(
+        self,
+        court: Court,
+        model: ModelSource,
+        reconsider: Callable[
+            [EntityView, UUID, dict[str, Any]], Coroutine[Any, Any, dict[str, Any]]
+        ],
+    ) -> None:
         self.court = court
+        self.reconsider = reconsider
         self.tasks: dict[tuple[UUID, str, int], asyncio.Task[dict[str, Any]]] = {}
         self.continuations: dict[tuple[UUID, str], asyncio.Task[None]] = {}
+        # Selected pushes live with the other ledger-started tasks, not a second registry.
+        self.pushes: dict[str, asyncio.Task[dict[str, Any]]] = {}
         self.agent = build_agent(
             model,
             name="simulation",
@@ -35,7 +66,7 @@ class Simulations:
             deps_type=Materials,
             tools=[read_records],
             retries=1,
-            instructions="你推演真实世界，用 read_records 查账。日期由输入账本给定，只写本月，写到本月底结束。交本段原文、零到多道奏疏及是否已写到月底。未到月底请旨是岔路；交回的每问独立，可各自续写。到月底附带奏疏是下个月开局奏折，不在本月执行。旨意推演只办输入已准各旨，不推其余世界；世界推演读各夜结果，只写其余发展和本月重议已准旨、上月已批奏疏。fiscal_events是本月到点应呈的饷率事件，写陈情与拟旨，停在本月岔路待皇帝批红，不自行准驳；留中不改征收，日后是否再上疏由人物自决。例行收支、欠额与建筑月产由落账后的月账统一核算，不再虚构一遍扣款或收入；拨款用途、减额、暂欠、改序与摊派仍由人物与旨意决定。上月急务按所选办理；弹劾按原奏疏的署名人、被劾人及所选处置，写清皇威、发难派系满意度和被劾者去留的实际后果。查实再办要读被劾人账上实有事实，写这一查费的工夫、所得及各方反应。撤回成命照外廷判词办理，保留其皇威、当事大臣与相关派系反应；收权罢差零毁约代价。强颁付皇威及相关派系或阶级反应，反应可正可负可零，中旨标记写在旨上。民心不是强颁或撤旨的固定代价。人物异地启程按账本距离在途，所在由引擎月末倒数更新，在途不改道；事务办完只写往事，不设了结。奏报与实况分清。续写接同段对话，只写当前这一问的后果，不替其他问选择、不重复已写部分。",
+            instructions="你推演真实世界，用 read_records 查账。日期由输入账本给定，只写本月，写到本月底结束。交本段原文、零到多道奏疏及是否已写到月底。未到月底请旨是岔路；交回的每问独立，可各自续写。到月底附带奏疏是下个月开局奏折，不在本月执行。旨意推演只办输入已准各旨，不推其余世界；世界推演读各夜结果，只写其余发展和本月重议已准旨、上月已批奏疏。fiscal_events是本月到点应呈的饷率事件，写陈情与拟旨，停在本月岔路待皇帝批红，不自行准驳；留中不改征收，日后是否再上疏由人物自决。例行收支、欠额与建筑月产由落账后的月账统一核算，不再虚构一遍扣款或收入；拨款用途、减额、暂欠、改序与摊派仍由人物与旨意决定。上月急务按所选办理；弹劾按原奏疏的署名人、被劾人及所选处置，写清皇威、发难派系满意度和被劾者去留的实际后果。查实再办要读被劾人账上实有事实，写这一查费的工夫、所得及各方反应。人物异地启程按账本距离在途，所在由引擎月末倒数更新，在途不改道；事务办完只写往事，不设了结。奏报与实况分清。续写接同段对话，只写当前这一问的后果，不替其他问选择、不重复已写部分。" + COST_RULES,
         )
 
     def publish(self, route: UUID, segment: dict[str, Any]) -> None:
@@ -110,7 +141,11 @@ class Simulations:
                 "petition": petition.model_dump(mode="json"),
                 "option": option,
                 "choice": petition.options[option],
-                "instruction": "只续写这一问的后果到本月底。其他问保持待批；强颁则续写此旨及其代价。",
+                "decree": self.court.entity(petition.entity_id).model_dump(mode="json")
+                if petition.entity_id != petition.route_id else None,
+                "deliberations": [f.detail for f in self.court.products(petition.entity_id, kind="deliberation")],
+                "prior_interim": [f.detail for f in self.court.products(petition.entity_id, current=False, kind="interim")],
+                "instruction": "只续写这一问的后果到本月底。其他问保持待批；强颁则续写此旨及其代价。御笔强推只追加担名，获外廷准后按正常旨办理。",
             },
             parent["messages"],
         )
@@ -167,6 +202,85 @@ class Simulations:
             task.add_done_callback(self.log_failure)
         return self.continuations[key]
 
+    def start_push(
+        self, petition: PendingPetition, option: int
+    ) -> asyncio.Task[dict[str, Any]]:
+        """One in-flight reconsideration for this petition; a failed task stays until recovery discards it."""
+        key = str(petition.id)
+        if key not in self.pushes:
+            task = self.pushes[key] = asyncio.create_task(
+                self.reconsider(
+                    self.court.entity(petition.entity_id),
+                    petition.route_id,
+                    push_key(key, option),
+                )
+            )
+            task.add_done_callback(self.log_failure)
+        return self.pushes[key]
+
+    def hold_push(self, petition: PendingPetition, choice: dict[str, Any] | None) -> bool:
+        """Start a selected imperial push the way a forecast is started. True once it no longer blocks."""
+        if (
+            choice is None
+            or choice.get("text") != "御笔强推"
+            or push_verdict(petition, self.court) is not None
+        ):
+            return True
+        task = self.start_push(petition, choice["option"])
+        return task.done() and task.exception() is None
+
+    def open_pushes(self, petition_id: str | None) -> list[str]:
+        return [
+            key
+            for key, task in self.pushes.items()
+            if not (task.done() and task.exception() is None)
+            and (petition_id is None or key == petition_id)
+        ]
+
+    def discard_failed(self, petition_id: str | None) -> None:
+        """Drop failed tasks this recovery entry will start again. A fresh failure stays."""
+        chain = self.chain(petition_id)
+        for key, task in list(self.continuations.items()):
+            if (
+                (key[1] in chain if petition_id is not None else key[1] not in chain)
+                and task.done() and task.exception() is not None
+            ):
+                del self.continuations[key]
+        for key, task in list(self.pushes.items()):
+            if (
+                (petition_id is None or key == petition_id)
+                and task.done() and task.exception() is not None
+            ):
+                del self.pushes[key]
+
+    def advance_petition(
+        self,
+        petition: PendingPetition,
+        choice: dict[str, Any] | None,
+        segments: list[dict[str, Any]],
+        petition_id: str | None,
+    ) -> tuple[bool, bool]:
+        """Return whether this petition blocks, and whether a segment was published."""
+        if choice is not None and petition_id not in (None, str(petition.id)):
+            return False, False
+        blocks = not self.hold_push(petition, choice)
+        if not segments:
+            return blocks, False
+        options = continuing_options(petition, self.court)
+        for option in options:
+            self.start_forecast(petition, option)
+        if (
+            choice is None
+            or choice["option"] not in options
+            or any(s.get("petition_id") == str(petition.id) for s in segments)
+        ):
+            return blocks, False
+        task = self.start_forecast(petition, choice["option"])
+        if not task.done() or task.exception() is not None:
+            return True, False
+        self.publish(petition.route_id, task.result())
+        return blocks, True
+
     async def run(self, route: EntityView, context: dict[str, Any]) -> bool:
         if not self.court.products(route.id, kind="simulation"):
             self.publish(route.id, await self.call(context, []))
@@ -213,28 +327,11 @@ class Simulations:
             progressed = False
             ready = True
             for petition in petitions:
-                choice = choices.get(str(petition.id))
-                if (
-                    choice is not None and petition_id not in (None, str(petition.id))
-                ) or not segments:
-                    # Without the parent segment no forecast of this route can run;
-                    # its production re-enters here through run() once it lands.
-                    continue
-                options = continuing_options(petition, route)
-                for option in options:
-                    self.start_forecast(petition, option)
-                if (
-                    choice is None
-                    or choice["option"] not in options
-                    or any(s.get("petition_id") == str(petition.id) for s in segments)
-                ):
-                    continue
-                task = self.start_forecast(petition, choice["option"])
-                if not task.done() or task.exception() is not None:
-                    ready = False
-                    continue
-                self.publish(route, task.result())
-                progressed = True
+                blocks, published = self.advance_petition(
+                    petition, choices.get(str(petition.id)), segments, petition_id
+                )
+                ready = ready and not blocks
+                progressed = progressed or published
             for segment in segments:
                 if (
                     (petition_id is None or segment["id"] in self.chain(petition_id))
@@ -256,6 +353,7 @@ class Simulations:
         tasks: list[asyncio.Task[Any]] = [
             *self.tasks.values(),
             *self.continuations.values(),
+            *self.pushes.values(),
         ]
         if tasks:
             # Candidate failures are logged by log_failure; they are not formal work.

@@ -182,7 +182,10 @@ def due_decrees(date: Item) -> Select[Any]:
     return ENTITY_ROWS.where(
         E.kind == "decree",
         ~select(F.position)
-        .where(F.entity_id == E.id, F.kind.in_(("landed", "unhandled")))
+        .where(F.entity_id == E.id, or_(
+            F.kind == "landed",
+            and_(F.kind == "unhandled", F.detail["monthly"].as_string().is_distinct_from("attempted")),
+        ))
         .exists(),
         or_(
             decision.is_(None),

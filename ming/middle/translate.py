@@ -34,8 +34,8 @@ T = TypeVar("T", bound=Declaration)
 INSTRUCTIONS = """你是御前召对的转译官。退朝后通读整夜已落账的全部轮次，一夜只交一次声明。
 decrees 只记成了的旨意：领旨的人已经把皇帝的话拟成正式圣旨念出，皇帝认可了那份定稿。
 认可按意思认，不限于“准”字；皇帝没表态的就是默拒，驳了的也不成旨。认可须对应当时已经拟就的具体旨稿，不预认本轮回话后续新增的拟稿，也不追认更早搁置的请示。不要把问话、大臣请示或未认可的拟稿记成旨。
-text 保留皇帝认可的圣旨定稿全文，不改写、不摘要。origin 记原本是皇帝所下还是大臣所请，people 按字段说明填写。
-旨意按字段声明 secret 与成旨 turn；不带交办或拨款载荷，不预先执行待月末办理的后果。
+text 保留皇帝认可的圣旨定稿全文，不改写、不摘要。origin 记原本是皇帝所下还是大臣所请，people、endorsements、interim 按字段说明填写。
+旨意按字段声明 secret 与成旨 turn，记背书与中旨标记；不带交办或拨款载荷，不预先执行待月末办理的后果。
 当场已经发生的事实用 facts：哪个实体、是否新建、字段变更列表、一段文字。不分类，不设动作枚举。
 只记今夜新发生的实况，不把邸报旧事、档案履历或大臣奏报中的说法当成今夜已经发生的事实。
 是待执行旨意还是当场实况，照整夜戏文判断；未认可的拟旨不能当成已经执行的事实。
@@ -128,10 +128,15 @@ def check(ledger: Ledger, out: Declaration, source: UUID) -> None:
     check_fiscal(ledger, out)
     check_rules(out, set(names.get("affair", {})))
     check_references(out, names)
-    check_decrees(ledger, out, source)
+    check_decrees(ledger, out, source, names)
 
 
-def check_decrees(ledger: Ledger, out: Declaration, source: UUID) -> None:
+def check_decrees(
+    ledger: Ledger,
+    out: Declaration,
+    source: UUID,
+    names: dict[str, dict[str, list[str]]],
+) -> None:
     owner = ledger.entities(entity_id=source)[0]
     for item in [*out.facts, *out.decree_events]:
         ref = item.decree
@@ -149,6 +154,25 @@ def check_decrees(ledger: Ledger, out: Declaration, source: UUID) -> None:
         for decree in out.decrees:
             if decree.turn > len(turns):
                 fail("decrees.turn", decree.turn, list(range(1, len(turns) + 1)))
+    if isinstance(out, NightDeclaration):
+        check_endorsements(ledger, out, source, names)
+
+
+def check_endorsements(
+    ledger: Ledger,
+    out: NightDeclaration,
+    source: UUID,
+    names: dict[str, dict[str, list[str]]],
+) -> None:
+    turn_ids = {f["detail"]["id"] for f in ledger.facts(entity_id=source, kind="turn")}
+    for i, decree in enumerate(out.decrees):
+        for j, endorsement in enumerate(decree.endorsements):
+            path = f"decrees[{i}].endorsements[{j}]"
+            if endorsement.source_chat_turn_id not in turn_ids:
+                fail(path + ".source_chat_turn_id", endorsement.source_chat_turn_id, sorted(turn_ids))
+            expected = ["御笔"] if endorsement.form == "御笔手敕" else names.get("person", {})
+            if endorsement.endorser not in expected:
+                fail(path + ".endorser", endorsement.endorser, expected)
 
 
 def check_fiscal(ledger: Ledger, out: Declaration) -> None:

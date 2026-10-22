@@ -28,7 +28,7 @@ HISTORY_ACTIONS = {
 
 
 @contextmanager
-def recorded_steps(case=None):
+def recorded_steps(case=None, start=0):
     invalid = json.loads((RECORDED / "night_invalid.json").read_text())["cases"][
         "missing_fields"
     ]
@@ -54,14 +54,12 @@ def recorded_steps(case=None):
             for name in ("deliberation", "simulation", "gazette", "secret_report")
         },
     }
-    if case in {"approved", "secret"}:
+    if case is not None:
         case = json.loads((RECORDED / f"night_{case}.json").read_text())
         replies["scene"] = replaying(
-            [
-                m
-                for m in ModelMessagesTypeAdapter.validate_python(
-                    case["scene_responses"]
-                )
+            [turn["scene"] for turn in case["turns"][start:]]
+            if "turns" in case else [
+                m for m in ModelMessagesTypeAdapter.validate_python(case["scene_responses"])
                 if isinstance(m, ModelResponse)
             ]
         )
@@ -75,6 +73,8 @@ def recorded_steps(case=None):
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(models, "ALLOW_MODEL_REQUESTS", False)
         patch.setattr(Agent, "run", recorded)
+        if case is not None and "turns" in case:
+            patch.setattr("ming.game.uuid4", iter(t["id"] for t in case["turns"][start:]).__next__)
         yield replies
 
 
@@ -174,10 +174,31 @@ def secret_night(first_night, tmp_path_factory):
     )
 
 
-def extend_history(source, directory, actions, case=None):
+@pytest.fixture(scope="session")
+def backing_offer(first_night, tmp_path_factory):
+    case = json.loads((RECORDED / "night_endorsed.json").read_text())
+    return extend_history(
+        first_night, tmp_path_factory.mktemp("backing-offer"),
+        [{"action": "say", "words": turn["emperor_words"]} for turn in case["turns"][:2]],
+        case="endorsed",
+    )
+
+
+@pytest.fixture(scope="session")
+def backed_night(backing_offer, tmp_path_factory, request):
+    case = getattr(request, "param", "endorsed")
+    recording = json.loads((RECORDED / f"night_{case}.json").read_text())
+    return extend_history(
+        backing_offer, tmp_path_factory.mktemp(f"{case}-night"),
+        [{"action": "say", "words": turn["emperor_words"]} for turn in recording["turns"][2:]],
+        case=case, start=2,
+    )
+
+
+def extend_history(source, directory, actions, case=None, start=0):
     path = directory / source.name
     copyfile(source, path)
-    with recorded_steps(case) as replies, TestClient(create_app(directory)) as client:
+    with recorded_steps(case, start) as replies, TestClient(create_app(directory)) as client:
         if case is None:
             replies["NightDeclaration"] = TestModel(
                 call_tools=[],
