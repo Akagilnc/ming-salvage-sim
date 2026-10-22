@@ -3,6 +3,7 @@
 import io
 import json
 from pathlib import Path
+from shutil import copyfile
 
 import pytest
 from pydantic_ai.models.test import TestModel
@@ -15,7 +16,7 @@ RECORDED = Path(__file__).parent / "recorded"
 
 @pytest.mark.parametrize("steps", ["approved"], indirect=True)
 def test_cli_preserves_jsonl_and_resumes_failed_month(
-    tmp_path: Path, steps, monkeypatch, capsys
+    game_db: Path, steps, monkeypatch, capsys, opening_db
 ) -> None:
     case = json.loads((RECORDED / "night_approved.json").read_text())
     steps["Declaration"] = TestModel(
@@ -28,8 +29,7 @@ def test_cli_preserves_jsonl_and_resumes_failed_month(
             *[(RECORDED / "simulation.txt").read_text()] * 4,
         ]
     )
-    main(["new", "--directory", str(tmp_path)])
-    db = json.loads(capsys.readouterr().out)["db"]
+    db = str(game_db)
     requests = [
         {"action": "open"},
         *[{"action": "say", "words": words} for words in case["words"]],
@@ -165,8 +165,7 @@ def test_cli_preserves_jsonl_and_resumes_failed_month(
     assert resumed["date"]["year"] == failed_date["year"] + (failed_date["month"] == 12)
     assert resumed["petitions"] == []
     # A world-only month can also be continued through JSONL before any audience exists.
-    main(["new", "--directory", str(tmp_path)])
-    db = json.loads(capsys.readouterr().out)["db"]
+    db = str(copyfile(opening_db, game_db.with_name("world.sqlite")))
     steps["simulation"] = replaying(
         [
             (RECORDED / "month_petition.txt").read_text(),

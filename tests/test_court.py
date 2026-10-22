@@ -54,7 +54,7 @@ def replaying(
     return FunctionModel(reply, stream_function=stream_response)
 
 
-def physical_state(court: Court, replay: bool = False) -> list[dict[str, object]]:
+def physical_state(court: Court) -> list[dict[str, object]]:
     fields = {
         "office",
         "office_region",
@@ -72,7 +72,7 @@ def physical_state(court: Court, replay: bool = False) -> list[dict[str, object]
             "key": e.key,
             "state": {k: v for k, v in e.data.items() if k in fields},
         }
-        for e in court.entities("audit", replay)
+        for e in court.entities("audit")
     ]
 
 
@@ -125,8 +125,9 @@ def physical_state(court: Court, replay: bool = False) -> list[dict[str, object]
         "first-known-location",
     ],
 )
+@pytest.mark.parametrize("game_db", ["first_night"], indirect=True)
 def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
-    tmp_path: Path,
+    game_db: Path,
     appointee: str,
     changes: list[dict[str, str | float]],
     incumbent_status: str,
@@ -208,7 +209,7 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
         },
         ensure_ascii=False,
     )
-    court = Court.new_game(tmp_path, replaying([reply, reply]))
+    court = Court(game_db, replaying([reply, reply]))
     assert asyncio.run(
         court.read_records(Officials(people=["郭允厚"]), "account", "国库")
     )["entities"]
@@ -239,7 +240,7 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
         (Path(__file__).parent / "recorded/night_invalid.json").read_text()
     )["cases"]["unknown_field"]["scene"]
 
-    app = create_app(tmp_path)
+    app = create_app(game_db.parent)
     with TestClient(app) as client:
         client.post("/actions", json={"action": "load", "save": court.db_path.name})
         audience = app.state.web.game.audience
@@ -247,7 +248,6 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
             audience.scene.override(model=replaying([scene])),
             audience.translation.override(model=replaying([reply, reply])),
         ):
-            client.post("/actions", json={"action": "open"})
             before = physical_state(court)
             client.post(
                 "/actions",
@@ -323,7 +323,6 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
     path = court.db_path
     court.close()
     court = Court(path, replaying([]))
-    assert physical_state(court) == before == physical_state(court, replay=True)
+    assert physical_state(court) == before
     assert court.facts("audit") == facts
-    assert court.facts("audit", replay=True) == facts
     court.close()

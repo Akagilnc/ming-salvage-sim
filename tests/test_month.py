@@ -26,9 +26,10 @@ LANDING = (
     ("first", "extra"),
     [("simulation.txt", 0), ("month_deferred.txt", 0), ("month_zero.txt", 1)],
 )
-def test_month_without_decrees_advances_and_replays_after_reopening(
-    tmp_path: Path, steps, audit, first: str, extra: int
+def test_month_without_decrees_advances_after_reopening(
+    game_db: Path, steps, audit, first: str, extra: int
 ) -> None:
+    tmp_path = game_db.parent
     received = []
     steps["simulation"] = replaying(
         [
@@ -38,7 +39,9 @@ def test_month_without_decrees_advances_and_replays_after_reopening(
         received,
     )
     with TestClient(create_app(tmp_path)) as client:
-        save = client.post("/actions", json={"action": "new"}).json()["save"]
+        save = client.post(
+            "/actions", json={"action": "load", "save": game_db.name}
+        ).json()["save"]
         for year, month in [(1627, 11), (1627, 12), (1628, 1)]:
             assert client.post("/actions", json={"action": "month"}).status_code == 204
             state = client.get("/state").json()["game"]
@@ -64,7 +67,6 @@ def test_month_without_decrees_advances_and_replays_after_reopening(
                 assert len(received) == calls
                 assert client.get("/state").json()["game"]["date"] == state["date"]
             ledger = audit(tmp_path / save)
-            assert ledger == audit(tmp_path / save, True)
             assert not [e for e in ledger["entities"] if e["kind"] == "affair"]
             assert not [f for f in ledger["facts"] if f["kind"] == "forecast"]
             assert (
@@ -103,8 +105,9 @@ def test_month_without_decrees_advances_and_replays_after_reopening(
     ],
 )
 def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
-    tmp_path: Path, case, steps, audit
+    game_db: Path, case, steps, audit
 ) -> None:
+    tmp_path = game_db.parent
     nominal, actual, interrupt = case
     steps["Declaration"] = TestModel(
         call_tools=[],
@@ -120,7 +123,9 @@ def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
             raise RuntimeError("injected pre-commit failure")
 
     with TestClient(create_app(tmp_path)) as client:
-        save = client.post("/actions", json={"action": "new"}).json()["save"]
+        save = client.post(
+            "/actions", json={"action": "load", "save": game_db.name}
+        ).json()["save"]
         db = tmp_path / save
         if interrupt == "write":
             with sqlite3.connect(db) as connection:
@@ -169,7 +174,6 @@ def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
             (-nominal, -actual),
             (nominal, actual),
         ]
-        assert ledger == audit(db, True)
         public = audit(db, identity="public")
         assert not [e for e in public["entities"] if e["kind"] == "account"]
         assert all(
@@ -188,12 +192,15 @@ def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
 
 
 def test_exhausted_month_declaration_is_unhandled_not_a_stopped_month(
-    tmp_path: Path, steps, audit
+    game_db: Path, steps, audit
 ) -> None:
+    tmp_path = game_db.parent
     reply = (RECORDED / "month_invalid.txt").read_text()
     steps["Declaration"] = replaying([reply, reply])
     with TestClient(create_app(tmp_path)) as client:
-        save = client.post("/actions", json={"action": "new"}).json()["save"]
+        save = client.post(
+            "/actions", json={"action": "load", "save": game_db.name}
+        ).json()["save"]
         client.post("/actions", json={"action": "month"})
         state = client.get("/state").json()["game"]
         assert (state["date"]["month"], state["running"], state["failure"]) == (

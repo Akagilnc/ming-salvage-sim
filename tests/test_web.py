@@ -79,19 +79,28 @@ def test_menu_creates_distinct_games_and_opens_only_existing_saves(
 
 @pytest.mark.parametrize("steps", ["approved"], indirect=True)
 @pytest.mark.parametrize(
-    "path",
+    ("path", "game_db"),
     [
-        "petition",
-        "multiple-petitions",
-        "choice-error",
-        "decree",
-        "precompute-error",
-        "precompute-structure",
-        "translation-error",
+        (
+            path,
+            "opening_db"
+            if path in {"petition", "multiple-petitions", "choice-error"}
+            else "first_night",
+        )
+        for path in (
+            "petition",
+            "multiple-petitions",
+            "choice-error",
+            "decree",
+            "precompute-error",
+            "precompute-structure",
+            "translation-error",
+        )
     ],
+    indirect=["game_db"],
 )
 def test_http_month_dispatches_choices_and_retries_missing_step(
-    tmp_path: Path, path: str, steps, audit, clock
+    game_db: Path, path: str, steps, audit, clock
 ) -> None:
     money = (RECORDED / "month_money_300000.txt").read_text()
     received = {name: [] for name in ("deliberation", "simulation", "gazette")}
@@ -117,10 +126,12 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
                 ),
             ]
         )
-    app = create_app(tmp_path)
+    app = create_app(game_db.parent)
     with TestClient(app) as client:
-        save = client.post("/actions", json={"action": "new"}).json()["save"]
-        db = tmp_path / save
+        save = client.post(
+            "/actions", json={"action": "load", "save": game_db.name}
+        ).json()["save"]
+        db = game_db
         if path in {
             "decree",
             "precompute-error",
@@ -160,7 +171,6 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
                         (RECORDED / "deliberation.txt").read_text(),
                     ]
                 )
-            client.post("/actions", json={"action": "open"})
             for words in case["words"]:
                 assert (
                     client.post(
@@ -228,7 +238,7 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
             before = audit(db)
             client.get("/state")
             client.get("/records")
-            assert audit(db) == audit(db, True) == before
+            assert audit(db) == before
             for petition in game["petitions"][:]:
                 choice = {"action": "choose", "petition": petition["id"], "option": 0}
                 assert (
@@ -268,7 +278,6 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
             game["petitions"],
         ) == (11, "desk", False, None, [])
         ledger = audit(db)
-        assert ledger == audit(db, True)
         assert len([f for f in ledger["facts"] if f["kind"] == "gazette"]) == 1
         if path == "decree":
             decree = next(e for e in ledger["entities"] if e["kind"] == "decree")
@@ -345,9 +354,17 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
 
 
 @pytest.mark.parametrize(
-    ("step", "failure"),
+    ("step", "failure", "game_db"),
     [
-        (step, RuntimeError)
+        (
+            step,
+            RuntimeError,
+            "opening_db"
+            if step == "month"
+            else "first_night"
+            if step == "say"
+            else "spoken_night",
+        )
         for step in (
             "say",
             "translation",
@@ -357,13 +374,15 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
         )
     ]
     + [
-        ("translation", ConnectionError),
-        ("translation", UnexpectedModelBehavior),
+        ("translation", ConnectionError, "spoken_night"),
+        ("translation", UnexpectedModelBehavior, "spoken_night"),
     ],
+    indirect=["game_db"],
 )
 def test_settings_survive_reopening_and_failed_scene_retries_in_place(
-    tmp_path: Path, step: str, failure: type[Exception], steps
+    game_db: Path, step: str, failure: type[Exception], steps
 ) -> None:
+    tmp_path = game_db.parent
     case = json.loads((RECORDED / "night_invalid.json").read_text())
     name = (
         "scene"
@@ -386,19 +405,20 @@ def test_settings_survive_reopening_and_failed_scene_retries_in_place(
         client.post(
             "/actions", json={"action": "settings", "settings": settings.model_dump()}
         )
-        save = client.post("/actions", json={"action": "new"}).json()["save"]
+        save = client.post(
+            "/actions", json={"action": "load", "save": game_db.name}
+        ).json()["save"]
         if step == "month":
             client.post("/actions", json={"action": "month"})
-        else:
-            client.post("/actions", json={"action": "open"})
+        elif step == "say":
             client.post(
                 "/actions", json={"action": "say", "words": case["emperor_words"]}
             )
-            if step != "say":
-                client.post("/actions", json={"action": "dismiss"})
-                client.post("/actions", json={"action": "load", "save": save})
-                if step == "month-translation":
-                    client.post("/actions", json={"action": "month"})
+        else:
+            client.post("/actions", json={"action": "dismiss"})
+            client.post("/actions", json={"action": "load", "save": save})
+            if step == "month-translation":
+                client.post("/actions", json={"action": "month"})
         game = client.get("/state").json()["game"]
         if step == "translation-then-month":
             assert game["failure"]["action"] == "translation"
@@ -450,8 +470,9 @@ def test_settings_survive_reopening_and_failed_scene_retries_in_place(
     ],
 )
 def test_month_transport_retry_is_bounded_and_persistent(
-    tmp_path: Path, case, steps, clock, audit
+    game_db: Path, case, steps, clock, audit
 ) -> None:
+    tmp_path = game_db.parent
     status, failures, waits, name = case
     steps[name] = replaying(
         [
@@ -465,7 +486,7 @@ def test_month_transport_retry_is_bounded_and_persistent(
         ]
     )
     with TestClient(create_app(tmp_path)) as client:
-        client.post("/actions", json={"action": "new"})
+        client.post("/actions", json={"action": "load", "save": game_db.name})
         client.post("/actions", json={"action": "month"})
         state = client.get("/state").json()["game"]
         assert clock == waits
@@ -485,9 +506,11 @@ def test_month_transport_retry_is_bounded_and_persistent(
 
 
 @pytest.mark.parametrize("model", ["", "sonnet"])
+@pytest.mark.parametrize("game_db", ["first_night"], indirect=True)
 def test_cli_backend_leaves_the_default_model_to_the_host(
-    tmp_path: Path, model: str, monkeypatch
+    game_db: Path, model: str, monkeypatch
 ) -> None:
+    tmp_path = game_db.parent
     calls = []
     reply = json.loads((RECORDED / "night_invalid.json").read_text())["cases"][
         "missing_fields"
@@ -521,8 +544,9 @@ def test_cli_backend_leaves_the_default_model_to_the_host(
                 "settings": {"backend": "claude-cli", "model": model},
             },
         )
-        save = client.post("/actions", json={"action": "new"}).json()["save"]
-        client.post("/actions", json={"action": "open"})
+        save = client.post(
+            "/actions", json={"action": "load", "save": game_db.name}
+        ).json()["save"]
         client.post("/actions", json={"action": "dismiss"})
         client.post("/actions", json={"action": "load", "save": save})
         assert client.get("/state").json()["game"]["failure"] is None

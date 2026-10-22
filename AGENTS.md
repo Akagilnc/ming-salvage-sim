@@ -8,4 +8,4 @@
 
 ## 测试执行（owner 2026-08-22 暂记）
 
-新包全量测试验证用 `python -m pytest tests/ -q`（与 CI 同参）。全量时点与切片聚焦范围见 `CLAUDE.md`「测试分级」。
+全量跑法以 `.github/workflows/ci.yml` 的 Python pytest 步骤为准；全量时点与切片聚焦范围见 `CLAUDE.md`「测试分级」。

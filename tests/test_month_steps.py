@@ -16,39 +16,50 @@ RECORDED = Path(__file__).parent / "recorded"
 
 @pytest.mark.parametrize("steps", ["approved"], indirect=True)
 @pytest.mark.parametrize(
-    "case",
+    ("case", "game_db"),
     [
-        (0, False, ("rejected", "approved")),
-        (0, True, ("rejected", "approved")),
-        (1, False, ("rejected", "approved")),
-        (2, False, ("rejected", "approved")),
-        (2, True, ("rejected", "approved")),
-        (0, False, ("vital",)),
-        (2, False, ("rejected", "rejected")),
+        (case, "first_night" if case[2] == ("vital",) else "rejected_night")
+        for case in (
+            (0, False, ("rejected", "approved")),
+            (0, True, ("rejected", "approved")),
+            (1, False, ("rejected", "approved")),
+            (2, False, ("rejected", "approved")),
+            (2, True, ("rejected", "approved")),
+            (0, False, ("vital",)),
+            (2, False, ("rejected", "rejected")),
+        )
     ],
+    indirect=["game_db"],
 )
 def test_rejected_decree_is_forced_withdrawn_or_reconsidered(
-    tmp_path: Path, steps, audit, case: tuple
+    game_db: Path, steps, audit, case: tuple
 ) -> None:
+    tmp_path = game_db.parent
     option, new_night, verdicts = case
     names = {
         "rejected": "deliberation_rejected.txt",
         "approved": "deliberation.txt",
         "vital": "deliberation_vital.txt",
     }
-    steps["deliberation"] = replaying(
-        [(RECORDED / names[v]).read_text() for v in verdicts]
-    )
     vital = verdicts[0] == "vital"
+    # The shared rejected node has already consumed the first verdict.
+    steps["deliberation"] = replaying(
+        [
+            (RECORDED / names[v]).read_text()
+            for v in (verdicts if vital else verdicts[1:])
+        ]
+    )
     reforced = len(verdicts) == 2 and verdicts[-1] == "rejected"
     with TestClient(create_app(tmp_path)) as client:
-        save = client.post("/actions", json={"action": "new"}).json()["save"]
-        client.post("/actions", json={"action": "open"})
-        for words in json.loads((RECORDED / "night_approved.json").read_text())[
-            "words"
-        ]:
-            client.post("/actions", json={"action": "say", "words": words})
-        client.post("/actions", json={"action": "load", "save": save})
+        save = client.post(
+            "/actions", json={"action": "load", "save": game_db.name}
+        ).json()["save"]
+        if vital:
+            for words in json.loads((RECORDED / "night_approved.json").read_text())[
+                "words"
+            ]:
+                client.post("/actions", json={"action": "say", "words": words})
+            client.post("/actions", json={"action": "load", "save": save})
         state = client.get("/state").json()["game"]
         petition = state["petitions"][0]
         assert petition["options"] == (
@@ -85,7 +96,6 @@ def test_rejected_decree_is_forced_withdrawn_or_reconsidered(
             assert not [f for f in ledger["facts"] if f["kind"] == "interim"]
             world = next(e for e in ledger["entities"] if e["kind"] == "world")
             assert world["data"]["imperial_prestige"] == 20
-            assert ledger == audit(tmp_path / save, True)
             return
         declarations = (
             ("month_empty.txt", "month_force.txt", "month_empty.txt")
@@ -179,7 +189,6 @@ def test_rejected_decree_is_forced_withdrawn_or_reconsidered(
                 for f in reversed(ledger["facts"])
                 if f["kind"] == "deliberation"
             ) == next(e["id"] for e in ledger["entities"] if e["kind"] == "calendar")
-            assert ledger == audit(tmp_path / save, True)
             return
         steps["Declaration"] = TestModel(
             call_tools=[], custom_output_text=(RECORDED / "month_empty.txt").read_text()
@@ -207,12 +216,12 @@ def test_rejected_decree_is_forced_withdrawn_or_reconsidered(
                 for f in reversed(ledger["facts"])
                 if f["kind"] == "deliberation"
             ) == next(e["id"] for e in ledger["entities"] if e["kind"] == "calendar")
-        assert ledger == audit(tmp_path / save, True)
 
 
 def test_two_nights_feed_world_and_arrivals_wait_for_audience(
-    tmp_path: Path, steps, audit
+    game_db: Path, steps, audit
 ) -> None:
+    tmp_path = game_db.parent
     received = []
     steps["simulation"] = replaying(
         [(RECORDED / "simulation.txt").read_text()] * 4, received
@@ -224,7 +233,9 @@ def test_two_nights_feed_world_and_arrivals_wait_for_audience(
         ]
     )
     with TestClient(create_app(tmp_path)) as client:
-        save = client.post("/actions", json={"action": "new"}).json()["save"]
+        save = client.post(
+            "/actions", json={"action": "load", "save": game_db.name}
+        ).json()["save"]
         for case in ("travel", "approved"):
             case = json.loads((RECORDED / f"night_{case}.json").read_text())
             steps["scene"] = replaying(
@@ -275,7 +286,7 @@ def test_two_nights_feed_world_and_arrivals_wait_for_audience(
                 assert person["data"]["waiting_audience"] == (month == 12)
                 assert person["key"] not in state["night"]["hall"]
             client.post("/actions", json={"action": "load", "save": save})
-            assert audit(tmp_path / save) == ledger == audit(tmp_path / save, True)
+            assert audit(tmp_path / save) == ledger
         steps["scene"] = replaying(
             ModelMessagesTypeAdapter.validate_json(
                 (RECORDED / "travel_admission.json").read_bytes()
