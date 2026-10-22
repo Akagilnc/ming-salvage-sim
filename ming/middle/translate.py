@@ -33,8 +33,6 @@ decrees 只记成了的旨意：领旨的人已经把皇帝的话拟成正式圣
 认可按意思认，不限于“准”字；皇帝没表态的就是默拒，驳了的也不成旨。认可须对应当时已经拟就的具体旨稿，不预认本轮回话后续新增的拟稿，也不追认更早搁置的请示。不要把问话、大臣请示或未认可的拟稿记成旨。
 text 保留皇帝认可的圣旨定稿全文，不改写、不摘要。origin 记原本是皇帝所下还是大臣所请，people 按字段说明填写。
 旨意按字段声明 secret 与成旨 turn；不带交办或拨款载荷，不预先执行待月末办理的后果。
-实际经手的每道传递经办在 decree_events 逐条声明；已办结也在该项声明，未办结不填 completed。
-密令内部查获实情标 facts.discovered；来源用 decree 指向本份 decrees 零基下标。物理实况正文只写后果，密令来源只放在结构化来源关系里。
 当场已经发生的事实用 facts：哪个实体、是否新建、字段变更列表、一段文字。不分类，不设动作枚举。
 只记今夜新发生的实况，不把邸报旧事、档案履历或大臣奏报中的说法当成今夜已经发生的事实。
 是待执行旨意还是当场实况，照整夜戏文判断；未认可的拟旨不能当成已经执行的事实。
@@ -121,10 +119,8 @@ def check_decrees(ledger: Ledger, out: Declaration, source: UUID) -> None:
         if ref is not None:
             if not isinstance(out, NightDeclaration) or not 0 <= ref < len(out.decrees):
                 fail("decree", ref, "本份 decrees 的零基下标")
-        elif (
-            ref is None
-            and owner["kind"] != "decree"
-            and (isinstance(item, DecreeEvent) or item.discovered)
+        elif owner["kind"] != "decree" and (
+            isinstance(item, DecreeEvent) or item.discovered
         ):
             fail("decree", ref, "指定所属旨意；只有月末本旨声明可省略来源")
     if isinstance(out, NightDeclaration) and out.decrees:

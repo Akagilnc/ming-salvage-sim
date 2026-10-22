@@ -1,6 +1,5 @@
 """Monthly exposure from recorded counts, and each unfinished errand's own report."""
 
-import asyncio
 import json
 
 from ming.middle.court import Court
@@ -70,12 +69,3 @@ class Secrets:
         )
         self.court.log.info("model output: %s", result.output)
         self.court.record_product(decree.id, "secret_report", {"text": result.output})
-
-    async def run(self) -> None:
-        results = await asyncio.gather(
-            *(self.report(d) for d in self.court.errands()),
-            return_exceptions=True,
-        )
-        for result in results:
-            if isinstance(result, BaseException):
-                raise result

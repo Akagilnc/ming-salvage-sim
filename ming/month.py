@@ -295,7 +295,9 @@ class Month:
             await self.landing.run()
             self.secrets.accumulate()
             results = await asyncio.gather(
-                self.gazette.run(), self.secrets.run(), return_exceptions=True
+                self.gazette.run(),
+                *(self.secrets.report(d) for d in self.court.errands()),
+                return_exceptions=True,
             )
             for result in results:
                 if isinstance(result, BaseException):

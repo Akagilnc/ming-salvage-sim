@@ -16,23 +16,19 @@ from tests.test_court import replaying
 RECORDED = Path(__file__).parent / "recorded"
 
 
+def _declaration_prompt(messages):
+    return json.loads(messages[0].parts[0].content.split("\n", 1)[1])
+
+
 def declaration_reply(messages, response_file, quiet_month=None):
-    prompt = json.loads(messages[0].parts[0].content.split("\n", 1)[1])
-    return ModelResponse(
-        parts=[
-            TextPart(
-                (
-                    RECORDED
-                    / (
-                        response_file
-                        if prompt["source"]["data"].get("secret")
-                        and prompt["date"]["month"] != quiet_month
-                        else "month_empty.txt"
-                    )
-                ).read_text()
-            )
-        ]
+    prompt = _declaration_prompt(messages)
+    name = (
+        response_file
+        if prompt["source"]["data"].get("secret")
+        and prompt["date"]["month"] != quiet_month
+        else "month_empty.txt"
     )
+    return (RECORDED / name).read_text()
 
 
 @pytest.mark.parametrize("game_db", ["secret_night"], indirect=True)
@@ -288,14 +284,11 @@ def _appointment(person: str) -> str:
 
 
 def _landing_reply(messages):
-    prompt = json.loads(messages[0].parts[0].content.split("\n", 1)[1])
-    source = prompt["source"]
+    source = _declaration_prompt(messages)["source"]
     if source["kind"] != "decree":
-        return ModelResponse(
-            parts=[TextPart((RECORDED / "month_empty.txt").read_text())]
-        )
+        return (RECORDED / "month_empty.txt").read_text()
     person = "杨嗣昌" if source["data"].get("secret") else "洪承畴"
-    return ModelResponse(parts=[TextPart(_appointment(person))])
+    return _appointment(person)
 
 
 @pytest.mark.parametrize("game_db", ["first_night"], indirect=True)
