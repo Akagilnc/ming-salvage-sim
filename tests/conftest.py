@@ -91,6 +91,8 @@ def opening_db(request, tmp_path_factory):
                 if item["key"] in {"官俸_base", "宫廷_base"}:
                     item["value"] = {"官俸_base": 2000, "宫廷_base": 1000}[item["key"]]
             (content / "fiscal_config.json").write_text(json.dumps(config))
+        elif request.param == "prestige":
+            opening["world"][0]["imperial_prestige"] = 100
         else:
             opening["calendar"][0].update(year=request.param, month=1)
         (content / "opening.json").write_text(json.dumps(opening))

@@ -53,3 +53,17 @@ A-full 也推进至十二月，但原场景仍停在询问，整夜译出零道�
 `gazette.txt` 仍为 #1956 原始公开邸报回复，含其编辑附言。
 原卷为 `2026-10-20/northstar-accept/A/saves/df549bf5-99de-4fff-8182-6516f929f1ce.errors.log`。
 这些旧回复仅作原样错误/文本边界材料，不伪称本票的新形状录音。
+
+#1955 转译边界录音
+
+做法同 `month_fiscal_payments.txt`：`Court.translation_agent(Declaration, content/prompts/month_translate.md)`，
+本机 Claude CLI 逐次旗 `haiku`，合成输入，原生 `ModelResponse.text` 原样入夹具。
+归档：`~/.ak-roles/books/Ming_LLM/1955/artifacts/t1-recordings/`。
+
+| 夹具 | 归档 | 用途 |
+| --- | --- | --- |
+| `month_fiscal_reject.txt` | `reject/reply-1.txt` | 辽饷加派驳回，`terminal_reason` 为已驳 |
+| `month_fiscal_reorder.txt` | `reorder/reply-1.txt` | 边饷优先，改国库 `payment_order` 与 `army_order` |
+| `month_fiscal_building.txt` | `building/reply-1.txt` | 新建「钦定银矿」，按 `condition` 折算产出 |
+
+留中用既有 `month_empty.txt`，不另造结局声明。坏输入在测试参数表里手造，不是录音。
