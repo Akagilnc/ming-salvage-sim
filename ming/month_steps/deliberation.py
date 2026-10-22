@@ -29,10 +29,7 @@ class Deliberations:
         self, decree: EntityView, route: UUID, decision: dict[str, Any] | None = None
     ) -> dict[str, Any]:
         """The verdict its caller asked for: the segment's own, or one push's."""
-        done = next((
-            f.detail for f in self.court.products(decree.id, kind="deliberation")
-            if f.detail["decision_key"] == decision
-        ), None)
+        done = self.court.deliberation(decree.id, decision)
         if done is not None:
             return done
         decree = self.court.entity(decree.id)

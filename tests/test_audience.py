@@ -142,20 +142,22 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
 @pytest.mark.usefixtures("backed_night")
 @pytest.mark.parametrize("game_db", ["backed_night"], indirect=True)
 @pytest.mark.parametrize("backed_night,recording,case", [
-    ("endorsed", "endorsed", case) for case in ["approved", "held", "name", "form", "source", "missing"]
+    ("endorsed", "endorsed", case) for case in ["approved", "held", "name", "form", "source"]
 ] + [("double", "double", "approved")], indirect=["backed_night"])
 def test_backing_follows_its_decree_and_signers(game_db, steps, audit, case, recording):
     multiple = recording == "double"
     recording = json.loads((RECORDED / f"night_{recording}.json").read_text())
     reply = json.loads(recording["replies"][-1])
     received = []
-    if case in {"name", "form", "source", "missing"}:
-        if case == "missing":
-            del reply["decrees"][0]["endorsements"][0]["endorser"]
+    if case in {"name", "form", "source"}:
+        endorsement = reply["decrees"][0]["endorsements"][0]
+        if case == "form":
+            del endorsement["endorser"]
+            endorsement["form"] = "力保"
         else:
-            reply["decrees"][0]["endorsements"][0][{
-                "name": "endorser", "form": "form", "source": "source_chat_turn_id",
-            }[case]] = {"name": "毕尚书", "form": "力保", "source": "other-night"}[case]
+            endorsement[{
+                "name": "endorser", "source": "source_chat_turn_id",
+            }[case]] = {"name": "毕尚书", "source": "other-night"}[case]
         steps["NightDeclaration"] = replaying([json.dumps(reply, ensure_ascii=False)] * 2, received)
     else:
         steps["NightDeclaration"] = replaying(recording["replies"])
@@ -178,14 +180,22 @@ def test_backing_follows_its_decree_and_signers(game_db, steps, audit, case, rec
                 assert reply["field"] == "decrees[0].endorsements[0].endorser"
                 assert reply["current"] == "毕尚书"
                 assert "毕自严" in reply["expected"]
-            elif case in {"form", "missing"}:
-                reply = retries[0].content[0]
-                assert reply["type"] == ("literal_error" if case == "form" else "missing")
-                assert reply["loc"] == ("decrees", 0, "endorsements", 0, "form" if case == "form" else "endorser")
-                assert reply["input"] == ("力保" if case == "form" else {
-                    "form": "当面站台", "source_chat_turn_id": "north-star-backing",
-                })
-                assert "msg" in reply
+            elif case == "form":
+                errors = retries[0].content
+                assert any(
+                    item["type"] == "missing"
+                    and item["loc"] == ("decrees", 0, "endorsements", 0, "endorser")
+                    and item["input"] == {
+                        "form": "力保", "source_chat_turn_id": "north-star-backing",
+                    }
+                    for item in errors
+                )
+                assert any(
+                    item["type"] == "literal_error"
+                    and item["loc"] == ("decrees", 0, "endorsements", 0, "form")
+                    and item["input"] == "力保"
+                    for item in errors
+                )
             assert len([f for f in audit(game_db)["facts"] if f["kind"] == "unhandled"]) == 1
             assert [f["detail"] for f in client.get("/records").json()["facts"] if f["kind"] == "unhandled"] == [{}]
             client.post("/actions", json={"action": "month"}).raise_for_status()

@@ -153,6 +153,18 @@ class Court:
             )
         ]
 
+    def deliberation(
+        self, entity_id: UUID, decision: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        return next(
+            (
+                f.detail
+                for f in self.products(entity_id, kind="deliberation")
+                if f.detail["decision_key"] == decision
+            ),
+            None,
+        )
+
     def record_product(
         self, entity_id: UUID, kind: str, detail: dict[str, object]
     ) -> None:

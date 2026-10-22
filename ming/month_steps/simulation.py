@@ -16,6 +16,10 @@ from ming.middle.month_work import COST_RULES, Materials, Simulation, prompt, re
 from ming.middle.view import EntityView
 
 
+def push_key(petition_id: str, option: int) -> dict[str, Any]:
+    return {"petition_id": petition_id, "option": option}
+
+
 def push_verdict(petition: PendingPetition, court: Court) -> dict[str, Any] | None:
     """This petition's landed imperial-push reconsideration, or None."""
     option = next(
@@ -23,14 +27,8 @@ def push_verdict(petition: PendingPetition, court: Court) -> dict[str, Any] | No
     )
     if option is None:
         return None
-    decision = {"petition_id": str(petition.id), "option": option}
-    return next(
-        (
-            f.detail
-            for f in court.products(petition.entity_id, kind="deliberation")
-            if f.detail.get("decision_key") == decision
-        ),
-        None,
+    return court.deliberation(
+        petition.entity_id, push_key(str(petition.id), option)
     )
 
 
@@ -203,7 +201,7 @@ class Simulations:
                 self.reconsider(
                     self.court.entity(petition.entity_id),
                     petition.route_id,
-                    {"petition_id": key, "option": option},
+                    push_key(key, option),
                 )
             )
             task.add_done_callback(self.log_failure)
