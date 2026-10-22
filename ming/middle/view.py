@@ -253,12 +253,26 @@ def fact_exposure(
         if identity == "public" or isinstance(identity, Officials)
         else ("public",)
     )
-    rules = [
+    # A person reads his whole own history (scene dossier) before any audience
+    # rule; person-side decree links surface through the decree entity instead.
+    rules: list[tuple[ColumnElement[bool], str]] = (
+        [
+            (
+                (E.kind == "person")
+                & E.key.in_(identity.people)
+                & (F.kind != "decreed"),
+                "dated",
+            )
+        ]
+        if isinstance(identity, Officials)
+        else []
+    )
+    rules.append(
         (
             or_(F.kind == "gazette", F.detail["audience"].as_string().in_(audiences)),
             "text",
         )
-    ]
+    )
     rules.extend(
         [
             (E.id.in_(access["known"]) & (F.kind == "decreed"), "dated"),

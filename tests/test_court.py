@@ -205,6 +205,30 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
                     "changes": [],
                     "text": "调银三十万两赈灾。",
                 },
+                {
+                    "entity_type": "account",
+                    "entity": "国库",
+                    "create": False,
+                    "changes": [
+                        {
+                            "field": "taels",
+                            "value": -1000,
+                            "counterpart": {
+                                "entity_type": "person",
+                                "entity": "徐光启",
+                            },
+                        }
+                    ],
+                    "text": "赐徐光启银一千两。",
+                },
+            ],
+            "reports": [
+                {
+                    "entity_type": "person",
+                    "entity": "徐光启",
+                    "text": "徐光启具疏谢恩。",
+                    "audience": "public",
+                }
             ],
         },
         ensure_ascii=False,
@@ -293,6 +317,11 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
         for e in court.read_person("郭允厚").events
         if e["kind"] == "displaced"
     ] == [(court.calendar().data, "徐光启")]
+    assert {
+        e["kind"]: e["date"]
+        for e in court.read_person("徐光启").events
+        if e["kind"] in ("reported", "received")
+    } == {"reported": court.calendar().data, "received": court.calendar().data}
     for identity, names in (
         (Officials(people=["徐光启"]), ["国库"] if office_status == "active" else []),
         (Officials(people=["郭允厚"]), []),
