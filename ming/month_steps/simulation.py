@@ -2,7 +2,7 @@
 
 import asyncio
 import json
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable, Coroutine
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -51,7 +51,7 @@ class Simulations:
         court: Court,
         model: ModelSource,
         reconsider: Callable[
-            [EntityView, UUID, dict[str, Any]], Awaitable[dict[str, Any]]
+            [EntityView, UUID, dict[str, Any]], Coroutine[Any, Any, dict[str, Any]]
         ],
     ) -> None:
         self.court = court
@@ -59,7 +59,7 @@ class Simulations:
         self.tasks: dict[tuple[UUID, str, int], asyncio.Task[dict[str, Any]]] = {}
         self.continuations: dict[tuple[UUID, str], asyncio.Task[None]] = {}
         # Selected pushes live with the other ledger-started tasks, not a second registry.
-        self.pushes: dict[str, asyncio.Task[None]] = {}
+        self.pushes: dict[str, asyncio.Task[dict[str, Any]]] = {}
         self.agent = build_agent(
             model,
             name="simulation",
@@ -193,20 +193,21 @@ class Simulations:
             task.add_done_callback(self.log_failure)
         return self.continuations[key]
 
-    def start_push(self, petition: PendingPetition, option: int) -> asyncio.Task[None]:
+    def start_push(
+        self, petition: PendingPetition, option: int
+    ) -> asyncio.Task[dict[str, Any]]:
         """One in-flight reconsideration for this petition; a failed task stays until recovery discards it."""
         key = str(petition.id)
         if key not in self.pushes:
-            task = self.pushes[key] = asyncio.create_task(self._push(petition, option))
+            task = self.pushes[key] = asyncio.create_task(
+                self.reconsider(
+                    self.court.entity(petition.entity_id),
+                    petition.route_id,
+                    {"petition_id": key, "option": option},
+                )
+            )
             task.add_done_callback(self.log_failure)
         return self.pushes[key]
-
-    async def _push(self, petition: PendingPetition, option: int) -> None:
-        await self.reconsider(
-            self.court.entity(petition.entity_id),
-            petition.route_id,
-            {"petition_id": str(petition.id), "option": option},
-        )
 
     def hold_push(self, petition: PendingPetition, choice: dict[str, Any] | None) -> bool:
         """Start a selected imperial push the way a forecast is started. True once it no longer blocks."""
