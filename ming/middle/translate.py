@@ -55,6 +55,11 @@ def catalogue(ledger: Ledger) -> dict[str, dict[str, list[str]]]:
     return result
 
 
+# Content catalogues the month accounts and levy timeline iterate: only the
+# imported rows exist, so a declaration may change them but never add one.
+CATALOGUES = {"event", "fiscal"}
+
+
 def allowed_fields(ledger: Ledger) -> dict[str, set[str]]:
     fields: dict[str, set[str]] = {
         "affair": {"text"},
@@ -99,6 +104,8 @@ def check(ledger: Ledger, out: Declaration) -> None:
         known = names.setdefault(fact.entity_type, {})
         if fact.entity_type not in fields:
             fail(path + ".entity_type", fact.entity_type, list(fields))
+        if fact.create and fact.entity_type in CATALOGUES:
+            fail(path + ".create", True, {"create": False, "entities": list(known)})
         if (fact.entity in known) == fact.create:
             fail(
                 path + ".entity",
