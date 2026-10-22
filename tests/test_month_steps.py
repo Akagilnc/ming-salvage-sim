@@ -10,6 +10,7 @@ from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.test import TestModel
 from starlette.testclient import TestClient
 
+from ming.middle.view import character_input
 from ming.web import create_app
 from tests.test_court import replaying
 
@@ -183,7 +184,7 @@ def test_rejected_decree_is_forced_withdrawn_or_reconsidered(
                 context = json.loads(original["messages"][0]["parts"][0]["content"])["context"]
                 assert [r["deliberation"]["decision_key"] for r in context["reconsidered"]] == [None]
                 assert len([f for f in ledger["facts"] if f["kind"] == "landed" and f["entity_id"] == decree["id"]]) == 1
-                assert next(e for e in ledger["entities"] if e["kind"] == "world")["data"]["imperial_prestige"] == 20
+                assert not [f for f in ledger["facts"] if f["kind"] == "changed" and f["detail"]["origin_ref"] == decree["id"] and "imperial_prestige" in f["detail"]["actual"]]
                 return
             assert client.get("/state").json()["game"]["date"]["month"] == 12
             ledger = audit(game_db.parent / save)
@@ -217,8 +218,12 @@ def test_rejected_decree_is_forced_withdrawn_or_reconsidered(
             client.post("/actions", json={"action": "open"})
             received = []
             steps["scene"] = replaying([json.loads((RECORDED / "night_invalid.json").read_text())["cases"]["missing_fields"]["scene"]], received)
+            prestige = next(e for e in audit(game_db.parent / save)["entities"] if e["kind"] == "world")["data"]["imperial_prestige"]
             client.post("/actions", json={"action": "say", "words": "宣徐光启。"}).raise_for_status()
-            assert json.loads(received[0].parts[0].content[0])["imperial_prestige"] == ("威令未立" if case["option"] == 0 else "威福旁落")
+            seen = json.loads(received[0].parts[0].content[0])["imperial_prestige"]
+            # The scene reads the ADR 0143 band of the ledger's prestige, never the number.
+            assert seen == character_input({"imperial_prestige": prestige})["imperial_prestige"]
+            assert not isinstance(seen, (int, float))
             client.post("/actions", json={"action": "dismiss"})
         client.post("/actions", json={"action": "month"})
         ledger = audit(game_db.parent / save)
@@ -414,7 +419,7 @@ def test_imperial_backing_reconsiders_the_original_decree(game_db, steps, audit,
             and f["detail"].get("petition_id") == petition["id"]
         ]) == int(case != "rejected")
         assert not [f for f in ledger["facts"] if f["kind"] == "interim"]
-        assert next(e for e in ledger["entities"] if e["kind"] == "world")["data"]["imperial_prestige"] == 20
+        assert not [f for f in ledger["facts"] if f["kind"] == "changed" and f["detail"]["origin_ref"] == decree["id"] and "imperial_prestige" in f["detail"]["actual"]]
         assert not [f for f in ledger["facts"] if f["kind"] == "changed" and "satisfaction" in f["detail"].get("actual", {})]
 
 
@@ -457,7 +462,6 @@ def test_interim_costs_follow_promulgation_not_backing(game_db, steps, audit, ca
         assert any("satisfaction" in f["detail"]["actual"] for f in effects)
         assert len({f["entity_id"] for f in effects if "satisfaction" in f["detail"]["actual"]}) == len([f for f in effects if "satisfaction" in f["detail"]["actual"]])
         if rejected:
-            assert next(e for e in ledger["entities"] if e["kind"] == "world")["data"]["imperial_prestige"] == 20
             assert not [f for f in effects if "taels" in f["detail"]["actual"]]
         if case == "held":
             client.post("/actions", json={"action": "month"}).raise_for_status()

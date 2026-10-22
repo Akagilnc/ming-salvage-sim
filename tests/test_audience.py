@@ -267,7 +267,7 @@ def test_backing_follows_its_decree_and_signers(game_db, steps, audit, case, rec
             client.post("/actions", json={"action": "month"}).raise_for_status()
             assert json.loads(received[-1].parts[0].content)["context"]["decree"]["data"]["endorsements"] == decree["data"]["endorsements"]
         ledger = audit(game_db)
-        assert next(e for e in ledger["entities"] if e["kind"] == "world")["data"]["imperial_prestige"] == 20
+        assert not [f for f in ledger["facts"] if f["kind"] == "changed" and f["detail"]["origin_ref"] == decree["id"] and "imperial_prestige" in f["detail"]["actual"]]
         assert not [f for f in ledger["facts"] if f["kind"] == "interim"]
         assert not [f for f in ledger["facts"] if f["kind"] == "changed" and "satisfaction" in f["detail"].get("actual", {})]
 
