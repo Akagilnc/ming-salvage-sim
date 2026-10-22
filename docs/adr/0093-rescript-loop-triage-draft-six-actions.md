@@ -6,4 +6,6 @@ Status: Accepted（#1816／#1847 后出修订独立署庭：给事中 run `01a0f
 
 发回不阻塞当月整批，修订奏折自次月再呈，双缺位原案搁置、补任再呈而不造代理人（源卷 `a59eafbe-ffb1-4d1c-9cf5-c001af65c0ac.jsonl`，assistant `43754feb-bf9d-4a51-8c2e-b0c4ccbdd270` 问重拟何时回来及何处呈现，owner `fc46c74b-01ca-4bd0-9554-8e035caad1d4`：「发回改票。就是下个月才看得见了。」；源卷 `a45c2e6b-8c9a-4f56-85fb-73324ee40299.jsonl`，assistant `04f23ca6-0f32-4e73-acbc-210cc18d32fd` 问跨月双缺位，owner `d5405bb6-6f96-4274-919f-502515537437` 选「搁着，有人上任再呈（推荐）」）。同案头不混同效果写口：颁布关的法定三选、颁布资格及结构化判后物化保持；御笔另旨·中旨与无人站台原案强推保持，原案及 `decision_key` 不变，不恢复独立手拟入口。
 
+2026-10-21：「御笔另旨·中旨……保持」已由 [#1953](https://github.com/Akagilnc/ming-salvage-sim/issues/1953) 按陛下 `61f84100`（题 5）取代；「无人站台原案强推保持」按同票题 1、陛下 `c487b564` 落点。本句仅记录原决定。法源：`~/.claude/projects/-Users-akagilnc-WorkSpace-Ming-LLM/a45c2e6b-8c9a-4f56-85fb-73324ee40299.jsonl`，user uuid `61f84100-9630-49ca-8b66-3d3b17d37ae8`、`c487b564-511f-4e6d-bfca-5f37016bef55`。
+
 执行契约与验收唯一见 [#1847](https://github.com/Akagilnc/ming-salvage-sim/issues/1847)；主链接 #1843、呈现 #1826、恢复 #1846。运行时实施与验证由 #1847 施工回执承接，不以文档修订代实施证据。

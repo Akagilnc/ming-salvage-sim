@@ -255,25 +255,130 @@ async def _month_during_push(client, petition_id: str, steps, received: list) ->
 
     game.active = asyncio.create_task(busy())
     choose = game.start("choose", {"petition": petition_id, "option": 3})
-    await entered.wait()
-    hold.set()
-    await asyncio.sleep(0)
-    month = game.start("month")
-    for _ in range(100):
-        if month.done():
-            break
+    try:
+        for _ in range(100):
+            if entered.is_set():
+                break
+            await asyncio.sleep(0)
+        assert entered.is_set()
+        hold.set()
         await asyncio.sleep(0)
-    waited = not month.done()
-    release.set()
-    await asyncio.gather(month, choose)
+        month = game.start("month")
+        for _ in range(100):
+            if month.done():
+                break
+            await asyncio.sleep(0)
+        waited = not month.done()
+        release.set()
+        await asyncio.gather(month, choose)
+        await game.drain()
+        return waited
+    finally:
+        hold.set()
+        release.set()
+        await game.drain()
+
+
+async def _fail_push(client, petition_id: str, steps) -> None:
+    """In-flight push fails, and the month started against it fails too."""
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow(_messages, _info):
+        entered.set()
+        await release.wait()
+        raise TimeoutError()
+
+    game = client.app.state.web.game
     await game.drain()
-    return waited
+    prior = dict(game.court.calendar().data)
+    prior["month"] -= 1
+    game.interaction("month", "done", {"date": prior})
+    steps["deliberation"] = FunctionModel(slow)
+    hold = asyncio.Event()
+
+    async def busy():
+        await hold.wait()
+
+    game.active = asyncio.create_task(busy())
+    choose = game.start("choose", {"petition": petition_id, "option": 3})
+    try:
+        for _ in range(100):
+            if entered.is_set():
+                break
+            await asyncio.sleep(0)
+        assert entered.is_set()
+        hold.set()
+        await asyncio.sleep(0)
+        month = game.start("month")
+        for _ in range(100):
+            if month.done():
+                break
+            await asyncio.sleep(0)
+        assert not month.done()
+        release.set()
+        await asyncio.gather(month, choose, return_exceptions=True)
+    finally:
+        hold.set()
+        release.set()
+        await game.drain()
+
+
+async def _repeat_month(client) -> None:
+    game = client.app.state.web.game
+    task = game.start("month", repeat=True)
+    assert task is not None
+    await task
+    await game.drain()
+
+
+def _finish_failed_push(client, save: str, case: str) -> None:
+    if case != "push_fail":
+        client.post("/actions", json={"action": "load", "save": save}).raise_for_status()
+        client.portal.call(client.app.state.web.game.drain)
+    if case == "push_month":
+        client.portal.call(_repeat_month, client)
+    else:
+        client.post("/actions", json={"action": "retry"}).raise_for_status()
+        client.portal.call(client.app.state.web.game.drain)
+
+
+def _recover_failed_push(client, petition_id, steps, received, finish) -> None:
+    """Recover a failed push by retry, or by the month entry that redoes that failure."""
+    client.portal.call(_fail_push, client, petition_id, steps)
+    assert client.get("/state").json()["game"]["failure"]["action"] == "month"
+    steps["deliberation"] = replaying(
+        [(RECORDED / "deliberation.txt").read_text()], received
+    )
+    finish()
+    date = client.get("/state").json()["game"]["date"]
+    assert not [
+        item
+        for item in client.app.state.web.game.court.interactions().values()
+        if item["action"] in {"month", "choose"}
+        and item["status"] == "done"
+        and item["payload"].get("date") == date
+    ]
+
+
+def _retry_choose(client, game_db, steps, case, audit) -> None:
+    unsimulated = case.startswith("original")
+    assert client.get("/state").json()["game"]["failure"]["action"] == "choose"
+    assert len([f for f in audit(game_db)["facts"] if f["kind"] == "deliberation"]) == 1 + unsimulated
+    if unsimulated:
+        steps["simulation"] = replaying([(RECORDED / "simulation.txt").read_text()] * 6)
+    if case == "original_reopen":
+        client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
+    client.post("/actions", json={"action": "retry"}).raise_for_status()
+    client.portal.call(client.app.state.web.game.drain)
 
 
 @pytest.mark.parametrize("steps", ["approved"], indirect=True)
 @pytest.mark.parametrize(
     ("case", "game_db"),
-    [(case, "rejected_night") for case in ("approved", "rejected", "retry", "in_flight")]
+    [(case, "rejected_night") for case in (
+        "approved", "rejected", "retry", "in_flight", "push_fail", "push_reopen", "push_month",
+    )]
     + [(case, "first_night") for case in ("original_retry", "original_reopen")],
     indirect=["game_db"],
 )
@@ -303,21 +408,19 @@ def test_imperial_backing_reconsiders_the_original_decree(game_db, steps, audit,
             {"petition": petition["id"], "words": "朕另下手敕，照此办理。"},
         ):
             assert client.post("/actions", json={"action": "choose", **invalid}).status_code == 400
-        if case == "in_flight":
+        if case.startswith("push_"):
+            _recover_failed_push(
+                client, petition["id"], steps, received,
+                lambda: _finish_failed_push(client, game_db.name, case),
+            )
+        elif case == "in_flight":
             # J3: busy choose of 御笔强推, month starts while that reconsideration is in flight.
             assert client.portal.call(_month_during_push, client, petition["id"], steps, received)
         else:
             client.post("/actions", json={"action": "choose", "petition": petition["id"], "option": 3}).raise_for_status()
             client.portal.call(client.app.state.web.game.drain)
-        if case.endswith("retry") or case == "original_reopen":
-            assert client.get("/state").json()["game"]["failure"]["action"] == "choose"
-            assert len([f for f in audit(game_db)["facts"] if f["kind"] == "deliberation"]) == 1 + unsimulated
-            if unsimulated:
-                steps["simulation"] = replaying([(RECORDED / "simulation.txt").read_text()] * 6)
-            if case == "original_reopen":
-                client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
-            client.post("/actions", json={"action": "retry"}).raise_for_status()
-            client.portal.call(client.app.state.web.game.drain)
+        if not case.startswith("push_") and (case.endswith("retry") or case == "original_reopen"):
+            _retry_choose(client, game_db, steps, case, audit)
         ledger = audit(game_db)
         decree = next(e for e in ledger["entities"] if e["kind"] == "decree")
         original = next(
@@ -345,7 +448,7 @@ def test_imperial_backing_reconsiders_the_original_decree(game_db, steps, audit,
             client.post("/actions", json={"action": "choose", "petition": state["petitions"][0]["id"], "option": 1}).raise_for_status()
         else:
             assert state["petitions"] == []
-        if case != "in_flight":
+        if case != "in_flight" and not case.startswith("push_"):
             client.post("/actions", json={"action": "month"}).raise_for_status()
             client.portal.call(client.app.state.web.game.drain)
         ledger = audit(game_db)

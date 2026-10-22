@@ -25,14 +25,12 @@ class Month:
     ) -> None:
         self.court = court
         self.deliberations = Deliberations(court, model)
-        self.simulations = Simulations(court, model)
+        self.simulations = Simulations(court, model, self.deliberations.run)
         self.inbox = Inbox(court)
         self.landing = Landing(court)
         self.gazette = Gazette(court, model, on_delta)
         self.lock = asyncio.Lock()
         self.originals: dict[UUID, asyncio.Task[bool]] = {}
-        # Petition-chain reconsiderations. Original segments never start these.
-        self.reconsiderations: dict[str, asyncio.Task[dict[str, Any]]] = {}
 
     def opened(self) -> bool:
         return bool(self.court.products(self.court.calendar().id, kind="month_open"))
@@ -58,20 +56,6 @@ class Month:
 
     def choose(self, petition_id: UUID, option: int) -> None:
         self.inbox.choose(petition_id, option)
-
-    async def reconsider(self, petition: PendingPetition, option: int) -> None:
-        """Lazy push reconsideration for this petition; original segments never call it."""
-        key = str(petition.id)
-        task = self.reconsiderations.get(key)
-        if task is None or (task.done() and task.exception() is not None):
-            task = self.reconsiderations[key] = asyncio.create_task(
-                self.deliberations.run(
-                    self.court.entity(petition.entity_id),
-                    petition.route_id,
-                    {"petition_id": key, "option": option},
-                )
-            )
-        await task
 
     async def night(self, night: EntityView, decrees: list[EntityView]) -> bool:
         verdicts = await self.verdicts(decrees, night.id)
@@ -110,13 +94,7 @@ class Month:
         # A failed task is not missing work. Only its owner entering recovery
         # may discard it; never discard it while reporting the fresh failure.
         if not speculative:
-            chain = self.simulations.chain(petition_id)
-            for key, task in list(self.simulations.continuations.items()):
-                if (
-                    (key[1] in chain if petition_id is not None else key[1] not in chain)
-                    and task.done() and task.exception() is not None
-                ):
-                    del self.simulations.continuations[key]
+            self.simulations.discard_failed(petition_id)
         while date == self.court.calendar().data:
             if petition_id is None:
                 pending = await self._resume(speculative=speculative)
@@ -132,8 +110,6 @@ class Month:
                     ),
                     None,
                 )
-                if choice is not None and choice["text"] == "御笔强推":
-                    await self.reconsider(petition, choice["option"])
                 # Only a choice that continues the segment depends on its parent
                 # original; 收回/留中 consume no continuation and never wait for it.
                 if (
@@ -147,8 +123,9 @@ class Month:
                 pending = self.petitions()
             if date != self.court.calendar().data:
                 return pending
-            waiting, continuing, reconsidering = self.gaps(petition_id)
-            if not waiting and not continuing and not reconsidering:
+            waiting, continuing = self.gaps(petition_id)
+            pushes = self.simulations.open_pushes(petition_id)
+            if not waiting and not continuing and not pushes:
                 return pending
             # Only the caller's selected work waits here, outside the month lock.
             # An in-flight push reconsideration waits with the selected continuations.
@@ -163,7 +140,7 @@ class Month:
                     asyncio.shield(self.simulations.continuations[key])
                     for key in continuing
                 ),
-                *(asyncio.shield(self.reconsiderations[pid]) for pid in reconsidering),
+                *(asyncio.shield(self.simulations.pushes[pid]) for pid in pushes),
             ]
             for result in await asyncio.gather(*jobs, return_exceptions=True):
                 if isinstance(result, BaseException):
@@ -172,7 +149,7 @@ class Month:
 
     def gaps(
         self, petition_id: str | None
-    ) -> tuple[list[tuple[UUID, str, int]], list[tuple[UUID, str]], list[str]]:
+    ) -> tuple[list[tuple[UUID, str, int]], list[tuple[UUID, str]]]:
         """Unfinished selected work; one question waits only for its own chain."""
         facts = (
             self.court.petition_products(
@@ -207,13 +184,7 @@ class Month:
             if not (task.done() and task.exception() is None)
             and (chain is None or key[1] in chain)
         ]
-        reconsidering = [
-            pid
-            for pid, task in self.reconsiderations.items()
-            if not (task.done() and task.exception() is None)
-            and (petition_id is None or pid == petition_id)
-        ]
-        return waiting, continuing, reconsidering
+        return waiting, continuing
 
     def nights(self, decrees: list[EntityView]) -> list[EntityView]:
         return [
