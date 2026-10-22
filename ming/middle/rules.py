@@ -138,7 +138,7 @@ def field_values(
     fact: Fact,
     data: dict[str, Any],
     amount: float | None,
-    baselines: dict[tuple[str, str, str], Any] | None = None,
+    offsets: dict[tuple[str, str, str], Any],
 ) -> dict[str, Any]:
     nominal = {c.field: c.value for c in fact.changes}
     actual = dict(nominal)
@@ -149,12 +149,8 @@ def field_values(
             actual[field] = min(cap, max(0, actual[field]))
     for field in SCALE_FIELDS:
         if field in actual and fact.entity_type in {"world", "faction", "class"}:
-            baseline = (baselines or {}).get((fact.entity_type, fact.entity, field))
-            if baseline is not None:
-                # Parallel shares each declare a post-value from the same pre-landing
-                # reading; compose every share's delta instead of overwriting it.
-                actual[field] = data.get(field, 0) + (actual[field] - baseline)
-            actual[field] = min(100, max(0, actual[field]))
+            key = fact.entity_type, fact.entity, field
+            actual[field] = min(100, max(0, actual[field] + offsets.get(key, 0)))
     changes = dict(actual)
     if "taels" in changes and fact.entity_type == "account":
         changes["taels"] += data.get("taels", 0)

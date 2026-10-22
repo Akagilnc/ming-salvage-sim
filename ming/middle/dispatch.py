@@ -45,6 +45,13 @@ def dispatch(
 
     if not isinstance(result, Unhandled):
         amounts = money_amounts(result.facts, existing)
+        # A share declares post-values from the reading it saw. Shares landed
+        # since then shift the whole share once: none overwrites another, and
+        # its own successive facts stay the progression it declared.
+        offsets = {
+            key: existing[key[:2]]["data"][key[2]] - value
+            for key, value in (baselines or {}).items()
+        }
         for fact in result.facts:
             pair = fact.entity_type, fact.entity
             if fact.create and pair not in existing:
@@ -58,7 +65,7 @@ def dispatch(
                 if fact.affair is not None
                 else {}
             )
-            detail = field_values(fact, entity.data, amounts.get(i), baselines)
+            detail = field_values(fact, entity.data, amounts.get(i), offsets)
             detail.update(association)
             changes = detail["changes"]
             if entity.kind == "person":

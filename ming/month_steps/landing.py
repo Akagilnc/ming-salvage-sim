@@ -136,6 +136,6 @@ class Landing:
                 monthly=True,
                 baselines={
                     (b["entity_type"], b["entity"], b["field"]): b["value"]
-                    for b in declaration.get("baselines", [])
+                    for b in declaration["baselines"]
                 },
             )

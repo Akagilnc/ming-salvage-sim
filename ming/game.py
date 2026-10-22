@@ -149,29 +149,44 @@ class Game:
         elif self.month.petitions():
             self.start_background()
 
-    def recover_month(self) -> asyncio.Task[Any]:
+    def recover_month(self) -> None:
         """Ledger-driven month gap-fill; the 请先退朝 gate only guards user clicks."""
         payload = {"date": self.court.calendar().data}
         self.interaction("month", "running", payload)
         self.active = asyncio.create_task(self.execute("month", payload))
-        return self.active
+        # Started from inside other work, it replaces the task a drain is already
+        # awaiting; tracking it keeps every drain waiting for the gap-fill too.
+        self.track(self.active)
 
     async def _resume(self, pending: list[dict[str, Any]]) -> None:
-        for item in pending:
-            if item["action"] not in {"month", "choose"}:
-                await self.execute(item["action"], item["payload"])
-                if self.presentation()["failure"]:
-                    return
+        async def ordered() -> None:
+            for item in pending:
+                if item["action"] not in {"month", "choose"}:
+                    await self.execute(item["action"], item["payload"])
+                    if self.presentation()["failure"]:
+                        return
+            for item in pending:
+                if item["action"] == "month":
+                    await self.execute(item["action"], item["payload"])
+
+        # Each question resumes on its own chain; it never waits for an audience
+        # turn, a night translation or the month work recovered beside it.
         await asyncio.gather(
+            ordered(),
             *(
                 self.execute(item["action"], item["payload"])
                 for item in pending
-                if item["action"] in {"month", "choose"}
-            )
+                if item["action"] == "choose"
+            ),
         )
         if self.presentation()["failure"]:
             return
-        if not self.month.opened() or self.month.petitions():
+        if self.month.opened():
+            # After the recovered interaction, missing products are filled by the
+            # same ledger-driven month entry as any other reopen; the speculative
+            # path stops before world products and would leave them missing.
+            self.recover_month()
+        else:
             self.start_background()
 
     async def command(self, action: str, payload: dict[str, Any]) -> None:
@@ -183,9 +198,9 @@ class Game:
             for item in self.interactions().values()
         )
         self.resume()
-        if action != "month" and not accepted and not self.presentation()["failure"]:
-            # A fresh per-question action waits only for its own chain; draining
-            # unrelated in-flight work first would block its acceptance.
+        # A question — fresh or retrying its own failed call — is accepted at
+        # once; draining unrelated in-flight work first would block it.
+        if action == "choose" and not accepted:
             self.start(action, payload, repeat=True)
             await self.drain()
             return
@@ -339,7 +354,7 @@ class Game:
                     i["status"] == "running" for i in self.interactions().values()
                 )
             ):
-                self.track(self.recover_month())
+                self.recover_month()
             return output
         except Exception as error:
             self.court.log.exception("action=%s", action)
