@@ -111,23 +111,16 @@ def check(ledger: Ledger, out: Declaration, source: UUID) -> None:
                 )
     check_rules(out, set(names.get("affair", {})))
     check_references(out, names)
-    check_decrees(ledger, out, names, source)
+    check_decrees(ledger, out, source)
 
 
-def check_decrees(
-    ledger: Ledger,
-    out: Declaration,
-    names: dict[str, dict[str, list[str]]],
-    source: UUID,
-) -> None:
+def check_decrees(ledger: Ledger, out: Declaration, source: UUID) -> None:
     owner = ledger.entities(entity_id=source)[0]
     for item in [*out.facts, *out.decree_events]:
         ref = item.decree
-        if isinstance(ref, int):
+        if ref is not None:
             if not isinstance(out, NightDeclaration) or not 0 <= ref < len(out.decrees):
                 fail("decree", ref, "本份 decrees 的零基下标")
-        elif isinstance(ref, str) and ref not in names.get("decree", {}):
-            fail("decree", ref, names.get("decree", {}))
         elif (
             ref is None
             and owner["kind"] != "decree"

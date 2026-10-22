@@ -51,9 +51,9 @@ class Fact(StrictModel):
         default=None,
         description="本条后果所属事务的正名；可指同份声明新建的 affair，无所属事务可省略。",
     )
-    decree: int | str | None = Field(
+    decree: int | None = Field(
         default=None,
-        description="来源旨意：整夜本份 decrees 的零基下标，或既有旨意的账本 key；月末本旨后果省略，使用当前旨意来源。",
+        description="来源旨意：整夜本份 decrees 的零基下标；月末本旨后果省略，使用当前旨意来源。",
     )
     discovered: bool = Field(
         default=False, description="是否为密令内部查获实情；不按有无字段变化判断。"
@@ -70,9 +70,9 @@ class Report(EntityRef):
 
 
 class DecreeEvent(StrictModel):
-    decree: int | str | None = Field(
+    decree: int | None = Field(
         default=None,
-        description="整夜本份 decrees 零基下标，或既有旨意账本 key；月末本旨省略，使用当前旨意来源。",
+        description="整夜本份 decrees 零基下标；月末本旨省略，使用当前旨意来源。",
     )
     kind: Literal["handled", "completed"] = Field(
         description="handled：实际发生的一道传递、经办（转交、往返），每道各记一条；completed：推演已认定该差事办结，包括关联事务已成往事。无记录、接不住不算办结。"

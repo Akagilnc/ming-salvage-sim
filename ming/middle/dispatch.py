@@ -21,11 +21,6 @@ def landing_entities(
             (f.entity_type, f.entity) for f in [*result.facts, *result.reports]
         )
         pairs.update(("affair", f.affair) for f in result.facts if f.affair is not None)
-        pairs.update(
-            ("decree", f.decree)
-            for f in [*result.facts, *result.decree_events]
-            if isinstance(f.decree, str)
-        )
     if isinstance(result, NightDeclaration):
         pairs.update(("person", p) for d in result.decrees for p in d.people)
     found = {
@@ -131,11 +126,7 @@ def dispatch(
             detail.update(association)
             fact_origin = {"discovered": fact.discovered}
             if fact.decree is not None:
-                fact_origin["origin_ref"] = str(
-                    decrees[fact.decree].id
-                    if isinstance(fact.decree, int)
-                    else known("decree", fact.decree).id
-                )
+                fact_origin["origin_ref"] = str(decrees[fact.decree].id)
             changes = detail["changes"]
             if entity.kind == "person":
                 move_person(entity, changes, existing, record)
@@ -158,8 +149,6 @@ def dispatch(
         for event in result.decree_events:
             record(
                 decrees[event.decree]
-                if isinstance(event.decree, int)
-                else known("decree", event.decree)
                 if event.decree is not None
                 else known(owner.kind, owner.key),
                 event.kind,
