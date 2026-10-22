@@ -12,6 +12,18 @@ OUTPUT_METRICS = ["国库", "内库", *OUTPUT_SCALES, ""]
 # Provincial taxes collected at a national rate, and the estate's own route.
 REGION_TAXES = {"salt_tax": "盐税", "commerce_tax": "商税"}
 ESTATE = "皇庄"
+# Imported power name. The content id "ming" is rewritten at import and never stored.
+MING = "大明"
+
+
+def remitting_region(data: Item) -> bool:
+    """Land, salt and commerce remit only from a region 大明 still holds."""
+    return data.get("controlled_by") == MING
+
+
+def payable_army(data: Item) -> bool:
+    """Pay an army only when 大明 owns it and it already has a salary rate."""
+    return data.get("owner_power") == MING and "salary_rate" in data
 
 
 def levers(config: list[Item]) -> list[str]:
@@ -178,7 +190,9 @@ class Accounts:
             )
 
     def revenues(self) -> None:
-        for region in (e for e in self.rows if e.kind == "region"):
+        for region in (
+            e for e in self.rows if e.kind == "region" and remitting_region(e.data)
+        ):
             fiscal = region.data.get("fiscal", {})
             if "settle" in fiscal:
                 self.income(region, "国库", fiscal["settle"]["p"]["起运定额"], "起运")
@@ -235,7 +249,7 @@ class Accounts:
 
     def expenses(self) -> None:
         armies = {
-            e.key: e for e in self.rows if e.kind == "army" and "salary_rate" in e.data
+            e.key: e for e in self.rows if e.kind == "army" and payable_army(e.data)
         }
         for account in self.accounts.values():
             for category in account.data.get("payment_order", []):

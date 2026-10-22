@@ -178,7 +178,7 @@ def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
             for e in ledger["entities"]
             if e["kind"] == "account"
         } == pytest.approx(
-            {"国库": 11960269.2869425 - actual, "内库": 7657600 + actual}
+            {"国库": 11940269.2869425 - actual, "内库": 7657600 + actual}
         )
         transfers = [
             f["detail"]
@@ -247,7 +247,7 @@ def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
             (
                 "month_fiscal_payments.txt",
                 60,
-                (990.97307130575, 1981.9461426115),
+                (992.97307130575, 1985.9461426115),
                 (66, 66),
                 [
                     ("补欠", 5000000, 0, "balance"),
@@ -422,4 +422,4 @@ def test_exhausted_month_declaration_is_unhandled_not_a_stopped_month(
             e["key"]: e["data"]["taels"]
             for e in audit(tmp_path / save)["entities"]
             if e["kind"] == "account"
-        } == pytest.approx({"国库": 11960269.2869425, "内库": 7657600})
+        } == pytest.approx({"国库": 11940269.2869425, "内库": 7657600})

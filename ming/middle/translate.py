@@ -14,7 +14,7 @@ from pydantic_ai.exceptions import ToolRetryError, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelResponse
 
 from ming.ledger import Ledger
-from ming.middle.fiscal import OUTPUT_METRICS, levers
+from ming.middle.fiscal import OUTPUT_METRICS, levers, payable_army
 from ming.middle.declaration import (
     Declaration,
     NightDeclaration,
@@ -180,7 +180,7 @@ def check_fiscal(ledger: Ledger, out: Declaration) -> None:
                     [
                         r["key"]
                         for r in ledger.entities(kind="army")
-                        if "salary_rate" in r["data"]
+                        if payable_army(r["data"])
                     ]
                     if change.field == "army_order"
                     else [
