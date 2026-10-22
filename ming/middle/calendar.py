@@ -7,8 +7,8 @@ CAPITAL = "北直隶 / 京师"
 
 
 def advance_month(ledger: Ledger) -> None:
-    rows = ledger.entities()
-    calendar = ledger.get(next(r["id"] for r in rows if r["kind"] == "calendar"))
+    rows = ledger.entities(kind="person")
+    calendar = ledger.get(ledger.entities(kind="calendar")[0]["id"])
     date = dict(calendar.data)
     changed: list[Entity] = []
     for row in rows:

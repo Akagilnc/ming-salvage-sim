@@ -133,7 +133,7 @@ class Simulations:
                 PendingPetition.model_validate(
                     {k: v for k, v in f.detail.items() if k != "date"}
                 )
-                for f in self.court.facts("audit")
+                for f in self.court.facts("audit", kind="petition")
                 if f.kind == "petition" and f.detail["id"] == key[1]
             )
             if self.tasks[key] is task:
@@ -165,7 +165,9 @@ class Simulations:
 
     def chain(self, petition_id: str | None) -> set[str]:
         segments = [
-            f.detail for f in self.court.facts("audit") if f.kind == "simulation"
+            f.detail
+            for f in self.court.facts("audit", kind="simulation")
+            if f.kind == "simulation"
         ]
         chain = {
             s["id"]
@@ -183,14 +185,16 @@ class Simulations:
             segments = [f.detail for f in self.court.products(route, kind="simulation")]
             choices = {
                 f.detail["petition_id"]: f.detail
-                for f in self.court.facts("audit")
+                for f in self.court.facts("audit", kind="choice")
                 if f.kind == "choice"
             }
             petitions = [
                 PendingPetition.model_validate(
                     {k: v for k, v in f.detail.items() if k != "date"}
                 )
-                for f in self.court.facts("audit")
+                for f in self.court.facts(
+                    "audit", kind="petition", date=self.court.calendar().data
+                )
                 if f.kind == "petition"
                 and f.detail["route_id"] == str(route)
                 and f.detail["date"] == self.court.calendar().data

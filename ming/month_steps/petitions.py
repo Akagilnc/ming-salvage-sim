@@ -11,18 +11,11 @@ class Inbox:
         self.court = court
 
     def petitions(self) -> list[PendingPetition]:
-        facts = self.court.facts("audit")
-        chosen = {f.detail["petition_id"] for f in facts if f.kind == "choice"}
-        date = self.court.calendar().data
         return [
             PendingPetition.model_validate(
                 {k: v for k, v in f.detail.items() if k != "date"}
             )
-            for f in facts
-            if f.kind == "petition"
-            and f.detail["id"] not in chosen
-            and (f.detail["available"]["year"], f.detail["available"]["month"])
-            <= (date["year"], date["month"])
+            for f in self.court.pending_petitions()
         ]
 
     def choose(self, petition_id: UUID, option: int) -> None:

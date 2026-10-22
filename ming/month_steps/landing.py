@@ -20,10 +20,10 @@ class Landing:
 
     def sources(self) -> list[tuple[EntityView, UUID]]:
         sources: list[tuple[EntityView, UUID]] = []
-        for decree in self.court.entities("audit"):
+        for decree in self.court.entities("audit", kind="decree"):
             if decree.kind != "decree":
                 continue
-            products = self.court.products(decree.id)
+            products = self.court.products(decree.id, kind=("deliberation", "choice"))
             verdict = next(
                 (f.detail for f in products if f.kind == "deliberation"), None
             )
@@ -42,10 +42,12 @@ class Landing:
     ) -> None:
         if any(
             f.kind in {"declaration", "landed", "unhandled"}
-            for f in self.court.products(source.id)
+            for f in self.court.products(
+                source.id, kind=("declaration", "landed", "unhandled")
+            )
         ):
             return
-        entities = [e for e in self.court.entities("world") if e.source]
+        entities = [e for e in self.court.entities("world", sourced=True) if e.source]
         result = await self.court.translate(
             self.agent,
             json.dumps(
@@ -58,7 +60,9 @@ class Landing:
                     else "只交世界其余变化，别重复各道旨的后果",
                     "deliberation": [
                         f.model_dump(mode="json")
-                        for f in self.court.products(source.id)
+                        for f in self.court.products(
+                            source.id, kind=("deliberation", "choice")
+                        )
                         if f.kind in {"deliberation", "choice"}
                     ],
                     "others": [
@@ -66,7 +70,9 @@ class Landing:
                             "decree": other.model_dump(mode="json"),
                             "deliberation": [
                                 f.model_dump(mode="json")
-                                for f in self.court.products(other.id)
+                                for f in self.court.products(
+                                    other.id, kind=("deliberation", "choice")
+                                )
                                 if f.kind in {"deliberation", "choice"}
                             ],
                         }
@@ -74,7 +80,7 @@ class Landing:
                     ],
                     "simulation": [
                         f.detail["output"]
-                        for f in self.court.products(route)
+                        for f in self.court.products(route, kind="simulation")
                         if f.kind == "simulation"
                     ],
                 },
@@ -124,7 +130,9 @@ class Landing:
             if isinstance(result, BaseException):
                 raise result
         for source, _route in sources:
-            products = self.court.products(source.id)
+            products = self.court.products(
+                source.id, kind=("declaration", "landed", "unhandled")
+            )
             if any(f.kind in {"landed", "unhandled"} for f in products):
                 continue
             declaration = next(f.detail for f in products if f.kind == "declaration")

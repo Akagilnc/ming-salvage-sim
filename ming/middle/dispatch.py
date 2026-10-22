@@ -9,6 +9,27 @@ from ming.middle.declaration import Declaration, NightDeclaration, Unhandled
 from ming.middle.rules import field_values, money_amounts
 
 
+def landing_entities(
+    ledger: Ledger, result: Declaration | Unhandled, owner: Entity
+) -> dict[tuple[str, str], Item]:
+    pairs = {("calendar", "world"), (owner.kind, owner.key)}
+    if not isinstance(result, Unhandled):
+        pairs.update(
+            (f.entity_type, f.entity) for f in [*result.facts, *result.reports]
+        )
+        pairs.update(("affair", f.affair) for f in result.facts if f.affair is not None)
+    if isinstance(result, NightDeclaration):
+        pairs.update(("person", p) for d in result.decrees for p in d.people)
+    rows = [
+        e for kind, key in sorted(pairs) for e in ledger.entities(kind=kind, key=key)
+    ]
+    if not isinstance(result, Unhandled) and any(
+        f.entity_type == "person" for f in result.facts
+    ):
+        rows.extend(ledger.entities(kind=("person", "office", "distance")))
+    return {(e["kind"], e["key"]): e for e in rows}
+
+
 def dispatch(
     ledger: Ledger,
     result: Declaration | Unhandled,
@@ -16,14 +37,16 @@ def dispatch(
     monthly: bool = False,
     baselines: dict[tuple[str, str, str], Any] | None = None,
 ) -> None:
-    existing = {(e["kind"], e["key"]): e for e in ledger.entities()}
+    owner = ledger.get(night_id)
+    existing = landing_entities(ledger, result, owner)
     changed: dict[tuple[str, str], Entity] = {}
     date = existing[("calendar", "world")]["data"]
-    owner = ledger.get(night_id)
     origin = (
         ledger.get(UUID(owner.data["night_id"])) if owner.kind == "decree" else owner
     )
-    words = "\n".join(e["emperor_words"] for e in origin.events if e["kind"] == "turn")
+    words = "\n".join(
+        e["emperor_words"] for e in ledger.facts(entity_id=origin.id, kind="turn")
+    )
 
     def known(kind: str, key: str) -> Entity:
         pair = kind, key
@@ -51,6 +74,7 @@ def dispatch(
         offsets = {
             key: existing[key[:2]]["data"][key[2]] - value
             for key, value in (baselines or {}).items()
+            if key[:2] in existing
         }
         for fact in result.facts:
             pair = fact.entity_type, fact.entity
@@ -140,7 +164,7 @@ def interim_mark(ledger: Ledger, decree: Entity, date: Item) -> str | None:
     verdict = next(
         (
             e["detail"]
-            for e in decree.events
+            for e in ledger.facts(entity_id=decree.id, kind="deliberation", date=date)
             if e["kind"] == "deliberation" and e["detail"]["date"] == date
         ),
         None,
@@ -148,7 +172,7 @@ def interim_mark(ledger: Ledger, decree: Entity, date: Item) -> str | None:
     forced = next(
         (
             e["detail"]
-            for e in decree.events
+            for e in ledger.facts(entity_id=decree.id, kind="choice", date=date)
             if e["kind"] == "choice"
             and e["detail"]["date"] == date
             and e["detail"]["text"] == "强颁"
@@ -159,7 +183,7 @@ def interim_mark(ledger: Ledger, decree: Entity, date: Item) -> str | None:
         route = ledger.get(UUID(verdict["route_id"]))
         return next(
             e["detail"]["output"]["text"]
-            for e in route.events
+            for e in ledger.facts(entity_id=route.id, kind="simulation")
             if e["kind"] == "simulation"
             and e["detail"].get("petition_id") == forced["petition_id"]
         )

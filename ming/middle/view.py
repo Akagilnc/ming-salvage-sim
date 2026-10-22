@@ -91,9 +91,14 @@ class FactView(BaseModel):
     detail: dict[str, Any]
 
 
-def owned_accounts(rows: list[Item], identity: Identity) -> set[UUID]:
+def owned_accounts(ledger: Ledger, identity: Identity) -> set[UUID]:
     if not isinstance(identity, Officials):
         return set()
+    rows = ledger.entities(kind=("office_type", "account")) + [
+        person
+        for name in identity.people
+        for person in ledger.entities(kind="person", key=name)
+    ]
     # Resolve the current formal title through the imported office catalogue,
     # never a person's stale office_type or an umbrella-office exception.
     departments = {
@@ -119,28 +124,42 @@ def owned_accounts(rows: list[Item], identity: Identity) -> set[UUID]:
     }
 
 
-def month_open(rows: list[Item]) -> Item | None:
+def month_open(ledger: Ledger) -> Item | None:
     """The month's persisted emperor projection, not execution state."""
-    calendar = next((r for r in rows if r["kind"] == "calendar"), None)
+    calendar = next(iter(ledger.entities(kind="calendar")), None)
     if calendar is None:
         return None
     return next(
         (
             e["detail"]
-            for e in reversed(calendar["events"])
-            if e["kind"] == "month_open" and e["detail"]["date"] == calendar["data"]
+            for e in reversed(
+                ledger.facts(
+                    entity_id=calendar["id"], kind="month_open", date=calendar["data"]
+                )
+            )
         ),
         None,
     )
 
 
 def entities(
-    ledger: Ledger, identity: Identity, replay: bool = False
+    ledger: Ledger, identity: Identity, selection: Item | None = None
 ) -> list[EntityView]:
-    rows = ledger.entities(replay)
-    if identity == "emperor" and (opening := month_open(rows)):
-        return [EntityView.model_validate(e) for e in opening["entities"]]
-    accounts = owned_accounts(rows, identity)
+    if identity == "emperor" and (opening := month_open(ledger)):
+        return [
+            EntityView.model_validate(e)
+            for e in opening["entities"]
+            if all(e[k] == v for k, v in (selection or {}).items())
+        ]
+    selection = dict(selection or {})
+    if not selection and identity not in ("audit", "world"):
+        selection["kind"] = (
+            ("person", "night", "decree", "gazette", "calendar")
+            if identity == "emperor"
+            else ("person", "gazette", "calendar", "office_type", "account")
+        )
+    rows = ledger.entities(**selection)
+    accounts = owned_accounts(ledger, identity)
     result: list[EntityView] = []
     for row in rows:
         if identity not in ("audit", "world"):
@@ -163,7 +182,11 @@ def entities(
             elif row["kind"] not in {"gazette", "calendar"}:
                 continue
         if identity == "world" and row["kind"] == "person":
-            travel = journey(row["data"], row["events"])
+            travel = (
+                journey(row["data"], ledger.facts(entity_id=row["id"]))
+                if row["data"].get("transit_to")
+                else {}
+            )
             row["data"] = {
                 k: v
                 for k, v in row["data"].items()
@@ -175,24 +198,71 @@ def entities(
     return result
 
 
-def project(ledger: Ledger, identity: Identity, replay: bool = False) -> list[FactView]:
-    rows = ledger.entities(replay)
-    opening = month_open(rows) if identity == "emperor" else None
-    date = next((r["data"] for r in rows if r["kind"] == "calendar"), dict[str, Any]())
+def fact_rows(
+    ledger: Ledger, identity: Identity, selection: Item, rows: list[Item]
+) -> list[tuple[Item, list[Item]]]:
+    if identity in ("audit", "world") or isinstance(identity, Officials):
+        material = ledger.facts(**selection)
+    else:
+        material = ledger.facts(
+            **selection,
+            visibility=(
+                ("interaction", "petition", "choice", "gazette", "unhandled"),
+                ("public", "official") if identity == "public" else ("public",),
+            ),
+        )
+    grouped: dict[UUID, list[Item]] = {}
+    for item in material:
+        grouped.setdefault(item["entity_id"], []).append(item)
+    known = {row["id"]: row for row in rows}
+    return [
+        (known.get(entity_id, {"id": entity_id, "kind": "", "data": {}}), items)
+        for entity_id, items in grouped.items()
+    ]
+
+
+def project(
+    ledger: Ledger, identity: Identity, selection: Item | None = None
+) -> list[FactView]:
+    selection = selection or {}
+    rows: list[Item] = (
+        ledger.entities(kind=("person", "office_type", "account", "decree"))
+        if isinstance(identity, Officials)
+        else []
+    )
+    opening = month_open(ledger) if identity == "emperor" else None
+    date = next((r["data"] for r in ledger.entities(kind="calendar")), dict[str, Any]())
     controls = {"interaction", "petition", "choice", "gazette"}
-    accounts = owned_accounts(rows, identity)
+    accounts = owned_accounts(ledger, identity)
     result: list[FactView] = (
         [
             FactView.model_validate(f)
             for f in opening["facts"]
             if f["kind"] not in controls
+            and (
+                selection.get("entity_id") is None
+                or f["entity_id"] == str(selection["entity_id"])
+            )
+            and (
+                selection.get("kind") is None
+                or f["kind"]
+                in (
+                    (selection["kind"],)
+                    if isinstance(selection["kind"], str)
+                    else selection["kind"]
+                )
+            )
+            and (
+                selection.get("date") is None
+                or f["detail"].get("date") == selection["date"]
+            )
         ]
         if opening
         else []
     )
-    for row in rows:
-        for item in row["events"]:
-            fact = FactView(entity_id=row["id"], **item)
+    for row, items in fact_rows(ledger, identity, selection, rows):
+        for item in items:
+            fact = FactView(**item)
             available = fact.detail.get("available", date)
             if (
                 (opening and fact.kind not in controls)

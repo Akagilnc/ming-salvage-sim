@@ -38,7 +38,7 @@ text 保留皇帝认可的圣旨定稿全文，不改写、不摘要。origin �
 
 def catalogue(ledger: Ledger) -> dict[str, dict[str, list[str]]]:
     result: dict[str, dict[str, list[str]]] = {}
-    for row in ledger.entities():
+    for row in ledger.catalogue():
         aliases = row["data"].get("aliases", [])
         name = row["data"].get("name")
         if name and name != row["key"]:
@@ -52,7 +52,7 @@ def allowed_fields(ledger: Ledger) -> dict[str, set[str]]:
         "affair": {"text"},
         "decree": {"text", "origin", "people"},
     }
-    for row in ledger.entities():
+    for row in ledger.catalogue():
         if row["source"] and row["kind"] != "calendar":
             fields.setdefault(row["kind"], set()).update(row["data"])
     fields.setdefault("person", set()).add("travel_speed")
@@ -151,7 +151,9 @@ def declaration_agent(
     )
 
     @agent.instructions
-    def names() -> str:
+    async def names() -> str:
+        # These local ledger reads stay on the caller's event loop, like tools;
+        # only model I/O needs to yield. No thread-pool hop for a tiny catalogue.
         return json.dumps(
             {
                 "names_and_aliases": catalogue(ledger),

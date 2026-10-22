@@ -32,20 +32,13 @@ class Game:
         self.active: asyncio.Task[Any] | None = None
         self.background: set[asyncio.Task[Any]] = set()
         self.translation: asyncio.Task[Any] | None = None
-        nights = court.nights()
+        nights = court.nights(latest=True)
         if nights:
             self.audience.open(nights[-1].id)
 
     def notify(self, event: str, data: Any) -> None:
         if self.emit:
             self.emit({"event": event, "data": data})
-
-    def interactions(self) -> dict[str, dict[str, Any]]:
-        return {
-            f.detail["key"]: f.detail
-            for f in self.court.facts("audit")
-            if f.kind == "interaction"
-        }
 
     def interaction(self, action: str, status: str, payload: dict[str, Any]) -> None:
         key = f"choose:{payload['petition']}" if action == "choose" else action
@@ -66,11 +59,11 @@ class Game:
         )
 
     def failures(self) -> list[dict[str, Any]]:
-        nights = self.court.nights()
+        nights = self.court.nights(latest=True)
         night = nights[-1] if nights else None
         return [
             i
-            for i in self.interactions().values()
+            for i in self.court.interactions().values()
             if i["status"] == "failed"
             and not (
                 i["action"] == "say"
@@ -83,12 +76,12 @@ class Game:
         ]
 
     def presentation(self) -> dict[str, Any]:
-        interactions = list(self.interactions().values())
+        interactions = list(self.court.interactions().values())
         pending = next((i for i in interactions if i["status"] == "running"), None)
-        month = self.interactions().get("month")
+        month = self.court.interactions().get("month")
         if month and month["status"] == "running":
             pending = month
-        nights = self.court.nights()
+        nights = self.court.nights(latest=True)
         night = nights[-1].model_dump(mode="json") if nights else None
         failures = self.failures()
         # The translation-to-month exception must not bypass another failed action.
@@ -115,7 +108,7 @@ class Game:
     def settle_month(self, date: dict[str, Any] | None = None) -> None:
         # A completed advance settles all failed callers of that work. On reopen,
         # a changed calendar is durable proof even if completion events were interrupted.
-        for item in self.interactions().values():
+        for item in self.court.interactions().values():
             if (
                 item["action"] in {"month", "choose"}
                 and item["status"] == "failed"
@@ -131,7 +124,7 @@ class Game:
         self.settle_month()
         pending = [
             i
-            for i in self.interactions().values()
+            for i in self.court.interactions().values()
             if i["status"] == "running"
             and (not self.failures() or i["action"] == "choose")
         ]
@@ -156,7 +149,7 @@ class Game:
         if (
             not self.month.opened()
             or self.failures()
-            or any(i["status"] == "running" for i in self.interactions().values())
+            or any(i["status"] == "running" for i in self.court.interactions().values())
         ):
             return
         payload = {"date": self.court.calendar().data}
@@ -203,7 +196,7 @@ class Game:
             item["status"] == "running"
             and item["action"] == action
             and all(item["payload"].get(k) == v for k, v in payload.items())
-            for item in self.interactions().values()
+            for item in self.court.interactions().values()
         )
         self.resume()
         # A question — fresh or retrying its own failed call — is accepted at
@@ -262,7 +255,7 @@ class Game:
             self.interaction(action, "running", payload)
         else:
             if action == "dismiss":
-                if not self.court.nights():
+                if not self.court.nights(latest=True):
                     raise InvalidAction("请先召对")
                 self.audience.dismiss()
                 self.start_background()
@@ -355,13 +348,11 @@ class Game:
             return output
         except Exception as error:
             self.court.log.exception("action=%s", action)
-            key = f"choose:{payload['petition']}" if action == "choose" else action
-            accepted = self.interactions()[key]["payload"]
             self.interaction(
                 action,
                 "failed",
                 {
-                    **accepted,
+                    **payload,
                     "type": type(error).__name__,
                     "message": str(error),
                     "log": str(self.court.error_path),

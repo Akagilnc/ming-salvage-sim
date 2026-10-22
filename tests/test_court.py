@@ -22,7 +22,9 @@ def replaying(
 ) -> FunctionModel:
     remaining = iter(replies) if not callable(replies) else iter(())
 
-    def reply(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+    async def reply(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        # Use FunctionModel's native async callback, not competing worker threads
+        # consuming the same recorded sequence.
         if received is not None:
             received.extend(_messages)
         result = replies(_messages) if callable(replies) else next(remaining)
@@ -37,7 +39,7 @@ def replaying(
     async def stream_response(
         messages: list[ModelMessage], info: AgentInfo
     ) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
-        for index, part in enumerate(reply(messages, info).parts):
+        for index, part in enumerate((await reply(messages, info)).parts):
             if isinstance(part, TextPart):
                 yield part.content
             elif isinstance(part, ToolCallPart):

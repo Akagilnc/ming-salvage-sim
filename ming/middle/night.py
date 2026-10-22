@@ -24,11 +24,11 @@ class NightView(BaseModel):
 
 
 def read_night(ledger: Ledger, night_id: UUID) -> NightView:
-    night = ledger.get(night_id)
-    date = next(r["data"] for r in ledger.entities() if r["kind"] == "calendar")
+    night = ledger.entities(entity_id=night_id)[0]
+    date = ledger.entities(kind="calendar")[0]["data"]
     turns: list[TurnView] = []
     result = None
-    for item in night.events:
+    for item in ledger.facts(entity_id=night_id):
         detail = item["detail"]
         if item["kind"] == "turn":
             turns.append(TurnView(**detail, emperor_words=item["emperor_words"]))
@@ -37,8 +37,8 @@ def read_night(ledger: Ledger, night_id: UUID) -> NightView:
         elif item["kind"] == "unhandled":
             result = "unhandled"
     return NightView(
-        id=night.id,
-        **night.data,
+        id=night_id,
+        **night["data"],
         date={"year": date["year"], "month": date["month"]},
         turns=turns,
         result=result,
@@ -46,7 +46,7 @@ def read_night(ledger: Ledger, night_id: UUID) -> NightView:
 
 
 def open_night(ledger: Ledger) -> UUID:
-    for row in reversed(ledger.entities()):
+    for row in ledger.entities(kind="night", night="latest"):
         if row["kind"] == "night" and not row["data"]["closed"]:
             return row["id"]
     night = Entity("night", str(uuid4()), "", {"closed": False, "hall": ["王承恩"]})

@@ -27,7 +27,7 @@ class Deliberations:
     def due(self) -> list[EntityView]:
         result: list[EntityView] = []
         date = self.court.calendar().data
-        for decree in self.court.entities("audit"):
+        for decree in self.court.entities("audit", kind="decree"):
             if decree.kind != "decree":
                 continue
             products = self.court.products(decree.id, current=False)
@@ -48,7 +48,7 @@ class Deliberations:
         if any(f.kind == "deliberation" for f in self.court.products(decree.id)):
             return
         identity = Officials(people=decree.data["people"])
-        world = next(e for e in self.court.entities("audit") if e.kind == "world")
+        world = self.court.entities("audit", kind="world")[0]
         result = await invoke(
             self.agent,
             prompt(

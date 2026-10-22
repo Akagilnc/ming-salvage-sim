@@ -34,7 +34,7 @@ class Month:
     def opened(self) -> bool:
         return any(
             f.kind == "month_open"
-            for f in self.court.products(self.court.calendar().id)
+            for f in self.court.products(self.court.calendar().id, kind="month_open")
         )
 
     def open(self) -> None:
@@ -62,7 +62,7 @@ class Month:
     def current_decrees(self) -> list[EntityView]:
         return [
             e
-            for e in self.court.entities("audit")
+            for e in self.court.entities("audit", kind="decree")
             if e.kind == "decree"
             and any(f.kind == "decreed" for f in self.court.products(e.id))
         ]
@@ -117,7 +117,7 @@ class Month:
             else:
                 detail = next(
                     f.detail
-                    for f in self.court.facts("audit")
+                    for f in self.court.facts("audit", kind="petition")
                     if f.kind == "petition" and f.detail["id"] == petition_id
                 )
                 route = UUID(detail["route_id"])
@@ -127,7 +127,7 @@ class Month:
                 choice = next(
                     (
                         f.detail
-                        for f in self.court.facts("audit")
+                        for f in self.court.facts("audit", kind="choice")
                         if f.kind == "choice" and f.detail["petition_id"] == petition_id
                     ),
                     None,
@@ -171,7 +171,7 @@ class Month:
         self, petition_id: str | None
     ) -> tuple[list[tuple[UUID, str, int]], list[tuple[UUID, str]]]:
         """Unfinished selected work; one question waits only for its own chain."""
-        facts = self.court.facts("audit")
+        facts = self.court.facts("audit", kind=("choice", "simulation"))
         choices = {
             (f.detail["petition_id"], f.detail["option"])
             for f in facts
@@ -200,10 +200,8 @@ class Month:
 
     def nights(self, decrees: list[EntityView]) -> list[EntityView]:
         return [
-            e
-            for e in self.court.entities("audit")
-            if e.kind == "night"
-            and any(d.data["night_id"] == str(e.id) for d in decrees)
+            self.court.entity(UUID(night_id))
+            for night_id in dict.fromkeys(d.data["night_id"] for d in decrees)
         ]
 
     def original(self, route: UUID) -> asyncio.Task[bool]:
@@ -214,7 +212,7 @@ class Month:
         """
         task = self.originals.get(route)
         if task is None or task.done():
-            entity = next(e for e in self.court.entities("audit") if e.id == route)
+            entity = self.court.entity(route)
             decrees = self.current_decrees()
             produce = (
                 self.night(
@@ -260,8 +258,11 @@ class Month:
                 ],
                 "prior_choices": [
                     f.detail
-                    for f in self.court.facts("audit")
-                    if f.kind == "choice" and f.detail["date"] == self.court.calendar().data
+                    for f in self.court.facts(
+                        "audit", kind="choice", date=self.court.calendar().data
+                    )
+                    if f.kind == "choice"
+                    and f.detail["date"] == self.court.calendar().data
                 ],
             },
         )

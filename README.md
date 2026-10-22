@@ -120,6 +120,25 @@ python -m pytest tests/test_web.py -q
 
 CI 命令以 [ci.yml](.github/workflows/ci.yml) 为准。P8、禁正则、禁裸 noqa 和 Python 单文件行数检查覆盖全仓，pyright strict 与分层检查限定游戏包。
 
+### 读表示范：月历与夜
+
+设计真源见 [ADR 0160](docs/adr/0160-read-tables-by-library-projection.md)。照着新增读法时，沿这条链看：
+
+1. `ming/middle/calendar.py:advance_month`、`ming/middle/night.py:dismiss` 修改聚合并 `commit()`。
+2. `ming/ledger/domain.py:Entity` 的 `@event` 方法定义状态变化；`ming/ledger/projection.py:ReadModel` 经库的 runner 写相应读表行及事实，不在使用者里刷新。
+3. `Court.calendar()` 只取月历行，`read_night()` 只取指定夜及其事实；`Court.products()` 按实体、类型、日期查询。人物与账户照此选条件，不先取世界再筛。
+4. `tests/test_read_budget.py` 从 HTTP 入口比较三局无关旧夜不同的 SQL 条数和返回行数；原子性测试也从 HTTP 进入，在外层提交前注入失败，随后由审计 CLI 重开核对。
+
+`--replay` 在临时内存读表上运行同一个库策略，不改原存档。正常开档只按 tracking 追平，不自动判断或迁移读表结构。升级读表结构（包括升级本票前的 `entities.events` 旧表）时，先退出游戏并备份，**只清派生表，不动 `ledger_events`**，再用现有读入口追平：
+
+```bash
+sqlite3 saves/game.sqlite '.backup saves/game-before-read-tables.sqlite'
+sqlite3 saves/game.sqlite 'BEGIN; DROP TABLE IF EXISTS entities; DROP TABLE IF EXISTS facts; DROP TABLE IF EXISTS readmodel_tracking; COMMIT;'
+python -m ming read --db saves/game.sqlite --identity audit
+```
+
+示例文件名需换为实际存档及新的备份路径；清表是人工升级操作，不是日常开档步骤。
+
 ## 目录与文档
 
 ```text

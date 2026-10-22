@@ -39,22 +39,22 @@ PERSON_FIELDS = {
 
 
 def read_person(ledger: Ledger, name: str) -> PersonView:
-    rows = ledger.entities()
-    person = next((e for e in rows if e["kind"] == "person" and e["key"] == name), None)
+    person = next(iter(ledger.entities(kind="person", key=name)), None)
     if person is None:
         return PersonView(found=False)
     data = {k: v for k, v in person["data"].items() if k in PERSON_FIELDS}
-    if travel := journey(person["data"], person["events"]):
+    history = ledger.facts(entity_id=person["id"])
+    if travel := journey(person["data"], history):
         data["journey"] = travel
-    for row in rows:
-        if row["kind"] == "dossier" and row["key"] == name:
-            data.update(row["data"])
+    for row in ledger.entities(kind="dossier", key=name):
+        data.update(row["data"])
     decrees = {
         str(e["id"]): {
             k: v for k, v in e["data"].items() if k in {"text", "origin", "people"}
         }
-        for e in rows
-        if e["kind"] == "decree"
+        for item in history
+        if item["kind"] == "decreed"
+        for e in ledger.entities(entity_id=UUID(item["detail"]["decree_id"]))
     }
     events = [
         {
@@ -70,7 +70,7 @@ def read_person(ledger: Ledger, name: str) -> PersonView:
                 if k in {"date", "text", "decree_id", "successor"}
             },
         }
-        for e in person["events"]
+        for e in history
     ]
     return PersonView(found=True, person=data, events=events)
 
@@ -79,7 +79,11 @@ def set_hall(
     ledger: Ledger, night_id: UUID, add: list[str], remove: list[str]
 ) -> HallResult:
     night = ledger.get(night_id)
-    people = {e["key"]: e for e in ledger.entities() if e["kind"] == "person"}
+    people = {
+        e["key"]: e
+        for name in dict.fromkeys(add)
+        for e in ledger.entities(kind="person", key=name)
+    }
     failures: list[dict[str, Any]] = []
     for name in add:
         person = people.get(name)

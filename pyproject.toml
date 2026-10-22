@@ -47,3 +47,18 @@ name = "ledger only via middle"
 type = "protected"
 protected_modules = ["ming.ledger"]
 allowed_importers = ["ming.middle.*"]
+
+# Negative sample: add `from ming.ledger.projection import ReadModel` to
+# ming/middle/calendar.py; lint-imports must reject it. All row writes live in
+# ReadModel.policy; the facade imports it only to assemble the library runner.
+[[tool.importlinter.contracts]]
+name = "read-table writer is private to the ledger runner"
+type = "protected"
+protected_modules = ["ming.ledger.projection"]
+allowed_importers = ["ming.ledger"]
+
+[[tool.importlinter.contracts]]
+name = "query schema stays behind the ledger read API"
+type = "protected"
+protected_modules = ["ming.ledger.tables"]
+allowed_importers = ["ming.ledger", "ming.ledger.projection"]
