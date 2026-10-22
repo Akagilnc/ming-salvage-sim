@@ -112,7 +112,11 @@ def due_decrees(date: Item) -> Select[Any]:
             decision.is_(None),
             and_(
                 decision["text"].as_string() != "收回",
-                ~and_(decision["text"].as_string() == "留中", decision["date"] == date),
+                ~and_(
+                    decision["text"].as_string() == "留中",
+                    decision["date"]["year"].as_integer() == date["year"],
+                    decision["date"]["month"].as_integer() == date["month"],
+                ),
             ),
         ),
     )
