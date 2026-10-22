@@ -5,13 +5,12 @@ matching rows/facts. No caller refreshes tables or carries a parallel event list
 """
 
 from collections.abc import Callable, Generator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Any, cast
 from uuid import UUID, uuid4
 
 from eventsourcing.system import SingleThreadedRunner, System
-from eventsourcing.application import LRUCache
 from eventsourcing_sqlalchemy.recorders import SQLAlchemyApplicationRecorder
 from sqlalchemy import Engine, Select
 
@@ -70,10 +69,14 @@ class Ledger:
             with self.sql.transaction():
                 self.events.save(*entities)
         except Exception:
-            # A rollback must not leave uncommitted aggregate state in the cache.
+            # A rollback must not leave uncommitted aggregate state in the cache:
+            # the policy cached each saved aggregate at its uncommitted version.
+            # LRUCache.clear() resets only its recency list, so evict each one.
             cache = self.events.repository.cache
-            if isinstance(cache, LRUCache):
-                cache.clear()
+            if cache is not None:
+                for entity in entities:
+                    with suppress(KeyError):
+                        cache.get(entity.id, evict=True)
             raise
         if self.on_commit is not None:
             self.on_commit()

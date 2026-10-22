@@ -36,8 +36,9 @@ class ReadModel(ProcessApplication[UUID]):
         domain_event: DomainEventProtocol[UUID],
         processing_event: ProcessingEvent[UUID],
     ) -> None:
-        # save() has already populated the library aggregate cache. On catch-up,
-        # the same repository reconstitutes final state from the authoritative log.
+        # process_event resolved it through the source repository, which caches it
+        # (uncommitted in a live save; Ledger.commit evicts it on rollback). On
+        # catch-up the same repository reconstitutes it from the authoritative log.
         # No event merging rule lives here: Entity's @event methods own all of it.
         entity = self.projecting
         sql = cast(SQLAlchemyApplicationRecorder, self.recorder)

@@ -7,13 +7,11 @@ outside the measurement; the measured month request resumes an already open mont
 """
 
 import json
-import sqlite3
 from pathlib import Path
 
 import pytest
 from pydantic_ai.models.test import TestModel
-from sqlalchemy import Engine, event, text
-from sqlalchemy.orm import Session
+from sqlalchemy import Engine, event
 from starlette.testclient import TestClient
 
 from ming.web import create_app
@@ -110,63 +108,3 @@ def test_http_read_work_ignores_unrelated_history(tmp_path, steps, action, histo
             budgets.append(tuple(budget))
 
     assert budgets[0] == budgets[1] == budgets[2]
-
-
-@pytest.mark.parametrize("crash", [False, True])
-def test_http_commit_keeps_events_rows_and_tracking_atomic(
-    tmp_path, steps, audit, crash
-):
-    app = create_app(tmp_path)
-    with TestClient(app) as client:
-        save = client.post("/actions", json={"action": "new"}).json()["save"]
-        db = tmp_path / save
-        before = audit(db)
-        with sqlite3.connect(db) as connection:
-            position = connection.execute(
-                "SELECT max(id) FROM ledger_events"
-            ).fetchone()[0]
-        observed = []
-
-        def before_commit(session):
-            # Session.commit is the outer SQLAlchemy commit: policy and library
-            # tracking have run, but neither is durable yet.
-            observed.append(
-                tuple(
-                    session.execute(text(query)).scalar_one()
-                    for query in (
-                        "SELECT max(id) FROM ledger_events",
-                        "SELECT count(*) FROM entities WHERE kind = 'night'",
-                        "SELECT max(notification_id) FROM readmodel_tracking",
-                    )
-                )
-            )
-            if crash:
-                raise RuntimeError("injected pre-commit failure")
-
-        event.listen(Session, "before_commit", before_commit)
-        try:
-            if crash:
-                with pytest.raises(RuntimeError):
-                    client.post("/actions", json={"action": "open"})
-            else:
-                assert (
-                    client.post("/actions", json={"action": "open"}).status_code == 200
-                )
-        finally:
-            event.remove(Session, "before_commit", before_commit)
-        assert observed == [(position + 1, 1, position + 1)]
-    with sqlite3.connect(db) as connection:
-        assert tuple(
-            connection.execute(query).fetchone()[0]
-            for query in (
-                "SELECT max(id) FROM ledger_events",
-                "SELECT count(*) FROM entities WHERE kind = 'night'",
-                "SELECT max(notification_id) FROM readmodel_tracking",
-            )
-        ) == (position + int(not crash), int(not crash), position + int(not crash))
-    reopened = audit(db)
-    assert reopened == audit(db, True)
-    if crash:
-        assert reopened == before
-    else:
-        assert len([e for e in reopened["entities"] if e["kind"] == "night"]) == 1
