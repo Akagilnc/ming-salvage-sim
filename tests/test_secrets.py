@@ -16,8 +16,8 @@ from tests.test_court import replaying
 RECORDED = Path(__file__).parent / "recorded"
 
 
-def declaration_reply(messages, response_file):
-    source = json.loads(messages[0].parts[0].content.split("\n", 1)[1])["source"]
+def declaration_reply(messages, response_file, quiet_month=None):
+    prompt = json.loads(messages[0].parts[0].content.split("\n", 1)[1])
     return ModelResponse(
         parts=[
             TextPart(
@@ -25,7 +25,8 @@ def declaration_reply(messages, response_file):
                     RECORDED
                     / (
                         response_file
-                        if source["data"].get("secret")
+                        if prompt["source"]["data"].get("secret")
+                        and prompt["date"]["month"] != quiet_month
                         else "month_empty.txt"
                     )
                 ).read_text()
@@ -155,12 +156,17 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
 def test_discoveries_stay_private_and_completion_stops_only_reports(
     tmp_path: Path, game_db: Path, steps
 ) -> None:
+    # The errand runs quietly through its decree month and is done the next.
     steps["Declaration"] = replaying(
-        partial(declaration_reply, response_file="month_secret_completed.txt")
+        partial(
+            declaration_reply,
+            response_file="month_secret_completed.txt",
+            quiet_month=10,
+        )
     )
     simulations = []
     steps["simulation"] = replaying(
-        [(RECORDED / "simulation.txt").read_text()] * 3, simulations
+        [(RECORDED / "simulation.txt").read_text()] * 4, simulations
     )
     with TestClient(create_app(tmp_path)) as client:
         client.post(
@@ -170,26 +176,31 @@ def test_discoveries_stay_private_and_completion_stops_only_reports(
         secret = next(
             d for d in court.entities("audit", kind="decree") if d.data["secret"]
         )
-        for month in range(3):
+        for month in range(4):
             client.post("/actions", json={"action": "month"}).raise_for_status()
             client.portal.call(client.app.state.web.game.drain)
             assert client.get("/state").json()["game"]["failure"] is None
             court = client.app.state.web.game.court
-            assert len(court.products(secret.id, kind="completed", current=False)) == 1
-            assert (
-                len(court.products(secret.id, kind="secret_report", current=False)) == 1
-            )
+            done = month >= 1
+            assert len(
+                court.products(secret.id, kind="completed", current=False)
+            ) == int(done)
+            for identity in ("emperor", Officials(people=["王承恩"])):
+                assert len(court.facts(identity, kind="secret_report")) == min(
+                    month + 1, 2
+                )
             exposure = court.products(secret.id, kind="exposure", current=False)
-            assert [f.detail["score"] for f in exposure] == [14, 28, 42][: month + 1]
+            assert [f.detail["score"] for f in exposure] == [3, 17, 31, 45][: month + 1]
             assert (
-                exposure[-1].detail["stage"] == ("半公开", "半公开", "满朝风闻")[month]
+                exposure[-1].detail["stage"]
+                == ("密", "半公开", "半公开", "满朝风闻")[month]
             )
             changed = [
                 f
                 for f in court.facts("audit", kind="changed")
                 if f.detail.get("origin_ref") == str(secret.id)
             ]
-            assert len(changed) == 2
+            assert len(changed) == 2 * done
             assert [
                 e["date"]
                 for e in court.read_person("王承恩").events
@@ -198,7 +209,7 @@ def test_discoveries_stay_private_and_completion_stops_only_reports(
             assert (
                 court.entities("audit", kind="person", key="韩爌")[0].data["intrigue"]
                 == 75
-            )
+            ) == done
             for identity, discoveries in (
                 ("emperor", True),
                 ("public", False),

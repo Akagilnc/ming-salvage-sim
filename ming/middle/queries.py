@@ -102,6 +102,20 @@ def decrees_with(kind: str, date: Item) -> Select[Any]:
     )
 
 
+SECRET_DECREES = ENTITY_ROWS.where(
+    E.kind == "decree", E.data["secret"].as_boolean().is_(True)
+)
+
+
+def errands(date: Item) -> Select[Any]:
+    """Secret decrees still in hand: no completion landed before this month."""
+    return SECRET_DECREES.where(
+        ~select(F.position)
+        .where(F.entity_id == E.id, F.kind == "completed", F.date != date)
+        .exists()
+    )
+
+
 def public_decree() -> ColumnElement[bool]:
     return and_(
         E.kind == "decree",

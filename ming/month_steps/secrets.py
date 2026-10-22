@@ -44,10 +44,7 @@ class Secrets:
 
     async def report(self, decree: EntityView) -> None:
         date = self.court.calendar().data
-        if self.court.products(decree.id, kind="secret_report") or any(
-            f.detail["date"] != date
-            for f in self.court.products(decree.id, kind="completed", current=False)
-        ):
+        if self.court.products(decree.id, kind="secret_report"):
             return
         result = await invoke(
             self.agent,
@@ -76,7 +73,7 @@ class Secrets:
 
     async def run(self) -> None:
         results = await asyncio.gather(
-            *(self.report(d) for d in self.court.secret_decrees()),
+            *(self.report(d) for d in self.court.errands()),
             return_exceptions=True,
         )
         for result in results:

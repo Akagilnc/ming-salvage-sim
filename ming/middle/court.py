@@ -304,10 +304,13 @@ class Court:
     def secret_decrees(self) -> list[EntityView]:
         return [
             EntityView.model_validate(e)
-            for e in self._ledger.entities(
-                kind="decree",
-                query=ENTITY_ROWS.where(E.data["secret"].as_boolean().is_(True)),
-            )
+            for e in self._ledger.read(queries.SECRET_DECREES)
+        ]
+
+    def errands(self) -> list[EntityView]:
+        return [
+            EntityView.model_validate(e)
+            for e in self._ledger.read(queries.errands(self.calendar().data))
         ]
 
     def known_people(self, decree: EntityView) -> set[str]:
@@ -326,10 +329,13 @@ class Court:
         ]
 
     def landing_sources(self) -> list[tuple[EntityView, UUID]]:
+        # A secret errand lands each month until done: in its decree month from
+        # its night's simulation, afterwards from the world's.
+        calendar = self.calendar()
+        current = {d.id for d in self.current_decrees()}
         sources = [
-            (d, UUID(d.data["night_id"]))
-            for d in self.current_decrees()
-            if d.data["secret"]
+            (d, UUID(d.data["night_id"]) if d.id in current else calendar.id)
+            for d in self.errands()
         ]
         for row in self._ledger.read(
             queries.decrees_with("deliberation", self.calendar().data)
@@ -342,7 +348,6 @@ class Court:
             )
             if verdict["verdict"] == "准" or (choice and choice["text"] == "强颁"):
                 sources.append((decree, UUID(verdict["route_id"])))
-        calendar = self.calendar()
         return sources + [(calendar, calendar.id)]
 
     def observe(self, on_change: Callable[[], None]) -> None:
