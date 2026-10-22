@@ -19,6 +19,10 @@ from tests.test_court import replaying
 
 RECORDED = Path(__file__).parent / "recorded"
 AGENT_RUN = Agent.run
+HISTORY_ACTIONS = {
+    "month": ({"action": "month"},),
+    "night": ({"action": "open"}, {"action": "dismiss"}),
+}
 
 
 @contextmanager
@@ -86,26 +90,19 @@ def opening_db(tmp_path_factory):
 
 @pytest.fixture(scope="session")
 def first_night(opening_db, tmp_path_factory):
-    path = tmp_path_factory.mktemp("first-night") / opening_db.name
-    copyfile(opening_db, path)
-    with TestClient(create_app(path.parent)) as client:
-        client.post("/actions", json={"action": "load", "save": path.name})
-        client.post("/actions", json={"action": "open"}).raise_for_status()
-    return path
+    return extend_history(
+        opening_db, tmp_path_factory.mktemp("first-night"), ({"action": "open"},)
+    )
 
 
 @pytest.fixture(scope="session")
 def spoken_night(first_night, tmp_path_factory):
-    path = tmp_path_factory.mktemp("spoken-night") / first_night.name
-    copyfile(first_night, path)
     case = json.loads((RECORDED / "night_invalid.json").read_text())
-    with recorded_steps(), TestClient(create_app(path.parent)) as client:
-        client.post("/actions", json={"action": "load", "save": path.name})
-        client.post(
-            "/actions", json={"action": "say", "words": case["emperor_words"]}
-        ).raise_for_status()
-        assert client.get("/state").json()["game"]["failure"] is None
-    return path
+    return extend_history(
+        first_night,
+        tmp_path_factory.mktemp("spoken-night"),
+        ({"action": "say", "words": case["emperor_words"]},),
+    )
 
 
 @pytest.fixture(scope="session")
@@ -147,7 +144,7 @@ def extend_history(source, directory, actions):
         )
         client.post("/actions", json={"action": "load", "save": path.name})
         for action in actions:
-            client.post("/actions", json={"action": action}).raise_for_status()
+            client.post("/actions", json=action).raise_for_status()
             client.portal.call(client.app.state.web.game.drain)
         assert client.get("/state").json()["game"]["failure"] is None
     return path
@@ -161,7 +158,7 @@ def history_one(request, tmp_path_factory, history):
     return extend_history(
         source,
         tmp_path_factory.mktemp("history-one"),
-        ("month",) if history == "month" else ("dismiss",),
+        HISTORY_ACTIONS[history][-1:],
     )
 
 
@@ -170,7 +167,7 @@ def history_two(history_one, tmp_path_factory, history):
     return extend_history(
         history_one,
         tmp_path_factory.mktemp("history-two"),
-        ("month",) if history == "month" else ("open", "dismiss"),
+        HISTORY_ACTIONS[history],
     )
 
 
@@ -179,7 +176,7 @@ def history_four(history_two, tmp_path_factory, history):
     return extend_history(
         history_two,
         tmp_path_factory.mktemp("history-four"),
-        (("month",) if history == "month" else ("open", "dismiss")) * 2,
+        HISTORY_ACTIONS[history] * 2,
     )
 
 
@@ -191,7 +188,7 @@ def pending_histories(
     for size, source in zip((1, 2, 4), (history_one, history_two, history_four)):
         directory = tmp_path_factory.mktemp("pending-history")
         path = (
-            extend_history(source, directory, ("open", "dismiss"))
+            extend_history(source, directory, HISTORY_ACTIONS["night"])
             if history == "month"
             else copyfile(source, directory / source.name)
         )
