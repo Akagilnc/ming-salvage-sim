@@ -63,7 +63,9 @@ def open_night(ledger: Ledger) -> UUID:
     for row in ledger.read(LATEST_NIGHT):
         if not row["data"]["closed"]:
             return row["id"]
-    night = Entity("night", str(uuid4()), "", {"closed": False, "hall": list(INITIAL_HALL)})
+    night = Entity(
+        "night", str(uuid4()), "", {"closed": False, "hall": list(INITIAL_HALL)}
+    )
     ledger.commit([night])
     return night.id
 
