@@ -5,14 +5,17 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
 
-from ming.ledger import Entity, Ledger
+from ming.ledger import Entity, Item, Ledger
 from ming.middle.queries import LATEST_NIGHT, NIGHT_ROWS
+
+INITIAL_HALL = ("王承恩",)
 
 
 class TurnView(BaseModel):
     id: str
     emperor_words: str
     scene: str
+    hall: list[str]
 
 
 class NightView(BaseModel):
@@ -28,9 +31,19 @@ def read_night(ledger: Ledger, night_id: UUID) -> NightView:
     night = ledger.entities(entity_id=night_id, query=NIGHT_ROWS)[0]
     date = ledger.entities(kind="calendar")[0]["data"]
     turns: list[TurnView] = []
-    for item in ledger.facts(entity_id=night_id, kind="turn"):
+    hall: list[str] = list(INITIAL_HALL)
+    for item in ledger.facts(entity_id=night_id, kind=("turn", "hall")):
         detail = item["detail"]
-        turns.append(TurnView(**detail, emperor_words=item["emperor_words"]))
+        if item["kind"] == "hall":
+            hall = list(
+                dict.fromkeys(
+                    p for p in hall + detail["add"] if p not in detail["remove"]
+                )
+            )
+        else:
+            turns.append(
+                TurnView(**detail, emperor_words=item["emperor_words"], hall=hall)
+            )
     return NightView(
         id=night_id,
         **night["data"],
@@ -40,11 +53,17 @@ def read_night(ledger: Ledger, night_id: UUID) -> NightView:
     )
 
 
+def known_people(ledger: Ledger, decree: Item) -> set[str]:
+    data = decree["data"]
+    night = read_night(ledger, UUID(data["night_id"]))
+    return set(data["people"]) | set(night.turns[int(data["turn"]) - 1].hall)
+
+
 def open_night(ledger: Ledger) -> UUID:
     for row in ledger.read(LATEST_NIGHT):
         if not row["data"]["closed"]:
             return row["id"]
-    night = Entity("night", str(uuid4()), "", {"closed": False, "hall": ["王承恩"]})
+    night = Entity("night", str(uuid4()), "", {"closed": False, "hall": list(INITIAL_HALL)})
     ledger.commit([night])
     return night.id
 

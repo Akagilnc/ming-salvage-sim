@@ -95,7 +95,7 @@ class Audience:
             night_id = pending[0]
             night = self.court.night(night_id)
             result = await self.court.translate(
-                self.translation, night.model_dump_json()
+                self.translation, night.model_dump_json(), night_id
             )
             self.court.land(result, night_id)
 

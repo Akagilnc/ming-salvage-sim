@@ -102,6 +102,17 @@ def decrees_with(kind: str, date: Item) -> Select[Any]:
     )
 
 
+def public_decree() -> ColumnElement[bool]:
+    return and_(
+        E.kind == "decree",
+        E.data["secret"].as_boolean().is_(False),
+        select(F.position)
+        .where(F.entity_id == E.id, F.kind == "landed")
+        .correlate(E.id.table)
+        .exists(),
+    )
+
+
 def due_decrees(date: Item) -> Select[Any]:
     decision = type_coerce(
         select(F.detail)

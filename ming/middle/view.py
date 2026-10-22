@@ -4,19 +4,20 @@ from typing import Any, Literal, cast
 from uuid import UUID
 
 from pydantic import BaseModel
-from sqlalchemy import case, func, literal, or_, select
+from sqlalchemy import case, literal, or_
 from sqlalchemy.sql.elements import ColumnElement
 
 from ming.ledger import Item, Ledger
 from ming.ledger import ENTITY_COLUMNS as E, FACT_COLUMNS as F, ENTITY_ROWS, FACT_ROWS
-from ming.middle.queries import available_on
-from ming.middle.night import read_night
+from ming.middle.queries import available_on, public_decree
+from ming.middle.night import known_people, read_night
 
 PublicIdentity = Literal["emperor", "audit", "world", "public"]
 
 
 class Officials(BaseModel):
     people: list[str]
+    exclude_secrets: bool = False
 
 
 Identity = PublicIdentity | Officials
@@ -143,6 +144,32 @@ def month_open(ledger: Ledger) -> Item | None:
     )
 
 
+def decree_access(ledger: Ledger, identity: Identity) -> dict[str, set[UUID]]:
+    access: dict[str, set[UUID]] = {"known": set(), "handled": set(), "secret": set()}
+    for row in ledger.entities(
+        kind="decree", query=ENTITY_ROWS.add_columns(public_decree().label("public"))
+    ):
+        if row["data"]["secret"]:
+            access["secret"].add(row["id"])
+            if isinstance(identity, Officials) and identity.exclude_secrets:
+                continue
+        if (
+            identity == "emperor"
+            or row["public"]
+            or (
+                isinstance(identity, Officials)
+                and known_people(ledger, row).intersection(identity.people)
+            )
+        ):
+            access["known"].add(row["id"])
+        if identity == "emperor" or (
+            isinstance(identity, Officials)
+            and set(row["data"]["people"]).intersection(identity.people)
+        ):
+            access["handled"].add(row["id"])
+    return access
+
+
 def entities(
     ledger: Ledger, identity: Identity, selection: Item | None = None
 ) -> list[EntityView]:
@@ -154,7 +181,10 @@ def entities(
             for e in opening["entities"]
             if all(e[k] == v for k, v in (selection or {}).items())
         ]
-    exposure = entity_exposure(identity, owned_accounts(ledger, identity))
+    access = (
+        decree_access(ledger, identity) if identity not in ("audit", "world") else {}
+    )
+    exposure = entity_exposure(identity, owned_accounts(ledger, identity), access)
     query = ENTITY_ROWS.add_columns(exposure.label("exposure")).where(
         exposure.is_not(None)
     )
@@ -176,7 +206,7 @@ def entities(
                 row["data"] = {
                     k: v
                     for k, v in row["data"].items()
-                    if k in {"text", "origin", "people", "night_id"}
+                    if k in {"text", "origin", "people", "night_id", "secret", "turn"}
                 }
         if identity == "world" and row["kind"] == "person":
             travel = (
@@ -195,20 +225,25 @@ def entities(
     return result
 
 
-def entity_exposure(identity: Identity, accounts: set[UUID]) -> ColumnElement[str]:
+def entity_exposure(
+    identity: Identity, accounts: set[UUID], access: dict[str, set[UUID]]
+) -> ColumnElement[str]:
     if identity in ("audit", "world"):
         return literal("full")
     rules = [
         (E.id.in_(accounts), "full"),
         (E.kind == "person", "person"),
         (E.kind.in_(("gazette", "calendar")), "full"),
+        (E.id.in_(access["known"]), "decree"),
     ]
     if identity == "emperor":
         rules.extend([(E.kind == "night", "night"), (E.kind == "decree", "decree")])
     return case(*rules)
 
 
-def fact_exposure(identity: Identity, accounts: set[UUID]) -> ColumnElement[str]:
+def fact_exposure(
+    identity: Identity, accounts: set[UUID], access: dict[str, set[UUID]]
+) -> ColumnElement[str]:
     if identity == "audit":
         return literal("full")
     if identity == "world":
@@ -224,22 +259,39 @@ def fact_exposure(identity: Identity, accounts: set[UUID]) -> ColumnElement[str]
             "text",
         )
     ]
+    rules.extend(
+        [
+            (E.id.in_(access["known"]) & (F.kind == "decreed"), "text"),
+            (
+                F.detail["decree_id"].as_string().in_([str(i) for i in access["known"]])
+                & (F.kind == "decreed"),
+                "full",
+            ),
+            (E.id.in_(access["handled"]) & (F.kind == "secret_report"), "report"),
+            (
+                (E.kind == "person")
+                & F.kind.in_(
+                    (
+                        "changed",
+                        "displaced",
+                        "departed",
+                        "arrived",
+                        "travelled",
+                        "audience_admitted",
+                    )
+                ),
+                "optional_text",
+            ),
+        ]
+    )
     if identity == "emperor":
         rules.append((F.kind == "interaction", "full"))
     rules.append((F.kind.in_(("petition", "choice")), "full"))
     if identity == "emperor":
         rules.append((F.kind == "unhandled", "empty"))
     if isinstance(identity, Officials):
-        people = func.json_each(E.data["people"]).table_valued("value")
-        decree = (E.kind == "decree") & select(people.c.value).where(
-            people.c.value.in_(identity.people)
-        ).exists()
         rules.append(
-            (
-                or_(E.id.in_(accounts), decree)
-                & F.kind.in_(("changed", "received", "decreed")),
-                "optional_text",
-            )
+            (E.id.in_(accounts) & F.kind.in_(("changed", "received")), "optional_text")
         )
     return case(*rules)
 
@@ -250,11 +302,23 @@ def project(
     selection = selection or {}
     opening = month_open(ledger) if identity == "emperor" else None
     date = next((r["data"] for r in ledger.entities(kind="calendar")), dict[str, Any]())
-    controls = {"interaction", "petition", "choice", "gazette"}
-    exposure = fact_exposure(identity, owned_accounts(ledger, identity))
+    controls = {"interaction", "petition", "choice", "gazette", "secret_report"}
+    access = (
+        decree_access(ledger, identity) if identity not in ("audit", "world") else {}
+    )
+    exposure = fact_exposure(identity, owned_accounts(ledger, identity), access)
     query = FACT_ROWS.add_columns(exposure.label("exposure")).where(
         exposure.is_not(None)
     )
+    if identity not in ("audit", "world"):
+        query = query.where(
+            ~(
+                F.detail["origin_ref"]
+                .as_string()
+                .in_([str(i) for i in access["secret"] - access["handled"]])
+                & F.detail["discovered"].as_boolean().is_(True)
+            )
+        )
     if identity != "audit":
         query = query.where(available_on(date))
     if opening:
@@ -304,8 +368,13 @@ def project(
         if identity == "world" and fact.kind == "simulation":
             fact.detail = {k: v for k, v in fact.detail.items() if k != "messages"}
         if identity not in ("audit", "world"):
-            if item["exposure"] == "text":
-                fact.detail = {"text": fact.detail["text"]}
+            if item["exposure"] in ("text", "report"):
+                fact.detail = {
+                    k: v
+                    for k, v in fact.detail.items()
+                    if k
+                    in ({"text", "date"} if item["exposure"] == "report" else {"text"})
+                }
             elif item["exposure"] == "empty":
                 fact.detail = {}
             elif item["exposure"] == "optional_text":

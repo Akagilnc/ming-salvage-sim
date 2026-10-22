@@ -47,9 +47,8 @@ def test_nights_are_persistent_and_translate_only_after_dismissal(
         orders = [e for e in ledger["entities"] if e["kind"] == "decree"]
         assert orders
         assert all(e["data"]["night_id"] == first["id"] for e in orders)
-        assert all(
-            set(e["data"]) == {"text", "origin", "people", "night_id"} for e in orders
-        )
+        assert all(e["data"].get("secret") is False for e in orders)
+        assert all(e["data"]["turn"] == 4 for e in orders)
         ids = {e["key"]: e["id"] for e in ledger["entities"] if e["kind"] == "person"}
         for name in ("王承恩", "徐光启"):
             assert {

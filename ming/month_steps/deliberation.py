@@ -27,7 +27,7 @@ class Deliberations:
     async def run(self, decree: EntityView, route: UUID) -> None:
         if self.court.products(decree.id, kind="deliberation"):
             return
-        identity = Officials(people=decree.data["people"])
+        identity = Officials(people=decree.data["people"], exclude_secrets=True)
         world = self.court.entities("audit", kind="world")[0]
         result = await invoke(
             self.agent,

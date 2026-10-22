@@ -8,7 +8,7 @@ from sqlalchemy import and_, or_
 
 from ming.ledger import Entity, Item, Ledger
 from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS, FACT_COLUMNS as F, FACT_ROWS
-from ming.middle.declaration import Declaration, NightDeclaration, Unhandled
+from ming.middle.declaration import Declaration, Fact, NightDeclaration, Unhandled
 from ming.middle.rules import field_values, money_amounts
 
 
@@ -21,6 +21,11 @@ def landing_entities(
             (f.entity_type, f.entity) for f in [*result.facts, *result.reports]
         )
         pairs.update(("affair", f.affair) for f in result.facts if f.affair is not None)
+        pairs.update(
+            ("decree", f.decree)
+            for f in [*result.facts, *result.decree_events]
+            if isinstance(f.decree, str)
+        )
     if isinstance(result, NightDeclaration):
         pairs.update(("person", p) for d in result.decrees for p in d.people)
     found = {
@@ -68,6 +73,7 @@ def dispatch(
     owner = ledger.get(night_id)
     existing = landing_entities(ledger, result, owner)
     changed: dict[tuple[str, str], Entity] = {}
+    fact_origin: Item = {}
     date = existing[("calendar", "world")]["data"]
     origin = (
         ledger.get(UUID(owner.data["night_id"])) if owner.kind == "decree" else owner
@@ -89,11 +95,15 @@ def dispatch(
         changes: dict[str, object] | None = None,
     ) -> None:
         entity.record(
-            kind, words, {**detail, "origin_ref": str(owner.id), "date": date}, changes
+            kind,
+            words,
+            {"origin_ref": str(owner.id), "date": date, **fact_origin, **detail},
+            changes,
         )
         changed[(entity.kind, entity.key)] = entity
         existing[(entity.kind, entity.key)] = entity.snapshot()
 
+    decrees = record_decrees(result, owner, known, record)
     if not isinstance(result, Unhandled):
         amounts = money_amounts(result.facts, existing)
         # A share declares post-values from the reading it saw. Shares landed
@@ -119,6 +129,13 @@ def dispatch(
             )
             detail = field_values(fact, entity.data, amounts.get(i), offsets)
             detail.update(association)
+            fact_origin = {"discovered": fact.discovered}
+            if fact.decree is not None:
+                fact_origin["origin_ref"] = str(
+                    decrees[fact.decree].id
+                    if isinstance(fact.decree, int)
+                    else known("decree", fact.decree).id
+                )
             changes = detail["changes"]
             if entity.kind == "person":
                 move_person(entity, changes, existing, record)
@@ -129,25 +146,25 @@ def dispatch(
                 and entity.data.get("office")
             ):
                 displace(entity, existing, known, record, association)
-        record_receipts(result, amounts, known, record)
+            if i in amounts:
+                record_receipts(fact, amounts[i], known, record)
+        fact_origin = {}
         for report in result.reports:
             record(
                 known(report.entity_type, report.entity),
                 "reported",
                 report.model_dump(),
             )
-    if isinstance(result, NightDeclaration):
-        for decree in result.decrees:
-            data = decree.model_dump()
-            data["night_id"] = str(night_id)
-            entity = Entity("decree", "", "", data)
-            record(entity, "decreed", data)
-            for person in decree.people:
-                record(
-                    known("person", person),
-                    "decreed",
-                    {"decree_id": str(entity.id)},
-                )
+        for event in result.decree_events:
+            record(
+                decrees[event.decree]
+                if isinstance(event.decree, int)
+                else known("decree", event.decree)
+                if event.decree is not None
+                else known(owner.kind, owner.key),
+                event.kind,
+                {"text": event.text},
+            )
     if (
         monthly
         and owner.kind == "decree"
@@ -164,28 +181,49 @@ def dispatch(
     ledger.commit(list(changed.values()))
 
 
+def record_decrees(
+    result: Declaration | Unhandled,
+    owner: Entity,
+    known: Callable[[str, str], Entity],
+    record: Callable[..., None],
+) -> list[Entity]:
+    decrees: list[Entity] = []
+    if isinstance(result, NightDeclaration):
+        for decree in result.decrees:
+            data = {**decree.model_dump(), "night_id": str(owner.id)}
+            if decree.secret:
+                data["exposure"] = {"score": 0, "stage": "密"}
+            entity = Entity("decree", "", "", data)
+            record(entity, "decreed", data)
+            decrees.append(entity)
+            for person in decree.people:
+                record(
+                    known("person", person), "decreed", {"decree_id": str(entity.id)}
+                )
+    return decrees
+
+
 def record_receipts(
-    result: Declaration,
-    amounts: dict[int, float],
+    fact: Fact,
+    amount: float,
     known: Callable[[str, str], Entity],
     record: Callable[..., None],
 ) -> None:
-    for i, fact in enumerate(result.facts):
-        for change in fact.changes:
-            if change.counterpart and change.counterpart.entity_type != "account":
-                record(
-                    known(change.counterpart.entity_type, change.counterpart.entity),
-                    "received",
-                    {
-                        "nominal": -change.value,
-                        "actual": -amounts[i],
-                        "source": fact.entity,
-                        "affair_id": str(known("affair", fact.affair).id)
-                        if fact.affair is not None
-                        else None,
-                        "audience": "world",
-                    },
-                )
+    for change in fact.changes:
+        if change.counterpart and change.counterpart.entity_type != "account":
+            record(
+                known(change.counterpart.entity_type, change.counterpart.entity),
+                "received",
+                {
+                    "nominal": -change.value,
+                    "actual": -amount,
+                    "source": fact.entity,
+                    "affair_id": str(known("affair", fact.affair).id)
+                    if fact.affair is not None
+                    else None,
+                    "audience": "world",
+                },
+            )
 
 
 def interim_mark(ledger: Ledger, decree: Entity, date: Item) -> str | None:

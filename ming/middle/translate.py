@@ -2,19 +2,27 @@
 
 import json
 from typing import Any, TypeVar, cast
+from uuid import UUID
 
 from pydantic_ai import (
     Agent,
     ModelRetry,
     PromptedOutput,
+    RunContext,
     capture_run_messages,
 )
 from pydantic_ai.exceptions import ToolRetryError, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelResponse
 
 from ming.ledger import Ledger
-from ming.middle.declaration import Declaration, NightDeclaration, Unhandled
+from ming.middle.declaration import (
+    Declaration,
+    DecreeEvent,
+    NightDeclaration,
+    Unhandled,
+)
 from ming.middle.queries import CATALOGUE
+from ming.middle.night import read_night
 from ming.middle.opening import REFERENCES
 from ming.middle.rules import check_rules
 from ming.middle.invoke import ModelSource, build_agent, invoke
@@ -22,9 +30,11 @@ from ming.middle.invoke import ModelSource, build_agent, invoke
 T = TypeVar("T", bound=Declaration)
 INSTRUCTIONS = """你是御前召对的转译官。退朝后通读整夜已落账的全部轮次，一夜只交一次声明。
 decrees 只记成了的旨意：领旨的人已经把皇帝的话拟成正式圣旨念出，皇帝认可了那份定稿。
-认可按意思认，不限于“准”字；皇帝没表态的就是默拒，驳了的也不成旨。不要把问话、大臣请示或未认可的拟稿记成旨。
+认可按意思认，不限于“准”字；皇帝没表态的就是默拒，驳了的也不成旨。认可须对应当时已经拟就的具体旨稿，不预认本轮回话后续新增的拟稿，也不追认更早搁置的请示。不要把问话、大臣请示或未认可的拟稿记成旨。
 text 保留皇帝认可的圣旨定稿全文，不改写、不摘要。origin 记原本是皇帝所下还是大臣所请，people 按字段说明填写。
-旨意只记定稿、来历与涉及的人，不带交办或拨款载荷，不预先执行待月末办理的后果。
+旨意按字段声明 secret 与成旨 turn；不带交办或拨款载荷，不预先执行待月末办理的后果。
+实际经手的每道传递经办在 decree_events 逐条声明；已办结也在该项声明，未办结不填 completed。
+密令内部查获实情标 facts.discovered；来源用 decree 指向本份 decrees 零基下标。物理实况正文只写后果，密令来源只放在结构化来源关系里。
 当场已经发生的事实用 facts：哪个实体、是否新建、字段变更列表、一段文字。不分类，不设动作枚举。
 只记今夜新发生的实况，不把邸报旧事、档案履历或大臣奏报中的说法当成今夜已经发生的事实。
 是待执行旨意还是当场实况，照整夜戏文判断；未认可的拟旨不能当成已经执行的事实。
@@ -77,7 +87,7 @@ def fail(field: str, value: object, expected: object) -> None:
     )
 
 
-def check(ledger: Ledger, out: Declaration) -> None:
+def check(ledger: Ledger, out: Declaration, source: UUID) -> None:
     names, fields = catalogue(ledger), allowed_fields(ledger)
     for i, fact in enumerate(out.facts):
         path = f"facts[{i}]"
@@ -101,6 +111,34 @@ def check(ledger: Ledger, out: Declaration) -> None:
                 )
     check_rules(out, set(names.get("affair", {})))
     check_references(out, names)
+    check_decrees(ledger, out, names, source)
+
+
+def check_decrees(
+    ledger: Ledger,
+    out: Declaration,
+    names: dict[str, dict[str, list[str]]],
+    source: UUID,
+) -> None:
+    owner = ledger.entities(entity_id=source)[0]
+    for item in [*out.facts, *out.decree_events]:
+        ref = item.decree
+        if isinstance(ref, int):
+            if not isinstance(out, NightDeclaration) or not 0 <= ref < len(out.decrees):
+                fail("decree", ref, "本份 decrees 的零基下标")
+        elif isinstance(ref, str) and ref not in names.get("decree", {}):
+            fail("decree", ref, names.get("decree", {}))
+        elif (
+            ref is None
+            and owner["kind"] != "decree"
+            and (isinstance(item, DecreeEvent) or item.discovered)
+        ):
+            fail("decree", ref, "指定所属旨意；只有月末本旨声明可省略来源")
+    if isinstance(out, NightDeclaration) and out.decrees:
+        turns = read_night(ledger, source).turns
+        for decree in out.decrees:
+            if decree.turn > len(turns):
+                fail("decrees.turn", decree.turn, list(range(1, len(turns) + 1)))
 
 
 def check_references(out: Declaration, names: dict[str, dict[str, list[str]]]) -> None:
@@ -142,10 +180,11 @@ def declaration_agent(
     ledger: Ledger,
     output_type: type[T],
     instructions: str = INSTRUCTIONS,
-) -> Agent[None, T]:
+) -> Agent[UUID, T]:
     agent = build_agent(
         model,
         name=output_type.__name__,
+        deps_type=UUID,
         output_type=PromptedOutput(output_type),
         instructions=instructions,
         retries=1,
@@ -166,21 +205,24 @@ def declaration_agent(
         )
 
     @agent.output_validator
-    def validate(out: T) -> T:
-        check(ledger, out)
+    def validate(ctx: RunContext[UUID], out: T) -> T:
+        check(ledger, out, ctx.deps)
         return out
 
     return agent
 
 
 async def translate(
-    agent: Agent[None, T],
+    agent: Agent[UUID, T],
     prompt: str,
+    source: UUID,
 ) -> T | Unhandled:
     with capture_run_messages() as messages:
         try:
             return (
-                await invoke(agent, "请按 JSON schema 提交完整声明。\n" + prompt)
+                await invoke(
+                    agent, "请按 JSON schema 提交完整声明。\n" + prompt, deps=source
+                )
             ).output
         except UnexpectedModelBehavior as exhausted:
             if not isinstance(exhausted.__cause__, ToolRetryError):

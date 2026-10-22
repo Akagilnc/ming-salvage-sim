@@ -59,6 +59,7 @@ class Landing:
                 },
                 ensure_ascii=False,
             ),
+            source.id,
         )
         self.court.record_product(
             source.id,

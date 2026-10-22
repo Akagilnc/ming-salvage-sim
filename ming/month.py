@@ -13,6 +13,7 @@ from ming.month_steps.simulation import Simulations, continuing_options
 from ming.month_steps.petitions import Inbox
 from ming.month_steps.landing import Landing
 from ming.month_steps.gazette import Gazette
+from ming.month_steps.secrets import Secrets
 
 
 class Month:
@@ -28,6 +29,7 @@ class Month:
         self.inbox = Inbox(court)
         self.landing = Landing(court)
         self.gazette = Gazette(court, model, on_delta)
+        self.secrets = Secrets(court, model)
         self.lock = asyncio.Lock()
         self.originals: dict[UUID, asyncio.Task[bool]] = {}
 
@@ -58,7 +60,11 @@ class Month:
 
     async def night(self, night: EntityView, decrees: list[EntityView]) -> bool:
         results = await asyncio.gather(
-            *(self.deliberations.run(d, night.id) for d in decrees),
+            *(
+                self.deliberations.run(d, night.id)
+                for d in decrees
+                if not d.data["secret"]
+            ),
             return_exceptions=True,
         )
         for result in results:
@@ -67,7 +73,8 @@ class Month:
         approved = [
             d.model_dump(mode="json")
             for d in decrees
-            if any(
+            if d.data["secret"]
+            or any(
                 f.detail["verdict"] == "准"
                 for f in self.court.products(d.id, kind="deliberation")
             )
@@ -286,7 +293,13 @@ class Month:
             if not ready or pending:
                 return pending
             await self.landing.run()
-            await self.gazette.run()
+            self.secrets.accumulate()
+            results = await asyncio.gather(
+                self.gazette.run(), self.secrets.run(), return_exceptions=True
+            )
+            for result in results:
+                if isinstance(result, BaseException):
+                    raise result
             self.court.advance_month()
             return self.petitions()
 

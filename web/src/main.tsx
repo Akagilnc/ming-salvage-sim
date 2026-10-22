@@ -160,6 +160,10 @@ export function App() {
             {audience && <button disabled={busy || game.running} onClick={() => void action({ action: 'say', words: `宣${person.key}。` })}>宣召</button>}
           </article>)}</> : panel === 'orders' ? <><h2>旨意去向</h2>{book.entities.filter(entity => entity.kind === 'decree').map(entity => <article key={entity.id}>
             <p>{String(entity.data.text)}</p><small>{String(entity.data.origin)} · {String(entity.data.people)}</small>
+            {book.facts.filter(fact => fact.entity_id === entity.id && fact.kind === 'secret_report').map((fact, index) => <details className="gazette" key={index}>
+              <summary>密报 · {String((fact.detail.date as { year: number; month: number }).year)} 年 {String((fact.detail.date as { year: number; month: number }).month)} 月</summary>
+              <div>{String(fact.detail.text)}</div>
+            </details>)}
           </article>)}</> : <><h2>起居录</h2>{book.entities.filter(entity => entity.kind === 'night').map(entity => <details key={entity.id}>
             <summary>{entity.key}</summary><ScrollMessages turns={(entity.data as unknown as NonNullable<typeof night>).turns} />
             {entity.data.result === 'unhandled' && <p className="unhandled">接不住</p>}

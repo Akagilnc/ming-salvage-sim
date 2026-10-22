@@ -21,7 +21,7 @@ from ming.middle.calendar import advance_month
 from ming.middle.declaration import Declaration, Unhandled
 from ming.middle.invoke import ModelSource
 from ming.middle.opening import CONTENT, import_opening
-from ming.middle.night import NightView, dismiss, open_night, read_night
+from ming.middle.night import NightView, dismiss, known_people, open_night, read_night
 from ming.middle.scene import HallResult, PersonView, read_person, set_hall
 from ming.middle.translate import INSTRUCTIONS, declaration_agent, translate
 from ming.middle.view import EntityView, FactView, Identity, entities, project
@@ -157,11 +157,13 @@ class Court:
 
     def translation_agent(
         self, output_type: type[T], instructions: str = INSTRUCTIONS
-    ) -> Agent[None, T]:
+    ) -> Agent[UUID, T]:
         return declaration_agent(self.model, self._ledger, output_type, instructions)
 
-    async def translate(self, agent: Agent[None, T], prompt: str) -> T | Unhandled:
-        result = await translate(agent, prompt)
+    async def translate(
+        self, agent: Agent[UUID, T], prompt: str, source: UUID
+    ) -> T | Unhandled:
+        result = await translate(agent, prompt, source)
         self.log.info("translation output: %s", result.model_dump_json())
         return result
 
@@ -299,8 +301,36 @@ class Court:
             for e in self._ledger.read(queries.due_decrees(self.calendar().data))
         ]
 
+    def secret_decrees(self) -> list[EntityView]:
+        return [
+            EntityView.model_validate(e)
+            for e in self._ledger.entities(
+                kind="decree",
+                query=ENTITY_ROWS.where(E.data["secret"].as_boolean().is_(True)),
+            )
+        ]
+
+    def known_people(self, decree: EntityView) -> set[str]:
+        return known_people(self._ledger, decree.model_dump())
+
+    def consequences(self, decree: UUID) -> list[FactView]:
+        return [
+            FactView(**f)
+            for f in self._ledger.facts(
+                query=FACT_ROWS.where(
+                    F.detail["origin_ref"].as_string() == str(decree)
+                ),
+                kind=("changed", "received", "reported", "unhandled"),
+                date=self.calendar().data,
+            )
+        ]
+
     def landing_sources(self) -> list[tuple[EntityView, UUID]]:
-        sources: list[tuple[EntityView, UUID]] = []
+        sources = [
+            (d, UUID(d.data["night_id"]))
+            for d in self.current_decrees()
+            if d.data["secret"]
+        ]
         for row in self._ledger.read(
             queries.decrees_with("deliberation", self.calendar().data)
         ):

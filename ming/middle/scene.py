@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 from ming.ledger import Ledger
 from ming.middle.calendar import CAPITAL
-from ming.middle.view import journey
+from ming.middle.view import Officials, entities, journey, project
 
 
 class PersonView(BaseModel):
@@ -48,33 +48,16 @@ def read_person(ledger: Ledger, name: str) -> PersonView:
         data["journey"] = travel
     for row in ledger.entities(kind="dossier", key=name):
         data.update(row["data"])
-    decrees = {
-        str(e["id"]): {
-            k: v for k, v in e["data"].items() if k in {"text", "origin", "people"}
-        }
-        for e in ledger.entities(
-            entity_id=[
-                UUID(item["detail"]["decree_id"])
-                for item in history
-                if item["kind"] == "decreed"
-            ]
-        )
-    }
+    identity = Officials(people=[name])
+    decrees = {e.id: e.data for e in entities(ledger, identity, {"kind": "decree"})}
     events = [
         {
-            "kind": e["kind"],
-            **(
-                {"decree": decrees[e["detail"]["decree_id"]]}
-                if e["kind"] == "decreed"
-                else {}
-            ),
-            **{
-                k: v
-                for k, v in e["detail"].items()
-                if k in {"date", "text", "decree_id", "successor"}
-            },
+            "kind": e.kind,
+            **({"decree": decrees[e.entity_id]} if e.kind == "decreed" else {}),
+            **{k: v for k, v in e.detail.items() if k in {"date", "text", "successor"}},
         }
-        for e in history
+        for e in project(ledger, identity, {"entity_id": [person["id"], *decrees]})
+        if not (e.kind == "decreed" and e.entity_id == person["id"])
     ]
     return PersonView(found=True, person=data, events=events)
 
