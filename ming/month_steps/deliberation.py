@@ -56,6 +56,7 @@ class Deliberations:
                 segment_id=segment,
                 available=date,
                 blocking=True,
+                source="deliberation",
             )
             petitions.append(petition)
         self.court.record_product(

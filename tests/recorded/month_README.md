@@ -69,9 +69,11 @@ A-full 也推进至十二月，但原场景仍停在询问，整夜译出零道�
 | `sources_*-name.json`、`sources_*-structure.json` | `1954-cases/<同名 case>/` 的目标来源 messages；两次完整回复原样取出，不修字段 |
 | `sources_vacancy.json` | `1954-vacancy/001-scene`、`002-scene`、`003-NightDeclaration` messages；原话在 `state.json` |
 | `sources_appointment.json` | `1954-appointment/001-scene`、`002-scene`、`003-NightDeclaration` messages；原话在 `state.json` |
+| `sources_revision.txt` | `1954-appointment/014-urgent-messages.json` 的完整 `ModelResponse.text`，包含曹化淳改票及原案引用 |
 
 `1954-resume` 是选发回后的下月改票；`1954-retry` 是双缺位后无急务、原案搁置；`1954-appointment` 是曹化淳补任后按原案 id 改票。
 初次 vacancy 录制器嵌套 `capture_run_messages` 干扰转译错误处理，留下 `IndexError`；去掉外层 capture 后在同一存档重试成功，原失败卷保留，不算生产来源的失败证据。
 `1954-recovery-cases/*/state.json` 与 `recovered.json` 是两类来源坏正名、坏结构停住及仅补失败来源的真跑。
 `1954-consequences` 与 `1954-consequences-sonnet` 曾漏落奏疏的派系、去留字段：转译范围将奏疏处置误排作另份圣旨。明确只排除 `others` 后，`1954-effects/002-Declaration-output.json` 与最终存档记有皇威、派系满意度及人物去留字段，推进到 1628 年五月。
+缺位测试的补任阶段原样重放 `sources_revision.txt`：正确例只用 pytest monkeypatch 冻结最初来源批次、原案的 UUID 生成值，使原案 id 对齐录音的 revision_of；其余 UUID 随机，不改回话、不改落账和校验。错误例不对齐原案 id，同一原样录音两次交回，验证引用失败点、停住且原案保留。两例都从 HTTP 入口走任免、发回、改票与重开。
 测试只断言结构化输入、状态、引用及落账，不约束这些模型回复的措辞。

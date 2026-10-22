@@ -142,7 +142,7 @@ export function App() {
           {game.petitions.map(petition => <article className="petition" key={petition.id}>
             <h3>奏疏{petition.signer && ` · ${petition.signer}`}</h3>
             {petition.target && <p>被劾人：{petition.target}</p>}
-            {petition.revision_of && <small>改票 · 原案 {petition.revision_of}</small>}
+            {petition.revision_of && <small>改票</small>}
             <p>{petition.text}</p>
             {petition.options.map((option, index) => <button disabled={choosing.has(petition.id)} key={index} onClick={() => void action({ action: 'choose', petition: petition.id, option: index })}>{option}</button>)}
           </article>)}

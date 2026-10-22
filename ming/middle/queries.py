@@ -67,7 +67,7 @@ def pending_petitions(date: Item) -> Select[Any]:
         .order_by(
             F.detail["available"]["year"].as_integer(),
             F.detail["available"]["month"].as_integer(),
-            func.coalesce(F.detail["ordinal"].as_integer(), 0),
+            F.detail["ordinal"].as_integer(),
             F.position,
         )
     )

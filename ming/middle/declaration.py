@@ -32,7 +32,7 @@ class PendingPetition(Petition):
     segment_id: UUID
     available: dict[str, Any]
     blocking: bool
-    source: str = "simulation"
+    source: str
     signer: str | None = None
     target: str | None = None
     revision_of: UUID | None = None

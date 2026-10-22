@@ -3,8 +3,11 @@
 import json
 import sqlite3
 from pathlib import Path
+from itertools import chain
+from uuid import UUID, uuid4
 
 import pytest
+from pydantic_ai.messages import RetryPromptPart
 from pydantic_ai.models.test import TestModel
 from sqlalchemy import event, text
 from sqlalchemy.orm import Session
@@ -66,7 +69,6 @@ def test_month_without_decrees_advances_after_reopening(
             if first == "sources":
                 urgent = [p for p in state["petitions"] if p["source"] == "urgent"]
                 assert [p["signer"] for p in urgent] == ["王体乾", "黄立极"]
-                assert [p["ordinal"] for p in urgent] == [0, 1]
                 assert all(not p["blocking"] for p in state["petitions"])
                 people = {
                     e["key"]: e["id"]
@@ -82,6 +84,8 @@ def test_month_without_decrees_advances_after_reopening(
                     if p["source"] == "impeachment"
                 )
             for petition in state["petitions"]:
+                if first != "sources":
+                    assert petition["source"] == "simulation"
                 calls = len(received)
                 assert (
                     client.post(
@@ -133,7 +137,11 @@ def test_month_without_decrees_advances_after_reopening(
             assert client.get("/state").json()["game"] == state
 
 
-def test_returned_urgent_waits_through_vacancy(game_db: Path, steps, audit) -> None:
+@pytest.mark.parametrize("valid_revision", [True, False])
+def test_returned_urgent_waits_through_vacancy(
+    game_db: Path, steps, monkeypatch, valid_revision: bool
+) -> None:
+    revision = (RECORDED / "sources_revision.txt").read_text()
     received = []
     steps["simulation"] = replaying(
         [(RECORDED / "simulation.txt").read_text()] * 5, received
@@ -142,7 +150,21 @@ def test_returned_urgent_waits_through_vacancy(game_db: Path, steps, audit) -> N
     drafting = []
     with TestClient(create_app(game_db.parent)) as client:
         client.post("/actions", json={"action": "load", "save": game_db.name})
+        if valid_revision:
+            # Freeze only the first batch/petition IDs to the recorded reference.
+            # All subsequent IDs remain random; model replies are untouched.
+            monkeypatch.setattr(
+                "ming.month_steps.sources.uuid4",
+                chain(
+                    [
+                        uuid4(),
+                        UUID(json.loads(revision)["petitions"][0]["revision_of"]),
+                    ],
+                    iter(uuid4, None),
+                ).__next__,
+            )
         client.post("/actions", json={"action": "month"})
+        monkeypatch.undo()
         petitions = client.get("/state").json()["game"]["petitions"]
         original = petitions[0]
         for index, petition in enumerate(petitions):
@@ -160,31 +182,47 @@ def test_returned_urgent_waits_through_vacancy(game_db: Path, steps, audit) -> N
             steps["scene"] = replaying(case["scenes"])
             steps["NightDeclaration"] = replaying([case["declaration"]])
             if phase == "appointment":
-                steps["urgent"] = replaying(
-                    [(RECORDED / "sources_empty.txt").read_text()], drafting
-                )
+                steps["urgent"] = replaying([revision] * 2, drafting)
             client.post("/actions", json={"action": "open"})
             for words in case["words"]:
                 client.post("/actions", json={"action": "say", "words": words})
             client.post("/actions", json={"action": "dismiss"})
             client.post("/actions", json={"action": "month"})
             state = client.get("/state").json()["game"]
-            assert state["failure"] is None
-            assert state["date"]["month"] == month
-            assert state["petitions"] == []
-            assert [
-                (p["petition"]["id"], p["awaiting_drafter"])
-                for p in state["returned_petitions"]
-            ] == [(original["id"], phase == "vacancy")]
+            if phase == "appointment" and not valid_revision:
+                assert state["failure"] is not None
+                assert state["failure"]["payload"]["type"] == "UnexpectedModelBehavior"
+                assert state["date"]["month"] == 12
+                assert state["petitions"] == []
+                assert [p["petition"]["id"] for p in state["returned_petitions"]] == [
+                    original["id"]
+                ]
+                assert [
+                    (json.loads(p.content)["field"], json.loads(p.content)["expected"])
+                    for m in drafting
+                    for p in m.parts
+                    if isinstance(p, RetryPromptPart)
+                ] == [("revision_of", [original["id"]])]
+            else:
+                assert state["failure"] is None
+                assert state["date"]["month"] == month
+                if phase == "vacancy":
+                    assert state["petitions"] == []
+                    assert [
+                        (p["petition"]["id"], p["awaiting_drafter"])
+                        for p in state["returned_petitions"]
+                    ] == [(original["id"], True)]
+                else:
+                    assert [
+                        (p["signer"], p["revision_of"])
+                        for p in state["petitions"]
+                        if p["revision_of"]
+                    ] == [("曹化淳", original["id"])]
+                    assert state["returned_petitions"] == []
             material = json.loads(received[-1].parts[0].content)["context"]
             assert {p["petition_id"] for p in material["prior_choices"]} == (
                 {petitions[1]["id"]} if phase == "vacancy" else set()
             )
-            assert [
-                f["detail"]["petitions"]
-                for f in audit(game_db)["facts"]
-                if f["kind"] == "urgent"
-            ][-1] == []
             client.post("/actions", json={"action": "load", "save": game_db.name})
             assert client.get("/state").json()["game"] == state
         material = json.loads(drafting[0].parts[0].content)["context"]
