@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, Field
 
 from ming.ledger import Entity, Ledger
+from ming.middle.queries import LATEST_NIGHT, NIGHT_ROWS
 
 
 class TurnView(BaseModel):
@@ -24,30 +25,24 @@ class NightView(BaseModel):
 
 
 def read_night(ledger: Ledger, night_id: UUID) -> NightView:
-    night = ledger.get(night_id)
-    date = next(r["data"] for r in ledger.entities() if r["kind"] == "calendar")
+    night = ledger.entities(entity_id=night_id, query=NIGHT_ROWS)[0]
+    date = ledger.entities(kind="calendar")[0]["data"]
     turns: list[TurnView] = []
-    result = None
-    for item in night.events:
+    for item in ledger.facts(entity_id=night_id, kind="turn"):
         detail = item["detail"]
-        if item["kind"] == "turn":
-            turns.append(TurnView(**detail, emperor_words=item["emperor_words"]))
-        elif item["kind"] == "translated":
-            result = "translated"
-        elif item["kind"] == "unhandled":
-            result = "unhandled"
+        turns.append(TurnView(**detail, emperor_words=item["emperor_words"]))
     return NightView(
-        id=night.id,
-        **night.data,
+        id=night_id,
+        **night["data"],
         date={"year": date["year"], "month": date["month"]},
         turns=turns,
-        result=result,
+        result=night["result"],
     )
 
 
 def open_night(ledger: Ledger) -> UUID:
-    for row in reversed(ledger.entities()):
-        if row["kind"] == "night" and not row["data"]["closed"]:
+    for row in ledger.read(LATEST_NIGHT):
+        if not row["data"]["closed"]:
             return row["id"]
     night = Entity("night", str(uuid4()), "", {"closed": False, "hall": ["王承恩"]})
     ledger.commit([night])

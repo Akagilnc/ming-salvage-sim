@@ -85,7 +85,9 @@ class Web:
                 **event,
                 "data": {
                     "text": event["data"],
-                    "hall": self.game.presentation()["night"]["hall"],
+                    "hall": self.game.court.entity(self.game.audience.night_id).data[
+                        "hall"
+                    ],
                 },
             }
         elif event["event"] == "done":

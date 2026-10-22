@@ -4,9 +4,58 @@ from collections.abc import Callable
 from typing import Any
 from uuid import UUID
 
+from sqlalchemy import and_, or_
+
 from ming.ledger import Entity, Item, Ledger
+from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS, FACT_COLUMNS as F, FACT_ROWS
 from ming.middle.declaration import Declaration, NightDeclaration, Unhandled
 from ming.middle.rules import field_values, money_amounts
+
+
+def landing_entities(
+    ledger: Ledger, result: Declaration | Unhandled, owner: Entity
+) -> dict[tuple[str, str], Item]:
+    pairs = {("calendar", "world"), (owner.kind, owner.key)}
+    if not isinstance(result, Unhandled):
+        pairs.update(
+            (f.entity_type, f.entity) for f in [*result.facts, *result.reports]
+        )
+        pairs.update(("affair", f.affair) for f in result.facts if f.affair is not None)
+    if isinstance(result, NightDeclaration):
+        pairs.update(("person", p) for d in result.decrees for p in d.people)
+    found = {
+        (e["kind"], e["key"]): e
+        for kind, key in sorted(pairs)
+        for e in ledger.entities(kind=kind, key=key)
+    }
+    if isinstance(result, Unhandled):
+        return found
+    # Only a location change can start a journey (from the current or a first
+    # location), and only an office/region change can displace its incumbents.
+    origins: set[str] = set()
+    offices: set[str] = set()
+    for fact in result.facts:
+        if fact.entity_type != "person":
+            continue
+        held = found.get(("person", fact.entity), {"data": {}})["data"]
+        changes = {c.field: c.value for c in fact.changes}
+        if "location" in changes:
+            origins.add(held.get("location") or str(changes["location"]))
+        if {"office", "office_region"}.intersection(changes):
+            offices.add(str(changes.get("office", held.get("office", ""))))
+    offices.discard("")
+    if origins or offices:
+        for e in ledger.read(
+            ENTITY_ROWS.where(
+                or_(
+                    and_(E.kind == "distance", E.key.in_(origins)),
+                    and_(E.kind == "office", E.key.in_(offices)),
+                    and_(E.kind == "person", E.data["office"].as_string().in_(offices)),
+                )
+            )
+        ):
+            found.setdefault((e["kind"], e["key"]), e)
+    return found
 
 
 def dispatch(
@@ -16,14 +65,16 @@ def dispatch(
     monthly: bool = False,
     baselines: dict[tuple[str, str, str], Any] | None = None,
 ) -> None:
-    existing = {(e["kind"], e["key"]): e for e in ledger.entities()}
+    owner = ledger.get(night_id)
+    existing = landing_entities(ledger, result, owner)
     changed: dict[tuple[str, str], Entity] = {}
     date = existing[("calendar", "world")]["data"]
-    owner = ledger.get(night_id)
     origin = (
         ledger.get(UUID(owner.data["night_id"])) if owner.kind == "decree" else owner
     )
-    words = "\n".join(e["emperor_words"] for e in origin.events if e["kind"] == "turn")
+    words = "\n".join(
+        e["emperor_words"] for e in ledger.facts(entity_id=origin.id, kind="turn")
+    )
 
     def known(kind: str, key: str) -> Entity:
         pair = kind, key
@@ -51,6 +102,7 @@ def dispatch(
         offsets = {
             key: existing[key[:2]]["data"][key[2]] - value
             for key, value in (baselines or {}).items()
+            if key[:2] in existing
         }
         for fact in result.facts:
             pair = fact.entity_type, fact.entity
@@ -140,29 +192,27 @@ def interim_mark(ledger: Ledger, decree: Entity, date: Item) -> str | None:
     verdict = next(
         (
             e["detail"]
-            for e in decree.events
-            if e["kind"] == "deliberation" and e["detail"]["date"] == date
+            for e in ledger.facts(entity_id=decree.id, kind="deliberation", date=date)
         ),
         None,
     )
     forced = next(
         (
             e["detail"]
-            for e in decree.events
-            if e["kind"] == "choice"
-            and e["detail"]["date"] == date
-            and e["detail"]["text"] == "强颁"
+            for e in ledger.facts(entity_id=decree.id, kind="choice", date=date)
+            if e["detail"]["text"] == "强颁"
         ),
         None,
     )
     if forced and verdict:
-        route = ledger.get(UUID(verdict["route_id"]))
-        return next(
-            e["detail"]["output"]["text"]
-            for e in route.events
-            if e["kind"] == "simulation"
-            and e["detail"].get("petition_id") == forced["petition_id"]
-        )
+        return ledger.facts(
+            entity_id=UUID(verdict["route_id"]),
+            kind="simulation",
+            date=date,
+            query=FACT_ROWS.where(
+                F.detail["petition_id"].as_string() == forced["petition_id"]
+            ),
+        )[0]["detail"]["output"]["text"]
     return None
 
 

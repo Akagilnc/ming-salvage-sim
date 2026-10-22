@@ -7,6 +7,13 @@ from typing import Any, TypeVar
 from uuid import UUID, uuid4
 
 from pydantic_ai import Agent
+from ming.ledger import (
+    ENTITY_COLUMNS as E,
+    FACT_COLUMNS as F,
+    ENTITY_ROWS,
+    FACT_ROWS,
+)
+from ming.middle import queries
 
 from ming.ledger import Entity, Item, Ledger
 from ming.middle.dispatch import dispatch
@@ -66,30 +73,40 @@ class Court:
     def set_hall(self, night_id: UUID, add: list[str], remove: list[str]) -> HallResult:
         return set_hall(self._ledger, night_id, add, remove)
 
-    def nights(self) -> list[NightView]:
-        return [self.night(e.id) for e in self.entities("audit") if e.kind == "night"]
+    def nights(self, *, latest: bool = False) -> list[NightView]:
+        query = queries.LATEST_NIGHT if latest else queries.NIGHT_ROWS
+        return [self.night(e["id"]) for e in self._ledger.read(query)]
 
     def pending_nights(self) -> list[UUID]:
-        return [n.id for n in self.nights() if n.closed and n.result is None]
+        return [
+            e["id"]
+            for e in self._ledger.read(
+                queries.NIGHT_ROWS.where(
+                    E.data["closed"].as_boolean().is_(True),
+                    queries.NIGHT_RESULT.is_(None),
+                )
+            )
+        ]
 
     def scene_material(self) -> dict[str, object]:
-        rows = self.entities("audit")
-        gazette = next(e.data["text"] for e in rows if e.kind == "gazette")
-        for fact in self.facts("audit"):
-            if fact.entity_id == self.calendar().id and fact.kind == "gazette":
-                gazette = fact.detail["text"]
+        rows = self._ledger.entities(
+            kind="person",
+            query=ENTITY_ROWS.where(E.data["waiting_audience"].as_boolean().is_(True)),
+        )
+        gazette = self.entities("audit", kind="gazette")[0].data["text"]
+        for fact in self._ledger.facts(
+            entity_id=self.calendar().id,
+            kind="gazette",
+            query=FACT_ROWS.order_by(None).order_by(F.position.desc()).limit(1),
+        ):
+            gazette = fact["detail"]["text"]
         return {
             "date": self.calendar().data,
-            "waiting_audience": [
-                e.key
-                for e in rows
-                if e.kind == "person" and e.data.get("waiting_audience")
-            ],
+            "waiting_audience": [row["key"] for row in rows],
             "gazette": gazette,
             "unhandled": [
                 {"kind": "unhandled", "entity_id": str(f.entity_id)}
-                for f in self.facts("emperor")
-                if f.kind == "unhandled"
+                for f in self.facts("emperor", kind="unhandled")
             ],
         }
 
@@ -97,7 +114,7 @@ class Court:
         advance_month(self._ledger)
 
     def calendar(self) -> EntityView:
-        return next(e for e in self.entities("audit") if e.kind == "calendar")
+        return EntityView.model_validate(self._ledger.entities(kind="calendar")[0])
 
     def record(
         self,
@@ -111,24 +128,26 @@ class Court:
         if isinstance(entity, UUID):
             target = self._ledger.get(entity)
         else:
-            row = next(
-                (e for e in self.entities("audit") if (e.kind, e.key) == entity), None
-            )
-            target = self._ledger.get(row.id) if row else Entity(*entity, "", {})
+            row = next(iter(self._ledger.entities(kind=entity[0], key=entity[1])), None)
+            target = self._ledger.get(row["id"]) if row else Entity(*entity, "", {})
         for kind, detail in events:
             target.record(kind, words, detail, changes)
         self._ledger.commit([target])
         return target.id
 
     def products(
-        self, entity_id: UUID, *, current: bool = True, kind: str | None = None
+        self,
+        entity_id: UUID,
+        *,
+        current: bool = True,
+        kind: str | tuple[str, ...] | None = None,
     ) -> list[FactView]:
         date = self.calendar().data
         return [
-            FactView(entity_id=entity_id, **event)
-            for event in self._ledger.get(entity_id).events
-            if (not current or event["detail"].get("date") == date)
-            and (kind is None or event["kind"] == kind)
+            FactView(**event)
+            for event in self._ledger.facts(
+                entity_id=entity_id, kind=kind, date=date if current else None
+            )
         ]
 
     def record_product(
@@ -160,30 +179,141 @@ class Court:
         self, identity: Identity, kind: str | None = None, key: str | None = None
     ) -> Item:
         """按类型与正名取本身份材料；空参取全部可读材料，含各衙门呈报的文字。"""
-        rows = [
-            e
-            for e in self.entities(identity)
-            if (kind is None or e.kind == kind) and (key is None or e.key == key)
-        ]
-        ids = {
-            e.id
-            for e in self.entities("audit")
-            if (kind is None or e.kind == kind) and (key is None or e.key == key)
-        }
+        rows = self.entities(identity, kind=kind, key=key)
+        ids = (
+            [e.id for e in self.entities("audit", kind=kind, key=key)]
+            if kind is not None or key is not None
+            else []
+        )
         return {
             "entities": [e.model_dump(mode="json") for e in rows],
             "facts": [
                 f.model_dump(mode="json")
-                for f in self.facts(identity)
-                if (kind is None and key is None) or f.entity_id in ids
+                for f in (
+                    self.facts(identity)
+                    if kind is None and key is None
+                    else self.facts(identity, entity_id=ids)
+                )
             ],
         }
 
-    def facts(self, identity: Identity, replay: bool = False) -> list[FactView]:
-        return project(self._ledger, identity, replay)
+    def facts(
+        self,
+        identity: Identity,
+        replay: bool = False,
+        *,
+        entity_id: UUID | list[UUID] | None = None,
+        kind: str | tuple[str, ...] | None = None,
+        date: Item | None = None,
+    ) -> list[FactView]:
+        selection = {
+            k: v
+            for k, v in {"entity_id": entity_id, "kind": kind, "date": date}.items()
+            if v is not None
+        }
+        with self._ledger.reading(replay) as ledger:
+            return project(ledger, identity, selection)
 
-    def entities(self, identity: Identity, replay: bool = False) -> list[EntityView]:
-        return entities(self._ledger, identity, replay)
+    def entities(
+        self,
+        identity: Identity,
+        replay: bool = False,
+        *,
+        kind: str | None = None,
+        key: str | None = None,
+        sourced: bool = False,
+    ) -> list[EntityView]:
+        selection: Item = {
+            k: v for k, v in {"kind": kind, "key": key}.items() if v is not None
+        }
+        if sourced:
+            selection["sourced"] = True
+        with self._ledger.reading(replay) as ledger:
+            return entities(ledger, identity, selection)
+
+    def entity(self, entity_id: UUID) -> EntityView:
+        return EntityView.model_validate(self._ledger.entities(entity_id=entity_id)[0])
+
+    def pending_petitions(self) -> list[FactView]:
+        return [
+            FactView(**f)
+            for f in self._ledger.read(queries.pending_petitions(self.calendar().data))
+        ]
+
+    def interactions(self) -> dict[str, Item]:
+        return {
+            f["detail"]["key"]: f["detail"]
+            for f in self._ledger.read(queries.interactions())
+        }
+
+    def petition(self, petition_id: str) -> FactView:
+        return FactView(
+            **self._ledger.facts(
+                kind="petition",
+                query=FACT_ROWS.where(F.detail["id"].as_string() == petition_id),
+            )[0]
+        )
+
+    def petition_products(
+        self,
+        petition_ids: list[str],
+        kind: str | tuple[str, ...],
+        *,
+        current: bool = False,
+    ) -> list[FactView]:
+        return [
+            FactView(**f)
+            for f in self._ledger.facts(
+                kind=kind,
+                date=self.calendar().data if current else None,
+                query=FACT_ROWS.where(
+                    F.detail["petition_id"].as_string().in_(petition_ids)
+                ),
+            )
+        ]
+
+    def route_petitions(self, route: UUID) -> list[FactView]:
+        return [
+            FactView(**f)
+            for f in self._ledger.facts(
+                kind="petition",
+                date=self.calendar().data,
+                query=FACT_ROWS.where(
+                    F.detail["route_id"].as_string() == str(route),
+                    F.detail["blocking"].as_boolean().is_(True),
+                ),
+            )
+        ]
+
+    def current_decrees(self) -> list[EntityView]:
+        return [
+            EntityView.model_validate(e)
+            for e in self._ledger.read(
+                queries.decrees_with("decreed", self.calendar().data)
+            )
+        ]
+
+    def due_decrees(self) -> list[EntityView]:
+        return [
+            EntityView.model_validate(e)
+            for e in self._ledger.read(queries.due_decrees(self.calendar().data))
+        ]
+
+    def landing_sources(self) -> list[tuple[EntityView, UUID]]:
+        sources: list[tuple[EntityView, UUID]] = []
+        for row in self._ledger.read(
+            queries.decrees_with("deliberation", self.calendar().data)
+        ):
+            decree = EntityView.model_validate(row)
+            products = self.products(decree.id, kind=("deliberation", "choice"))
+            verdict = next(f.detail for f in products if f.kind == "deliberation")
+            choice = next(
+                (f.detail for f in reversed(products) if f.kind == "choice"), None
+            )
+            if verdict["verdict"] == "准" or (choice and choice["text"] == "强颁"):
+                sources.append((decree, UUID(verdict["route_id"])))
+        calendar = self.calendar()
+        return sources + [(calendar, calendar.id)]
 
     def observe(self, on_change: Callable[[], None]) -> None:
         self._ledger.on_commit = on_change

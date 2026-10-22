@@ -32,10 +32,7 @@ class Month:
         self.originals: dict[UUID, asyncio.Task[bool]] = {}
 
     def opened(self) -> bool:
-        return any(
-            f.kind == "month_open"
-            for f in self.court.products(self.court.calendar().id)
-        )
+        return bool(self.court.products(self.court.calendar().id, kind="month_open"))
 
     def open(self) -> None:
         if not self.opened():
@@ -59,14 +56,6 @@ class Month:
     def choose(self, petition_id: UUID, option: int) -> None:
         self.inbox.choose(petition_id, option)
 
-    def current_decrees(self) -> list[EntityView]:
-        return [
-            e
-            for e in self.court.entities("audit")
-            if e.kind == "decree"
-            and any(f.kind == "decreed" for f in self.court.products(e.id))
-        ]
-
     async def night(self, night: EntityView, decrees: list[EntityView]) -> bool:
         results = await asyncio.gather(
             *(self.deliberations.run(d, night.id) for d in decrees),
@@ -79,8 +68,8 @@ class Month:
             d.model_dump(mode="json")
             for d in decrees
             if any(
-                f.kind == "deliberation" and f.detail["verdict"] == "准"
-                for f in self.court.products(d.id)
+                f.detail["verdict"] == "准"
+                for f in self.court.products(d.id, kind="deliberation")
             )
         ]
         return await self.simulations.run(
@@ -91,8 +80,7 @@ class Month:
                 "deliberations": [
                     f.detail
                     for d in decrees
-                    for f in self.court.products(d.id)
-                    if f.kind == "deliberation"
+                    for f in self.court.products(d.id, kind="deliberation")
                 ],
             },
         )
@@ -115,11 +103,7 @@ class Month:
             if petition_id is None:
                 pending = await self._resume(speculative=speculative)
             else:
-                detail = next(
-                    f.detail
-                    for f in self.court.facts("audit")
-                    if f.kind == "petition" and f.detail["id"] == petition_id
-                )
+                detail = self.court.petition(petition_id).detail
                 route = UUID(detail["route_id"])
                 petition = PendingPetition.model_validate(
                     {k: v for k, v in detail.items() if k != "date"}
@@ -127,8 +111,7 @@ class Month:
                 choice = next(
                     (
                         f.detail
-                        for f in self.court.facts("audit")
-                        if f.kind == "choice" and f.detail["petition_id"] == petition_id
+                        for f in self.court.petition_products([petition_id], "choice")
                     ),
                     None,
                 )
@@ -171,7 +154,15 @@ class Month:
         self, petition_id: str | None
     ) -> tuple[list[tuple[UUID, str, int]], list[tuple[UUID, str]]]:
         """Unfinished selected work; one question waits only for its own chain."""
-        facts = self.court.facts("audit")
+        facts = (
+            self.court.petition_products(
+                [petition_id], ("choice", "simulation"), current=True
+            )
+            if petition_id is not None
+            else self.court.facts(
+                "audit", kind=("choice", "simulation"), date=self.court.calendar().data
+            )
+        )
         choices = {
             (f.detail["petition_id"], f.detail["option"])
             for f in facts
@@ -200,10 +191,8 @@ class Month:
 
     def nights(self, decrees: list[EntityView]) -> list[EntityView]:
         return [
-            e
-            for e in self.court.entities("audit")
-            if e.kind == "night"
-            and any(d.data["night_id"] == str(e.id) for d in decrees)
+            self.court.entity(UUID(night_id))
+            for night_id in dict.fromkeys(d.data["night_id"] for d in decrees)
         ]
 
     def original(self, route: UUID) -> asyncio.Task[bool]:
@@ -214,8 +203,8 @@ class Month:
         """
         task = self.originals.get(route)
         if task is None or task.done():
-            entity = next(e for e in self.court.entities("audit") if e.id == route)
-            decrees = self.current_decrees()
+            entity = self.court.entity(route)
+            decrees = self.court.current_decrees()
             produce = (
                 self.night(
                     entity, [d for d in decrees if d.data["night_id"] == str(route)]
@@ -229,7 +218,7 @@ class Month:
     async def world(self, nights: list[EntityView], decrees: list[EntityView]) -> bool:
         """Verdicts on held decrees, then this month's world simulation."""
         calendar = self.court.calendar()
-        old = [d for d in self.deliberations.due() if d not in decrees]
+        old = [d for d in self.court.due_decrees() if d not in decrees]
         results = await asyncio.gather(
             *(self.deliberations.run(d, calendar.id) for d in old),
             return_exceptions=True,
@@ -246,8 +235,7 @@ class Month:
                         "night_id": str(n.id),
                         "segments": [
                             f.detail["output"]
-                            for f in self.court.products(n.id)
-                            if f.kind == "simulation"
+                            for f in self.court.products(n.id, kind="simulation")
                         ],
                     }
                     for n in nights
@@ -255,13 +243,14 @@ class Month:
                 "reconsidered": [
                     {"decree": d.model_dump(mode="json"), "deliberation": f.detail}
                     for d in old
-                    for f in self.court.products(d.id)
-                    if f.kind == "deliberation" and f.detail["verdict"] == "准"
+                    for f in self.court.products(d.id, kind="deliberation")
+                    if f.detail["verdict"] == "准"
                 ],
                 "prior_choices": [
                     f.detail
-                    for f in self.court.facts("audit")
-                    if f.kind == "choice" and f.detail["date"] == self.court.calendar().data
+                    for f in self.court.facts(
+                        "audit", kind="choice", date=self.court.calendar().data
+                    )
                 ],
             },
         )
@@ -271,7 +260,7 @@ class Month:
         async with self.lock:
             if date != self.court.calendar().data:
                 return self.petitions()
-            nights = self.nights(self.current_decrees())
+            nights = self.nights(self.court.current_decrees())
             results = await asyncio.gather(
                 *(self.original(night.id) for night in nights),
                 return_exceptions=True,
@@ -285,9 +274,8 @@ class Month:
                 p.route_id in {n.id for n in nights}
                 or (
                     not p.blocking
-                    and not any(
-                        f.kind == "simulation"
-                        for f in self.court.products(self.court.calendar().id)
+                    and not self.court.products(
+                        self.court.calendar().id, kind="simulation"
                     )
                 )
                 for p in self.petitions()

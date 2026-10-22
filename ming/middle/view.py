@@ -4,8 +4,12 @@ from typing import Any, Literal, cast
 from uuid import UUID
 
 from pydantic import BaseModel
+from sqlalchemy import case, func, literal, or_, select
+from sqlalchemy.sql.elements import ColumnElement
 
 from ming.ledger import Item, Ledger
+from ming.ledger import ENTITY_COLUMNS as E, FACT_COLUMNS as F, ENTITY_ROWS, FACT_ROWS
+from ming.middle.queries import available_on
 from ming.middle.night import read_night
 
 PublicIdentity = Literal["emperor", "audit", "world", "public"]
@@ -91,9 +95,12 @@ class FactView(BaseModel):
     detail: dict[str, Any]
 
 
-def owned_accounts(rows: list[Item], identity: Identity) -> set[UUID]:
+def owned_accounts(ledger: Ledger, identity: Identity) -> set[UUID]:
     if not isinstance(identity, Officials):
         return set()
+    rows = ledger.entities(kind=("office_type", "account")) + ledger.entities(
+        kind="person", query=ENTITY_ROWS.where(E.key.in_(identity.people))
+    )
     # Resolve the current formal title through the imported office catalogue,
     # never a person's stale office_type or an umbrella-office exception.
     departments = {
@@ -108,7 +115,6 @@ def owned_accounts(rows: list[Item], identity: Identity) -> set[UUID]:
         )
         for r in rows
         if r["kind"] == "person"
-        and r["key"] in identity.people
         and r["data"].get("office")
         and r["data"].get("status", "active") == "active"
     } - {None, "内阁", "司礼监"}
@@ -119,51 +125,65 @@ def owned_accounts(rows: list[Item], identity: Identity) -> set[UUID]:
     }
 
 
-def month_open(rows: list[Item]) -> Item | None:
+def month_open(ledger: Ledger) -> Item | None:
     """The month's persisted emperor projection, not execution state."""
-    calendar = next((r for r in rows if r["kind"] == "calendar"), None)
+    calendar = next(iter(ledger.entities(kind="calendar")), None)
     if calendar is None:
         return None
     return next(
         (
             e["detail"]
-            for e in reversed(calendar["events"])
-            if e["kind"] == "month_open" and e["detail"]["date"] == calendar["data"]
+            for e in reversed(
+                ledger.facts(
+                    entity_id=calendar["id"], kind="month_open", date=calendar["data"]
+                )
+            )
         ),
         None,
     )
 
 
 def entities(
-    ledger: Ledger, identity: Identity, replay: bool = False
+    ledger: Ledger, identity: Identity, selection: Item | None = None
 ) -> list[EntityView]:
-    rows = ledger.entities(replay)
-    if identity == "emperor" and (opening := month_open(rows)):
-        return [EntityView.model_validate(e) for e in opening["entities"]]
-    accounts = owned_accounts(rows, identity)
+    selection = dict(selection or {})
+    sourced = selection.pop("sourced", False)
+    if identity == "emperor" and (opening := month_open(ledger)):
+        return [
+            EntityView.model_validate(e)
+            for e in opening["entities"]
+            if all(e[k] == v for k, v in (selection or {}).items())
+        ]
+    exposure = entity_exposure(identity, owned_accounts(ledger, identity))
+    query = ENTITY_ROWS.add_columns(exposure.label("exposure")).where(
+        exposure.is_not(None)
+    )
+    if sourced:
+        query = query.where(E.source != "")
+    rows = ledger.entities(**selection, query=query)
     result: list[EntityView] = []
     for row in rows:
         if identity not in ("audit", "world"):
-            if row["id"] in accounts:
-                pass
-            elif row["kind"] == "person":
+            if row["exposure"] == "person":
                 row["data"] = {
                     k: v
                     for k, v in row["data"].items()
                     if k in {"name", "office", "location", "status"}
                 }
-            elif row["kind"] == "night" and identity == "emperor":
+            elif row["exposure"] == "night":
                 row["data"] = read_night(ledger, row["id"]).model_dump(mode="json")
-            elif row["kind"] == "decree" and identity == "emperor":
+            elif row["exposure"] == "decree":
                 row["data"] = {
                     k: v
                     for k, v in row["data"].items()
                     if k in {"text", "origin", "people", "night_id"}
                 }
-            elif row["kind"] not in {"gazette", "calendar"}:
-                continue
         if identity == "world" and row["kind"] == "person":
-            travel = journey(row["data"], row["events"])
+            travel = (
+                journey(row["data"], ledger.facts(entity_id=row["id"]))
+                if row["data"].get("transit_to")
+                else {}
+            )
             row["data"] = {
                 k: v
                 for k, v in row["data"].items()
@@ -175,81 +195,121 @@ def entities(
     return result
 
 
-def project(ledger: Ledger, identity: Identity, replay: bool = False) -> list[FactView]:
-    rows = ledger.entities(replay)
-    opening = month_open(rows) if identity == "emperor" else None
-    date = next((r["data"] for r in rows if r["kind"] == "calendar"), dict[str, Any]())
+def entity_exposure(identity: Identity, accounts: set[UUID]) -> ColumnElement[str]:
+    if identity in ("audit", "world"):
+        return literal("full")
+    rules = [
+        (E.id.in_(accounts), "full"),
+        (E.kind == "person", "person"),
+        (E.kind.in_(("gazette", "calendar")), "full"),
+    ]
+    if identity == "emperor":
+        rules.extend([(E.kind == "night", "night"), (E.kind == "decree", "decree")])
+    return case(*rules)
+
+
+def fact_exposure(identity: Identity, accounts: set[UUID]) -> ColumnElement[str]:
+    if identity == "audit":
+        return literal("full")
+    if identity == "world":
+        return case((F.kind != "forecast", "full"))
+    audiences = (
+        ("public", "official")
+        if identity == "public" or isinstance(identity, Officials)
+        else ("public",)
+    )
+    rules = [
+        (
+            or_(F.kind == "gazette", F.detail["audience"].as_string().in_(audiences)),
+            "text",
+        )
+    ]
+    if identity == "emperor":
+        rules.append((F.kind == "interaction", "full"))
+    rules.append((F.kind.in_(("petition", "choice")), "full"))
+    if identity == "emperor":
+        rules.append((F.kind == "unhandled", "empty"))
+    if isinstance(identity, Officials):
+        people = func.json_each(E.data["people"]).table_valued("value")
+        decree = (E.kind == "decree") & select(people.c.value).where(
+            people.c.value.in_(identity.people)
+        ).exists()
+        rules.append(
+            (
+                or_(E.id.in_(accounts), decree)
+                & F.kind.in_(("changed", "received", "decreed")),
+                "optional_text",
+            )
+        )
+    return case(*rules)
+
+
+def project(
+    ledger: Ledger, identity: Identity, selection: Item | None = None
+) -> list[FactView]:
+    selection = selection or {}
+    opening = month_open(ledger) if identity == "emperor" else None
+    date = next((r["data"] for r in ledger.entities(kind="calendar")), dict[str, Any]())
     controls = {"interaction", "petition", "choice", "gazette"}
-    accounts = owned_accounts(rows, identity)
+    exposure = fact_exposure(identity, owned_accounts(ledger, identity))
+    query = FACT_ROWS.add_columns(exposure.label("exposure")).where(
+        exposure.is_not(None)
+    )
+    if identity != "audit":
+        query = query.where(available_on(date))
+    if opening:
+        query = query.where(F.kind.in_(controls))
     result: list[FactView] = (
         [
             FactView.model_validate(f)
             for f in opening["facts"]
             if f["kind"] not in controls
+            and (
+                selection.get("entity_id") is None
+                or f["entity_id"]
+                in (
+                    [
+                        str(entity_id)
+                        for entity_id in cast(list[UUID], selection["entity_id"])
+                    ]
+                    if isinstance(selection["entity_id"], list)
+                    else [str(selection["entity_id"])]
+                )
+            )
+            and (
+                selection.get("kind") is None
+                or f["kind"]
+                in (
+                    (selection["kind"],)
+                    if isinstance(selection["kind"], str)
+                    else selection["kind"]
+                )
+            )
+            and (
+                selection.get("date") is None
+                or f["detail"].get("date") == selection["date"]
+            )
         ]
         if opening
         else []
     )
-    for row in rows:
-        for item in row["events"]:
-            fact = FactView(entity_id=row["id"], **item)
-            available = fact.detail.get("available", date)
-            if (
-                (opening and fact.kind not in controls)
-                or (identity == "world" and fact.kind == "forecast")
-                or (
-                    identity != "audit"
-                    and date
-                    and fact.kind == "petition"
-                    and (available["year"], available["month"])
-                    > (date["year"], date["month"])
-                )
-            ):
-                continue
-            if identity == "world" and fact.kind in {
-                "departed",
-                "travelled",
-                "arrived",
-            }:
-                fact.detail = {
-                    k: v
-                    for k, v in fact.detail.items()
-                    if k not in {"distance", "remaining_distance", "travel_speed"}
-                }
-            if identity == "world" and fact.kind == "simulation":
-                fact.detail = {k: v for k, v in fact.detail.items() if k != "messages"}
-            if identity not in ("audit", "world"):
-                if (
-                    fact.kind == "gazette"
-                    or fact.detail.get("audience") == "public"
-                    or (
-                        (identity == "public" or isinstance(identity, Officials))
-                        and fact.detail.get("audience") == "official"
-                    )
-                ):
-                    fact.detail = {"text": fact.detail["text"]}
-                elif fact.kind == "interaction" and identity == "emperor":
-                    pass
-                elif fact.kind in {"petition", "choice"}:
-                    pass
-                elif fact.kind == "unhandled" and identity == "emperor":
-                    fact.detail = {}
-                elif (
-                    isinstance(identity, Officials)
-                    and (
-                        row["id"] in accounts
-                        or (
-                            row["kind"] == "decree"
-                            and set(identity.people).intersection(
-                                row["data"].get("people", [])
-                            )
-                        )
-                    )
-                    and fact.kind in {"changed", "received", "decreed"}
-                ):
-                    fact.detail = {"text": fact.detail.get("text", "")}
-                else:
-                    continue
-                fact.emperor_words = ""
-            result.append(fact)
+    for item in ledger.facts(**selection, query=query):
+        fact = FactView(**item)
+        if identity == "world" and fact.kind in {"departed", "travelled", "arrived"}:
+            fact.detail = {
+                k: v
+                for k, v in fact.detail.items()
+                if k not in {"distance", "remaining_distance", "travel_speed"}
+            }
+        if identity == "world" and fact.kind == "simulation":
+            fact.detail = {k: v for k, v in fact.detail.items() if k != "messages"}
+        if identity not in ("audit", "world"):
+            if item["exposure"] == "text":
+                fact.detail = {"text": fact.detail["text"]}
+            elif item["exposure"] == "empty":
+                fact.detail = {}
+            elif item["exposure"] == "optional_text":
+                fact.detail = {"text": fact.detail.get("text", "")}
+            fact.emperor_words = ""
+        result.append(fact)
     return result

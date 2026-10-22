@@ -120,6 +120,17 @@ python -m pytest tests/test_web.py -q
 
 CI 命令以 [ci.yml](.github/workflows/ci.yml) 为准。P8、禁正则、禁裸 noqa 和 Python 单文件行数检查覆盖全仓，pyright strict 与分层检查限定游戏包。
 
+### 读表示范：月历与夜
+
+设计真源见 [ADR 0160](docs/adr/0160-read-tables-by-library-projection.md)。照着新增读法时，沿这条链看：
+
+1. `ming/middle/calendar.py:advance_month`、`ming/middle/night.py:dismiss` 修改聚合并 `commit()`。
+2. `ming/ledger/domain.py:Entity` 的 `@event` 方法定义状态变化；`ming/ledger/projection.py:ReadModel` 经库的 runner 写相应读表行及事实，不在使用者里刷新。
+3. `Court.calendar()` 只取月历行，`read_night()` 与待转译查询共用 `ming/middle/queries.py` 的夜结果表达式；`Court.products()` 按实体、类型、日期查询。领域条件用 SQLAlchemy `Select` 组合后交给 `Ledger.read()`，人物与账户照此选条件，不向通用读口添加领域模式。
+4. `tests/test_read_budget.py` 从 HTTP 入口比较三局无关旧夜不同的 SQL 条数和返回行数；原子性测试也从 HTTP 进入，在外层提交前注入失败，随后由审计 CLI 重开核对。
+
+`--replay` 在临时内存读表上运行同一个库策略，不改原存档。
+
 ## 目录与文档
 
 ```text

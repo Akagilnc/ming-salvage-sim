@@ -6,12 +6,20 @@ from pathlib import Path
 
 import pytest
 from pydantic_ai.models.test import TestModel
+from sqlalchemy import event, text
+from sqlalchemy.orm import Session
 from starlette.testclient import TestClient
 
 from ming.web import create_app
 from tests.test_court import replaying
 
 RECORDED = Path(__file__).parent / "recorded"
+# Event log, read rows, and tracking: one landing commit lands all three.
+LANDING = (
+    "SELECT max(id) FROM ledger_events",
+    "SELECT count(*) FROM facts WHERE kind = 'landed'",
+    "SELECT max(notification_id) FROM readmodel_tracking",
+)
 
 
 @pytest.mark.parametrize(
@@ -90,7 +98,8 @@ def test_month_without_decrees_advances_and_replays_after_reopening(
         (300000, 300000, False),
         (3200000, 3200000, False),
         (5000000, 3200000, False),
-        (5000000, 3200000, True),
+        (5000000, 3200000, "write"),
+        (5000000, 3200000, "commit"),
     ],
 )
 def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
@@ -101,15 +110,35 @@ def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
         call_tools=[],
         custom_output_text=(RECORDED / f"month_money_{nominal}.txt").read_text(),
     )
+    observed = []
+
+    def before_commit(session):
+        # Outer SQLAlchemy commit: policy rows and tracking exist, none durable.
+        current = tuple(session.execute(text(q)).scalar_one() for q in LANDING)
+        if current[1] and not observed:
+            observed.append(current)
+            raise RuntimeError("injected pre-commit failure")
+
     with TestClient(create_app(tmp_path)) as client:
         save = client.post("/actions", json={"action": "new"}).json()["save"]
         db = tmp_path / save
-        if interrupt:
+        if interrupt == "write":
             with sqlite3.connect(db) as connection:
                 connection.execute(
                     "CREATE TRIGGER interrupt BEFORE UPDATE ON entities WHEN NEW.key='内库' BEGIN SELECT RAISE(ABORT, 'injected'); END"
                 )
-        client.post("/actions", json={"action": "month"})
+        if interrupt == "commit":
+            event.listen(Session, "before_commit", before_commit)
+        try:
+            client.post("/actions", json={"action": "month"})
+        finally:
+            if interrupt == "commit":
+                event.remove(Session, "before_commit", before_commit)
+        with sqlite3.connect(db) as connection:
+            durable = tuple(connection.execute(q).fetchone()[0] for q in LANDING)
+        assert durable[0] == durable[2] and bool(durable[1]) != bool(interrupt)
+        if interrupt == "commit":
+            assert observed[0][0] == observed[0][2] > durable[0]
         if interrupt:
             ledger = audit(db)
             assert {
@@ -121,7 +150,7 @@ def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
                 f for f in ledger["facts"] if f["kind"] in {"changed", "landed"}
             ]
             with sqlite3.connect(db) as connection:
-                connection.execute("DROP TRIGGER interrupt")
+                connection.execute("DROP TRIGGER IF EXISTS interrupt")
             client.post("/actions", json={"action": "load", "save": save})
             assert client.get("/state").json()["game"]["failure"] is not None
             client.post("/actions", json={"action": "retry"})

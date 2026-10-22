@@ -1,19 +1,20 @@
 """Monthly person movement and calendar advance share one ledger transaction."""
 
 from ming.ledger import Entity, Item, Ledger
+from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS
 
 
 CAPITAL = "北直隶 / 京师"
 
 
 def advance_month(ledger: Ledger) -> None:
-    rows = ledger.entities()
-    calendar = ledger.get(next(r["id"] for r in rows if r["kind"] == "calendar"))
+    rows = ledger.entities(
+        kind="person", query=ENTITY_ROWS.where(E.data["transit_to"].as_string() != "")
+    )
+    calendar = ledger.get(ledger.entities(kind="calendar")[0]["id"])
     date = dict(calendar.data)
     changed: list[Entity] = []
     for row in rows:
-        if row["kind"] != "person" or not row["data"].get("transit_to"):
-            continue
         person = ledger.get(row["id"])
         remaining = person.data["remaining_distance"] - person.data.get(
             "travel_speed", 1

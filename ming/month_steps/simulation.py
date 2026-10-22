@@ -79,9 +79,10 @@ class Simulations:
         existing = next(
             (
                 p.detail
-                for p in self.court.products(petition.route_id, kind="forecast")
-                if p.detail["petition_id"] == str(petition.id)
-                and p.detail["option"] == option
+                for p in self.court.petition_products(
+                    [str(petition.id)], "forecast", current=True
+                )
+                if p.detail["option"] == option
             ),
             None,
         )
@@ -129,12 +130,9 @@ class Simulations:
             await asyncio.shield(task)
         except Exception:
             # Failed speculation alone may be rerun on an actual selection.
-            petition = next(
-                PendingPetition.model_validate(
-                    {k: v for k, v in f.detail.items() if k != "date"}
-                )
-                for f in self.court.facts("audit")
-                if f.kind == "petition" and f.detail["id"] == key[1]
+            detail = self.court.petition(key[1]).detail
+            petition = PendingPetition.model_validate(
+                {k: v for k, v in detail.items() if k != "date"}
             )
             if self.tasks[key] is task:
                 del self.tasks[key]
@@ -164,9 +162,17 @@ class Simulations:
         return self.progress(route.id)
 
     def chain(self, petition_id: str | None) -> set[str]:
-        segments = [
-            f.detail for f in self.court.facts("audit") if f.kind == "simulation"
-        ]
+        facts = (
+            self.court.products(
+                UUID(self.court.petition(petition_id).detail["route_id"]),
+                kind="simulation",
+            )
+            if petition_id is not None
+            else self.court.facts(
+                "audit", kind="simulation", date=self.court.calendar().data
+            )
+        )
+        segments = [f.detail for f in facts]
         chain = {
             s["id"]
             for s in segments
@@ -181,21 +187,18 @@ class Simulations:
         """Publish ready products without awaiting unrelated model work."""
         while True:
             segments = [f.detail for f in self.court.products(route, kind="simulation")]
-            choices = {
-                f.detail["petition_id"]: f.detail
-                for f in self.court.facts("audit")
-                if f.kind == "choice"
-            }
             petitions = [
                 PendingPetition.model_validate(
                     {k: v for k, v in f.detail.items() if k != "date"}
                 )
-                for f in self.court.facts("audit")
-                if f.kind == "petition"
-                and f.detail["route_id"] == str(route)
-                and f.detail["date"] == self.court.calendar().data
-                and f.detail["blocking"]
+                for f in self.court.route_petitions(route)
             ]
+            choices = {
+                f.detail["petition_id"]: f.detail
+                for f in self.court.petition_products(
+                    [str(p.id) for p in petitions], "choice"
+                )
+            }
             progressed = False
             ready = True
             for petition in petitions:
