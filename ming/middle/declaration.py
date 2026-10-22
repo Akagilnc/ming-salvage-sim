@@ -135,14 +135,14 @@ class Decree(StrictModel):
     text: str = Field(description="皇帝已经认可的圣旨定稿全文，原样保留")
     origin: Literal["emperor", "minister"]
     secret: bool = Field(
-        description="按皇帝怎么说与整夜上下文判断是否密令，不按事务类型或有没有密字判断。"
+        description="密令不明发、不经外廷。按皇帝怎么说与整夜上下文判断是否密令，不按事务类型或有没有密字判断。"
     )
     turn: int = Field(
         ge=1,
         description="皇帝认可定稿、成旨的轮次，按输入 turns 从 1 起数。只记已成旨。",
     )
     endorsements: list[Endorsement] = Field(default_factory=list[Endorsement])
-    interim: bool = Field(default=False, description="皇帝明说中旨、不经内阁；御笔手敕本身不等于中旨")
+    interim: bool = Field(default=False, description="皇帝明说中旨、不经内阁票拟；中旨仍是明发，经外廷议处。御笔手敕本身不等于中旨")
     people: list[str] = Field(
         description=(
             "旨意涉及的人：旨意所及对象，以及戏文中实际拟旨、宣读或领旨的经手者；"
