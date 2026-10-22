@@ -81,7 +81,7 @@ class Report(EntityRef):
 class DecreeEvent(StrictModel):
     decree: DecreeRef
     kind: Literal["handled", "completed"] = Field(
-        description="handled：实际发生的一道传递、经办（转交、往返），每道各记一条；completed：推演已认定该差事办结，包括关联事务已成往事。无记录、接不住不算办结。"
+        description="handled：实际发生的一道传递、经办（转交、往返），每道各记一条；completed：推演已认定该差事办结，包括关联事务已成往事。无记录、接不住不算办结。没有新建事务也不算办结。"
     )
     text: str
 
