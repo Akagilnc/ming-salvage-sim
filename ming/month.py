@@ -228,6 +228,8 @@ class Month:
         for result in results:
             if isinstance(result, BaseException):
                 raise result
+        # World simulation precedes this month's sources: returned originals are unrevised.
+        returned = {str(f.detail["id"]) for f in self.court.returned_petitions()}
         return await self.simulations.run(
             calendar,
             {
@@ -249,19 +251,14 @@ class Month:
                     if f.detail["verdict"] == "准"
                 ],
                 "prior_choices": [
-                    {**f.detail, "petition": petition}
+                    {
+                        **f.detail,
+                        "petition": self.court.petition(f.detail["petition_id"]).detail,
+                    }
                     for f in self.court.facts(
                         "audit", kind="choice", date=self.court.calendar().data
                     )
-                    if not (
-                        (
-                            petition := self.court.petition(
-                                f.detail["petition_id"]
-                            ).detail
-                        ).get("source")
-                        == "urgent"
-                        and f.detail["option"] == len(petition["options"]) - 1
-                    )
+                    if f.detail["petition_id"] not in returned
                 ],
             },
         )

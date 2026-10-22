@@ -35,6 +35,14 @@ CATALOGUE = ENTITY_ROWS.where(
     )
 )
 
+IN_OFFICE = and_(
+    or_(
+        E.data["status"].as_string().is_(None),
+        E.data["status"].as_string() == "active",
+    ),
+    E.data["office"].as_string() != "",
+)
+
 
 def available_on(date: Item) -> ColumnElement[bool]:
     """A petition's availability, shared by identity reads and the inbox."""

@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 from pydantic_ai import PromptedOutput
 from pydantic_ai.messages import ModelMessagesTypeAdapter
 
+from ming.middle.calendar import next_month
 from ming.middle.court import Court
 from ming.middle.declaration import PendingPetition
 from ming.middle.invoke import ModelSource, build_agent, invoke
@@ -42,9 +43,7 @@ class Simulations:
         output = Simulation.model_validate(segment["output"])
         available = dict(date)
         if output.month_end:
-            available.update(
-                year=date["year"] + (date["month"] == 12), month=date["month"] % 12 + 1
-            )
+            available.update(next_month(date))
         petitions = [
             PendingPetition(
                 **item.model_dump(),

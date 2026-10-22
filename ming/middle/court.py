@@ -24,6 +24,7 @@ from ming.middle.opening import CONTENT, import_opening
 from ming.middle.night import NightView, dismiss, open_night, read_night
 from ming.middle.scene import HallResult, PersonView, read_person, set_hall
 from ming.middle.translate import INSTRUCTIONS, declaration_agent, translate
+from ming.middle.translate import catalogue as names_and_aliases
 from ming.middle.view import EntityView, FactView, Identity, entities, project
 
 T = TypeVar("T", bound=Declaration)
@@ -262,9 +263,7 @@ class Court:
             for e in self._ledger.entities(
                 kind="person",
                 query=ENTITY_ROWS.where(
-                    (E.data["status"].as_string().is_(None))
-                    | (E.data["status"].as_string() == "active"),
-                    E.data["office"].as_string() != "",
+                    queries.IN_OFFICE,
                     E.data["faction"].as_string() == faction
                     if faction is not None
                     else E.data["office"]
@@ -273,6 +272,9 @@ class Court:
                 ),
             )
         ]
+
+    def catalogue(self) -> dict[str, dict[str, list[str]]]:
+        return names_and_aliases(self._ledger)
 
     def returned_petitions(self, *, visible: bool = False) -> list[FactView]:
         return [

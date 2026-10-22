@@ -5,6 +5,7 @@ from uuid import UUID, uuid4
 from pydantic import Field
 from pydantic_ai import PromptedOutput, RunContext
 
+from ming.middle.calendar import next_month
 from ming.middle.court import Court
 from ming.middle.declaration import Petition, PendingPetition, StrictModel
 from ming.middle.invoke import ModelSource, build_agent, invoke
@@ -106,10 +107,7 @@ class Sources:
 
         @agent.output_validator
         def names(ctx: RunContext[Materials], output: Urgencies | Impeachments):
-            people = {
-                e.key: e.data.get("aliases", [])
-                for e in ctx.deps.court.entities("audit", kind="person")
-            }
+            people = ctx.deps.court.catalogue()["person"]
             originals = {
                 str(f.detail["id"]) for f in ctx.deps.court.returned_petitions()
             }
@@ -132,11 +130,7 @@ class Sources:
         )
         self.court.log.info("%s output: %s", kind, result.output.model_dump_json())
         date = self.court.calendar().data
-        available = {
-            **date,
-            "year": date["year"] + (date["month"] == 12),
-            "month": date["month"] % 12 + 1,
-        }
+        available = {**date, **next_month(date)}
         people = {e.key: e.id for e in self.court.entities("audit", kind="person")}
         batch_id = uuid4()
         petitions = [
