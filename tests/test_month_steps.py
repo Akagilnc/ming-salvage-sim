@@ -288,6 +288,8 @@ async def _month_during_push(
 
 def _recover_failed_push(client, petition_id, steps, received, save: str | None) -> None:
     """Failed push, then in-process retry, or the same retry after reopen."""
+    client.post("/actions", json={"action": "month"}).raise_for_status()
+    client.portal.call(client.app.state.web.game.drain)
     client.portal.call(
         _month_during_push, client, petition_id, steps, received, True
     )
@@ -297,7 +299,7 @@ def _recover_failed_push(client, petition_id, steps, received, save: str | None)
     if save is not None:
         client.post("/actions", json={"action": "load", "save": save}).raise_for_status()
         client.portal.call(client.app.state.web.game.drain)
-    for _ in client.app.state.web.game.failures():
+    for _ in range(2):
         if client.get("/state").json()["game"]["failure"] is None:
             break
         client.post("/actions", json={"action": "retry"}).raise_for_status()
