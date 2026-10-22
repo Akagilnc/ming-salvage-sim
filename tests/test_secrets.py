@@ -153,15 +153,25 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
 
 
 @pytest.mark.parametrize("game_db", ["secret_night"], indirect=True)
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        # Done in its decree month: the first accumulation already crosses.
+        (None, [14, 28, 42, 56], ("半公开", "半公开", "满朝风闻", "满朝风闻")),
+        # Quiet through its decree month, done the next from its own share.
+        (10, [3, 17, 31, 45], ("密", "半公开", "半公开", "满朝风闻")),
+    ],
+    ids=["done-in-decree-month", "done-next-month"],
+)
 def test_discoveries_stay_private_and_completion_stops_only_reports(
-    tmp_path: Path, game_db: Path, steps
+    tmp_path: Path, game_db: Path, steps, scenario
 ) -> None:
-    # The errand runs quietly through its decree month and is done the next.
+    quiet_month, scores, stages = scenario
     steps["Declaration"] = replaying(
         partial(
             declaration_reply,
             response_file="month_secret_completed.txt",
-            quiet_month=10,
+            quiet_month=quiet_month,
         )
     )
     simulations = []
@@ -181,20 +191,17 @@ def test_discoveries_stay_private_and_completion_stops_only_reports(
             client.portal.call(client.app.state.web.game.drain)
             assert client.get("/state").json()["game"]["failure"] is None
             court = client.app.state.web.game.court
-            done = month >= 1
+            done = month >= (quiet_month is not None)
             assert len(
                 court.products(secret.id, kind="completed", current=False)
             ) == int(done)
             for identity in ("emperor", Officials(people=["王承恩"])):
                 assert len(court.facts(identity, kind="secret_report")) == min(
-                    month + 1, 2
+                    month + 1, 1 + (quiet_month is not None)
                 )
             exposure = court.products(secret.id, kind="exposure", current=False)
-            assert [f.detail["score"] for f in exposure] == [3, 17, 31, 45][: month + 1]
-            assert (
-                exposure[-1].detail["stage"]
-                == ("密", "半公开", "半公开", "满朝风闻")[month]
-            )
+            assert [f.detail["score"] for f in exposure] == scores[: month + 1]
+            assert exposure[-1].detail["stage"] == stages[month]
             changed = [
                 f
                 for f in court.facts("audit", kind="changed")
@@ -234,5 +241,5 @@ def test_discoveries_stay_private_and_completion_stops_only_reports(
             json.loads(simulations[-1].parts[0].content)["context"]["secret_orders"][0][
                 "decree"
             ]["data"]["exposure"]["stage"]
-            == "半公开"
+            == stages[2]
         )
