@@ -34,7 +34,7 @@ class Simulations:
             deps_type=Materials,
             tools=[read_records],
             retries=1,
-            instructions="你推演真实世界，用 read_records 查账。日期由输入账本给定，只写本月，写到本月底结束。交本段原文、零到多道奏疏及是否已写到月底。未到月底请旨是岔路；交回的每问独立，可各自续写。到月底附带奏疏是下个月开局奏折，不在本月执行。旨意推演只办输入已准各旨，不推其余世界；世界推演读各夜结果，只写其余发展和本月重议已准旨、上月已批奏疏。撤回成命照外廷判词办理，保留其皇威、当事大臣与相关派系反应；收权罢差零毁约代价。强颁付皇威及相关派系或阶级反应，反应可正可负可零，中旨标记写在旨上。民心不是强颁或撤旨的固定代价。人物异地启程按账本距离在途，所在由引擎月末倒数更新，在途不改道；事务办完只写往事，不设了结。奏报与实况分清。续写接同段对话，只写当前这一问的后果，不替其他问选择、不重复已写部分。",
+            instructions="你推演真实世界，用 read_records 查账。日期由输入账本给定，只写本月，写到本月底结束。交本段原文、零到多道奏疏及是否已写到月底。未到月底请旨是岔路；交回的每问独立，可各自续写。到月底附带奏疏是下个月开局奏折，不在本月执行。旨意推演只办输入已准各旨，不推其余世界；世界推演读各夜结果，只写其余发展和本月重议已准旨、上月已批奏疏。上月急务按所选办理；弹劾按原奏疏的署名人、被劾人及所选处置，写清皇威、发难派系满意度和被劾者去留的实际后果。查实再办要读被劾人账上实有事实，写这一查费的工夫、所得及各方反应，不另开查案调用。撤回成命照外廷判词办理，保留其皇威、当事大臣与相关派系反应；收权罢差零毁约代价。强颁付皇威及相关派系或阶级反应，反应可正可负可零，中旨标记写在旨上。民心不是强颁或撤旨的固定代价。人物异地启程按账本距离在途，所在由引擎月末倒数更新，在途不改道；事务办完只写往事，不设了结。奏报与实况分清。续写接同段对话，只写当前这一问的后果，不替其他问选择、不重复已写部分。",
         )
 
     def publish(self, route: UUID, segment: dict[str, Any]) -> None:
@@ -45,9 +45,8 @@ class Simulations:
             available.update(
                 year=date["year"] + (date["month"] == 12), month=date["month"] % 12 + 1
             )
-        events = [("simulation", {**segment, "date": date})]
-        for item in output.petitions:
-            petition = PendingPetition(
+        petitions = [
+            PendingPetition(
                 **item.model_dump(),
                 id=uuid4(),
                 route_id=route,
@@ -56,10 +55,9 @@ class Simulations:
                 available=available,
                 blocking=not output.month_end,
             )
-            events.append(
-                ("petition", {**petition.model_dump(mode="json"), "date": date})
-            )
-        self.court.record(route, events)
+            for item in output.petitions
+        ]
+        self.court.record_product(route, "simulation", segment, petitions=petitions)
 
     async def call(self, context: dict[str, Any], history: list[Any]) -> dict[str, Any]:
         result = await invoke(

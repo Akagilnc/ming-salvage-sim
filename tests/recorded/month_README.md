@@ -53,3 +53,25 @@ A-full 也推进至十二月，但原场景仍停在询问，整夜译出零道�
 `gazette.txt` 仍为 #1956 原始公开邸报回复，含其编辑附言。
 原卷为 `2026-10-20/northstar-accept/A/saves/df549bf5-99de-4fff-8182-6516f929f1ce.errors.log`。
 这些旧回复仅作原样错误/文本边界材料，不伪称本票的新形状录音。
+
+## 急务与派系弹劾（#1954）
+
+2026-10-22 开发真跑归档：
+`~/.ak-roles/books/Ming_LLM/1954/runs/01a163ab-f6f8-74de-ae87-0e9162ba9a17@coder/evidence/`。
+使用本机 Claude CLI 的逐次 `haiku` / `sonnet`，未改宿主或席位配置。
+`1954-record.py` 从 `Game.command` 进入完整生产月推进；`1954-cases.py` 仅对目标来源真调模型，其他来源用录样，以开发指令要求错误输出来观察重交耗尽。录音本身不是运行依赖。
+
+| 夹具 | 归档内真源 |
+| --- | --- |
+| `sources_urgent.txt` | `1954-live/004-urgent-messages.json` |
+| `sources_impeachment.txt` | `1954-live/005-impeachment-messages.json` |
+| `sources_empty.txt` | `1954-cases/empty/004-urgent-messages.json` |
+| `sources_*-name.json`、`sources_*-structure.json` | `1954-cases/<同名 case>/` 的目标来源 messages；两次完整回复原样取出，不修字段 |
+| `sources_vacancy.json` | `1954-vacancy/001-scene`、`002-scene`、`003-NightDeclaration` messages；原话在 `state.json` |
+| `sources_appointment.json` | `1954-appointment/001-scene`、`002-scene`、`003-NightDeclaration` messages；原话在 `state.json` |
+
+`1954-resume` 是选发回后的下月改票；`1954-retry` 是双缺位后无急务、原案搁置；`1954-appointment` 是曹化淳补任后按原案 id 改票。
+初次 vacancy 录制器嵌套 `capture_run_messages` 干扰转译错误处理，留下 `IndexError`；去掉外层 capture 后在同一存档重试成功，原失败卷保留，不算生产来源的失败证据。
+`1954-recovery-cases/*/state.json` 与 `recovered.json` 是两类来源坏正名、坏结构停住及仅补失败来源的真跑。
+`1954-consequences` 与 `1954-consequences-sonnet` 曾漏落奏疏的派系、去留字段：转译范围将奏疏处置误排作另份圣旨。明确只排除 `others` 后，`1954-effects/002-Declaration-output.json` 与最终存档记有皇威、派系满意度及人物去留字段，推进到 1628 年五月。
+测试只断言结构化输入、状态、引用及落账，不约束这些模型回复的措辞。

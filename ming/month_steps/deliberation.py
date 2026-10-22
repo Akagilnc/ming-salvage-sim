@@ -44,17 +44,7 @@ class Deliberations:
         self.court.log.info("model output: %s", result.output.model_dump_json())
         date = self.court.calendar().data
         segment = uuid4()
-        events = [
-            (
-                "deliberation",
-                {
-                    **result.output.model_dump(),
-                    "date": date,
-                    "id": str(segment),
-                    "route_id": str(route),
-                },
-            )
-        ]
+        petitions: list[PendingPetition] = []
         if result.output.verdict != "准":
             petition = PendingPetition(
                 text=result.output.text,
@@ -67,7 +57,14 @@ class Deliberations:
                 available=date,
                 blocking=True,
             )
-            events.append(
-                ("petition", {**petition.model_dump(mode="json"), "date": date})
-            )
-        self.court.record(decree.id, events)
+            petitions.append(petition)
+        self.court.record_product(
+            decree.id,
+            "deliberation",
+            {
+                **result.output.model_dump(),
+                "id": str(segment),
+                "route_id": str(route),
+            },
+            petitions=petitions,
+        )

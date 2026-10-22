@@ -1,7 +1,7 @@
 """The ledger's door: identity reads, event recording, translation and landing."""
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, TypeVar
 from uuid import UUID, uuid4
@@ -18,7 +18,7 @@ from ming.middle import queries
 from ming.ledger import Entity, Item, Ledger
 from ming.middle.dispatch import dispatch
 from ming.middle.calendar import advance_month
-from ming.middle.declaration import Declaration, Unhandled
+from ming.middle.declaration import Declaration, PendingPetition, Unhandled
 from ming.middle.invoke import ModelSource
 from ming.middle.opening import CONTENT, import_opening
 from ming.middle.night import NightView, dismiss, open_night, read_night
@@ -151,9 +151,25 @@ class Court:
         ]
 
     def record_product(
-        self, entity_id: UUID, kind: str, detail: dict[str, object]
+        self,
+        entity_id: UUID,
+        kind: str,
+        detail: dict[str, object],
+        *,
+        petitions: Sequence[PendingPetition] = (),
     ) -> None:
-        self.record(entity_id, [(kind, {**detail, "date": self.calendar().data})])
+        """Commit a complete product and its petitions in the same transaction."""
+        date = self.calendar().data
+        targets = {
+            key: self._ledger.get(key)
+            for key in {entity_id, *(p.entity_id for p in petitions)}
+        }
+        for petition in petitions:
+            targets[petition.entity_id].record(
+                "petition", "", {**petition.model_dump(mode="json"), "date": date}
+            )
+        targets[entity_id].record(kind, "", {**detail, "date": date})
+        self._ledger.commit(list(targets.values()))
 
     def translation_agent(
         self, output_type: type[T], instructions: str = INSTRUCTIONS
@@ -238,6 +254,32 @@ class Court:
         return [
             FactView(**f)
             for f in self._ledger.read(queries.pending_petitions(self.calendar().data))
+        ]
+
+    def petition_officials(self, faction: str | None = None) -> list[EntityView]:
+        return [
+            EntityView.model_validate(e)
+            for e in self._ledger.entities(
+                kind="person",
+                query=ENTITY_ROWS.where(
+                    (E.data["status"].as_string().is_(None))
+                    | (E.data["status"].as_string() == "active"),
+                    E.data["office"].as_string() != "",
+                    E.data["faction"].as_string() == faction
+                    if faction is not None
+                    else E.data["office"]
+                    .as_string()
+                    .in_(("内阁首辅", "司礼监掌印太监")),
+                ),
+            )
+        ]
+
+    def returned_petitions(self, *, visible: bool = False) -> list[FactView]:
+        return [
+            FactView(**f)
+            for f in self._ledger.read(
+                queries.returned_petitions(self.calendar().data if visible else None)
+            )
         ]
 
     def interactions(self) -> dict[str, Item]:

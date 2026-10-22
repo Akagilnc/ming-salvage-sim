@@ -52,13 +52,46 @@ def available_on(date: Item) -> ColumnElement[bool]:
 
 def pending_petitions(date: Item) -> Select[Any]:
     choice = F.position.table.alias().c
+    return (
+        FACT_ROWS.where(
+            F.kind == "petition",
+            available_on(date),
+            ~select(choice.position)
+            .where(
+                choice.kind == "choice",
+                choice.detail["petition_id"].as_string() == F.detail["id"].as_string(),
+            )
+            .exists(),
+        )
+        .order_by(None)
+        .order_by(
+            F.detail["available"]["year"].as_integer(),
+            F.detail["available"]["month"].as_integer(),
+            func.coalesce(F.detail["ordinal"].as_integer(), 0),
+            F.position,
+        )
+    )
+
+
+def returned_petitions(date: Item | None = None) -> Select[Any]:
+    choice = F.position.table.alias().c
+    revision = F.position.table.alias().c
     return FACT_ROWS.where(
         F.kind == "petition",
-        available_on(date),
-        ~select(choice.position)
+        F.detail["source"].as_string() == "urgent",
+        select(choice.position)
         .where(
             choice.kind == "choice",
             choice.detail["petition_id"].as_string() == F.detail["id"].as_string(),
+            choice.detail["option"].as_integer()
+            == func.json_array_length(F.detail["options"]) - 1,
+            *([choice.date != date] if date is not None else []),
+        )
+        .exists(),
+        ~select(revision.position)
+        .where(
+            revision.kind == "petition",
+            revision.detail["revision_of"].as_string() == F.detail["id"].as_string(),
         )
         .exists(),
     )

@@ -40,6 +40,13 @@ def recorded_steps(case=None):
         ),
         **{
             name: TestModel(
+                call_tools=[],
+                custom_output_text=(RECORDED / "sources_empty.txt").read_text(),
+            )
+            for name in ("urgent", "impeachment")
+        },
+        **{
+            name: TestModel(
                 call_tools=[], custom_output_text=(RECORDED / f"{name}.txt").read_text()
             )
             for name in ("deliberation", "simulation", "gazette")

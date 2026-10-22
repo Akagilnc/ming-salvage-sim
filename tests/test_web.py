@@ -466,32 +466,69 @@ def test_settings_survive_reopening_and_failed_scene_retries_in_place(
         (429, 1, [], "simulation"),
         (500, 3, [5, 5], "gazette"),
         ("structure", 2, [], "simulation"),
+        *[
+            (status, attempts, waits, name)
+            for name in ("urgent", "impeachment")
+            for status, attempts, waits in (
+                (500, 3, [5, 5]),
+                ("structure", 2, []),
+                ("name", 2, []),
+            )
+        ],
     ],
 )
 def test_month_transport_retry_is_bounded_and_persistent(
     game_db: Path, case, steps, clock, audit
 ) -> None:
     status, failures, waits, name = case
-    steps[name] = replaying(
-        [
-            *[
-                (RECORDED / "simulation_invalid.txt").read_text()
-                if status == "structure"
-                else ModelHTTPError(status, "recording")
-                for _ in range(failures)
-            ],
-            (RECORDED / f"{name}.txt").read_text(),
+    source = name in {"urgent", "impeachment"}
+    bad = (
+        json.loads((RECORDED / f"sources_{name}-{status}.json").read_text())
+        if source and isinstance(status, str)
+        else [
+            (RECORDED / "simulation_invalid.txt").read_text()
+            if status == "structure"
+            else ModelHTTPError(status, "recording")
+            for _ in range(failures)
         ]
     )
+    replies = iter(
+        [
+            *bad,
+            (
+                RECORDED / (f"sources_{name}.txt" if source else f"{name}.txt")
+            ).read_text(),
+        ]
+    )
+
+    def reply(messages):
+        if (
+            name == "impeachment"
+            and json.loads(messages[0].parts[0].content)["context"]["faction"]["key"]
+            != "阉党"
+        ):
+            return (RECORDED / "sources_empty.txt").read_text()
+        return next(replies)
+
+    steps[name] = replaying(reply)
     with TestClient(create_app(game_db.parent)) as client:
         client.post("/actions", json={"action": "load", "save": game_db.name})
         client.post("/actions", json={"action": "month"})
         state = client.get("/state").json()["game"]
         assert clock == waits
-        if failures == 3 or status in (429, "structure"):
+        if failures == 3 or status in (429, "structure", "name"):
             assert state["failure"]["payload"]["type"] == (
-                "UnexpectedModelBehavior" if status == "structure" else "ModelHTTPError"
+                "UnexpectedModelBehavior"
+                if isinstance(status, str)
+                else "ModelHTTPError"
             )
+            before = audit(game_db)
+            assert not [f for f in before["facts"] if f["kind"] == "unhandled"]
+            if source:
+                assert len([f for f in before["facts"] if f["kind"] == "gazette"]) == 1
+                assert len(
+                    [f for f in before["facts"] if f["kind"] == "impeachment"]
+                ) == (6 if name == "impeachment" else 7)
             assert state["date"]["month"] == 10
             client.post("/actions", json={"action": "continue"})
             assert client.get("/state").json()["game"]["failure"] == state["failure"]
@@ -501,6 +538,15 @@ def test_month_transport_retry_is_bounded_and_persistent(
         assert state["failure"] is None
         ledger = audit(game_db.parent / client.get("/state").json()["save"])
         assert len([f for f in ledger["facts"] if f["kind"] == "landed"]) == 1
+        assert len([f for f in ledger["facts"] if f["kind"] == "gazette"]) == 1
+        assert len([f for f in ledger["facts"] if f["kind"] == "urgent"]) == 1
+        assert len([f for f in ledger["facts"] if f["kind"] == "impeachment"]) == 7
+        if source:
+            assert all(
+                f in ledger["facts"]
+                for f in before["facts"]
+                if f["kind"] != "interaction"
+            )
 
 
 @pytest.mark.parametrize("model", ["", "sonnet"])
