@@ -11,12 +11,10 @@ from pathlib import Path
 from shutil import copyfile
 
 import pytest
-from pydantic_ai.models.test import TestModel
 from sqlalchemy import Engine, event
 from starlette.testclient import TestClient
 
 from ming.web import create_app
-from tests.test_court import replaying
 
 RECORDED = Path(__file__).parent / "recorded"
 
@@ -28,13 +26,8 @@ def test_http_read_work_ignores_unrelated_history(
 ):
     budgets = []
     for size in (1, 2, 4):
-        steps["NightDeclaration"] = TestModel(
-            call_tools=[],
-            custom_output_text=json.dumps({"facts": [], "reports": [], "decrees": []}),
-        )
         petitions = (RECORDED / "month_multiple_petitions.txt").read_text()
-        source, remaining = pending_histories[size]
-        steps["simulation"] = replaying(remaining)
+        source = pending_histories[size]
         directory = tmp_path / str(size)
         directory.mkdir()
         save = copyfile(source, directory / source.name).name

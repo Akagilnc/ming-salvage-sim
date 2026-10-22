@@ -3,7 +3,7 @@
 import asyncio
 import json
 from pathlib import Path
-from collections.abc import AsyncIterator, Callable, Iterable
+from collections.abc import AsyncIterator, Callable, Sequence
 
 import pytest
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
@@ -16,7 +16,7 @@ from ming.middle.view import Officials
 
 
 def replaying(
-    replies: Iterable[str | ModelResponse | Exception]
+    replies: Sequence[str | ModelResponse | Exception]
     | Callable[[list[ModelMessage]], ModelResponse],
     received: list[ModelMessage] | None = None,
 ) -> FunctionModel:

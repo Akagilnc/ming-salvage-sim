@@ -194,7 +194,7 @@ def pending_histories(
         )
         with recorded_steps() as replies, TestClient(create_app(directory)) as client:
             petitions = (RECORDED / "month_multiple_petitions.txt").read_text()
-            responses = iter(
+            replies["simulation"] = replaying(
                 [
                     petitions,
                     *[(RECORDED / "simulation.txt").read_text()]
@@ -203,14 +203,13 @@ def pending_histories(
                     ),
                 ]
             )
-            replies["simulation"] = replaying(responses)
             client.post("/actions", json={"action": "load", "save": path.name})
             client.post("/actions", json={"action": "month"}).raise_for_status()
             client.portal.call(client.app.state.web.game.drain)
             client.post("/actions", json={"action": "load", "save": path.name})
             client.portal.call(client.app.state.web.game.drain)
             assert client.get("/state").json()["game"]["failure"] is None
-        paths[size] = (path, tuple(responses))
+        paths[size] = path
     return paths
 
 
