@@ -52,6 +52,8 @@
 
 ## 测试分级（#1185，owner 2026-08-13 裁定）
 
+公共前置的共享与隔离遵循 [ADR 0161](docs/adr/0161-shared-test-prefix-built-once.md)。
+
 **本仓测试分级政策真源**：
 
 - **切片轮次** 推荐逐片 implement / fixer 聚焦测试；不以复跑全量 suite 为必须复核手段。

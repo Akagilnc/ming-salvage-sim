@@ -18,13 +18,16 @@ RECORDED = Path(__file__).parent / "recorded"
 
 
 @pytest.mark.parametrize("steps", ["approved"], indirect=True)
+@pytest.mark.parametrize("game_db", ["first_night"], indirect=True)
 def test_nights_are_persistent_and_translate_only_after_dismissal(
-    tmp_path: Path, steps, audit
+    game_db: Path, steps, audit
 ) -> None:
+    tmp_path = game_db.parent
     case = json.loads((RECORDED / "night_approved.json").read_text())
     with TestClient(create_app(tmp_path)) as client:
-        save = client.post("/actions", json={"action": "new"}).json()["save"]
-        client.post("/actions", json={"action": "open"})
+        save = client.post(
+            "/actions", json={"action": "load", "save": game_db.name}
+        ).json()["save"]
         client.post("/actions", json={"action": "say", "words": case["words"][0]})
         first = client.get("/state").json()["game"]["night"]
         assert first["closed"] is False
@@ -67,9 +70,11 @@ def test_nights_are_persistent_and_translate_only_after_dismissal(
     assert audit(tmp_path / save) == audit(tmp_path / save, True)
 
 
+@pytest.mark.parametrize("game_db", ["first_night"], indirect=True)
 def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
-    tmp_path: Path, steps
+    game_db: Path, steps
 ) -> None:
+    tmp_path = game_db.parent
     case = json.loads((RECORDED / "night_invalid.json").read_text())
     received = []
     steps["scene"] = replaying(
@@ -109,8 +114,7 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
         received,
     )
     with TestClient(create_app(tmp_path)) as client:
-        client.post("/actions", json={"action": "new"})
-        client.post("/actions", json={"action": "open"})
+        client.post("/actions", json={"action": "load", "save": game_db.name})
         client.post("/actions", json={"action": "say", "words": case["emperor_words"]})
         game = client.get("/state").json()["game"]
         assert game["failure"] is None
@@ -132,8 +136,9 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
 
 
 def test_failed_night_translation_is_terminal_and_reaches_following_nights(
-    tmp_path: Path, steps, audit
+    game_db: Path, steps, audit
 ) -> None:
+    tmp_path = game_db.parent
     recording = json.loads((RECORDED / "night_invalid.json").read_text())
     cases = recording["cases"]
     steps["scene"] = replaying([case["scene"] for case in cases.values()])
@@ -141,7 +146,9 @@ def test_failed_night_translation_is_terminal_and_reaches_following_nights(
         [case["reply"] for case in cases.values() for _ in range(2)]
     )
     with TestClient(create_app(tmp_path)) as client:
-        save = client.post("/actions", json={"action": "new"}).json()["save"]
+        save = client.post(
+            "/actions", json={"action": "load", "save": game_db.name}
+        ).json()["save"]
         before = audit(tmp_path / save)["entities"]
         nights = []
         for _ in cases:

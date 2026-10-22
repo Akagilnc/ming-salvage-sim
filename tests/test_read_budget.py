@@ -8,6 +8,7 @@ outside the measurement; the measured month request resumes an already open mont
 
 import json
 from pathlib import Path
+from shutil import copyfile
 
 import pytest
 from pydantic_ai.models.test import TestModel
@@ -20,9 +21,11 @@ from tests.test_court import replaying
 RECORDED = Path(__file__).parent / "recorded"
 
 
-@pytest.mark.parametrize("history", ["night", "month"])
+@pytest.mark.parametrize("history", ["night", "month"], indirect=True)
 @pytest.mark.parametrize("action", ["state", "say", "month", "choose"])
-def test_http_read_work_ignores_unrelated_history(tmp_path, steps, action, history):
+def test_http_read_work_ignores_unrelated_history(
+    tmp_path, steps, action, pending_histories
+):
     budgets = []
     for size in (1, 2, 4):
         steps["NightDeclaration"] = TestModel(
@@ -30,36 +33,13 @@ def test_http_read_work_ignores_unrelated_history(tmp_path, steps, action, histo
             custom_output_text=json.dumps({"facts": [], "reports": [], "decrees": []}),
         )
         petitions = (RECORDED / "month_multiple_petitions.txt").read_text()
-        steps["simulation"] = TestModel(
-            call_tools=[], custom_output_text=(RECORDED / "simulation.txt").read_text()
-        )
-        app = create_app(tmp_path / str(size))
+        source, remaining = pending_histories[size]
+        steps["simulation"] = replaying(remaining)
+        directory = tmp_path / str(size)
+        directory.mkdir()
+        save = copyfile(source, directory / source.name).name
+        app = create_app(directory)
         with TestClient(app) as client:
-            save = client.post("/actions", json={"action": "new"}).json()["save"]
-            fresh = client.get("/state").json()["game"]
-            assert (fresh["night"], fresh["date"]) == (
-                None,
-                {"id": "world", "year": 1627, "month": 10},
-            )
-            if history == "month":
-                for _ in range(size):
-                    client.post("/actions", json={"action": "month"})
-                    client.portal.call(app.state.web.game.drain)
-            for _ in range(size if history == "night" else 1):
-                client.post("/actions", json={"action": "open"})
-                client.post("/actions", json={"action": "dismiss"})
-                client.portal.call(app.state.web.game.drain)
-            steps["simulation"] = replaying(
-                [
-                    petitions,
-                    *[(RECORDED / "simulation.txt").read_text()]
-                    * sum(
-                        len(p["options"]) for p in json.loads(petitions)["petitions"]
-                    ),
-                ]
-            )
-            client.post("/actions", json={"action": "month"})
-            client.portal.call(app.state.web.game.drain)
             client.post("/actions", json={"action": "load", "save": save})
             client.portal.call(app.state.web.game.drain)
             payload = {"action": action, "words": "召见。"}

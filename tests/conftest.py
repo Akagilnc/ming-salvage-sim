@@ -3,23 +3,26 @@
 import asyncio
 import io
 import json
-from contextlib import redirect_stdout
+from contextlib import contextmanager, redirect_stdout
 from pathlib import Path
+from shutil import copyfile
 
 import pytest
 from pydantic_ai import Agent, models
 from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelResponse
 from pydantic_ai.models.test import TestModel
+from starlette.testclient import TestClient
 
 from ming.__main__ import main
+from ming.web import create_app
 from tests.test_court import replaying
 
 RECORDED = Path(__file__).parent / "recorded"
+AGENT_RUN = Agent.run
 
 
-@pytest.fixture
-def steps(monkeypatch, request):
-    monkeypatch.setattr(models, "ALLOW_MODEL_REQUESTS", False)
+@contextmanager
+def recorded_steps(case=None):
     invalid = json.loads((RECORDED / "night_invalid.json").read_text())["cases"][
         "missing_fields"
     ]
@@ -38,7 +41,7 @@ def steps(monkeypatch, request):
             for name in ("deliberation", "simulation", "gazette")
         },
     }
-    if getattr(request, "param", None) == "approved":
+    if case == "approved":
         case = json.loads((RECORDED / "night_approved.json").read_text())
         replies["scene"] = replaying(
             [
@@ -50,15 +53,177 @@ def steps(monkeypatch, request):
             ]
         )
         replies["NightDeclaration"] = replaying(case["replies"])
-    run = Agent.run
 
     async def recorded(agent, *args, **kwargs):
         # Only the external model is substituted; Agent, tools and validators run normally.
         with agent.override(model=replies[agent.name]):
-            return await run(agent, *args, **kwargs)
+            return await AGENT_RUN(agent, *args, **kwargs)
 
-    monkeypatch.setattr(Agent, "run", recorded)
-    return replies
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(models, "ALLOW_MODEL_REQUESTS", False)
+        patch.setattr(Agent, "run", recorded)
+        yield replies
+
+
+@pytest.fixture
+def steps(request):
+    with recorded_steps(getattr(request, "param", None)) as replies:
+        yield replies
+
+
+@pytest.fixture(scope="session")
+def opening_db(tmp_path_factory):
+    directory = tmp_path_factory.mktemp("opening")
+    with TestClient(create_app(directory)) as client:
+        save = client.post("/actions", json={"action": "new"}).json()["save"]
+        fresh = client.get("/state").json()["game"]
+        assert (fresh["night"], fresh["date"]) == (
+            None,
+            {"id": "world", "year": 1627, "month": 10},
+        )
+    return directory / save
+
+
+@pytest.fixture(scope="session")
+def first_night(opening_db, tmp_path_factory):
+    path = tmp_path_factory.mktemp("first-night") / opening_db.name
+    copyfile(opening_db, path)
+    with TestClient(create_app(path.parent)) as client:
+        client.post("/actions", json={"action": "load", "save": path.name})
+        client.post("/actions", json={"action": "open"}).raise_for_status()
+    return path
+
+
+@pytest.fixture(scope="session")
+def spoken_night(first_night, tmp_path_factory):
+    path = tmp_path_factory.mktemp("spoken-night") / first_night.name
+    copyfile(first_night, path)
+    case = json.loads((RECORDED / "night_invalid.json").read_text())
+    with recorded_steps(), TestClient(create_app(path.parent)) as client:
+        client.post("/actions", json={"action": "load", "save": path.name})
+        client.post(
+            "/actions", json={"action": "say", "words": case["emperor_words"]}
+        ).raise_for_status()
+        assert client.get("/state").json()["game"]["failure"] is None
+    return path
+
+
+@pytest.fixture(scope="session")
+def rejected_night(first_night, tmp_path_factory):
+    path = tmp_path_factory.mktemp("rejected-night") / first_night.name
+    copyfile(first_night, path)
+    with (
+        recorded_steps("approved") as replies,
+        TestClient(create_app(path.parent)) as client,
+    ):
+        replies["deliberation"] = replaying(
+            [(RECORDED / "deliberation_rejected.txt").read_text()]
+        )
+        client.post("/actions", json={"action": "load", "save": path.name})
+        for words in json.loads((RECORDED / "night_approved.json").read_text())[
+            "words"
+        ]:
+            client.post(
+                "/actions", json={"action": "say", "words": words}
+            ).raise_for_status()
+        client.post("/actions", json={"action": "load", "save": path.name})
+        client.portal.call(client.app.state.web.game.drain)
+        assert client.get("/state").json()["game"]["petitions"]
+    return path
+
+
+@pytest.fixture(scope="session")
+def history(request):
+    return request.param
+
+
+def extend_history(source, directory, actions):
+    path = directory / source.name
+    copyfile(source, path)
+    with recorded_steps() as replies, TestClient(create_app(directory)) as client:
+        replies["NightDeclaration"] = TestModel(
+            call_tools=[],
+            custom_output_text=json.dumps({"facts": [], "reports": [], "decrees": []}),
+        )
+        client.post("/actions", json={"action": "load", "save": path.name})
+        for action in actions:
+            client.post("/actions", json={"action": action}).raise_for_status()
+            client.portal.call(client.app.state.web.game.drain)
+        assert client.get("/state").json()["game"]["failure"] is None
+    return path
+
+
+@pytest.fixture(scope="session")
+def history_one(request, tmp_path_factory, history):
+    source = request.getfixturevalue(
+        "opening_db" if history == "month" else "first_night"
+    )
+    return extend_history(
+        source,
+        tmp_path_factory.mktemp("history-one"),
+        ("month",) if history == "month" else ("dismiss",),
+    )
+
+
+@pytest.fixture(scope="session")
+def history_two(history_one, tmp_path_factory, history):
+    return extend_history(
+        history_one,
+        tmp_path_factory.mktemp("history-two"),
+        ("month",) if history == "month" else ("open", "dismiss"),
+    )
+
+
+@pytest.fixture(scope="session")
+def history_four(history_two, tmp_path_factory, history):
+    return extend_history(
+        history_two,
+        tmp_path_factory.mktemp("history-four"),
+        (("month",) if history == "month" else ("open", "dismiss")) * 2,
+    )
+
+
+@pytest.fixture(scope="session")
+def pending_histories(
+    history_one, history_two, history_four, history, tmp_path_factory
+):
+    paths = {}
+    for size, source in zip((1, 2, 4), (history_one, history_two, history_four)):
+        directory = tmp_path_factory.mktemp("pending-history")
+        path = (
+            extend_history(source, directory, ("open", "dismiss"))
+            if history == "month"
+            else copyfile(source, directory / source.name)
+        )
+        with recorded_steps() as replies, TestClient(create_app(directory)) as client:
+            petitions = (RECORDED / "month_multiple_petitions.txt").read_text()
+            responses = iter(
+                [
+                    petitions,
+                    *[(RECORDED / "simulation.txt").read_text()]
+                    * sum(
+                        len(p["options"]) for p in json.loads(petitions)["petitions"]
+                    ),
+                ]
+            )
+            replies["simulation"] = replaying(responses)
+            client.post("/actions", json={"action": "load", "save": path.name})
+            client.post("/actions", json={"action": "month"}).raise_for_status()
+            client.portal.call(client.app.state.web.game.drain)
+            client.post("/actions", json={"action": "load", "save": path.name})
+            client.portal.call(client.app.state.web.game.drain)
+            assert client.get("/state").json()["game"]["failure"] is None
+        paths[size] = (path, tuple(responses))
+    return paths
+
+
+@pytest.fixture
+def game_db(request, tmp_path):
+    # Sources are closed before copying; no live connection or WAL is shared.
+    source = request.getfixturevalue(getattr(request, "param", "opening_db"))
+    path = tmp_path / source.name
+    copyfile(source, path)
+    return path
 
 
 @pytest.fixture

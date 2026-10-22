@@ -3,7 +3,7 @@
 import asyncio
 import json
 from pathlib import Path
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Callable, Iterable
 
 import pytest
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
@@ -16,7 +16,7 @@ from ming.middle.view import Officials
 
 
 def replaying(
-    replies: Sequence[str | ModelResponse | Exception]
+    replies: Iterable[str | ModelResponse | Exception]
     | Callable[[list[ModelMessage]], ModelResponse],
     received: list[ModelMessage] | None = None,
 ) -> FunctionModel:
@@ -125,8 +125,9 @@ def physical_state(court: Court, replay: bool = False) -> list[dict[str, object]
         "first-known-location",
     ],
 )
+@pytest.mark.parametrize("game_db", ["first_night"], indirect=True)
 def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
-    tmp_path: Path,
+    game_db: Path,
     appointee: str,
     changes: list[dict[str, str | float]],
     incumbent_status: str,
@@ -208,7 +209,7 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
         },
         ensure_ascii=False,
     )
-    court = Court.new_game(tmp_path, replaying([reply, reply]))
+    court = Court(game_db, replaying([reply, reply]))
     assert asyncio.run(
         court.read_records(Officials(people=["郭允厚"]), "account", "国库")
     )["entities"]
@@ -239,7 +240,7 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
         (Path(__file__).parent / "recorded/night_invalid.json").read_text()
     )["cases"]["unknown_field"]["scene"]
 
-    app = create_app(tmp_path)
+    app = create_app(game_db.parent)
     with TestClient(app) as client:
         client.post("/actions", json={"action": "load", "save": court.db_path.name})
         audience = app.state.web.game.audience
@@ -247,7 +248,6 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
             audience.scene.override(model=replaying([scene])),
             audience.translation.override(model=replaying([reply, reply])),
         ):
-            client.post("/actions", json={"action": "open"})
             before = physical_state(court)
             client.post(
                 "/actions",
