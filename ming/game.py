@@ -139,16 +139,22 @@ class Game:
             self.active = asyncio.create_task(self._resume(pending))
         elif self.presentation()["failure"]:
             return
+        elif self.month.opened():
+            # Missing products are decided by the ledger, not the showing face:
+            # reopening fills them even while an audience is open, and the month
+            # work itself translates any pending nights before advancing.
+            self.recover_month()
         elif self.court.pending_nights():
             self.start_background()
-        elif self.month.opened() and not (
-            self.month.petitions() and self.presentation()["face"] == "audience"
-        ):
-            # Same gap-filling entry as advancing: with pending petitions it
-            # restarts only their missing option forecasts from the ledger.
-            self.start("month")
         elif self.month.petitions():
             self.start_background()
+
+    def recover_month(self) -> asyncio.Task[Any]:
+        """Ledger-driven month gap-fill; the 请先退朝 gate only guards user clicks."""
+        payload = {"date": self.court.calendar().data}
+        self.interaction("month", "running", payload)
+        self.active = asyncio.create_task(self.execute("month", payload))
+        return self.active
 
     async def _resume(self, pending: list[dict[str, Any]]) -> None:
         for item in pending:
@@ -177,6 +183,12 @@ class Game:
             for item in self.interactions().values()
         )
         self.resume()
+        if action != "month" and not accepted and not self.presentation()["failure"]:
+            # A fresh per-question action waits only for its own chain; draining
+            # unrelated in-flight work first would block its acceptance.
+            self.start(action, payload, repeat=True)
+            await self.drain()
+            return
         await self.drain()
         if not self.presentation()["failure"] and (
             accepted or (action == "month" and self.court.calendar().data != date)
@@ -327,10 +339,7 @@ class Game:
                     i["status"] == "running" for i in self.interactions().values()
                 )
             ):
-                self.active = None
-                task = self.start("month")
-                if task is not None:
-                    self.track(task)
+                self.track(self.recover_month())
             return output
         except Exception as error:
             self.court.log.exception("action=%s", action)

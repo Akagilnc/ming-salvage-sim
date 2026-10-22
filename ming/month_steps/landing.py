@@ -7,6 +7,7 @@ from uuid import UUID
 from ming.middle.court import Court
 from ming.middle.declaration import Declaration, Unhandled
 from ming.middle.opening import CONTENT
+from ming.middle.rules import SCALE_FIELDS
 from ming.middle.view import EntityView
 
 
@@ -44,17 +45,14 @@ class Landing:
             for f in self.court.products(source.id)
         ):
             return
+        entities = [e for e in self.court.entities("world") if e.source]
         result = await self.court.translate(
             self.agent,
             json.dumps(
                 {
                     "date": self.court.calendar().data,
                     "source": source.model_dump(mode="json"),
-                    "entities": [
-                        e.model_dump(mode="json")
-                        for e in self.court.entities("world")
-                        if e.source
-                    ],
+                    "entities": [e.model_dump(mode="json") for e in entities],
                     "scope": "只交本旨后果"
                     if source.kind == "decree"
                     else "只交世界其余变化，别重复各道旨的后果",
@@ -89,6 +87,19 @@ class Landing:
             {
                 "result": result.model_dump(),
                 "unhandled": isinstance(result, Unhandled),
+                # The shared-scale readings this declaration saw; landing composes
+                # each share's delta so parallel shares never overwrite one another.
+                "baselines": [
+                    {
+                        "entity_type": e.kind,
+                        "entity": e.key,
+                        "field": field,
+                        "value": e.data[field],
+                    }
+                    for e in entities
+                    for field in SCALE_FIELDS
+                    if field in e.data
+                ],
             },
         )
 
@@ -123,4 +134,8 @@ class Landing:
                 ),
                 source.id,
                 monthly=True,
+                baselines={
+                    (b["entity_type"], b["entity"], b["field"]): b["value"]
+                    for b in declaration.get("baselines", [])
+                },
             )

@@ -1,6 +1,7 @@
 """Land a whole declaration, query rows and events in the same transaction."""
 
 from collections.abc import Callable
+from typing import Any
 from uuid import UUID
 
 from ming.ledger import Entity, Item, Ledger
@@ -13,6 +14,7 @@ def dispatch(
     result: Declaration | Unhandled,
     night_id: UUID,
     monthly: bool = False,
+    baselines: dict[tuple[str, str, str], Any] | None = None,
 ) -> None:
     existing = {(e["kind"], e["key"]): e for e in ledger.entities()}
     changed: dict[tuple[str, str], Entity] = {}
@@ -56,7 +58,7 @@ def dispatch(
                 if fact.affair is not None
                 else {}
             )
-            detail = field_values(fact, entity.data, amounts.get(i))
+            detail = field_values(fact, entity.data, amounts.get(i), baselines)
             detail.update(association)
             changes = detail["changes"]
             if entity.kind == "person":

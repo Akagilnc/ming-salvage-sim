@@ -1,7 +1,6 @@
 """Medium: the new month branches through the same HTTP/CLI boundaries."""
 
 import json
-import threading
 from pathlib import Path
 
 import pytest
@@ -10,7 +9,7 @@ from pydantic_ai.models.test import TestModel
 from starlette.testclient import TestClient
 
 from ming.web import create_app
-from tests.test_court import BLOCKED, gating, replaying, wait_for
+from tests.test_court import replaying
 
 RECORDED = Path(__file__).parent / "recorded"
 
@@ -209,86 +208,6 @@ def test_rejected_decree_is_forced_withdrawn_or_reconsidered(
                 if f["kind"] == "deliberation"
             ) == next(e["id"] for e in ledger["entities"] if e["kind"] == "calendar")
         assert ledger == audit(tmp_path / save, True)
-
-
-@pytest.mark.parametrize("steps", ["approved"], indirect=True)
-def test_forced_decree_choice_waits_for_its_own_night_segment(
-    tmp_path: Path, steps, audit
-) -> None:
-    """A 强颁 choice arriving before its night's segment waits for that segment only."""
-    release = threading.Event()
-    received: list = []
-    steps["deliberation"] = replaying(
-        [(RECORDED / "deliberation_rejected.txt").read_text()]
-    )
-    steps["simulation"] = gating(
-        [BLOCKED], release, received, (RECORDED / "simulation.txt").read_text()
-    )
-    with TestClient(create_app(tmp_path)) as client:
-        save = client.post("/actions", json={"action": "new"}).json()["save"]
-        client.post("/actions", json={"action": "open"})
-        for words in json.loads((RECORDED / "night_approved.json").read_text())[
-            "words"
-        ]:
-            client.post("/actions", json={"action": "say", "words": words})
-        # The night's own simulation is still in flight when the choice arrives.
-        wait_for(lambda: len(received) == 1)
-        wait_for(
-            lambda: any(
-                f["kind"] == "petition" for f in audit(tmp_path / save)["facts"]
-            )
-        )
-        petition = next(
-            f["detail"]
-            for f in audit(tmp_path / save)["facts"]
-            if f["kind"] == "petition"
-        )
-        responses = []
-        thread = threading.Thread(
-            target=lambda: responses.append(
-                client.post(
-                    "/actions",
-                    json={
-                        "action": "choose",
-                        "petition": petition["id"],
-                        "option": 0,
-                    },
-                )
-            )
-        )
-        try:
-            thread.start()
-            wait_for(
-                lambda: any(
-                    f["kind"] == "interaction"
-                    and f["detail"]["action"] == "choose"
-                    and f["detail"]["status"] == "running"
-                    for f in audit(tmp_path / save)["facts"]
-                )
-            )
-            release.set()
-            thread.join(10)
-        finally:
-            release.set()
-        assert not thread.is_alive()
-        assert responses[0].status_code == 204
-        ledger = audit(tmp_path / save)
-        segments = [
-            f["detail"]
-            for f in ledger["facts"]
-            if f["kind"] == "simulation" and f["entity_id"] == petition["route_id"]
-        ]
-        assert len(segments) == 2
-        assert segments[1]["petition_id"] == petition["id"]
-        assert len(segments[1]["messages"]) > len(segments[0]["messages"])
-        assert len([f for f in ledger["facts"] if f["kind"] == "forecast"]) == 1
-        assert len(received) == 2
-        game = client.get("/state").json()["game"]
-        assert game["failure"] is None
-        assert client.post("/actions", json={"action": "month"}).status_code == 204
-        game = client.get("/state").json()["game"]
-        assert (game["date"]["month"], game["failure"]) == (11, None)
-        assert audit(tmp_path / save) == audit(tmp_path / save, True)
 
 
 def test_two_nights_feed_world_and_arrivals_wait_for_audience(

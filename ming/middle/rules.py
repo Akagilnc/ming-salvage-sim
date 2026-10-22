@@ -7,6 +7,8 @@ from pydantic_ai import ModelRetry
 
 from ming.middle.declaration import Change, Declaration, Fact
 
+SCALE_FIELDS = ("imperial_prestige", "public_support", "satisfaction")
+
 
 def check_rules(out: Declaration, affairs: set[str]) -> None:
     for i, fact in enumerate(out.facts):
@@ -133,7 +135,10 @@ def money_amounts(
 
 
 def field_values(
-    fact: Fact, data: dict[str, Any], amount: float | None
+    fact: Fact,
+    data: dict[str, Any],
+    amount: float | None,
+    baselines: dict[tuple[str, str, str], Any] | None = None,
 ) -> dict[str, Any]:
     nominal = {c.field: c.value for c in fact.changes}
     actual = dict(nominal)
@@ -142,8 +147,13 @@ def field_values(
     for field, cap in (("firearm_equipment", 100), ("cannon_equipment", 12)):
         if fact.entity_type == "army" and field in actual:
             actual[field] = min(cap, max(0, actual[field]))
-    for field in ("imperial_prestige", "public_support", "satisfaction"):
+    for field in SCALE_FIELDS:
         if field in actual and fact.entity_type in {"world", "faction", "class"}:
+            baseline = (baselines or {}).get((fact.entity_type, fact.entity, field))
+            if baseline is not None:
+                # Parallel shares each declare a post-value from the same pre-landing
+                # reading; compose every share's delta instead of overwriting it.
+                actual[field] = data.get(field, 0) + (actual[field] - baseline)
             actual[field] = min(100, max(0, actual[field]))
     changes = dict(actual)
     if "taels" in changes and fact.entity_type == "account":

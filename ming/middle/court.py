@@ -3,7 +3,7 @@
 import logging
 from collections.abc import Callable
 from pathlib import Path
-from typing import TypeVar
+from typing import Any, TypeVar
 from uuid import UUID, uuid4
 
 from pydantic_ai import Agent
@@ -147,9 +147,14 @@ class Court:
         return result
 
     def land(
-        self, result: Declaration | Unhandled, source: UUID, *, monthly: bool = False
+        self,
+        result: Declaration | Unhandled,
+        source: UUID,
+        *,
+        monthly: bool = False,
+        baselines: dict[tuple[str, str, str], Any] | None = None,
     ) -> None:
-        dispatch(self._ledger, result, source, monthly)
+        dispatch(self._ledger, result, source, monthly, baselines)
 
     async def read_records(
         self, identity: Identity, kind: str | None = None, key: str | None = None

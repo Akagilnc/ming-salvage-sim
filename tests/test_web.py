@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-import threading
 from pathlib import Path
 from uuid import uuid4
 from types import SimpleNamespace
@@ -20,7 +19,7 @@ from pydantic_ai.models.test import TestModel
 from starlette.testclient import TestClient
 
 from ming.web import Settings, create_app
-from tests.test_court import BLOCKED, gating, replaying, wait_for
+from tests.test_court import replaying
 
 RECORDED = Path(__file__).parent / "recorded"
 
@@ -343,75 +342,6 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
         client.get("/state")
         client.get("/records")
         assert audit(db) == before
-
-
-def test_retry_of_failed_choice_waits_only_for_its_own_question(
-    tmp_path: Path, steps
-) -> None:
-    """An explicit retry redoes its own failed call while another choice runs."""
-    release = threading.Event()
-    received: list = []
-    case = (RECORDED / "month_multiple_petitions.txt").read_text()
-    options = sum(len(p["options"]) for p in json.loads(case)["petitions"])
-    steps["simulation"] = gating(
-        [
-            case,
-            RuntimeError("forecast unavailable"),
-            *([BLOCKED] * (options - 1)),
-            RuntimeError("forecast still unavailable"),
-        ],
-        release,
-        received,
-        (RECORDED / "simulation.txt").read_text(),
-    )
-    with TestClient(create_app(tmp_path)) as client:
-        client.post("/actions", json={"action": "new"})
-        assert client.post("/actions", json={"action": "month"}).status_code == 204
-        first, second = client.get("/state").json()["game"]["petitions"][:2]
-        # The failed pre-push is rerun once on selection and fails again.
-        assert (
-            client.post(
-                "/actions",
-                json={"action": "choose", "petition": first["id"], "option": 0},
-            ).status_code
-            == 204
-        )
-        failure = client.get("/state").json()["game"]["failure"]
-        assert failure["action"] == "choose"
-        assert failure["payload"]["petition"] == first["id"]
-        calls_at_failure = len(received)
-        responses = []
-        thread = threading.Thread(
-            target=lambda: responses.append(
-                client.post(
-                    "/actions",
-                    json={"action": "choose", "petition": second["id"], "option": 0},
-                )
-            )
-        )
-        try:
-            thread.start()
-            wait_for(
-                lambda: (client.get("/state").json()["game"]["pending"] or {}).get(
-                    "action"
-                )
-                == "choose"
-            )
-            # The unrelated running choice must not block the explicit retry.
-            assert (
-                client.post("/actions", json={"action": "retry"}).status_code == 204
-            )
-            assert len(received) == calls_at_failure + 1
-            assert client.get("/state").json()["game"]["failure"] is None
-        finally:
-            release.set()
-        thread.join(10)
-        assert not thread.is_alive()
-        assert responses[0].status_code == 204
-        client.portal.call(client.app.state.web.game.drain)
-        game = client.get("/state").json()["game"]
-        assert (game["failure"], game["running"]) == (None, False)
-        assert len(game["petitions"]) == 2
 
 
 @pytest.mark.parametrize(

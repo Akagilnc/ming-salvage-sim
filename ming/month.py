@@ -11,7 +11,7 @@ from ming.middle.declaration import PendingPetition
 from ming.middle.invoke import ModelSource
 from ming.middle.view import EntityView
 from ming.month_steps.deliberation import Deliberations
-from ming.month_steps.simulation import Simulations
+from ming.month_steps.simulation import Simulations, continuing_options
 from ming.month_steps.petitions import Inbox
 from ming.month_steps.landing import Landing
 from ming.month_steps.gazette import Gazette
@@ -117,14 +117,30 @@ class Month:
             if petition_id is None:
                 pending = await self._resume(speculative=speculative)
             else:
-                petition = next(
+                detail = next(
                     f.detail
                     for f in self.court.facts("audit")
                     if f.kind == "petition" and f.detail["id"] == petition_id
                 )
-                route = UUID(petition["route_id"])
-                if petition["date"] == self.court.calendar().data and not (
-                    self.court.products(route, kind="simulation")
+                route = UUID(detail["route_id"])
+                petition = PendingPetition.model_validate(
+                    {k: v for k, v in detail.items() if k != "date"}
+                )
+                choice = next(
+                    (
+                        f.detail
+                        for f in self.court.facts("audit")
+                        if f.kind == "choice" and f.detail["petition_id"] == petition_id
+                    ),
+                    None,
+                )
+                # Only a choice that continues the segment depends on its parent
+                # original; 收回/留中 consume no continuation and never wait for it.
+                if (
+                    choice is not None
+                    and choice["option"] in continuing_options(petition, route)
+                    and detail["date"] == self.court.calendar().data
+                    and not self.court.products(route, kind="simulation")
                 ):
                     await self.produce_original(route)
                 self.simulations.progress(route, petition_id)

@@ -85,7 +85,8 @@ def set_hall(
         person = people.get(name)
         if (
             person is None
-            or person["data"].get("location") != CAPITAL
+            # ADR 0096: an empty location counts as in the capital (fail-open).
+            or (person["data"].get("location") or CAPITAL) != CAPITAL
             or person["data"].get("transit_to")
         ):
             failures.append(

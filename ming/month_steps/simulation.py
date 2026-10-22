@@ -15,6 +15,13 @@ from ming.middle.month_work import Materials, Simulation, prompt, read_records
 from ming.middle.view import EntityView
 
 
+def continuing_options(petition: PendingPetition, route: UUID) -> range | list[int]:
+    """Every option of a fork continues its segment; a rejection only 强颁 does."""
+    if petition.entity_id == route:
+        return range(len(petition.options))
+    return [petition.options.index("强颁")] if "强颁" in petition.options else []
+
+
 class Simulations:
     def __init__(self, court: Court, model: ModelSource) -> None:
         self.court = court
@@ -193,17 +200,13 @@ class Simulations:
             ready = True
             for petition in petitions:
                 choice = choices.get(str(petition.id))
-                if choice is not None and petition_id not in (None, str(petition.id)):
+                if (
+                    choice is not None and petition_id not in (None, str(petition.id))
+                ) or not segments:
+                    # Without the parent segment no forecast of this route can run;
+                    # its production re-enters here through run() once it lands.
                     continue
-                options = (
-                    range(len(petition.options))
-                    if petition.entity_id == route
-                    else (
-                        [petition.options.index("强颁")]
-                        if "强颁" in petition.options
-                        else []
-                    )
-                )
+                options = continuing_options(petition, route)
                 for option in options:
                     self.start_forecast(petition, option)
                 if (
