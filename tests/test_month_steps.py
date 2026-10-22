@@ -257,6 +257,11 @@ def test_imperial_backing_reconsiders_the_original_decree(game_db, steps, audit,
         ledger = audit(game_db)
         assert client.get("/state").json()["game"]["date"]["month"] == 11
         assert len([f for f in ledger["facts"] if f["kind"] == "landed" and f["entity_id"] == decree["id"]]) == int(case != "rejected")
+        assert len([
+            f for f in ledger["facts"]
+            if f["kind"] == "simulation" and f["entity_id"] == decree["data"]["night_id"]
+            and f["detail"].get("petition_id") == petition["id"]
+        ]) == int(case != "rejected")
         assert not [f for f in ledger["facts"] if f["kind"] == "interim"]
         assert next(e for e in ledger["entities"] if e["kind"] == "world")["data"]["imperial_prestige"] == 20
         assert not [f for f in ledger["facts"] if f["kind"] == "changed" and "satisfaction" in f["detail"].get("actual", {})]
