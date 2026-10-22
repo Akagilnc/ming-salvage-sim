@@ -6,6 +6,9 @@ from ming.ledger import Entity, Item, Ledger
 from ming.middle.declaration import PaymentPolicy
 
 WAN = 10_000
+# Building output goes to an account or a 0-100 world scale; "" yields nothing.
+OUTPUT_SCALES = {"皇威": "imperial_prestige", "民心": "public_support"}
+OUTPUT_METRICS = ["国库", "内库", *OUTPUT_SCALES, ""]
 
 
 def active_policy(data: Item, date: Item) -> PaymentPolicy:
@@ -27,7 +30,7 @@ def obligation(pair: tuple[str, str], existing: dict[tuple[str, str], Item]) -> 
     """The same monthly obligation caps appropriations and monthly payment."""
     data = existing[pair]["data"]
     if pair[0] == "army":
-        base = data["manpower"] * data.get("salary_rate", 0) / WAN
+        base = data.get("manpower", 0) * data.get("salary_rate", 0) / WAN
     elif pair[1] == "建筑维护_base":
         base = sum(
             row["data"].get("maintenance", 0)
@@ -97,10 +100,10 @@ class Accounts:
             "amount": amount,
             "unit": "万两",
         }
+        # One flow row on the receiving account; the detail names the source.
         target.record(
             "monthly_income", "", detail, {"taels": target.data["taels"] + amount * WAN}
         )
-        source.record("monthly_income", "", detail)
 
     def taxes(self) -> None:
         events = {
@@ -206,7 +209,7 @@ class Accounts:
             if metric in self.accounts:
                 self.income(building, metric, amount, "建筑产出")
             elif metric:
-                field = {"皇威": "imperial_prestige", "民心": "public_support"}[metric]
+                field = OUTPUT_SCALES[metric]
                 actual = min(100, max(0, world.data[field] + amount))
                 detail = {
                     "date": self.date,
@@ -216,14 +219,13 @@ class Accounts:
                     "actual": actual - world.data[field],
                 }
                 world.record("monthly_output", "", detail, {field: actual})
-                building.record("monthly_output", "", detail)
 
     def expenses(self) -> None:
         armies = {
             e.key: e for e in self.rows if e.kind == "army" and "salary_rate" in e.data
         }
         for account in self.accounts.values():
-            for category in account.data["payment_order"]:
+            for category in account.data.get("payment_order", []):
                 if category == "军饷":
                     order = dict.fromkeys([*account.data["army_order"], *armies])
                     targets = [armies[name] for name in order if name in armies]

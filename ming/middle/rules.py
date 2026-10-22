@@ -127,6 +127,16 @@ def money_amounts(
     amounts: dict[int, float] = {}
     reasons: dict[int, str | None] = {}
     balances = {key: row["data"].get("taels", 0) for key, row in existing.items()}
+    # Obligation caps read this share's declared post-values (policy, manpower,
+    # rates) without reordering how the share lands.
+    projected = {
+        key: {**row, "data": dict(row["data"])} for key, row in existing.items()
+    }
+    for fact in facts:
+        if (fact.entity_type, fact.entity) in projected:
+            projected[(fact.entity_type, fact.entity)]["data"].update(
+                {c.field: c.value for c in fact.changes if c.field != "taels"}
+            )
     limits: dict[tuple[str, str, str], float] = {}
     for i, fact in enumerate(facts):
         for change in fact.changes:
@@ -164,15 +174,15 @@ def money_amounts(
                     )
                     key = (*recipient, change.purpose)
                     if key not in limits:
-                        data = existing[recipient]["data"]
+                        data = projected[recipient]["data"]
                         limits[key] = (
                             max(
                                 0,
                                 data.get("arrears", 0)
                                 if change.purpose == "补欠"
-                                else obligation(recipient, existing)
+                                else obligation(recipient, projected)
                                 - current_paid(
-                                    data, existing[("calendar", "world")]["data"]
+                                    data, projected[("calendar", "world")]["data"]
                                 ),
                             )
                             * WAN

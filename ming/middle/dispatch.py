@@ -107,8 +107,6 @@ def dispatch(
         existing[(entity.kind, entity.key)] = entity.snapshot()
 
     if not isinstance(result, Unhandled):
-        amounts: dict[int, float] = {}
-        reasons: dict[int, str | None] = {}
         # A share declares post-values from the reading it saw. Shares landed
         # since then shift the whole share once: none overwrites another, and
         # its own successive facts stay the progression it declared.
@@ -123,22 +121,18 @@ def dispatch(
                 entity = Entity(*pair, "", {})
                 changed[pair] = entity
                 existing[pair] = entity.snapshot()
-        # Apply the declared obligations before capping this share's payments;
-        # relative order among monetary transfers is unchanged.
-        for i, fact in sorted(
-            enumerate(result.facts),
-            key=lambda item: any(c.field == "taels" for c in item[1].changes),
-        ):
+        amounts, reasons = money_amounts(result.facts, existing)
+        for i, fact in enumerate(result.facts):
             entity = known(fact.entity_type, fact.entity)
-            if not amounts and any(c.field == "taels" for c in fact.changes):
-                amounts, reasons = money_amounts(result.facts, existing)
             association = (
                 {"affair_id": str(known("affair", fact.affair).id)}
                 if fact.affair is not None
                 else {}
             )
             detail = field_values(fact, entity.data, amounts.get(i), offsets)
-            detail.update(association, limit_reason=reasons.get(i))
+            detail.update(association)
+            if i in reasons:
+                detail["limit_reason"] = reasons[i]
             changes = detail["changes"]
             if entity.kind == "person":
                 move_person(entity, changes, existing, record)
