@@ -9,6 +9,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from ming.ledger import (
     Item,
     ENTITY_COLUMNS as E,
+    ENTITY_ORDER,
     FACT_COLUMNS as F,
     ENTITY_ROWS,
     FACT_ROWS,
@@ -24,6 +25,14 @@ NIGHT_RESULT = (
 )
 NIGHT_ROWS = ENTITY_ROWS.add_columns(NIGHT_RESULT.label("result")).where(
     E.kind == "night"
+)
+LATEST_NIGHT = NIGHT_ROWS.order_by(None).order_by(ENTITY_ORDER.desc()).limit(1)
+# Translation's names and fields: imported kinds plus those landing creates.
+CATALOGUE = ENTITY_ROWS.where(
+    or_(
+        E.kind.in_(select(E.kind).where(E.source != "").distinct()),
+        E.kind.in_(("affair", "decree")),
+    )
 )
 
 

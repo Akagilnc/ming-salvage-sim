@@ -13,7 +13,7 @@ from uuid import UUID, uuid4
 from eventsourcing.system import SingleThreadedRunner, System
 from eventsourcing.application import LRUCache
 from eventsourcing_sqlalchemy.recorders import SQLAlchemyApplicationRecorder
-from sqlalchemy import Engine, Select, or_, select
+from sqlalchemy import Engine, Select
 
 from ming.ledger.domain import Entity as Entity, Item as Item
 from ming.ledger.projection import Events, ReadModel
@@ -146,18 +146,6 @@ class Ledger:
         if date is not None:
             query = query.where(FactRow.date == date)
         return self.read(query)
-
-    def catalogue(self) -> list[Item]:
-        return self.read(
-            ENTITY_ROWS.where(
-                or_(
-                    EntityRow.kind.in_(
-                        select(EntityRow.kind).where(EntityRow.source != "").distinct()
-                    ),
-                    EntityRow.kind.in_(("affair", "decree")),
-                )
-            )
-        )
 
     def get(self, entity_id: UUID) -> Entity:
         return self.events.repository.get(entity_id)

@@ -10,7 +10,6 @@ from pydantic_ai import Agent
 from ming.ledger import (
     ENTITY_COLUMNS as E,
     FACT_COLUMNS as F,
-    ENTITY_ORDER,
     ENTITY_ROWS,
     FACT_ROWS,
 )
@@ -75,9 +74,7 @@ class Court:
         return set_hall(self._ledger, night_id, add, remove)
 
     def nights(self, *, latest: bool = False) -> list[NightView]:
-        query = queries.NIGHT_ROWS
-        if latest:
-            query = query.order_by(None).order_by(ENTITY_ORDER.desc()).limit(1)
+        query = queries.LATEST_NIGHT if latest else queries.NIGHT_ROWS
         return [self.night(e["id"]) for e in self._ledger.read(query)]
 
     def pending_nights(self) -> list[UUID]:

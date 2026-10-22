@@ -6,8 +6,7 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, Field
 
 from ming.ledger import Entity, Ledger
-from ming.ledger import ENTITY_ORDER
-from ming.middle.queries import NIGHT_ROWS
+from ming.middle.queries import LATEST_NIGHT, NIGHT_ROWS
 
 
 class TurnView(BaseModel):
@@ -42,9 +41,7 @@ def read_night(ledger: Ledger, night_id: UUID) -> NightView:
 
 
 def open_night(ledger: Ledger) -> UUID:
-    for row in ledger.read(
-        NIGHT_ROWS.order_by(None).order_by(ENTITY_ORDER.desc()).limit(1)
-    ):
+    for row in ledger.read(LATEST_NIGHT):
         if not row["data"]["closed"]:
             return row["id"]
     night = Entity("night", str(uuid4()), "", {"closed": False, "hall": ["王承恩"]})

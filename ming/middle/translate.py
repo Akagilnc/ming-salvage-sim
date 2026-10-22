@@ -14,6 +14,7 @@ from pydantic_ai.messages import ModelResponse
 
 from ming.ledger import Ledger
 from ming.middle.declaration import Declaration, NightDeclaration, Unhandled
+from ming.middle.queries import CATALOGUE
 from ming.middle.opening import REFERENCES
 from ming.middle.rules import check_rules
 from ming.middle.invoke import ModelSource, build_agent, invoke
@@ -38,7 +39,7 @@ text 保留皇帝认可的圣旨定稿全文，不改写、不摘要。origin �
 
 def catalogue(ledger: Ledger) -> dict[str, dict[str, list[str]]]:
     result: dict[str, dict[str, list[str]]] = {}
-    for row in ledger.catalogue():
+    for row in ledger.read(CATALOGUE):
         aliases = row["data"].get("aliases", [])
         name = row["data"].get("name")
         if name and name != row["key"]:
@@ -52,7 +53,7 @@ def allowed_fields(ledger: Ledger) -> dict[str, set[str]]:
         "affair": {"text"},
         "decree": {"text", "origin", "people"},
     }
-    for row in ledger.catalogue():
+    for row in ledger.read(CATALOGUE):
         if row["source"] and row["kind"] != "calendar":
             fields.setdefault(row["kind"], set()).update(row["data"])
     fields.setdefault("person", set()).add("travel_speed")

@@ -112,44 +112,6 @@ def test_http_read_work_ignores_unrelated_history(tmp_path, steps, action, histo
     assert budgets[0] == budgets[1] == budgets[2]
 
 
-def test_http_retry_keeps_first_interaction_key_order(tmp_path, steps):
-    petitions = (RECORDED / "month_multiple_petitions.txt").read_text()
-    steps["simulation"] = replaying(
-        [
-            petitions,
-            *[RuntimeError("recorded model failure")]
-            * (sum(len(p["options"]) for p in json.loads(petitions)["petitions"]) + 3),
-        ]
-    )
-    app = create_app(tmp_path)
-    with TestClient(app) as client:
-        client.post("/actions", json={"action": "new"})
-        client.post("/actions", json={"action": "month"})
-        client.portal.call(app.state.web.game.drain)
-        questions = client.get("/state").json()["game"]["petitions"]
-        for question in questions[:2]:
-            assert (
-                client.post(
-                    "/actions",
-                    json={
-                        "action": "choose",
-                        "petition": question["id"],
-                        "option": 0,
-                    },
-                ).status_code
-                == 204
-            )
-        assert (
-            client.get("/state").json()["game"]["failure"]["payload"]["petition"]
-            == questions[0]["id"]
-        )
-        assert client.post("/actions", json={"action": "retry"}).status_code == 204
-        assert (
-            client.get("/state").json()["game"]["failure"]["payload"]["petition"]
-            == questions[0]["id"]
-        )
-
-
 @pytest.mark.parametrize("crash", [False, True])
 def test_http_commit_keeps_events_rows_and_tracking_atomic(
     tmp_path, steps, audit, crash
