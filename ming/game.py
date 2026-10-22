@@ -302,7 +302,6 @@ class Game:
 
     def track(self, task: asyncio.Task[Any]) -> None:
         self.background.add(task)
-        task.add_done_callback(self.background.discard)
 
     def start_background(self) -> None:
         task = asyncio.create_task(self.precompute())
@@ -394,7 +393,13 @@ class Game:
         if self.active is not None:
             await asyncio.shield(self.active)
         while self.background:
-            await asyncio.gather(*self.background)
+            tasks = list(self.background)
+            try:
+                await asyncio.gather(*tasks)
+            finally:
+                # Drain itself retires what it awaited: gather over finished tasks
+                # returns without yielding, so a done callback could never run.
+                self.background.difference_update(t for t in tasks if t.done())
         if self.translation is not None:
             await asyncio.shield(self.translation)
         await self.month.simulations.drain()
