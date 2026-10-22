@@ -55,6 +55,8 @@ def obligation(pair: tuple[str, str], existing: dict[tuple[str, str], Item]) -> 
     """The same monthly obligation caps appropriations and monthly payment."""
     data = existing[pair]["data"]
     if pair[0] == "army":
+        if not payable_army(data):
+            return 0
         base = data.get("manpower", 0) * data.get("salary_rate", 0) / WAN
     elif pair[1] == "建筑维护_base":
         base = sum(
