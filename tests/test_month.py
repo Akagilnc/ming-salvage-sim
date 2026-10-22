@@ -250,145 +250,112 @@ def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
         assert state["date"]["month"] == 11
 
 
+DEBT = {
+    "recording": "month_fiscal_payments.txt",
+    "army_arrears": 60,
+    "salary_arrears": (0,),
+    "dues": (66,),
+    "receipts": [],
+    "quota": 2.1969011325,
+    "prior_paid": 0,
+    "stipend_arrears": 0,
+    "court_arrears": 0,
+    "payment_order": GUOKU_ORDER,
+    "army_order": ARMY_ORDER,
+}
+
+
 @pytest.mark.parametrize(
     ("opening_db", "case"),
     [
         (
             None,
-            (
-                "month_fiscal_policy.txt",
-                40,
-                (25, 25, 25, 25),
-                (33, 33, 33, 66),
-                [("补欠", 200000, 200000, None)],
-                5.1969011325,
-                0,
-                0,
-                0,
-                GUOKU_ORDER,
-                ARMY_ORDER,
-                {},
-            ),
+            {
+                "recording": "month_fiscal_policy.txt",
+                "army_arrears": 40,
+                "salary_arrears": (25, 25, 25, 25),
+                "dues": (33, 33, 33, 66),
+                "receipts": [("补欠", 200000, 200000, None)],
+                "quota": 5.1969011325,
+            },
         ),
         (
             None,
-            (
-                "month_fiscal_payments.txt",
-                0,
-                (0, 0),
-                (66, 66),
-                [
+            {
+                "army_arrears": 0,
+                "salary_arrears": (0, 0),
+                "dues": (66, 66),
+                "receipts": [
                     ("补欠", 5000000, 600000, "obligation"),
                     ("当月饷", 5000000, 144000, "obligation"),
                     ("犒赏", 50000, 50000, None),
                     ("专项", 60000, 60000, None),
                 ],
-                2.1969011325,
-                14.4,
-                0,
-                0,
-                GUOKU_ORDER,
-                ARMY_ORDER,
-                {},
-            ),
+                "prior_paid": 14.4,
+            },
         ),
         (
             "shortage",
-            (
-                "month_fiscal_payments.txt",
-                60,
-                (992.97307130575, 1985.9461426115),
-                (66, 66),
-                [
+            {
+                "salary_arrears": (992.97307130575, 1985.9461426115),
+                "dues": (66, 66),
+                "receipts": [
                     ("补欠", 5000000, 0, "balance"),
                     ("当月饷", 5000000, 0, "balance"),
                     ("犒赏", 50000, 0, "balance"),
                     ("专项", 60000, 0, "balance"),
                 ],
-                2.1969011325,
-                0,
-                66,
-                667.24,
-                GUOKU_ORDER,
-                ARMY_ORDER,
-                {},
-            ),
+                "stipend_arrears": 66,
+                "court_arrears": 667.24,
+            },
         ),
         pytest.param(
             None,
-            (
-                "month_fiscal_reorder.txt",
-                60,
-                (0,),
-                (66,),
-                [],
-                2.1969011325,
-                0,
-                0,
-                0,
-                BORDER_ORDER,
-                BORDER_ARMIES,
-                {},
-            ),
+            {
+                "recording": "month_fiscal_reorder.txt",
+                "payment_order": BORDER_ORDER,
+                "army_order": BORDER_ARMIES,
+            },
             id="reorder",
         ),
         pytest.param(
             None,
-            (
-                "month_fiscal_building.txt",
-                60,
-                (0,),
-                (66,),
-                [],
-                2.1969011325,
-                0,
-                0,
-                0,
-                GUOKU_ORDER,
-                ARMY_ORDER,
-                {"building": "钦定银矿"},
-            ),
+            {
+                "recording": "month_fiscal_building.txt",
+                "building": "钦定银矿",
+            },
             id="building",
         ),
         pytest.param(
             "prestige",
-            (
-                "month_empty.txt",
-                60,
-                (0,),
-                (66,),
-                [],
-                2.1969011325,
-                0,
-                0,
-                0,
-                GUOKU_ORDER,
-                ARMY_ORDER,
-                {"prestige": 100},
-            ),
+            {
+                "recording": "month_empty.txt",
+                "prestige": 100,
+            },
             id="prestige",
         ),
     ],
     indirect=["opening_db"],
 )
 def test_month_keeps_debt_separate_from_reduction_and_temporary_deferral(
-    opening_db, game_db: Path, steps, audit, case: tuple
+    opening_db, game_db: Path, steps, audit, case
 ) -> None:
-    steps["Declaration"] = replaying([(RECORDED / case[0]).read_text()])
+    case = {**DEBT, **case}
+    steps["Declaration"] = replaying([(RECORDED / case["recording"]).read_text()])
     with TestClient(create_app(game_db.parent)) as client:
         client.post("/actions", json={"action": "load", "save": game_db.name})
-        for index, due in enumerate(case[3]):
+        for index, due in enumerate(case["dues"]):
             assert client.post("/actions", json={"action": "month"}).status_code == 204
             assert client.get("/state").json()["game"]["failure"] is None
             ledger = audit(game_db)
             rows = {(e["kind"], e["key"]): e["data"] for e in ledger["entities"]}
-            assert rows[("army", "关宁军 / 宁锦防线")]["arrears"] == case[1]
+            assert rows[("army", "关宁军 / 宁锦防线")]["arrears"] == case["army_arrears"]
             assert rows[("fiscal", "官俸_base")]["arrears"] == pytest.approx(
-                case[2][index]
+                case["salary_arrears"][index]
             )
-            assert rows[("fiscal", "宗室禄米_base")]["arrears"] == case[7] * (index + 1)
+            assert rows[("fiscal", "宗室禄米_base")]["arrears"] == case["stipend_arrears"] * (index + 1)
             assert rows[("fiscal", "宫廷_base")]["arrears"] == pytest.approx(
-                case[8] * (index + 1)
+                case["court_arrears"] * (index + 1)
             )
             assert (
                 rows[("fiscal", "内廷俸_base")]["arrears"]
@@ -402,32 +369,32 @@ def test_month_keeps_debt_separate_from_reduction_and_temporary_deferral(
             )
             assert rows[("region", "陕西")]["fiscal"]["settle"]["p"][
                 "起运定额"
-            ] == pytest.approx(case[5])
+            ] == pytest.approx(case["quota"])
             stipends = [
                 f["detail"]
                 for f in ledger["facts"]
                 if f["kind"] == "monthly_payment"
                 and f["detail"]["recipient"] == "宗室禄米_base"
             ]
-            assert (stipends[-1]["due"], stipends[-1]["paid"]) == (due, due - case[7])
+            assert (stipends[-1]["due"], stipends[-1]["paid"]) == (due, due - case["stipend_arrears"])
             receipts = [f["detail"] for f in ledger["facts"] if f["kind"] == "received"]
             assert [
                 (r["purpose"], r["nominal"], r["actual"], r["limit_reason"])
                 for r in receipts
-            ] == case[4]
+            ] == case["receipts"]
             army_payments = [
                 f["detail"]
                 for f in ledger["facts"]
                 if f["kind"] == "monthly_payment"
                 and f["detail"]["recipient"] == "关宁军 / 宁锦防线"
             ]
-            assert army_payments[-1]["prior_paid"] == (case[6] if index == 0 else 0)
+            assert army_payments[-1]["prior_paid"] == (case["prior_paid"] if index == 0 else 0)
             assert army_payments[-1]["paid"] + army_payments[-1][
                 "prior_paid"
             ] == pytest.approx(14.4)
             account = rows[("account", "国库")]
-            assert account["payment_order"] == case[9]
-            assert account["army_order"] == case[10]
+            assert account["payment_order"] == case["payment_order"]
+            assert account["army_order"] == case["army_order"]
             paid = [
                 f["detail"]["recipient"]
                 for f in ledger["facts"]
@@ -437,24 +404,24 @@ def test_month_keeps_debt_separate_from_reduction_and_temporary_deferral(
             ]
             expected = [
                 name
-                for category in case[9]
-                for name in (case[10] if category == "军饷" else (category,))
+                for category in case["payment_order"]
+                for name in (case["army_order"] if category == "军饷" else (category,))
             ]
             assert paid[-len(expected) :] == expected
-            if case[11].get("building"):
-                building = rows[("building", case[11]["building"])]
+            if case.get("building"):
+                building = rows[("building", case["building"])]
                 assert next(
                     f["detail"]["amount"]
                     for f in ledger["facts"]
                     if f["kind"] == "monthly_income"
-                    and f["detail"].get("source") == case[11]["building"]
+                    and f["detail"].get("source") == case["building"]
                 ) == pytest.approx(
                     building["output_amount"] * building["condition"] / 100
                 )
                 assert building["condition"] != 100
-            if "prestige" in case[11]:
+            if "prestige" in case:
                 assert (
-                    rows[("world", "天下")]["imperial_prestige"] == case[11]["prestige"]
+                    rows[("world", "天下")]["imperial_prestige"] == case["prestige"]
                 )
                 assert (
                     next(
@@ -583,245 +550,200 @@ def test_fiscal_petition_lands_only_declared_outcome_without_readding_levies(
 
 
 @pytest.mark.parametrize(
-    "reply",
+    "declared",
     [
         pytest.param((RECORDED / "month_invalid.txt").read_text(), id="invalid_shape"),
         pytest.param(
-            json.dumps(
+            [
                 {
-                    "facts": [
-                        {
-                            "entity_type": "event",
-                            "entity": "辽饷升至一分二厘",
-                            "create": False,
-                            "changes": [{"field": "terminal_reason", "value": "不准"}],
-                            "text": "结局不在该事件的闭集里",
-                        }
-                    ]
-                },
-                ensure_ascii=False,
-            ),
+                    "entity_type": "event",
+                    "entity": "辽饷升至一分二厘",
+                    "create": False,
+                    "changes": [{"field": "terminal_reason", "value": "不准"}],
+                    "text": "结局不在该事件的闭集里",
+                }
+            ],
             id="terminal_reason",
         ),
         pytest.param(
-            json.dumps(
+            [
                 {
-                    "facts": [
-                        {
-                            "entity_type": "region",
-                            "entity": "陕西",
-                            "create": False,
-                            "changes": [{"field": "fiscal_surcharge", "value": "三"}],
-                            "text": "加派额不是数字",
-                        }
-                    ]
-                },
-                ensure_ascii=False,
-            ),
+                    "entity_type": "region",
+                    "entity": "陕西",
+                    "create": False,
+                    "changes": [{"field": "fiscal_surcharge", "value": "三"}],
+                    "text": "加派额不是数字",
+                }
+            ],
             id="surcharge_type",
         ),
         pytest.param(
-            json.dumps(
+            [
                 {
-                    "facts": [
-                        {
-                            "entity_type": "region",
-                            "entity": "不存在省",
-                            "create": True,
-                            "changes": [{"field": "fiscal_surcharge", "value": 3}],
-                            "text": "加派写到账本里没有的地区",
-                        }
-                    ]
-                },
-                ensure_ascii=False,
-            ),
+                    "entity_type": "region",
+                    "entity": "不存在省",
+                    "create": True,
+                    "changes": [{"field": "fiscal_surcharge", "value": 3}],
+                    "text": "加派写到账本里没有的地区",
+                }
+            ],
             id="surcharge_region",
         ),
         pytest.param(
-            json.dumps(
+            [
                 {
-                    "facts": [
+                    "entity_type": "account",
+                    "entity": "国库",
+                    "create": False,
+                    "changes": [
                         {
-                            "entity_type": "account",
-                            "entity": "国库",
-                            "create": False,
-                            "changes": [
-                                {
-                                    "field": "payment_order",
-                                    "value": [
-                                        "军饷",
-                                        "官俸_base",
-                                        "宗室禄米_base",
-                                        "赈灾_base",
-                                        "工程_base",
-                                        "边饷",
-                                    ],
-                                }
+                            "field": "payment_order",
+                            "value": [
+                                "军饷",
+                                "官俸_base",
+                                "宗室禄米_base",
+                                "赈灾_base",
+                                "工程_base",
+                                "边饷",
                             ],
-                            "text": "改序写入不在科目里的名字",
                         }
-                    ]
-                },
-                ensure_ascii=False,
-            ),
+                    ],
+                    "text": "改序写入不在科目里的名字",
+                }
+            ],
             id="payment_order",
         ),
         pytest.param(
-            json.dumps(
+            [
                 {
-                    "facts": [
+                    "entity_type": "fiscal",
+                    "entity": "宗室禄米_base",
+                    "create": False,
+                    "changes": [
                         {
-                            "entity_type": "fiscal",
-                            "entity": "宗室禄米_base",
-                            "create": False,
-                            "changes": [
-                                {
-                                    "field": "payment_policy",
-                                    "value": {"factor": -0.5, "defer": 0.0},
-                                }
-                            ],
-                            "text": "减额比例为负",
+                            "field": "payment_policy",
+                            "value": {"factor": -0.5, "defer": 0.0},
                         }
-                    ]
-                },
-                ensure_ascii=False,
-            ),
+                    ],
+                    "text": "减额比例为负",
+                }
+            ],
             id="factor_negative",
         ),
         pytest.param(
-            json.dumps(
+            [
                 {
-                    "facts": [
+                    "entity_type": "fiscal",
+                    "entity": "宗室禄米_base",
+                    "create": False,
+                    "changes": [
                         {
-                            "entity_type": "fiscal",
-                            "entity": "宗室禄米_base",
-                            "create": False,
-                            "changes": [
-                                {
-                                    "field": "payment_policy",
-                                    "value": {"factor": 1.5, "defer": 0.0},
-                                }
-                            ],
-                            "text": "减额比例大于一",
+                            "field": "payment_policy",
+                            "value": {"factor": 1.5, "defer": 0.0},
                         }
-                    ]
-                },
-                ensure_ascii=False,
-            ),
+                    ],
+                    "text": "减额比例大于一",
+                }
+            ],
             id="factor_high",
         ),
         pytest.param(
-            json.dumps(
+            [
                 {
-                    "facts": [
+                    "entity_type": "account",
+                    "entity": "国库",
+                    "create": False,
+                    "changes": [
                         {
-                            "entity_type": "account",
-                            "entity": "国库",
-                            "create": False,
-                            "changes": [
-                                {
-                                    "field": "taels",
-                                    "value": -10000,
-                                    "counterpart": {
-                                        "entity_type": "army",
-                                        "entity": "关宁军 / 宁锦防线",
-                                    },
-                                }
-                            ],
-                            "text": "付给军队的款没写名目",
-                        },
-                        {
-                            "entity_type": "army",
-                            "entity": "关宁军 / 宁锦防线",
-                            "create": False,
-                            "changes": [],
-                            "text": "收到没写名目的拨付",
-                        },
-                    ]
+                            "field": "taels",
+                            "value": -10000,
+                            "counterpart": {
+                                "entity_type": "army",
+                                "entity": "关宁军 / 宁锦防线",
+                            },
+                        }
+                    ],
+                    "text": "付给军队的款没写名目",
                 },
-                ensure_ascii=False,
-            ),
+                {
+                    "entity_type": "army",
+                    "entity": "关宁军 / 宁锦防线",
+                    "create": False,
+                    "changes": [],
+                    "text": "收到没写名目的拨付",
+                },
+            ],
             id="purpose_missing",
         ),
         pytest.param(
-            json.dumps(
+            [
                 {
-                    "facts": [
+                    "entity_type": "account",
+                    "entity": "国库",
+                    "create": False,
+                    "changes": [
                         {
-                            "entity_type": "account",
-                            "entity": "国库",
-                            "create": False,
-                            "changes": [
-                                {
-                                    "field": "taels",
-                                    "value": -10000,
-                                    "purpose": "赏赐",
-                                    "counterpart": {
-                                        "entity_type": "army",
-                                        "entity": "关宁军 / 宁锦防线",
-                                    },
-                                }
-                            ],
-                            "text": "名目不在四类之内",
-                        },
-                        {
-                            "entity_type": "army",
-                            "entity": "关宁军 / 宁锦防线",
-                            "create": False,
-                            "changes": [],
-                            "text": "收到名目不在四类的拨付",
-                        },
-                    ]
+                            "field": "taels",
+                            "value": -10000,
+                            "purpose": "赏赐",
+                            "counterpart": {
+                                "entity_type": "army",
+                                "entity": "关宁军 / 宁锦防线",
+                            },
+                        }
+                    ],
+                    "text": "名目不在四类之内",
                 },
-                ensure_ascii=False,
-            ),
+                {
+                    "entity_type": "army",
+                    "entity": "关宁军 / 宁锦防线",
+                    "create": False,
+                    "changes": [],
+                    "text": "收到名目不在四类的拨付",
+                },
+            ],
             id="purpose_unknown",
         ),
         pytest.param(
-            json.dumps(
+            [
                 {
-                    "facts": [
+                    "entity_type": "account",
+                    "entity": "国库",
+                    "create": False,
+                    "changes": [
                         {
-                            "entity_type": "account",
-                            "entity": "国库",
-                            "create": False,
-                            "changes": [
-                                {
-                                    "field": "taels",
-                                    "value": 10000,
-                                    "purpose": "犒赏",
-                                }
-                            ],
-                            "text": "名目用在非军队非科目的款上",
+                            "field": "taels",
+                            "value": 10000,
+                            "purpose": "犒赏",
                         }
-                    ]
-                },
-                ensure_ascii=False,
-            ),
+                    ],
+                    "text": "名目用在非军队非科目的款上",
+                }
+            ],
             id="purpose_misplaced",
         ),
         pytest.param(
-            json.dumps(
+            [
                 {
-                    "facts": [
-                        {
-                            "entity_type": "army",
-                            "entity": "关宁军 / 宁锦防线",
-                            "create": False,
-                            "changes": [{"field": "arrears", "value": 0}],
-                            "text": "直接声明欠额",
-                        }
-                    ]
-                },
-                ensure_ascii=False,
-            ),
+                    "entity_type": "army",
+                    "entity": "关宁军 / 宁锦防线",
+                    "create": False,
+                    "changes": [{"field": "arrears", "value": 0}],
+                    "text": "直接声明欠额",
+                }
+            ],
             id="arrears",
         ),
     ],
 )
 def test_exhausted_month_declaration_is_unhandled_not_a_stopped_month(
-    tmp_path: Path, game_db: Path, steps, audit, reply: str
+    tmp_path: Path, game_db: Path, steps, audit, declared
 ) -> None:
+    reply = (
+        declared
+        if isinstance(declared, str)
+        else json.dumps({"facts": declared}, ensure_ascii=False)
+    )
     steps["Declaration"] = replaying([reply, reply])
     with TestClient(create_app(tmp_path)) as client:
         save = client.post(
