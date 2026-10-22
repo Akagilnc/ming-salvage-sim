@@ -348,6 +348,12 @@ class Court:
             )
             if verdict["verdict"] == "准" or (choice and choice["text"] == "强颁"):
                 sources.append((decree, UUID(verdict["route_id"])))
+        # Completion order is entities.rowid, the order ENTITY_ROWS already uses.
+        order = {
+            row["id"]: index
+            for index, row in enumerate(self._ledger.entities(kind="decree"))
+        }
+        sources.sort(key=lambda item: order[item[0].id])
         return sources + [(calendar, calendar.id)]
 
     def observe(self, on_change: Callable[[], None]) -> None:

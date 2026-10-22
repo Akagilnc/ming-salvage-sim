@@ -243,3 +243,97 @@ def test_discoveries_stay_private_and_completion_stops_only_reports(
             ]["data"]["exposure"]["stage"]
             == stages[2]
         )
+
+
+def _night_reply(secret: bool) -> str:
+    return json.dumps(
+        {
+            "facts": [],
+            "reports": [],
+            "decree_events": [],
+            "decrees": [
+                {
+                    "text": "密查内库" if secret else "任命巡抚",
+                    "origin": "emperor",
+                    "secret": secret,
+                    "turn": 1,
+                    "people": ["王承恩"],
+                }
+            ],
+        },
+        ensure_ascii=False,
+    )
+
+
+def _appointment(person: str) -> str:
+    return json.dumps(
+        {
+            "facts": [
+                {
+                    "entity_type": "person",
+                    "entity": person,
+                    "create": False,
+                    "changes": [
+                        {"field": "office", "value": "巡抚"},
+                        {"field": "office_region", "value": "陕西"},
+                    ],
+                    "text": "任职。",
+                }
+            ],
+            "reports": [],
+            "decree_events": [],
+        },
+        ensure_ascii=False,
+    )
+
+
+def _landing_reply(messages):
+    prompt = json.loads(messages[0].parts[0].content.split("\n", 1)[1])
+    source = prompt["source"]
+    if source["kind"] != "decree":
+        return ModelResponse(
+            parts=[TextPart((RECORDED / "month_empty.txt").read_text())]
+        )
+    person = "杨嗣昌" if source["data"].get("secret") else "洪承畴"
+    return ModelResponse(parts=[TextPart(_appointment(person))])
+
+
+@pytest.mark.parametrize("game_db", ["first_night"], indirect=True)
+def test_month_lands_an_earlier_public_decree_before_a_later_secret(
+    tmp_path: Path, game_db: Path, steps, audit
+) -> None:
+    """A public decree completed before a secret errand must land first.
+
+    night_secret.json creates the secret first, so it cannot show the inversion.
+    """
+    steps["Declaration"] = replaying(_landing_reply)
+    with TestClient(create_app(tmp_path)) as client:
+        save = client.post(
+            "/actions", json={"action": "load", "save": game_db.name}
+        ).json()["save"]
+        for secret in (False, True):
+            steps["scene"] = replaying(
+                [ModelResponse(parts=[TextPart("殿上无事。")])] * 2
+            )
+            steps["NightDeclaration"] = replaying([_night_reply(secret)])
+            client.post("/actions", json={"action": "open"}).raise_for_status()
+            client.post(
+                "/actions", json={"action": "say", "words": "先拟旨。"}
+            ).raise_for_status()
+            client.post("/actions", json={"action": "dismiss"}).raise_for_status()
+            client.portal.call(client.app.state.web.game.drain)
+            assert client.get("/state").json()["game"]["failure"] is None
+        client.post("/actions", json={"action": "month"}).raise_for_status()
+        client.portal.call(client.app.state.web.game.drain)
+        assert client.get("/state").json()["game"]["failure"] is None
+        ledger = audit(tmp_path / save)
+        decrees = [e for e in ledger["entities"] if e["kind"] == "decree"]
+        people = {
+            e["key"]: e["data"] for e in ledger["entities"] if e["kind"] == "person"
+        }
+        assert [e["data"]["secret"] for e in decrees] == [False, True]
+        assert (people["杨嗣昌"]["office"], people["杨嗣昌"]["office_region"]) == (
+            "巡抚",
+            "陕西",
+        )
+        assert people["洪承畴"]["office"] == ""
