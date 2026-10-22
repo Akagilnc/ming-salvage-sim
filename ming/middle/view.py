@@ -146,6 +146,8 @@ def month_open(ledger: Ledger) -> Item | None:
 
 def decree_access(ledger: Ledger, identity: Identity) -> dict[str, set[UUID]]:
     access: dict[str, set[UUID]] = {"known": set(), "handled": set(), "secret": set()}
+    if identity in ("audit", "world"):
+        return access
     for row in ledger.entities(
         kind="decree", query=ENTITY_ROWS.add_columns(public_decree().label("public"))
     ):
@@ -181,9 +183,7 @@ def entities(
             for e in opening["entities"]
             if all(e[k] == v for k, v in (selection or {}).items())
         ]
-    access = (
-        decree_access(ledger, identity) if identity not in ("audit", "world") else {}
-    )
+    access = decree_access(ledger, identity)
     exposure = entity_exposure(identity, owned_accounts(ledger, identity), access)
     query = ENTITY_ROWS.add_columns(exposure.label("exposure")).where(
         exposure.is_not(None)
@@ -310,9 +310,7 @@ def project(
     opening = month_open(ledger) if identity == "emperor" else None
     date = next((r["data"] for r in ledger.entities(kind="calendar")), dict[str, Any]())
     controls = {"interaction", "petition", "choice", "gazette", "secret_report"}
-    access = (
-        decree_access(ledger, identity) if identity not in ("audit", "world") else {}
-    )
+    access = decree_access(ledger, identity)
     exposure = fact_exposure(identity, owned_accounts(ledger, identity), access)
     query = FACT_ROWS.add_columns(exposure.label("exposure")).where(
         exposure.is_not(None)
