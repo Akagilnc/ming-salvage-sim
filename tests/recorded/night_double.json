@@ -1,5 +1,5 @@
 {
-  "source": "#1953 native claude-cli; archive 240–262 followed by player cosigning request, imperial backing without interim, and approval. Source: issue-1953-implementation/1953-recording-double/messages.json (archive root in month_README.md).",
+  "source": "#1953 native claude-cli; archive 240–262 followed by player cosigning request, imperial backing without interim, and approval. Source: re-recorded after merging #1952 through the production HTTP dismiss, claude-cli without --model: ~/.ak-roles/books/Ming_LLM/1953/artifacts/merge-1952-rerecord-nights/production/double-1/ (archive root in month_README.md).",
   "turns": [
     {
       "id": "north-star-backing",
@@ -23,7 +23,7 @@
     }
   ],
   "replies": [
-    "{\"facts\":[],\"reports\":[],\"decrees\":[{\"text\":\"奉天承运皇帝，敕曰：陕西连岁亢旱，延、庆、平凉诸府饥民聚散，地方需人。据吏部会同户部题请，陕西督粮参政洪承畴，熟谙秦中情形，勤敏有为，着加都察院右副都御史，巡抚陕西地方，赞理军务，便宜行事。赈济银三十万两，着户部于太仓拨发，另遣官押解，按月稽核，务令实惠及于饥民，毋得侵渔。该部知道。钦此。\",\"origin\":\"emperor\",\"endorsements\":[{\"endorser\":\"毕自严\",\"form\":\"当面站台\",\"source_chat_turn_id\":\"north-star-backing\"},{\"endorser\":\"王绍徽\",\"form\":\"会签\",\"source_chat_turn_id\":\"north-star-cosign\"},{\"endorser\":\"皇帝\",\"form\":\"御笔手敕\",\"source_chat_turn_id\":\"north-star-cosign\"}],\"interim\":false,\"people\":[\"洪承畴\",\"王绍徽\"]}]}",
-    "{\"facts\":[],\"reports\":[],\"decrees\":[{\"text\":\"奉天承运皇帝，敕曰：陕西连岁亢旱，延、庆、平凉诸府饥民聚散，地方需人。据吏部会同户部题请，陕西督粮参政洪承畴，熟谙秦中情形，勤敏有为，着加都察院右副都御史，巡抚陕西地方，赞理军务，便宜行事。赈济银三十万两，着户部于太仓拨发，另遣官押解，按月稽核，务令实惠及于饥民，毋得侵渔。该部知道。钦此。\",\"origin\":\"emperor\",\"endorsements\":[{\"endorser\":\"毕自严\",\"form\":\"当面站台\",\"source_chat_turn_id\":\"north-star-backing\"},{\"endorser\":\"王绍徽\",\"form\":\"会签\",\"source_chat_turn_id\":\"north-star-cosign\"},{\"endorser\":\"御笔\",\"form\":\"御笔手敕\",\"source_chat_turn_id\":\"north-star-cosign\"}],\"interim\":false,\"people\":[\"洪承畴\",\"王绍徽\"]}]}"
+    "{\"facts\":[],\"reports\":[],\"decree_events\":[{\"decree\":0,\"kind\":\"handled\",\"text\":\"王绍徽将拟就的旨稿素笺捧呈，王承恩接过，放到御案上请皇帝过目用宝。\"}],\"decrees\":[{\"text\":\"奉天承运皇帝，敕曰：陕西连岁亢旱，延、庆、平凉诸府饥民聚散，地方需人。据吏部会同户部题请，陕西督粮参政洪承畴，熟谙秦中情形，勤敏有为，着加都察院右副都御史，巡抚陕西地方，赞理军务，便宜行事。赈济银三十万两，着户部于太仓拨发，另遣官押解，按月稽核，务令实惠及于饥民，毋得侵渔。该部知道。钦此。\",\"origin\":\"emperor\",\"secret\":false,\"turn\":4,\"endorsements\":[{\"endorser\":\"毕自严\",\"form\":\"当面站台\",\"source_chat_turn_id\":\"north-star-backing\"},{\"endorser\":\"王绍徽\",\"form\":\"会签\",\"source_chat_turn_id\":\"north-star-cosign\"},{\"endorser\":\"皇帝\",\"form\":\"御笔手敕\",\"source_chat_turn_id\":\"north-star-cosign\"}],\"interim\":false,\"people\":[\"洪承畴\",\"王绍徽\",\"王承恩\"]}]}",
+    "{\"facts\":[],\"reports\":[],\"decree_events\":[{\"decree\":0,\"kind\":\"handled\",\"text\":\"王绍徽将拟就的旨稿素笺捧呈，王承恩接过，放到御案上请皇帝过目用宝。\"}],\"decrees\":[{\"text\":\"奉天承运皇帝，敕曰：陕西连岁亢旱，延、庆、平凉诸府饥民聚散，地方需人。据吏部会同户部题请，陕西督粮参政洪承畴，熟谙秦中情形，勤敏有为，着加都察院右副都御史，巡抚陕西地方，赞理军务，便宜行事。赈济银三十万两，着户部于太仓拨发，另遣官押解，按月稽核，务令实惠及于饥民，毋得侵渔。该部知道。钦此。\",\"origin\":\"emperor\",\"secret\":false,\"turn\":4,\"endorsements\":[{\"endorser\":\"毕自严\",\"form\":\"当面站台\",\"source_chat_turn_id\":\"north-star-backing\"},{\"endorser\":\"王绍徽\",\"form\":\"会签\",\"source_chat_turn_id\":\"north-star-cosign\"},{\"endorser\":\"御笔\",\"form\":\"御笔手敕\",\"source_chat_turn_id\":\"north-star-cosign\"}],\"interim\":false,\"people\":[\"洪承畴\",\"王绍徽\",\"王承恩\"]}]}"
   ]
 }

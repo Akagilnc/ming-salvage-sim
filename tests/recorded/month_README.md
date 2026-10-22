@@ -120,7 +120,19 @@ runner 曾在后台工作未完时索取空奏疏列表而报错，补读见 `re
   译出毕自严当面站台，独立于办事人。
 - `night_double.json`：同一前缀后请王绍徽会签、御笔亲担但照常制送阁；
   录出毕自严、王绍徽、御笔三条背书，非中旨。
-- `night_interim.json`：同一前缀后明确不经内阁、亲下手敕，再认可拟稿；录出中旨。
+- `night_interim.json`：同一前缀后明确亲下手敕、以中旨明发、不经内阁票拟，再认可拟稿；录出中旨。
+
+三份夜录音的 `replies` 已在并入 #1952 后按合并后 schema 重录，归档
+`~/.ak-roles/books/Ming_LLM/1953/artifacts/merge-1952-rerecord-nights/production/`（脚本
+`rerecord_1953_production.py`）。录法同 #1952：按 `conftest` 建夜（场景与轮次 id 原样重放），
+HTTP dismiss 驱动整夜转译，仅 `NightDeclaration` 真调；模型设置同原录，claude-cli 不带
+`--model`（本机 CLI 默认，`~/.claude/settings.json` 为 `sonnet`）。每次 CLI 往返的请求（含重交反馈）
+与原文回话逐份落卷，回话不手改。每份只录一次，均命中：endorsed 1 次（毕自严当面站台）；
+double 1 次（首回把御笔写成「皇帝」被校验打回，重交得毕自严、王绍徽、御笔三条，两条回话同存）；
+interim 1 次（interim=True、非密令）。interim 第 3 轮原话由「不经内阁，以中旨颁行」改为
+「以中旨明发天下，不经内阁票拟」使意图明确，场景回话仍原样重放。double 场景重放不含召人工具调用，
+殿上无王绍徽，与原录不同。废卷：`input-deviation/`（走测试路径但逐次 `haiku`）与
+`backed/`、`double/`、`interim/`（原 ledger、另拼转译 agent、逐次 `haiku`，backed 失败未留回话），均不作夹具来源。
 - `month_interim_*.json`：分别沿生产推演、转译 Agent 录出准行与封驳的后果。
   外廷采用 #1951 冻结判词；旧判词正文与本旨不一致，模型把它解释成错引旨文。
   这是混合边界录样，不冒称完整同源历史。封驳首份转译含该局旨 UUID，未改写它；

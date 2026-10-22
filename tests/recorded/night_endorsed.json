@@ -1,5 +1,5 @@
 {
-  "source": "#1953: archive/乾清宫一夜-崇祯元年十一月.md 240–262 plus explicit approval; native claude-cli. Source: issue-1953-implementation/1953-recording-backed/messages.json (archive root in month_README.md).",
+  "source": "#1953: archive/乾清宫一夜-崇祯元年十一月.md 240–262 plus explicit approval; native claude-cli. Source: re-recorded after merging #1952 through the production HTTP dismiss, claude-cli without --model: ~/.ak-roles/books/Ming_LLM/1953/artifacts/merge-1952-rerecord-nights/production/endorsed-1/ (archive root in month_README.md).",
   "turns": [
     {
       "id": "north-star-backing",
@@ -18,6 +18,6 @@
     }
   ],
   "replies": [
-    "{\"facts\": [], \"reports\": [], \"decrees\": [{\"text\": \"特旨钦命陕西督粮参政洪承畴加都察院右副都御史衔，巡抚陕西，便宜行事\", \"origin\": \"emperor\", \"people\": [\"洪承畴\", \"王绍徽\"], \"endorsements\": [{\"endorser\": \"毕自严\", \"form\": \"当面站台\", \"source_chat_turn_id\": \"north-star-backing\"}], \"interim\": false}]}"
+    "{\"facts\":[{\"entity_type\":\"person\",\"entity\":\"洪承畴\",\"create\":false,\"affair\":null,\"decree\":0,\"discovered\":false,\"changes\":[{\"field\":\"office\",\"value\":\"巡抚\"},{\"field\":\"office_region\",\"value\":\"陕西\"}],\"text\":\"特旨钦命，陕西督粮参政洪承畴加都察院右副都御史衔，巡抚陕西，便宜行事。\"}],\"reports\":[],\"decree_events\":[{\"decree\":0,\"kind\":\"handled\",\"text\":\"吏部尚书王绍徽伏地领旨，拟明诏，待用印明发。\"}],\"decrees\":[{\"text\":\"特旨钦命陕西督粮参政洪承畴加都察院右副都御史衔，巡抚陕西，便宜行事\",\"origin\":\"emperor\",\"secret\":false,\"turn\":3,\"endorsements\":[{\"endorser\":\"毕自严\",\"form\":\"当面站台\",\"source_chat_turn_id\":\"north-star-backing\"}],\"interim\":false,\"people\":[\"洪承畴\",\"王绍徽\"]}]}"
   ]
 }
