@@ -35,15 +35,19 @@ def read_night(ledger: Ledger, night_id: UUID) -> NightView:
     night = ledger.entities(entity_id=night_id, query=NIGHT_ROWS)[0]
     date = ledger.entities(kind="calendar")[0]["data"]
     turns: list[TurnView] = []
+    # A turn is recorded after its scene, whose hall changes come first; the
+    # turn's hall is the one present when the emperor spoke, before that scene.
     hall: list[str] = list(INITIAL_HALL)
+    spoken = hall
     for item in ledger.facts(entity_id=night_id, kind=("turn", "hall")):
         detail = item["detail"]
         if item["kind"] == "hall":
             hall = change_hall(hall, detail["add"], detail["remove"])
         else:
             turns.append(
-                TurnView(**detail, emperor_words=item["emperor_words"], hall=hall)
+                TurnView(**detail, emperor_words=item["emperor_words"], hall=spoken)
             )
+            spoken = hall
     return NightView(
         id=night_id,
         **night["data"],
