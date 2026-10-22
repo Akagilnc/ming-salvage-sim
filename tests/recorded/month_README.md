@@ -58,7 +58,7 @@ A-full 也推进至十二月，但原场景仍停在询问，整夜译出零道�
 
 归档：`~/WorkSpace/vault/ak-cc-wiki/raw/ming-llm-runner/2026-10-22/issue-1952-implementation/`。
 
-- `night_approved.json`、`night_travel.json`：保留原场景，整夜声明由 `1952-record-approved-r2/messages.json`、`1952-record-travel/messages.json` 重录，含新的成旨轮次与保密声明；不手补模型字段。
+- `night_approved.json`、`night_travel.json`：保留原场景，整夜声明由 `1952-record-approved-r2/messages.json`、`1952-record-travel/messages.json` 重录，含新的成旨轮次与保密声明；不手补模型字段。`night_travel.json` 的整夜声明（第 2、4 轮成旨）另供 `test_audience` 的合成四轮夜判知情圈。
 - `night_secret.json`：`1952-secret-native/001`–`007` 的原生 CLI JSONL 工具调用和最终场景文字，以及 `008-NightDeclaration-output.txt`。工具名去 MCP transport 前缀后装入原生 `ToolCallPart`；参数、调用 ID、回复原文不改。消息信封时间为冻结时间，不伪称模型原始元数据。
 - `secret_report.txt`：`1952-secret/018-secret_report-output.txt`，仅作为模型文本边界；不锁定内容或要求重放文字符合当前局面。
 - `month_secret_completed.txt`：`1952-boundary-crossing/output.txt`，通过真实 `Court.translate` 录下。`input.json` 明标人为构造的补充验收场景（内部发现、公开伤情、多次经办及办结），不是完整游戏推演；返回原文不改。测试从 HTTP 过月进入，检验身份可读实体、落账数值、曝光与停报，不检查文句。
