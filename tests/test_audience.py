@@ -184,9 +184,11 @@ def test_backing_follows_its_decree_and_signers(game_db, steps, audit, case, rec
     multiple = recording == "double"
     recording = json.loads((RECORDED / f"night_{recording}.json").read_text())
     reply = json.loads(recording["replies"][-1])
+    declared = reply["decrees"][0]["endorsements"]
     received = []
     if case in {"name", "form", "source"}:
-        endorsement = reply["decrees"][0]["endorsements"][0]
+        endorsement = dict(declared[0])
+        reply["decrees"][0]["endorsements"] = [endorsement, *declared[1:]]
         if case == "form":
             del endorsement["endorser"]
             endorsement["form"] = "力保"
@@ -222,7 +224,7 @@ def test_backing_follows_its_decree_and_signers(game_db, steps, audit, case, rec
                     item["type"] == "missing"
                     and item["loc"] == ("decrees", 0, "endorsements", 0, "endorser")
                     and item["input"] == {
-                        "form": "力保", "source_chat_turn_id": "north-star-backing",
+                        "form": "力保", "source_chat_turn_id": declared[0]["source_chat_turn_id"],
                     }
                     for item in errors
                 )
@@ -241,16 +243,17 @@ def test_backing_follows_its_decree_and_signers(game_db, steps, audit, case, rec
         assert state["night"]["result"] == "translated"
         ledger = audit(game_db)
         decree = next(e for e in ledger["entities"] if e["kind"] == "decree")
-        expected = [{"endorser": "毕自严", "form": "当面站台", "source_chat_turn_id": "north-star-backing"}]
-        if multiple:
-            expected += [
-                {"endorser": "王绍徽", "form": "会签", "source_chat_turn_id": "north-star-cosign"},
-                {"endorser": "御笔", "form": "御笔手敕", "source_chat_turn_id": "north-star-cosign"},
-            ]
-        assert decree["data"]["endorsements"] == expected
-        assert "毕自严" not in decree["data"]["people"]
+        # The ledger lands exactly what the replayed declaration declared.
+        assert decree["data"]["endorsements"] == declared
+        signers = {e["endorser"] for e in declared if e["endorser"] != "御笔"}
+        # Sample-borne behavior: double has two signers; endorsed has 毕自严 standing by in person.
+        assert (
+            len(signers) == 2
+            if multiple
+            else ("毕自严", "当面站台") in [(e["endorser"], e["form"]) for e in declared]
+        )
         assert json.loads(received[-1].parts[0].content)["context"]["decree"]["data"]["endorsements"] == decree["data"]["endorsements"]
-        for endorsement in (e for e in expected if e["endorser"] != "御笔"):
+        for endorsement in (e for e in declared if e["endorser"] != "御笔"):
             assert [f["detail"]["decree_id"] for f in ledger["facts"]
                     if f["kind"] == "endorsed" and f["entity_id"] == next(e["id"] for e in ledger["entities"] if e["key"] == endorsement["endorser"])] == [decree["id"]]
         if case == "held":

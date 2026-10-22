@@ -424,7 +424,8 @@ def test_imperial_backing_reconsiders_the_original_decree(game_db, steps, audit,
 @pytest.mark.parametrize("case", ["approved", "withdrawn", "held"])
 def test_interim_costs_follow_promulgation_not_backing(game_db, steps, audit, case):
     rejected = case != "approved"
-    steps["NightDeclaration"] = replaying(json.loads((RECORDED / "night_interim.json").read_text())["replies"])
+    replies = json.loads((RECORDED / "night_interim.json").read_text())["replies"]
+    steps["NightDeclaration"] = replaying(replies)
     received = []
     # A held decree is reconsidered and approved the next month.
     verdicts = ["rejected", "approved"] if case == "held" else ["rejected" if rejected else "approved"]
@@ -442,7 +443,7 @@ def test_interim_costs_follow_promulgation_not_backing(game_db, steps, audit, ca
         decree = next(e for e in audit(game_db)["entities"] if e["kind"] == "decree")
         assert decree["data"]["interim"] is True
         assert json.loads(received[-1].parts[0].content)["context"]["decree"]["data"]["interim"] is True
-        assert [e["endorser"] for e in decree["data"]["endorsements"]] == ["毕自严", "御笔"]
+        assert decree["data"]["endorsements"] == json.loads(replies[-1])["decrees"][0]["endorsements"]
         if rejected:
             assert state["petitions"][0]["options"] == ["强颁", "收回", "留中"]
             client.post("/actions", json={"action": "choose", "petition": state["petitions"][0]["id"], "option": 2 if case == "held" else 1}).raise_for_status()
