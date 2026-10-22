@@ -298,12 +298,9 @@ class Game:
             payload.update(night_id=str(self.audience.night_id), turn_id=str(uuid4()))
         elif action == "choose":
             try:
-                route = self.month.choose(
-                    UUID(str(payload["petition"])), payload["option"]
-                )
+                self.month.choose(UUID(str(payload["petition"])), payload["option"])
             except (ValueError, KeyError) as error:
                 raise InvalidAction("无效的批红选项", 400) from error
-            payload["route"] = str(route)
         elif action != "month":
             raise InvalidAction("无效的动作", 400)
         payload["date"] = self.court.calendar().data

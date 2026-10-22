@@ -18,14 +18,23 @@ def test_new_game_imports_complete_world_records_and_separates_identities(
 ) -> None:
     court = Court.new_game(tmp_path, TestModel())
     entities = court.entities("audit")
-    indexed = {(e.kind, e.key): e.data for e in entities}
-    assert indexed[("army", "关宁军 / 宁锦防线")]["station_region"] == "辽东 / 宁锦"
-    assert indexed[("class", "北直隶 / 京师·农民")]["region_id"] == "北直隶 / 京师"
-    assert indexed[("person", "徐光启")]["location"] == "南直隶 / 南京"
-    assert indexed[("army", "关宁军 / 宁锦防线")]["owner_power"] == "大明"
-    assert indexed[("region", "北直隶 / 京师")]["controlled_by"] == "大明"
-    assert indexed[("world", "天下")]["imperial_prestige"] == 20
-    assert indexed[("world", "天下")]["public_support"] == 50
+    # Pinyin keys between content records become the Chinese name they key.
+    names = {
+        r["id"]: r["name"]
+        for filename in ("regions", "powers")
+        for r in json.loads((CONTENT / f"{filename}.json").read_text())[filename]
+    }
+
+    def canonical(record: dict[str, object]) -> dict[str, object]:
+        return {
+            k: record["name"]
+            if k == "id" and "name" in record
+            else names.get(v, v)
+            if isinstance(v, str)
+            else v
+            for k, v in record.items()
+        }
+
     for filename, collection in [
         ("characters", "characters"),
         ("characters", "factions"),
@@ -38,28 +47,15 @@ def test_new_game_imports_complete_world_records_and_separates_identities(
         ("relation_seed", "summaries"),
         ("opening", "accounts"),
         ("opening", "calendar"),
+        ("opening", "world"),
         ("multiple_offices", "offices"),
         ("offices", "priority"),
     ]:
         source = f"{filename}.json/{collection}"
         expected = json.loads((CONTENT / f"{filename}.json").read_text())[collection]
-        imported = [e.data for e in entities if e.source == source]
-        assert len(imported) == len(expected)
-        reference_fields = {
-            "id",
-            "region_id",
-            "station_region",
-            "location",
-            "office_region",
-            "power_id",
-            "owner_power",
-            "controller",
-            "controlled_by",
-        }
-        for original, actual in zip(expected, imported, strict=True):
-            assert {k: v for k, v in actual.items() if k not in reference_fields} == {
-                k: v for k, v in original.items() if k not in reference_fields
-            }
+        assert [e.data for e in entities if e.source == source] == [
+            canonical(r) for r in expected
+        ]
     dossiers = json.loads((CONTENT / "minister_dossiers.json").read_text())
     assert {e.key: e.data for e in entities if e.kind == "dossier"} == dossiers
     assert [e.key for e in entities if e.kind == "gazette"] == ["opening"]
@@ -84,7 +80,7 @@ def test_new_game_imports_complete_world_records_and_separates_identities(
     )
     for name in ["史可法", "徐光启", "黄道周", "练国事", "郭允厚"]:
         assert shown[name] == {
-            k: v for k, v in indexed[("person", name)].items() if k in visible_fields
+            k: v for k, v in canonical(characters[name]).items() if k in visible_fields
         }
     assert court.facts("audit") == []
     court.close()

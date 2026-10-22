@@ -1,9 +1,7 @@
 """Month user: resume the first missing ledger product, including after choices."""
 
 import asyncio
-from collections.abc import Awaitable, Callable, Coroutine
-from functools import partial
-from typing import Any
+from collections.abc import Awaitable, Callable
 from uuid import UUID
 
 from ming.middle.court import Court
@@ -58,8 +56,8 @@ class Month:
     def petitions(self) -> list[PendingPetition]:
         return self.inbox.petitions()
 
-    def choose(self, petition_id: UUID, option: int) -> UUID:
-        return self.inbox.choose(petition_id, option)
+    def choose(self, petition_id: UUID, option: int) -> None:
+        self.inbox.choose(petition_id, option)
 
     def current_decrees(self) -> list[EntityView]:
         return [
@@ -142,7 +140,7 @@ class Month:
                     and detail["date"] == self.court.calendar().data
                     and not self.court.products(route, kind="simulation")
                 ):
-                    await self.produce_original(route)
+                    await self.original(route)
                 self.simulations.progress(route, petition_id)
                 pending = self.petitions()
             if date != self.court.calendar().data:
@@ -200,9 +198,15 @@ class Month:
         ]
         return waiting, continuing
 
-    def original(
-        self, route: UUID, produce: Callable[[], Coroutine[Any, Any, bool]]
-    ) -> asyncio.Task[bool]:
+    def nights(self, decrees: list[EntityView]) -> list[EntityView]:
+        return [
+            e
+            for e in self.court.entities("audit")
+            if e.kind == "night"
+            and any(d.data["night_id"] == str(e.id) for d in decrees)
+        ]
+
+    def original(self, route: UUID) -> asyncio.Task[bool]:
         """One shared in-flight production of a route's original segment.
 
         A finished task is replaced on the next call so every pass re-checks
@@ -210,28 +214,17 @@ class Month:
         """
         task = self.originals.get(route)
         if task is None or task.done():
-            task = self.originals[route] = asyncio.create_task(produce())
-        return task
-
-    async def produce_original(self, route: UUID) -> None:
-        """Produce the one original segment this question's forecast continues."""
-        entity = next(e for e in self.court.entities("audit") if e.id == route)
-        decrees = self.current_decrees()
-        if entity.kind == "night":
-            produce = partial(
-                self.night,
-                entity,
-                [d for d in decrees if d.data["night_id"] == str(route)],
+            entity = next(e for e in self.court.entities("audit") if e.id == route)
+            decrees = self.current_decrees()
+            produce = (
+                self.night(
+                    entity, [d for d in decrees if d.data["night_id"] == str(route)]
+                )
+                if entity.kind == "night"
+                else self.world(self.nights(decrees), decrees)
             )
-        else:
-            nights = [
-                e
-                for e in self.court.entities("audit")
-                if e.kind == "night"
-                and any(d.data["night_id"] == str(e.id) for d in decrees)
-            ]
-            produce = partial(self.world, nights, decrees)
-        await self.original(route, produce)
+            task = self.originals[route] = asyncio.create_task(produce)
+        return task
 
     async def world(self, nights: list[EntityView], decrees: list[EntityView]) -> bool:
         """Verdicts on held decrees, then this month's world simulation."""
@@ -278,29 +271,9 @@ class Month:
         async with self.lock:
             if date != self.court.calendar().data:
                 return self.petitions()
-            decrees = self.current_decrees()
-            nights = [
-                e
-                for e in self.court.entities("audit")
-                if e.kind == "night"
-                and any(d.data["night_id"] == str(e.id) for d in decrees)
-            ]
+            nights = self.nights(self.current_decrees())
             results = await asyncio.gather(
-                *(
-                    self.original(
-                        night.id,
-                        partial(
-                            self.night,
-                            night,
-                            [
-                                d
-                                for d in decrees
-                                if d.data["night_id"] == str(night.id)
-                            ],
-                        ),
-                    )
-                    for night in nights
-                ),
+                *(self.original(night.id) for night in nights),
                 return_exceptions=True,
             )
             for result in results:
@@ -320,9 +293,7 @@ class Month:
                 for p in self.petitions()
             ):
                 return self.petitions()
-            ready = await self.original(
-                self.court.calendar().id, partial(self.world, nights, decrees)
-            )
+            ready = await self.original(self.court.calendar().id)
             pending = self.petitions()
             if not ready or pending:
                 return pending

@@ -25,7 +25,7 @@ class Inbox:
             <= (date["year"], date["month"])
         ]
 
-    def choose(self, petition_id: UUID, option: int) -> UUID:
+    def choose(self, petition_id: UUID, option: int) -> None:
         petition = next((p for p in self.petitions() if p.id == petition_id), None)
         if (
             petition is None
@@ -42,4 +42,3 @@ class Inbox:
                 "text": petition.options[option],
             },
         )
-        return petition.route_id
