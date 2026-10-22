@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 from pydantic_ai.exceptions import ModelHTTPError
-from pydantic_ai.messages import ModelResponse, TextPart
 from starlette.testclient import TestClient
 
 from ming.middle.view import Officials
@@ -305,9 +304,7 @@ def test_month_lands_an_earlier_public_decree_before_a_later_secret(
             "/actions", json={"action": "load", "save": game_db.name}
         ).json()["save"]
         for secret in (False, True):
-            steps["scene"] = replaying(
-                [ModelResponse(parts=[TextPart("殿上无事。")])] * 2
-            )
+            steps["scene"] = replaying(["殿上无事。"] * 2)
             steps["NightDeclaration"] = replaying([_night_reply(secret)])
             client.post("/actions", json={"action": "open"}).raise_for_status()
             client.post(

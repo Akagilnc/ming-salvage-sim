@@ -237,7 +237,7 @@ def entity_exposure(
         (E.id.in_(access["known"]), "decree"),
     ]
     if identity == "emperor":
-        rules.extend([(E.kind == "night", "night"), (E.kind == "decree", "decree")])
+        rules.append((E.kind == "night", "night"))
     return case(*rules)
 
 
