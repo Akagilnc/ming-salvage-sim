@@ -380,9 +380,8 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
     indirect=["game_db"],
 )
 def test_settings_survive_reopening_and_failed_scene_retries_in_place(
-    game_db: Path, step: str, failure: type[Exception], steps
+    tmp_path: Path, game_db: Path, step: str, failure: type[Exception], steps
 ) -> None:
-    tmp_path = game_db.parent
     case = json.loads((RECORDED / "night_invalid.json").read_text())
     name = (
         "scene"
@@ -472,7 +471,6 @@ def test_settings_survive_reopening_and_failed_scene_retries_in_place(
 def test_month_transport_retry_is_bounded_and_persistent(
     game_db: Path, case, steps, clock, audit
 ) -> None:
-    tmp_path = game_db.parent
     status, failures, waits, name = case
     steps[name] = replaying(
         [
@@ -485,7 +483,7 @@ def test_month_transport_retry_is_bounded_and_persistent(
             (RECORDED / f"{name}.txt").read_text(),
         ]
     )
-    with TestClient(create_app(tmp_path)) as client:
+    with TestClient(create_app(game_db.parent)) as client:
         client.post("/actions", json={"action": "load", "save": game_db.name})
         client.post("/actions", json={"action": "month"})
         state = client.get("/state").json()["game"]
@@ -501,16 +499,15 @@ def test_month_transport_retry_is_bounded_and_persistent(
         state = client.get("/state").json()["game"]
         assert state["date"]["month"] == 11
         assert state["failure"] is None
-        ledger = audit(tmp_path / client.get("/state").json()["save"])
+        ledger = audit(game_db.parent / client.get("/state").json()["save"])
         assert len([f for f in ledger["facts"] if f["kind"] == "landed"]) == 1
 
 
 @pytest.mark.parametrize("model", ["", "sonnet"])
 @pytest.mark.parametrize("game_db", ["first_night"], indirect=True)
 def test_cli_backend_leaves_the_default_model_to_the_host(
-    game_db: Path, model: str, monkeypatch
+    tmp_path: Path, game_db: Path, model: str, monkeypatch
 ) -> None:
-    tmp_path = game_db.parent
     calls = []
     reply = json.loads((RECORDED / "night_invalid.json").read_text())["cases"][
         "missing_fields"

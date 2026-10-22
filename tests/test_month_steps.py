@@ -32,9 +32,8 @@ RECORDED = Path(__file__).parent / "recorded"
     indirect=["game_db"],
 )
 def test_rejected_decree_is_forced_withdrawn_or_reconsidered(
-    game_db: Path, steps, audit, case: tuple
+    tmp_path: Path, game_db: Path, steps, audit, case: tuple
 ) -> None:
-    tmp_path = game_db.parent
     option, new_night, verdicts = case
     names = {
         "rejected": "deliberation_rejected.txt",
@@ -219,9 +218,8 @@ def test_rejected_decree_is_forced_withdrawn_or_reconsidered(
 
 
 def test_two_nights_feed_world_and_arrivals_wait_for_audience(
-    game_db: Path, steps, audit
+    tmp_path: Path, game_db: Path, steps, audit
 ) -> None:
-    tmp_path = game_db.parent
     received = []
     steps["simulation"] = replaying(
         [(RECORDED / "simulation.txt").read_text()] * 4, received
