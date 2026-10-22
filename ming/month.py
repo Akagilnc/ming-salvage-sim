@@ -2,6 +2,7 @@
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from typing import Any
 from uuid import UUID
 
 from ming.middle.court import Court
@@ -57,34 +58,34 @@ class Month:
         self.inbox.choose(petition_id, option)
 
     async def night(self, night: EntityView, decrees: list[EntityView]) -> bool:
+        verdicts = await self.verdicts(decrees, night.id)
+        return await self.simulations.run(
+            night,
+            {
+                "scope": "旨意推演",
+                "decrees": [
+                    d.model_dump(mode="json")
+                    for d, v in zip(decrees, verdicts)
+                    if v["verdict"] == "准"
+                ],
+                "deliberations": [
+                    {"decree": d.model_dump(mode="json"), **v,
+                     "prior_interim": [p.detail for p in self.court.products(d.id, current=False, kind="interim")]}
+                    for d, v in zip(decrees, verdicts)
+                ],
+            },
+        )
+
+    async def verdicts(self, decrees: list[EntityView], route: UUID) -> list[dict[str, Any]]:
+        """A segment's own verdicts; a push's reconsideration is its petition's."""
         results = await asyncio.gather(
-            *(self.deliberations.start(d, night.id) for d in decrees),
+            *(self.deliberations.run(d, route) for d in decrees),
             return_exceptions=True,
         )
         for result in results:
             if isinstance(result, BaseException):
                 raise result
-        approved = [
-            d.model_dump(mode="json")
-            for d in decrees
-            if any(
-                f.detail["verdict"] == "准"
-                for f in self.court.products(d.id, kind="deliberation")
-            )
-        ]
-        return await self.simulations.run(
-            night,
-            {
-                "scope": "旨意推演",
-                "decrees": approved,
-                "deliberations": [
-                    {"decree": d.model_dump(mode="json"), **f.detail,
-                     "prior_interim": [p.detail for p in self.court.products(d.id, current=False, kind="interim")]}
-                    for d in decrees
-                    for f in self.court.products(d.id, kind="deliberation")
-                ],
-            },
-        )
+        return [r for r in results if not isinstance(r, BaseException)]
 
     async def resume(
         self, *, speculative: bool = False, petition_id: str | None = None
@@ -116,7 +117,10 @@ class Month:
                     None,
                 )
                 if choice is not None and choice["text"] == "御笔强推":
-                    await self.deliberations.start(self.court.entity(petition.entity_id), petition.route_id)
+                    await self.deliberations.run(
+                        self.court.entity(petition.entity_id), petition.route_id,
+                        {"petition_id": petition_id, "option": choice["option"]},
+                    )
                 # Only a choice that continues the segment depends on its parent
                 # original; 收回/留中 consume no continuation and never wait for it.
                 if (
@@ -220,13 +224,7 @@ class Month:
         """Verdicts on held decrees, then this month's world simulation."""
         calendar = self.court.calendar()
         old = [d for d in self.court.due_decrees() if d not in decrees]
-        results = await asyncio.gather(
-            *(self.deliberations.start(d, calendar.id) for d in old),
-            return_exceptions=True,
-        )
-        for result in results:
-            if isinstance(result, BaseException):
-                raise result
+        verdicts = await self.verdicts(old, calendar.id)
         return await self.simulations.run(
             calendar,
             {
@@ -242,10 +240,9 @@ class Month:
                     for n in nights
                 ],
                 "reconsidered": [
-                    {"decree": d.model_dump(mode="json"), "deliberation": f.detail,
+                    {"decree": d.model_dump(mode="json"), "deliberation": v,
                      "prior_interim": [p.detail for p in self.court.products(d.id, current=False, kind="interim")]}
-                    for d in old
-                    for f in self.court.products(d.id, kind="deliberation")
+                    for d, v in zip(old, verdicts)
                 ],
                 "prior_choices": [
                     f.detail

@@ -1,6 +1,6 @@
 """Per-decree court verdicts; rejected decrees offer their own inbox choices."""
 
-import asyncio
+from typing import Any
 from uuid import UUID, uuid4
 
 from pydantic_ai import PromptedOutput
@@ -15,7 +15,6 @@ from ming.middle.view import EntityView, Officials
 class Deliberations:
     def __init__(self, court: Court, model: ModelSource) -> None:
         self.court = court
-        self.tasks: dict[UUID, asyncio.Task[None]] = {}
         self.agent = build_agent(
             model,
             name="deliberation",
@@ -26,26 +25,16 @@ class Deliberations:
             instructions="你演外廷内阁票拟、六科封驳、部院议处。交议处原文和判词。按经手官员所知议处定稿圣旨，不用世界全知。用 read_records 查本身份材料。合规常务准行；越制破格、撞派系逆鳞、撞把关关口才审视封驳。皇威高触发面收窄但有谏言寒蝉、无人担名的反噬，皇威低触发面变宽；命门不因皇威高而豁免。背书人只是担名，不是办事人；会签、当面站台的分量据人物与局势判断。御笔手敕是皇帝亲担，驳了就是抗旨，仍由外廷判词决定。背书本身没有中旨代价。撤旨照常议处，收权罢差是正当治术。",
         )
 
-    async def start(self, decree: EntityView, route: UUID) -> None:
-        task = self.tasks.get(decree.id)
-        if task is None or task.done():
-            task = self.tasks[decree.id] = asyncio.create_task(self.run(decree, route))
-        await asyncio.shield(task)
-
-    async def run(self, decree: EntityView, route: UUID) -> None:
-        choice = next((
-            f.detail for f in reversed(self.court.products(decree.id, kind="choice"))
-            if f.detail["text"] == "御笔强推"
+    async def run(
+        self, decree: EntityView, route: UUID, decision: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """The verdict its caller asked for: the segment's own, or one push's."""
+        done = next((
+            f.detail for f in self.court.products(decree.id, kind="deliberation")
+            if f.detail["decision_key"] == decision
         ), None)
-        decision = (
-            {"petition_id": choice["petition_id"], "option": choice["option"]}
-            if choice else None
-        )
-        if any(
-            f.detail.get("decision_key") == decision
-            for f in self.court.products(decree.id, kind="deliberation")
-        ):
-            return
+        if done is not None:
+            return done
         decree = self.court.entity(decree.id)
         if decision and not decree.data.get("endorsements"):
             endorsement = {"endorser": "御笔", "form": "御笔手敕", "decision_key": decision}
@@ -100,3 +89,4 @@ class Deliberations:
                 ("petition", {**petition.model_dump(mode="json"), "date": date})
             )
         self.court.record(decree.id, events)
+        return events[0][1]
