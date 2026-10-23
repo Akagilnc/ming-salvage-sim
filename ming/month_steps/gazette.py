@@ -10,7 +10,7 @@ from ming.middle.month_work import Materials, prompt, read_records
 
 class Gazette:
     def __init__(
-        self, court: Court, model: ModelSource, on_delta: Callable[[str], None] | None
+        self, court: Court, model: ModelSource, on_delta: Callable[[str | None], None] | None
     ) -> None:
         self.court, self.on_delta = court, on_delta
         self.agent = build_agent(

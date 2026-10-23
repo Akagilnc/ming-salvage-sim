@@ -34,8 +34,8 @@ export function App() {
     void refresh().catch(reason => setError(String(reason)));
     const events = new EventSource('/stream');
     events.addEventListener('delta', event => {
-      const chunk = JSON.parse((event as MessageEvent).data) as { text: string; hall: string[] };
-      setLive(text => text + chunk.text);
+      const chunk = JSON.parse((event as MessageEvent).data) as { text: string | null; hall: string[] };
+      setLive(text => chunk.text === null ? '' : text + chunk.text);
       setSnapshot(value => value?.game?.night ? {
         ...value, game: { ...value.game, night: { ...value.game.night, hall: chunk.hall } },
       } : value);
@@ -43,7 +43,8 @@ export function App() {
     events.addEventListener('gazette', event => {
       if (!gazetteStreaming.current) { setReading('latest'); setLiveGazette(''); }
       gazetteStreaming.current = true;
-      setLiveGazette(text => text + (JSON.parse((event as MessageEvent).data) as string));
+      const chunk = JSON.parse((event as MessageEvent).data) as string | null;
+      setLiveGazette(text => chunk === null ? '' : text + chunk);
     });
     const receive = (event: Event) => {
       if (event.type === 'done') gazetteStreaming.current = false;

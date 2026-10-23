@@ -97,7 +97,7 @@ class Audience:
             self.court.land(result, night_id)
 
     async def say(
-        self, words: str, turn_id: str, on_delta: Callable[[str], None] | None = None
+        self, words: str, turn_id: str, on_delta: Callable[[str | None], None] | None = None
     ) -> str:
         night = self.court.night(self.night_id)
         for turn in night.turns:
@@ -110,7 +110,7 @@ class Audience:
         return await self._turn
 
     async def _generate(
-        self, words: str, turn_id: str, on_delta: Callable[[str], None] | None
+        self, words: str, turn_id: str, on_delta: Callable[[str | None], None] | None
     ) -> str:
         history: list[ModelMessage] = []
         for turn in self.court.night(self.night_id).turns:

@@ -425,7 +425,10 @@ def assert_scene(state: dict[str, object], events: list[dict[str, object]]) -> N
     assert "王承恩" in night["hall"]
     deltas = [event["data"] for event in events if event["event"] == "delta"]
     assert len(deltas) >= 2
-    assert "".join(str(item) for item in deltas) == night["turns"][-1]["scene"]
+    live = ""
+    for item in deltas:
+        live = "" if item is None else live + str(item)
+    assert live == night["turns"][-1]["scene"]
 
 
 @pytest.mark.parametrize(

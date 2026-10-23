@@ -23,7 +23,7 @@ class Month:
         self,
         court: Court,
         model: ModelSource,
-        on_delta: Callable[[str], None] | None = None,
+        on_delta: Callable[[str | None], None] | None = None,
     ) -> None:
         self.court = court
         self.deliberations = Deliberations(court, model)

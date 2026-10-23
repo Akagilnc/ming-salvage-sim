@@ -108,13 +108,17 @@ def transient(error: BaseException) -> bool:
 
 
 async def stream_text(
-    on_delta: Callable[[str], None],
+    on_delta: Callable[[str | None], None],
     _ctx: RunContext[Any],
     stream: AsyncIterable[AgentStreamEvent],
 ) -> None:
-    """Forward native text events without exposing tools or reasoning."""
+    """Forward text; None resets the live buffer when a part is overwritten."""
+    started: set[int] = set()
     async for event in stream:
         if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
+            if event.index in started:
+                on_delta(None)
+            started.add(event.index)
             on_delta(event.part.content)
         elif isinstance(event, PartDeltaEvent) and isinstance(
             event.delta, TextPartDelta

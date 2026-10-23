@@ -14,22 +14,28 @@ import tomllib
 from collections.abc import AsyncGenerator, AsyncIterator, Iterator, Sequence
 from typing import Any, Protocol, cast
 from concurrent.futures import Future
-from contextlib import asynccontextmanager
+from contextlib import aclosing, asynccontextmanager
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
 from tempfile import TemporaryDirectory, TemporaryFile
 
 import uvicorn
 from mcp.server.mcpserver import MCPServer
-from pydantic_ai import Tool
+from pydantic_ai import RunContext, Tool
+from pydantic_ai._instrumentation import get_instructions
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelResponse,
+    ModelResponseStreamEvent,
     TextPart,
 )
+from pydantic_ai.models import ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.settings import ModelSettings
 
 GROK_SLOT_COUNT = 16
 GROK_MAX_OUTPUT = 256 * 1024 * 1024
@@ -51,8 +57,8 @@ GROK_OFF = (
 _SLOT_POOLS: dict[tuple[str, int, int], "SlotPool"] = {}
 
 
-class HostEvents(Protocol):
-    def observe(self, message: dict[str, Any]) -> Iterator[str]: ...
+class HostEvents[T](Protocol):
+    def observe(self, message: dict[str, Any]) -> Iterator[T]: ...
 
     def failure(self, code: int | None, stderr: str) -> str | None: ...
 
@@ -111,14 +117,14 @@ def prompt_bytes(messages: list[ModelMessage]) -> bytes:
     return ModelMessagesTypeAdapter.dump_json(messages, indent=2)
 
 
-async def stream_process(
+async def stream_process[T](
     argv: list[str],
     *,
     cwd: str,
     prompt: Any,
-    events: HostEvents,
+    events: HostEvents[T],
     env: dict[str, str] | None = None,
-) -> AsyncIterator[str]:
+) -> AsyncGenerator[T]:
     with TemporaryFile() as errors:
         proc = await asyncio.create_subprocess_exec(
             *argv,
@@ -219,31 +225,28 @@ class PiEvents:
     def __init__(self) -> None:
         self.error: dict[str, Any] | None = None
         self.settled = False
-        self.streamed = ""
 
-    def observe(self, message: dict[str, Any]) -> Iterator[str]:
+    def observe(self, message: dict[str, Any]) -> Iterator[str | TextPart]:
         kind = message.get("type")
         if kind == "message_update":
             event = as_dict(message.get("assistantMessageEvent"))
             if event is not None and event.get("type") == "text_delta":
                 delta = event.get("delta")
                 if isinstance(delta, str) and delta:
-                    self.streamed += delta
                     yield delta
             return
         body = as_dict(message.get("message"))
+        if kind == "auto_retry_start" or (
+            kind == "message_start" and body is not None and body.get("role") == "assistant"
+        ):
+            yield TextPart("")
         if (
             kind == "message_end"
             and body is not None
             and body.get("role") == "assistant"
         ):
             self.error = message if body.get("stopReason") in {"error", "aborted"} else None
-            full = pi_text(body.get("content"))
-            if full.startswith(self.streamed):
-                extra = full[len(self.streamed) :]
-                if extra:
-                    yield extra
-            self.streamed = ""
+            yield TextPart(pi_text(body.get("content")))
         if kind == "auto_retry_end":
             self.error = None if message.get("success") else message
         if kind == "agent_settled":
@@ -507,10 +510,49 @@ class GrokCliModel(CliHost):
             pool.release(slot)
 
 
+@dataclass
+class PiStreamedResponse(StreamedResponse):
+    _model_name: str
+    _iter: AsyncIterator[str | TextPart]
+    _timestamp: datetime = field(default_factory=partial(datetime.now, UTC))
+
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        produced = False
+        async for item in self._iter:
+            produced = True
+            if isinstance(item, TextPart):
+                yield self._parts_manager.handle_part(vendor_part_id="content", part=item)
+            else:
+                for event in self._parts_manager.handle_text_delta(
+                    vendor_part_id="content", content=item
+                ):
+                    yield event
+        if not produced:
+            yield self._parts_manager.handle_part(
+                vendor_part_id="content", part=TextPart("")
+            )
+
+    @property
+    def model_name(self) -> str:
+        return self._model_name
+
+    @property
+    def provider_name(self) -> None:
+        return None
+
+    @property
+    def provider_url(self) -> None:
+        return None
+
+    @property
+    def timestamp(self) -> datetime:
+        return self._timestamp
+
+
 class PiCliModel(CliHost):
     host = "pi"
 
-    def argv(self, info: AgentInfo, tools: bool) -> list[str]:
+    def argv(self, instructions: str, tools: bool) -> list[str]:
         argv = [
             "pi",
             "--mode",
@@ -524,7 +566,7 @@ class PiCliModel(CliHost):
             "--no-builtin-tools",
             "--no-extensions",
             "--system-prompt",
-            info.instructions or "",
+            instructions,
         ]
         if tools:
             argv.extend(
@@ -539,6 +581,25 @@ class PiCliModel(CliHost):
     async def _stream(
         self, messages: list[ModelMessage], info: AgentInfo
     ) -> AsyncIterator[str]:
+        """Use the same final response for non-streaming FunctionModel requests."""
+        async with self.request_stream(
+            messages, info.model_settings, info.model_request_parameters
+        ) as response:
+            async for _ in response:
+                pass
+            for part in response.get().parts:
+                if isinstance(part, TextPart):
+                    yield part.content
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> AsyncGenerator[StreamedResponse]:
+        _, parameters = self.prepare_request(model_settings, model_request_parameters)
         async with court_server(self.tools) as url:
             with (
                 TemporaryDirectory(prefix="ming-pi-") as directory,
@@ -548,14 +609,14 @@ class PiCliModel(CliHost):
                     write_pi_mcp(Path(directory), url)
                 prompt.write(prompt_bytes(messages))
                 prompt.seek(0)
-                produced = False
-                async for text in stream_process(
-                    self.argv(info, url is not None),
-                    cwd=directory,
-                    prompt=prompt,
-                    events=PiEvents(),
-                ):
-                    produced = True
-                    yield text
-                if not produced:
-                    yield ""
+                async with aclosing(
+                    stream_process(
+                        self.argv(
+                            get_instructions(messages, parameters) or "", url is not None
+                        ),
+                        cwd=directory,
+                        prompt=prompt,
+                        events=PiEvents(),
+                    )
+                ) as parts:
+                    yield PiStreamedResponse(parameters, self.model_name, parts)
