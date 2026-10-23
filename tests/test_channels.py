@@ -9,6 +9,7 @@ import os
 import time
 import tomllib
 from pathlib import Path
+from functools import partial
 from shutil import copyfile
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -19,6 +20,7 @@ import pytest
 from mcp import Client
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai.providers.openai_codex import OpenAICodexProvider
+from pydantic_ai.providers.openai import OpenAIProvider
 from starlette.testclient import TestClient
 
 from ming.__main__ import main
@@ -166,14 +168,16 @@ def install_process(monkeypatch, *, mode: str = "ok", delay: float = 0):
     inflight: dict[str, str] = {}
 
     async def spawn(*args: str, **kwargs: object) -> SimpleNamespace:
-        calls.append((args, kwargs))
+        calls.append((args, {**kwargs, "agent": (
+            None if "--trust" in args else get_current_run_context().agent.name
+        )}))
         if args[0] == "grok" and "--trust" in args:
             mark_trusted(Path(args[args.index("--cwd") + 1]))
             return finished(asyncio.StreamReader())
         if mode == "missing":
             raise FileNotFoundError(2, "No such file or directory", args[0])
         output = asyncio.StreamReader(limit=kwargs["limit"])
-        if mode == "exit":
+        if mode == "exit" or ("--model" in args and args[args.index("--model") + 1] == "rejected-model"):
             output.feed_eof()
             return finished(output, 1)
         cwd = str(kwargs.get("cwd"))
@@ -220,10 +224,30 @@ def tool_records(body: dict[str, object]) -> list[dict[str, object]]:
 
 
 def codex_response(
-    request: httpx2.Request, outputs: list[dict[str, object]] | None = None
+    request: httpx2.Request, outputs: list[dict[str, object]] | None = None,
+    *, requests: list[httpx2.Request] | None = None, rejected: bool = False,
 ) -> httpx2.Response:
+    if requests is not None:
+        requests.append(request)
+    if rejected:
+        return httpx2.Response(400, json={"error": {"message": "unsupported effort"}})
     body = json.loads(request.content)
     name = get_current_run_context().agent.name
+    if request.url.path.endswith("/chat/completions"):
+        reply = REPLIES[name]
+        completion = {
+            "id": "chatcmpl-recorded", "object": "chat.completion", "created": 1,
+            "model": CODEX_MODEL,
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": reply},
+                         "finish_reason": "stop"}],
+        }
+        if not body.get("stream"):
+            return httpx2.Response(200, json=completion)
+        completion["object"] = "chat.completion.chunk"
+        completion["choices"] = [{"index": 0, "delta": {"role": "assistant", "content": reply},
+                                   "finish_reason": "stop"}]
+        return httpx2.Response(200, headers={"content-type": "text/event-stream"},
+                               content=f"data: {json.dumps(completion)}\n\ndata: [DONE]\n\n".encode())
     called = any(
         isinstance(item, dict) and item.get("type") == "function_call"
         for item in body.get("input") or []
@@ -235,16 +259,16 @@ def codex_response(
     return codex_stream(name)
 
 
-def install_codex(monkeypatch, handler):
+def install_codex(monkeypatch, handler, provider=OpenAICodexProvider):
     codex_auth._PROVIDERS.clear()
     client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
-    real = OpenAICodexProvider.__init__
+    real = provider.__init__
 
     def init(self, *args, **kwargs):
         kwargs["http_client"] = client
         real(self, *args, **kwargs)
 
-    monkeypatch.setattr(OpenAICodexProvider, "__init__", init)
+    monkeypatch.setattr(provider, "__init__", init)
 
 
 def watch(app) -> list[dict[str, object]]:
@@ -259,9 +283,10 @@ def watch(app) -> list[dict[str, object]]:
     return events
 
 
-def open_game(client: TestClient, settings: dict[str, str], game_db: Path) -> None:
+def open_game(client: TestClient, settings: dict[str, object], game_db: Path | None) -> None:
     client.post("/actions", json={"action": "settings", "settings": settings}).raise_for_status()
-    client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
+    client.post("/actions", json={"action": "load", "save": game_db.name}
+                if game_db else {"action": "new"}).raise_for_status()
 
 
 def assert_scene(state: dict[str, object], events: list[dict[str, object]]) -> None:
@@ -281,13 +306,15 @@ def assert_scene(state: dict[str, object], events: list[dict[str, object]]) -> N
 
 
 @pytest.mark.parametrize(
-    ("backend", "model"),
-    [("claude-cli", ""), ("claude-cli", "sonnet"), ("grok", ""),
-     ("grok", "grok-4.7"), ("pi", ""), ("pi", f"{PI_MODEL}:high")],
+    ("backend", "model", "effort"),
+    [("claude-cli", "", ""), ("claude-cli", "sonnet", "native-unknown"),
+     ("grok", "", ""), ("grok", "grok-4.7", "medium"),
+     ("pi", "", ""), ("pi", f"{PI_MODEL}:high", "native-unknown")],
 )
 def test_process_subscription_scene_lands_and_streams(
-    tmp_path: Path, monkeypatch, backend: str, model: str, game_db: Path
+    game_db: Path, monkeypatch, backend: str, model: str, effort: str
 ) -> None:
+    tmp_path = game_db.parent
     before = {path: stamp(path) for path in USER_FILES}
     monkeypatch.setenv("GROK_HOME", str(tmp_path / "grok-home"))
     monkeypatch.setenv("HOME", str(tmp_path))
@@ -295,7 +322,7 @@ def test_process_subscription_scene_lands_and_streams(
     app = create_app(game_db.parent)
     events = watch(app)
     with TestClient(app) as client:
-        open_game(client, {"backend": backend, "model": model}, game_db)
+        open_game(client, {"backend": backend, "model": model, "effort": effort}, None)
         client.post("/actions", json={"action": "open"}).raise_for_status()
         client.post("/actions", json={"action": "say", "words": "宣王承恩"}).raise_for_status()
         client.post("/actions", json={"action": "dismiss"}).raise_for_status()
@@ -312,6 +339,11 @@ def test_process_subscription_scene_lands_and_streams(
             assert args[args.index("--model") + 1] == model
         else:
             assert "--model" not in args
+        flag = {"claude-cli": "--effort", "grok": "--reasoning-effort", "pi": "--thinking"}[backend]
+        if effort:
+            assert args[args.index(flag) + 1] == effort
+        else:
+            assert flag not in args
     if backend == "grok":
         args, kwargs = next((args, kwargs) for args, kwargs in calls if "--trust" not in args)
         assert args[args.index("--tools") + 1] == "search_tool,use_tool"
@@ -332,33 +364,60 @@ def test_process_subscription_scene_lands_and_streams(
     assert {path: stamp(path) for path in USER_FILES} == before
 
 
-def test_codex_scene_lands_and_streams(tmp_path: Path, monkeypatch, game_db: Path) -> None:
+@pytest.mark.parametrize("channel", [
+    ("codex", ""), ("codex", "high"), ("codex", "native-unknown"),
+    ("api", ""), ("api", "medium"), ("api", "native-unknown"),
+])
+def test_codex_scene_lands_and_streams(tmp_path: Path, monkeypatch, game_db: Path, channel) -> None:
     before = {path: stamp(path) for path in USER_FILES}
     home = tmp_path / "codex"
     auth_file(home / "auth.json", expired=False)
     monkeypatch.setenv("CODEX_HOME", str(home))
-    install_codex(monkeypatch, codex_response)
+    bodies = []
+
+    install_codex(monkeypatch, partial(codex_response, requests=bodies,
+                                      rejected=channel[1] == "native-unknown"),
+                  OpenAICodexProvider if channel[0] == "codex" else OpenAIProvider)
     app = create_app(game_db.parent)
     events = watch(app)
     with TestClient(app) as client:
-        open_game(client, {"backend": "codex", "model": CODEX_MODEL}, game_db)
+        open_game(client, {"backend": channel[0], "model": CODEX_MODEL, "effort": channel[1],
+                           "base_url": "https://api.example.test/v1", "api_key": "test-key"}, None)
         client.post("/actions", json={"action": "open"}).raise_for_status()
         client.post("/actions", json={"action": "say", "words": "宣王承恩"}).raise_for_status()
         client.post("/actions", json={"action": "dismiss"}).raise_for_status()
         client.portal.call(app.state.web.game.drain)
         state = client.get("/state").json()
-    assert_scene(state, events)
+    assert bodies
+    for request in bodies:
+        body = json.loads(request.content)
+        effort = body.get("reasoning", {}).get("effort") if channel[0] == "codex" else body.get("reasoning_effort")
+        assert effort == (channel[1] or None)
+    if channel[1] == "native-unknown":
+        assert state["game"]["failure"]["payload"]["type"] == "ModelHTTPError"
+    elif channel[0] == "codex":
+        assert_scene(state, events)
+    else:
+        assert state["game"]["failure"] is None
+        assert state["game"]["night"]["result"] == "translated"
     assert {path: stamp(path) for path in USER_FILES} == before
     assert not (home / "config.toml").exists()
 
 
 @pytest.mark.parametrize(
-    "scene_model",
-    ["grok", f"pi:{PI_MODEL}:high", f"codex:{CODEX_MODEL}", f"openai-codex:{CODEX_MODEL}"],
+    ("scene_model", "month_options"),
+    [(model, ["--month-backend", "pi", "--month-model", PI_MODEL, "--month-effort", "high"])
+     for model in ("grok", f"pi:{PI_MODEL}:high", f"codex:{CODEX_MODEL}", f"openai-codex:{CODEX_MODEL}")]
+    + [(f"pi:{PI_MODEL}", flags) for flags in (
+        [], ["--month-backend", ""], ["--month-model", "ignored"],
+        ["--month-backend", "api", "--month-model", CODEX_MODEL, "--month-base-url", ""],
+        ["--month-backend", "pi", "--month-model", "rejected-model", "--month-effort", "high"],
+    )],
 )
 def test_cli_model_string_reaches_its_host(
-    tmp_path: Path, monkeypatch, game_db: Path, scene_model: str
+    game_db: Path, monkeypatch, capsys, scene_model: str, month_options
 ) -> None:
+    tmp_path = game_db.parent
     monkeypatch.setenv("GROK_HOME", str(tmp_path / "grok-home"))
     monkeypatch.setenv("HOME", str(tmp_path))
     home = tmp_path / "codex"
@@ -369,15 +428,34 @@ def test_cli_model_string_reaches_its_host(
 
     def handler(request: httpx2.Request) -> httpx2.Response:
         bodies.append(json.loads(request.content))
-        return codex_stream("scene")
+        return codex_response(request)
 
     install_codex(monkeypatch, handler)
-    monkeypatch.setattr(
-        "sys.stdin", io.StringIO(json.dumps({"action": "say", "words": "宣"}) + "\n")
-    )
-    main(["audience", "--db", str(game_db), "--scene-model", scene_model])
+    monkeypatch.setattr("sys.stdin", io.StringIO("\n".join(json.dumps(action) for action in (
+        {"action": "say", "words": "宣"}, {"action": "dismiss"},
+        {"action": "drain"}, {"action": "month"}, {"action": "drain"},
+    ))))
+    backend, _, name = scene_model.partition(":")
+    main(["audience", "--db", str(game_db), "--backend",
+          "codex" if backend == "openai-codex" else backend, "--model", name,
+          "--effort", "medium", *month_options])
+    state = json.loads(capsys.readouterr().out.splitlines()[-1])
+    if "rejected-model" in month_options:
+        assert state["date"]["month"] == 10
+        assert state["month_error"]["type"] == "RuntimeError"
+        assert set(state["month_error"]) == {"type", "message", "log"}
+    else:
+        assert state["date"]["month"] == 11
+        assert state["month_error"] is None
+    for args, info in calls:
+        if "--trust" not in args and info["agent"] not in {"scene", "NightDeclaration"}:
+            assert args[0] == "pi"
+            assert args[args.index("--thinking") + 1] == (
+                "high" if "--month-effort" in month_options else "medium"
+            )
     if scene_model.startswith(("codex:", "openai-codex:")):
         assert bodies[0]["model"] == CODEX_MODEL
+        assert all(body["reasoning"]["effort"] == "medium" for body in bodies)
         assert not [args for args, _kwargs in calls if args and args[0] == "codex"]
         return
     binary, _, name = scene_model.partition(":")
@@ -397,25 +475,68 @@ def test_codex_settings_require_a_model(tmp_path: Path) -> None:
     assert response.status_code == 400
 
 
-@pytest.mark.parametrize("backend", ["grok", "pi", "codex"])
-def test_subscription_month_completes(tmp_path: Path, monkeypatch, backend: str, game_db: Path) -> None:
+@pytest.mark.parametrize(("backend", "game_db", "expected_calls"), [
+    ("grok", "opening_db", {"Declaration"}), ("pi", "opening_db", {"Declaration"}),
+    ("codex", "opening_db", set()), ("api", "opening_db", set()),
+    ("claude-cli", "secret_night", {"secret_report", "Declaration"}),
+    ("claude-cli", "backed_night", {"deliberation", "Declaration"}),
+], indirect=["game_db"])
+def test_subscription_month_completes(tmp_path: Path, monkeypatch, backend: str, game_db: Path, expected_calls) -> None:
     monkeypatch.setenv("GROK_HOME", str(tmp_path / "grok-home"))
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr("ming.middle.cli_model.GROK_SLOT_COUNT", 2)
     calls, snapshots = install_process(monkeypatch, delay=0.05 if backend == "grok" else 0)
-    if backend == "codex":
+    if "deliberation" in expected_calls:
+        monkeypatch.setitem(REPLIES, "NightDeclaration", json.loads(
+            (RECORDED / "night_endorsed.json").read_text()
+        )["replies"][0])
+    bodies = []
+    if backend in {"api", "codex"}:
         home = tmp_path / "codex"
         auth_file(home / "auth.json", expired=False)
         monkeypatch.setenv("CODEX_HOME", str(home))
-        install_codex(monkeypatch, codex_response)
+
+        install_codex(monkeypatch, partial(codex_response, requests=bodies),
+                      OpenAIProvider if backend == "api" else OpenAICodexProvider)
     app = create_app(game_db.parent)
     with TestClient(app) as client:
-        settings = {"backend": backend, "model": CODEX_MODEL if backend == "codex" else ""}
-        open_game(client, settings, game_db)
+        settings = {
+            "backend": "claude-cli" if backend == "claude-cli" else "pi",
+            "model": PI_MODEL, "effort": "medium",
+            "month_model": {"backend": backend, "model": CODEX_MODEL if backend in {"api", "codex"} else PI_MODEL,
+                            "effort": "high", "base_url": "https://month.example.test/v1", "api_key": "month-key"},
+        }
+        open_game(client, settings, game_db if backend == "claude-cli" else None)
+        client.post("/actions", json={"action": "open"}).raise_for_status()
+        client.post("/actions", json={"action": "say", "words": "宣王承恩"}).raise_for_status()
+        client.post("/actions", json={"action": "dismiss"}).raise_for_status()
+        client.portal.call(app.state.web.game.drain)
         client.post("/actions", json={"action": "month"}).raise_for_status()
         state = client.get("/state").json()
     assert state["game"]["failure"] is None
     assert state["game"]["date"]["month"] == 11
+    assert state["settings"]["month_model"] == settings["month_model"]
+    if backend in {"api", "codex"}:
+        assert bodies
+        for request in bodies:
+            body = json.loads(request.content)
+            assert body["model"] == CODEX_MODEL
+            assert (body["reasoning"]["effort"] if backend == "codex" else body["reasoning_effort"]) == "high"
+            if backend == "api":
+                assert request.url.host == "month.example.test"
+                assert request.headers["authorization"] == "Bearer month-key"
+    for args, info in calls:
+        if "--trust" in args:
+            continue
+        if info["agent"] in {"scene", "NightDeclaration"}:
+            assert args[0] == ("claude" if backend == "claude-cli" else "pi")
+            flag = "--effort" if backend == "claude-cli" else "--thinking"
+            assert args[args.index(flag) + 1] == "medium"
+        else:
+            assert args[0] == ("claude" if backend == "claude-cli" else backend)
+            flag = {"claude-cli": "--effort", "grok": "--reasoning-effort", "pi": "--thinking"}[backend]
+            assert args[args.index(flag) + 1] == "high"
+    assert {info["agent"] for _, info in calls} >= expected_calls
     if backend == "grok":
         assert snapshots
         assert any(len(set(shot.values())) == len(shot) and len(shot) >= 2 for shot in snapshots)
@@ -423,6 +544,41 @@ def test_subscription_month_completes(tmp_path: Path, monkeypatch, backend: str,
         trust = [args for args, _kwargs in calls if "--trust" in args]
         assert trust
         assert len(trust) == len({args[args.index("--cwd") + 1] for args in trust})
+
+
+@pytest.mark.parametrize("optional", [
+    {}, {"month_model": ""}, {"month_model": None},
+    {"month_model": {"model": PI_MODEL}},
+    {"month_model": {"backend": "api", "model": CODEX_MODEL, "base_url": ""}},
+    {"month_model": {"backend": "codex", "model": ""}},
+])
+def test_optional_channel_falls_back_and_configure_reopens(game_db, monkeypatch, optional):
+    calls, _ = install_process(monkeypatch)
+    settings = {"backend": "claude-cli", "model": "sonnet", "effort": "medium", **optional}
+    (game_db.parent / "settings.json").write_text(json.dumps(settings))
+    app = create_app(game_db.parent)
+    with TestClient(app) as client:
+        client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
+        for action in ({"action": "open"}, {"action": "say", "words": "宣王承恩"}, {"action": "dismiss"}):
+            client.post("/actions", json=action).raise_for_status()
+        client.portal.call(app.state.web.game.drain)
+        client.post("/actions", json={"action": "month"}).raise_for_status()
+        assert client.get("/state").json()["game"]["date"]["month"] == 11
+        assert calls
+        for args, _ in calls:
+            assert args[0] == "claude"
+            assert args[args.index("--model") + 1] == "sonnet"
+            assert args[args.index("--effort") + 1] == "medium"
+        calls.clear()
+        settings["month_model"] = {"backend": "pi", "model": PI_MODEL, "effort": "high"}
+        client.post("/actions", json={"action": "settings", "settings": settings}).raise_for_status()
+        client.post("/actions", json={"action": "month"}).raise_for_status()
+        state = client.get("/state").json()
+        assert state["game"]["failure"] is None
+        assert state["game"]["date"]["month"] == 12
+        assert calls
+        for args, _ in calls:
+            assert args[args.index("--thinking") + 1] == "high"
 
 
 def test_grok_second_month_does_not_trust_again(tmp_path: Path, monkeypatch, game_db: Path) -> None:
@@ -485,12 +641,28 @@ def test_pi_empty_assistant_is_not_a_transport_failure(
 def test_process_failure_stops_month(tmp_path: Path, monkeypatch, backend: str, mode: str, game_db: Path) -> None:
     monkeypatch.setenv("GROK_HOME", str(tmp_path / "grok-home"))
     monkeypatch.setenv("HOME", str(tmp_path))
-    install_process(monkeypatch, mode=mode)
-    with TestClient(create_app(game_db.parent)) as client:
-        open_game(client, {"backend": backend, "model": ""}, game_db)
+    install_process(monkeypatch)
+    app = create_app(game_db.parent)
+    with TestClient(app) as client:
+        open_game(client, {"backend": "claude-cli", "model": "sonnet", "effort": "medium",
+                           "month_model": {"backend": backend, "model": "unknown-native", "effort": "native-unknown"}}, game_db)
+        for action in ({"action": "open"}, {"action": "say", "words": "宣王承恩"}, {"action": "dismiss"}):
+            client.post("/actions", json=action).raise_for_status()
+        client.portal.call(app.state.web.game.drain)
+        assert client.get("/state").json()["game"]["failure"] is None
+        calls, _ = install_process(monkeypatch, mode=mode)
         client.post("/actions", json={"action": "month"}).raise_for_status()
         state = client.get("/state").json()
+    model_calls = [args for args, _ in calls if "--trust" not in args]
+    assert model_calls
+    for args in model_calls:
+        assert args[0] == backend
+        assert args[args.index("--model") + 1] == "unknown-native"
+        flag = "--reasoning-effort" if backend == "grok" else "--thinking"
+        assert args[args.index(flag) + 1] == "native-unknown"
     failure = state["game"]["failure"]
+    assert {"type", "message", "log"} <= failure["payload"].keys()
+    assert Path(failure["payload"]["log"]).is_file()
     assert state["game"]["date"]["month"] == 10
     assert failure["status"] == "failed"
     assert failure["action"] == "month"

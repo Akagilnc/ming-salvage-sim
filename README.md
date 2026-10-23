@@ -48,7 +48,7 @@ python -m ming.desktop
 
 启动先到主菜单：新开一局、继续（最新存档）、读取存档、设置。每局一个 SQLite 文件，每次落账自动保存，没有存档位或另存。默认存档与模型设置在 `~/.ming/saves/`。
 
-API 地址、key、模型，或 Claude / Codex / Grok / Pi 订阅，在主菜单设置中填写。Codex 必须填写模型 id。网页／桌面设置不从 `.env` 读取；`.env.example` 仅说明命令行开发入口的可选环境变量。订阅通道用本机已有登录，不替用户登录。工具经该通道自己的原生工具或本地 MCP 交付，戏文按该通道的流式输出增量送到界面。进程自然结束，不强杀。关窗正常退出会先等在飞工作，浏览器断线不打断已接受的说话动作。
+主菜单设置分「主模型」和「过月模型」两套通道，各自可填后端、模型、API 地址、Key 和档位。召对及夜里转译走主模型；过月使用者（含廷议票拟、推演、月末转译、急务、弹劾、邸报和密令）整段走过月模型。过月栏没填全就整组沿用主模型，不逐项借值：必须选后端，API 必填模型和地址，Codex 必填模型；API Key 可空。档位留空用宿主默认档，填写则原样透传，不在游戏里校验词。保存设置会重开当前局，新设置立即生效。原生开关及已知缺口见 [事实单](docs/1968-native-effort.md)。网页／桌面设置不从 `.env` 读取；`.env.example` 仅说明命令行开发入口的可选环境变量。订阅通道用本机已有登录，不替用户登录。工具经该通道自己的原生工具或本地 MCP 交付，戏文按该通道的流式输出增量送到界面。进程自然结束，不强杀。关窗正常退出会先等在飞工作，浏览器断线不打断已接受的说话动作。
 
 不改宿主配置，只有两处例外：Codex 刷新令牌时写回 Codex CLI 自己的 `~/.codex/auth.json`（不写 `config.toml`），刷新后 Codex CLI 仍读同一条链；Grok 每个并行槽位在 `~/.ming/grok-slots/` 下有一个固定目录，未信任过才调用 Grok 自己的 `--trust` 写入信任清单，已信任的不再写。Grok 仍会读到 `~/.grok` 里用户自己登记的 MCP，以及被关闭兼容扫描后仍列在 `~/.claude.json` 里的服务（那些服务处于关闭状态）。Pi 没有只关掉 `~/.pi/agent/mcp.json` 的开关，本局用 `--tools mcp__court__*` 把声明给模型的工具收窄到这一局的服务；Pi 对超过约 20KB 的 MCP 文本会截断并留下全文临时文件，没有关闭该截断的开关。
 
@@ -72,11 +72,14 @@ python -m ming read --db saves/<新局文件>.sqlite --identity audit --replay
 
 `new` 输出新局路径；继续操作使用该路径。默认读取皇帝材料，`audit` 用于内部对账，`--replay` 从事件重放读取。
 
-召对使用支持原生文本和工具的 Pydantic AI 模型；OpenAI 兼容端点用自己的 `OPENAI_BASE_URL`、`OPENAI_API_KEY` 环境变量。仅支持 Chat Completions 的端点选 `openai-chat:` 前缀（`openai:` 默认走 Responses）。订阅通道写 `claude-cli`、`codex:<模型>`、`openai-codex:<模型>`、`grok`、`grok:<模型>`、`pi` 或 `pi:<模型>`（模型段可含 `provider/id:thinking`）。转译默认沿用已登录的 `claude -p`，可用逐次参数换成上述任一通道：
+所有子命令用同一套两槽旗：`--backend`、`--model`、`--base-url`、`--api-key`、`--effort` 是主模型；加 `month-` 前缀就是过月模型（例如 `--month-backend`、`--month-effort`）。后端选 `api`（OpenAI 兼容 Chat Completions）、`claude-cli`、`codex`、`grok` 或 `pi`；模型填宿主自己的 id，Pi 的 `provider/id:thinking` 后缀仍原样传入。主模型默认已登录的 `claude -p`。过月栏后端未选或必填项不全则沿用主模型，规则同网页设置。CLI 不读取网页的 settings.json；两边各自显式配置。旧的 scene/translation 分槽已移除。
+
+例如召对 medium、过月 high：
 
 ```bash
 python -m ming audience --db saves/<新局文件>.sqlite \
-  --scene-model openai-chat:<模型名> --translation-model openai-chat:<模型名>
+  --backend pi --model openai-codex/gpt-6.1-sol --effort medium \
+  --month-backend pi --month-model openai-codex/gpt-6.1-sol --month-effort high
 ```
 
 stdin/stdout 为逐行 JSON。进入时输出夜 id；输入示例：
@@ -101,10 +104,11 @@ stdin/stdout 为逐行 JSON。进入时输出夜 id；输入示例：
 
 ```bash
 python -m ming month --db saves/<新局文件>.sqlite \
-  --model openai-chat:<模型名> --translation-model openai-chat:<模型名>
+  --backend api --model <模型名> --base-url "$OPENAI_BASE_URL" --api-key "$OPENAI_API_KEY" \
+  --month-backend pi --month-model openai-codex/gpt-6.1-sol --month-effort high
 python -m ming choose --db saves/<新局文件>.sqlite \
-  --petition <奏疏id> --option 0 --model openai-chat:<模型名> \
-  --translation-model openai-chat:<模型名>
+  --petition <奏疏id> --option 0 --backend pi --model openai-codex/gpt-6.1-sol \
+  --effort medium --month-backend pi --month-model openai-codex/gpt-6.1-sol --month-effort high
 ```
 
 错误与模型原文写在存档旁的同名 `.errors.log`（Python 标准日志）。API 的 5xx／超时按 #1846 共三次、间隔五秒，429 不自动重试；夜里预推只试一次，失败由过月补跑。声明校验仍由 Pydantic AI 单层回喂；CLI 的不可分类错误保留原文，不猜 HTTP 状态。

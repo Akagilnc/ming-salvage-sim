@@ -19,7 +19,7 @@ from starlette.staticfiles import StaticFiles
 
 from ming.game import Game, InvalidAction
 from ming.middle.court import Court
-from ming.middle.invoke import Settings as Settings
+from ming.middle.invoke import Configuration, REQUIRED_SETTINGS
 
 
 class Action(BaseModel):
@@ -39,7 +39,7 @@ class Action(BaseModel):
     words: str = ""
     petition: UUID | None = None
     option: int = -1
-    settings: Settings | None = None
+    settings: Configuration | None = None
 
 
 class Web:
@@ -48,12 +48,12 @@ class Web:
         self.game: Game | None = None
         self.listeners: set[asyncio.Queue[dict[str, Any]]] = set()
 
-    def settings(self) -> Settings:
+    def settings(self) -> Configuration:
         path = self.directory / "settings.json"
         return (
-            Settings.model_validate_json(path.read_text())
+            Configuration.model_validate_json(path.read_text())
             if path.exists()
-            else Settings()
+            else Configuration()
         )
 
     def saves(self) -> list[str]:
@@ -74,6 +74,7 @@ class Web:
         return {
             "saves": self.saves(),
             "settings": self.settings().model_dump(),
+            "required_settings": REQUIRED_SETTINGS,
             "save": self.game.court.db_path.name if self.game else None,
             "game": self.game.presentation() if self.game else None,
         }
@@ -119,7 +120,7 @@ class Web:
             if action == "new"
             else Court(self.directory / save, model)
         )
-        self.game = Game(court, model, self.emit)
+        self.game = Game(court, model, self.emit, month_model=model.month_model)
         court.observe(lambda: self.emit({"event": "state", "data": self.snapshot()}))
         self.game.resume()
         return {"save": court.db_path.name}

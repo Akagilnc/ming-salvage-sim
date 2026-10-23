@@ -107,7 +107,7 @@ def test_cli_new_games_never_overwrite_and_missing_game_is_not_created(
     assert after["facts"] == saved["facts"]
     assert len(after["entities"]) > len(first["entities"])
     main(
-        ["month", "--db", first["db"], "--model", "test", "--translation-model", "test"]
+        ["month", "--db", first["db"], "--backend", "claude-cli"]
     )
     month = json.loads(capsys.readouterr().out)
     assert month["date"]["month"] == 11

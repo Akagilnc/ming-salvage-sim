@@ -30,11 +30,16 @@ class Game:
         court: Court,
         model: ModelSource,
         emit: Callable[[dict[str, Any]], None] | None = None,
+        *,
+        month_model: ModelSource | None = None,
     ) -> None:
         self.court = court
         self.emit = emit
         self.audience = Audience(court, model)
-        self.month = Month(court, model, partial(self.notify, "gazette"))
+        self.month = Month(
+            court, month_model if month_model is not None else model,
+            partial(self.notify, "gazette"),
+        )
         self.active: asyncio.Task[Any] | None = None
         self.background: set[asyncio.Task[Any]] = set()
         self.translation: asyncio.Task[Any] | None = None

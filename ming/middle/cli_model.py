@@ -390,9 +390,12 @@ def slots() -> SlotPool:
 class CliHost(FunctionModel):
     host = "cli"
 
-    def __init__(self, name: str = "", tools: Sequence[Tool[Any]] = ()) -> None:
+    def __init__(
+        self, name: str = "", tools: Sequence[Tool[Any]] = (), *, effort: str = ""
+    ) -> None:
         self.tools = tools
         self.cli_name = name
+        self.effort = effort
         super().__init__(
             function=self._request,
             stream_function=self._stream,
@@ -423,6 +426,7 @@ class ClaudeCliModel(CliHost):
         return [
             "claude",
             "-p",
+            *(["--effort", self.effort] if self.effort else []),
             *(["--model", self.cli_name] if self.cli_name else []),
             "--tools",
             "",
@@ -477,6 +481,7 @@ class GrokCliModel(CliHost):
     def argv(self, slot: Path, prompt_path: Path, info: AgentInfo) -> list[str]:
         argv = [
             "grok",
+            *(["--reasoning-effort", self.effort] if self.effort else []),
             "--cwd",
             str(slot),
             "--prompt-file",
@@ -562,6 +567,7 @@ class PiCliModel(CliHost):
     def argv(self, instructions: str, tools: bool) -> list[str]:
         argv = [
             "pi",
+            *(["--thinking", self.effort] if self.effort else []),
             "--mode",
             "json",
             "-p",
