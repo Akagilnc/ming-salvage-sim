@@ -55,7 +55,7 @@ GROK_OFF = (
     "GROK_CURSOR_HOOKS_ENABLED",
     "GROK_CURSOR_RULES_ENABLED",
 )
-_SLOT_POOLS: dict[tuple[str, int, int], "SlotPool"] = {}
+_SLOT_POOLS: dict[tuple[str, int], "SlotPool"] = {}
 
 
 class HostEvents[T](Protocol):
@@ -374,8 +374,8 @@ class SlotPool:
 
 
 def slots() -> SlotPool:
-    root = Path(os.environ.get("MING_GROK_SLOTS") or Path.home() / ".ming" / "grok-slots")
-    key = (str(root), id(asyncio.get_running_loop()), GROK_SLOT_COUNT)
+    root = Path.home() / ".ming" / "grok-slots"
+    key = (str(root), id(asyncio.get_running_loop()))
     pool = _SLOT_POOLS.get(key)
     if pool is None:
         pool = SlotPool(root, GROK_SLOT_COUNT)
@@ -501,15 +501,14 @@ class GrokCliModel(CliHost):
             async with court_server(self.tools) as url:
                 write_grok_config(slot, url)
                 prompt_path.write_bytes(prompt_bytes(messages))
-                with prompt_path.open("rb") as prompt:
-                    async for text in stream_process(
-                        self.argv(slot, prompt_path, info),
-                        cwd=str(slot),
-                        prompt=prompt,
-                        events=GrokEvents(),
-                        env=grok_env(),
-                    ):
-                        yield text
+                async for text in stream_process(
+                    self.argv(slot, prompt_path, info),
+                    cwd=str(slot),
+                    prompt=asyncio.subprocess.DEVNULL,
+                    events=GrokEvents(),
+                    env=grok_env(),
+                ):
+                    yield text
         finally:
             prompt_path.unlink(missing_ok=True)
             pool.release(slot)

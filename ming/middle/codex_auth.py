@@ -3,7 +3,6 @@
 import asyncio
 import json
 import os
-import threading
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -17,7 +16,6 @@ from pydantic_ai.providers.openai_codex import (
 )
 
 _PROVIDERS: dict[tuple[str, int], OpenAICodexProvider] = {}
-_PROVIDER_LOCK = threading.Lock()
 
 
 def auth_path() -> Path:
@@ -67,13 +65,10 @@ class CodexAuthFile(OpenAICodexCredentialSource):
 
 
 def codex_model(name: str) -> OpenAICodexModel:
-    if not name:
-        raise ValueError("codex requires a model id")
     path = auth_path()
     key = (str(path), id(asyncio.get_running_loop()))
-    with _PROVIDER_LOCK:
-        provider = _PROVIDERS.get(key)
-        if provider is None:
-            provider = OpenAICodexProvider(credential_source=CodexAuthFile(path))
-            _PROVIDERS[key] = provider
+    provider = _PROVIDERS.get(key)
+    if provider is None:
+        provider = OpenAICodexProvider(credential_source=CodexAuthFile(path))
+        _PROVIDERS[key] = provider
     return OpenAICodexModel(name, provider=provider)

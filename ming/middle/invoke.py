@@ -63,15 +63,16 @@ def configured_model(settings: Settings) -> Model:
 
 
 def named_model(model: str) -> Model:
-    if model == "claude-cli":
-        return ClaudeCliModel()
-    if model == "grok" or model.startswith("grok:"):
-        return GrokCliModel(model[5:] if model.startswith("grok:") else "")
-    if model == "pi" or model.startswith("pi:"):
-        return PiCliModel(model[3:] if model.startswith("pi:") else "")
-    if model == "codex" or model.startswith(("codex:", "openai-codex:")):
-        name = model.split(":", 1)[1] if ":" in model else ""
-        return codex_model(name)
+    backend, _, name = model.partition(":")
+    if (
+        model == "claude-cli"
+        or backend in {"grok", "pi", "codex"}
+        or model.startswith("openai-codex:")
+    ):
+        return configured_model(Settings.model_validate({
+            "backend": "codex" if backend == "openai-codex" else backend,
+            "model": name,
+        }))
     return infer_model(model)
 
 
