@@ -2,10 +2,12 @@
 
 import asyncio
 import json
+from collections import Counter
 from pathlib import Path
 from uuid import uuid4
 
 import pytest
+from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
 from pydantic_ai.messages import (
     ModelResponse,
@@ -16,10 +18,105 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.test import TestModel
 from starlette.testclient import TestClient
 
+from ming.middle.court import Court
+from ming.middle.month_work import Materials, prompt, read_records
+from ming.middle.view import Officials
 from ming.web import Settings, create_app
 from tests.test_court import replaying
 
 RECORDED = Path(__file__).parent / "recorded"
+
+
+async def assert_record_queries(court: Court) -> None:
+    rows = {str(e.id): e for e in court.entities("audit")}
+    for identity in ("world", "emperor", "public", Officials(people=["郭允厚"], exclude_secrets=True)):
+        baseline = await court.read_records(identity)
+        counts = Counter(f["entity_id"] for f in baseline["facts"])
+        catalogue = json.loads(prompt(court, identity, {}))["catalogue"]
+        assert len(catalogue) == len({e["id"] for e in baseline["entities"]} | counts.keys())
+        assert {(e["kind"], e["key"], e["event_count"]) for e in catalogue} == {
+            (rows[entity_id].kind, rows[entity_id].key, counts[entity_id])
+            for entity_id in {e["id"] for e in baseline["entities"]} | counts.keys()
+        }
+        assert all(set(e) == {"kind", "key", "event_count"} for e in catalogue)
+        assert any(e["event_count"] == 0 for e in catalogue)
+        date = court.calendar().data
+        if baseline["facts"]:
+            date = date | {"month": date["month"] - 1}
+        queries = {
+            "empty": {},
+            "class": {"kind": "person"},
+            "date": {"date": date},
+            "class-date": {"kind": "person", "date": date},
+            "one": {"kind": "person", "key": "温体仁"},
+            "many": {"kind": "person", "key": ["温体仁", "杨嗣昌"]},
+            "named": {"key": [e["key"] for e in catalogue]},
+            "dated": {"key": [e["key"] for e in catalogue], "date": date},
+            "prior": {"key": [e["key"] for e in catalogue], "date": {"year": date["year"], "month": date["month"] - 1}},
+            "unknown-key": {"key": "不存在的人"},
+            "unknown-kind": {"kind": "不存在的类"},
+        }
+        for e in rows.values():
+            if e.kind == "decree" and e.data["secret"]:
+                queries["secret"] = {"kind": "decree", "key": e.key}
+        agent = Agent(
+            replaying([
+                ModelResponse(parts=[ToolCallPart("read_records", args, tool_call_id=label) for label, args in queries.items()]),
+                "done",
+            ]),
+            deps_type=Materials, tools=[read_records],
+        )
+        # Native graph entry keeps the real tool schema and dispatch; only the model is recorded.
+        async with agent.iter(prompt(court, identity, {}), deps=Materials(court, identity)) as run:
+            async for _ in run:
+                pass
+        results = {
+            part.tool_call_id: part.model_response_object()
+            for m in run.all_messages() for part in m.parts if isinstance(part, ToolReturnPart)
+        }
+        assert results.keys() == queries.keys()
+        assert results["empty"]["status"] == "query_required"
+        for label in ("unknown-key", "unknown-kind"):
+            assert results[label]["status"] == "not_found"
+            assert {
+                (kind, key) for kind, names in results[label]["names_and_aliases"].items() for key in names
+            } == {(e["kind"], e["key"]) for e in catalogue}
+        assert set(results["empty"]).isdisjoint({"entities", "facts", "catalogue"})
+        for label in ("class", "date", "class-date"):
+            assert set(results[label]) == {"catalogue"}
+            counts = Counter(
+                (rows[f["entity_id"]].kind, rows[f["entity_id"]].key)
+                for f in (baseline if label == "class" else await court.read_records(identity, date=date))["facts"]
+            )
+            assert Counter((e["kind"], e["key"], e["event_count"]) for e in results[label]["catalogue"]) == Counter(
+                (e["kind"], e["key"], counts[e["kind"], e["key"]]) for e in catalogue
+                if (label == "date" or e["kind"] == "person")
+                and (label == "class" or counts[e["kind"], e["key"]])
+            )
+        assert [e["key"] for e in results["one"]["entities"]] == ["温体仁"]
+        assert {e["key"] for e in results["many"]["entities"]} == {"温体仁", "杨嗣昌"}
+        assert len(results["many"]["entities"]) == 2
+        for label in ("one", "many", "named", "dated", "prior"):
+            expected = baseline if label == "named" else await court.read_records(identity, **queries[label])
+            counts = [
+                Counter((f["entity_id"], f["kind"], tuple(f["detail"].get("date", {}).get(k) for k in ("year", "month"))) for f in facts)
+                for facts in (
+                    results[label]["facts"],
+                    expected["facts"],
+                )
+            ]
+            assert counts[0] == counts[1]
+            assert Counter((e["id"], frozenset(e["data"])) for e in results[label]["entities"]) == Counter(
+                (e["id"], frozenset(e["data"])) for e in expected["entities"]
+            )
+        if isinstance(identity, Officials):
+            assert {e["key"] for e in results["named"]["entities"] if e["kind"] == "account"} == {"国库"}
+        if "secret" in results:
+            if identity in ("world", "emperor"):
+                assert [e["key"] for e in results["secret"]["entities"]] == [queries["secret"]["key"]]
+            else:
+                assert results["secret"]["status"] == "not_found"
+                assert queries["secret"]["key"] not in results["secret"]["names_and_aliases"].get("decree", {})
 
 
 def test_menu_creates_distinct_games_and_opens_only_existing_saves(
@@ -49,6 +146,7 @@ def test_menu_creates_distinct_games_and_opens_only_existing_saves(
             ]
             == first
         )
+        asyncio.run(assert_record_queries(client.app.state.web.game.court))
         records = client.get("/records").json()
         assert {e["kind"] for e in records["entities"]} == {
             "person",
@@ -318,6 +416,11 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
                 for name, messages in received.items()
             }
             assert all(materials.values())
+            assert all(
+                set(e) == {"kind", "key", "event_count"}
+                for messages in received.values()
+                for e in json.loads(messages[0].parts[0].content)["catalogue"]
+            )
             case = [
                 {part.tool_call_id: part.model_response_object()
                  for m in messages for part in m.parts if isinstance(part, ToolReturnPart)}
