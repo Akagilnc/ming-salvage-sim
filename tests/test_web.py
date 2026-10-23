@@ -2,7 +2,7 @@
 
 import asyncio
 import json
-from collections import Counter
+from collections import Counter, defaultdict
 from pathlib import Path
 from uuid import uuid4
 
@@ -27,47 +27,74 @@ from tests.test_court import replaying
 RECORDED = Path(__file__).parent / "recorded"
 
 
+def record_queries(catalogue, date, secret=None):
+    queries = {
+        "empty": {},
+        "class": {"kind": "person"},
+        "date": {"date": date},
+        "date-original": {"date": {"id": "world", **date}},
+        "date-reordered": {"date": {"month": date["month"], "year": date["year"], "id": "world"}},
+        "class-date": {"kind": "person", "date": date},
+        "one": {"kind": "person", "key": "温体仁"},
+        "pair": {"kind": "person", "key": ["温体仁", "杨嗣昌"]},
+        "many": {"key": [e["key"] for e in catalogue if e["kind"] in {"account", "army"} or e["key"] == "杨嗣昌"]},
+        "named": {"key": [e["key"] for e in catalogue]},
+        "dated": {"key": "徐光启", "date": {"id": "world", **date}},
+        "dated-ym": {"key": "徐光启", "date": {"year": date["year"], "month": date["month"]}},
+        "prior": {"key": [e["key"] for e in catalogue], "date": {"year": date["year"], "month": date["month"] - 1}},
+        "unknown-key": {"key": "不存在的人"},
+        "unknown-kind": {"kind": "不存在的类"},
+    }
+    if secret is not None:
+        queries["secret"] = {"kind": "decree", "key": secret}
+    return queries
+
+
+def record_months(baseline, audit):
+    # Public projection can erase dates. Align complete event groups, never prose.
+    dates = defaultdict(list)
+    for fact in audit["facts"]:
+        dates[fact["entity_id"], fact["kind"]].append(fact["detail"].get("date", {}))
+    sizes = Counter((f["entity_id"], f["kind"]) for f in baseline["facts"])
+    seen = Counter()
+    months = []
+    for fact in baseline["facts"]:
+        key = fact["entity_id"], fact["kind"]
+        if "date" not in fact["detail"]:
+            assert sizes[key] == len(dates[key])
+        months.append(fact["detail"].get("date", dates[key][seen[key]]))
+        seen[key] += 1
+    return months
+
+
 async def assert_record_queries(court: Court) -> None:
-    rows = {str(e.id): e for e in court.entities("audit")}
+    audit = await court.read_records("audit")
+    rows = {e["id"]: e for e in audit["entities"]}
     for identity in ("world", "emperor", "public", Officials(people=["郭允厚"], exclude_secrets=True)):
         baseline = await court.read_records(identity)
+        months = record_months(baseline, audit)
         counts = Counter(f["entity_id"] for f in baseline["facts"])
         catalogue = json.loads(prompt(court, identity, {}))["catalogue"]
         assert len(catalogue) == len({e["id"] for e in baseline["entities"]} | counts.keys())
         assert {(e["kind"], e["key"], e["event_count"]) for e in catalogue} == {
-            (rows[entity_id].kind, rows[entity_id].key, counts[entity_id])
+            (rows[entity_id]["kind"], rows[entity_id]["key"], counts[entity_id])
             for entity_id in {e["id"] for e in baseline["entities"]} | counts.keys()
         }
         assert all(set(e) == {"kind", "key", "event_count"} for e in catalogue)
         assert any(e["event_count"] == 0 for e in catalogue)
-        date = court.calendar().data
-        if baseline["facts"]:
-            date = date | {"month": date["month"] - 1}
-        queries = {
-            "empty": {},
-            "class": {"kind": "person"},
-            "date": {"date": date},
-            "class-date": {"kind": "person", "date": date},
-            "one": {"kind": "person", "key": "温体仁"},
-            "many": {"kind": "person", "key": ["温体仁", "杨嗣昌"]},
-            "named": {"key": [e["key"] for e in catalogue]},
-            "dated": {"key": [e["key"] for e in catalogue], "date": date},
-            "prior": {"key": [e["key"] for e in catalogue], "date": {"year": date["year"], "month": date["month"] - 1}},
-            "unknown-key": {"key": "不存在的人"},
-            "unknown-kind": {"kind": "不存在的类"},
-        }
-        for e in rows.values():
-            if e.kind == "decree" and e.data["secret"]:
-                queries["secret"] = {"kind": "decree", "key": e.key}
-        agent = Agent(
+        queries = record_queries(
+            catalogue,
+            court.calendar().data | {"month": court.calendar().data["month"] - bool(baseline["facts"])},
+            next((e["key"] for e in rows.values() if e["kind"] == "decree" and e["data"]["secret"]), None),
+        )
+        # Native graph entry keeps the real tool schema and dispatch; only the model is recorded.
+        async with Agent(
             replaying([
                 ModelResponse(parts=[ToolCallPart("read_records", args, tool_call_id=label) for label, args in queries.items()]),
                 "done",
             ]),
             deps_type=Materials, tools=[read_records],
-        )
-        # Native graph entry keeps the real tool schema and dispatch; only the model is recorded.
-        async with agent.iter(prompt(court, identity, {}), deps=Materials(court, identity)) as run:
+        ).iter(prompt(court, identity, {}), deps=Materials(court, identity)) as run:
             async for _ in run:
                 pass
         results = {
@@ -85,8 +112,9 @@ async def assert_record_queries(court: Court) -> None:
         for label in ("class", "date", "class-date"):
             assert set(results[label]) == {"catalogue"}
             counts = Counter(
-                (rows[f["entity_id"]].kind, rows[f["entity_id"]].key)
-                for f in (baseline if label == "class" else await court.read_records(identity, date=date))["facts"]
+                (rows[f["entity_id"]]["kind"], rows[f["entity_id"]]["key"])
+                for f, month in zip(baseline["facts"], months, strict=True)
+                if label == "class" or all(month.get(k) == queries[label]["date"][k] for k in ("year", "month"))
             )
             assert Counter((e["kind"], e["key"], e["event_count"]) for e in results[label]["catalogue"]) == Counter(
                 (e["kind"], e["key"], counts[e["kind"], e["key"]]) for e in catalogue
@@ -94,16 +122,25 @@ async def assert_record_queries(court: Court) -> None:
                 and (label == "class" or counts[e["kind"], e["key"]])
             )
         assert [e["key"] for e in results["one"]["entities"]] == ["温体仁"]
-        assert {e["key"] for e in results["many"]["entities"]} == {"温体仁", "杨嗣昌"}
-        assert len(results["many"]["entities"]) == 2
-        for label in ("one", "many", "named", "dated", "prior"):
-            expected = baseline if label == "named" else await court.read_records(identity, **queries[label])
+        assert {e["key"] for e in results["pair"]["entities"]} == {"温体仁", "杨嗣昌"}
+        assert len(results["pair"]["entities"]) == 2
+        for label in ("one", "pair", "many", "named", "dated", "dated-ym", "prior"):
+            ids = {
+                e["id"] for e in rows.values()
+                if ("kind" not in queries[label] or e["kind"] == queries[label]["kind"])
+                and e["key"] in ([queries[label]["key"]] if isinstance(queries[label]["key"], str) else queries[label]["key"])
+            }
+            expected = {
+                "entities": [e for e in baseline["entities"] if e["id"] in ids],
+                "facts": [
+                    f for f, month in zip(baseline["facts"], months, strict=True)
+                    if f["entity_id"] in ids
+                    and ("date" not in queries[label] or all(month.get(k) == queries[label]["date"][k] for k in ("year", "month")))
+                ],
+            } if label != "named" else baseline
             counts = [
                 Counter((f["entity_id"], f["kind"], tuple(f["detail"].get("date", {}).get(k) for k in ("year", "month"))) for f in facts)
-                for facts in (
-                    results[label]["facts"],
-                    expected["facts"],
-                )
+                for facts in (results[label]["facts"], expected["facts"])
             ]
             assert counts[0] == counts[1]
             assert Counter((e["id"], frozenset(e["data"])) for e in results[label]["entities"]) == Counter(
@@ -246,21 +283,11 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
                         )
                         else ModelResponse(parts=[
                             ToolCallPart("read_records", args, tool_call_id=label)
-                            for label, args in (
-                                ("empty", {}),
-                                ("class", {"kind": "person"}),
-                                ("date", {"date": {"year": 1627, "month": 10}}),
-                                ("date-original", {"date": {"id": "world", "year": 1627, "month": 10}}),
-                                ("date-reordered", {"date": {"month": 10, "year": 1627, "id": "world"}}),
-                                ("class-date", {"kind": "person", "date": {"month": 10, "year": 1627}}),
-                                ("one", {"kind": "person", "key": "温体仁"}),
-                                ("many", {"key": [e["key"] for e in json.loads(messages[0].parts[0].content)["catalogue"] if e["kind"] in {"account", "army"} or e["key"] == "杨嗣昌"]}),
-                                ("dated", {"key": "徐光启", "date": {"month": 10, "year": 1627, "id": "world"}}),
-                                ("dated-ym", {"key": "徐光启", "date": {"year": 1627, "month": 10}}),
-                                ("prior", {"key": "温体仁", "date": {"id": "world", "year": 1627, "month": 9}}),
-                                ("unknown-key", {"key": "不存在的人"}),
-                                ("unknown-kind", {"kind": "不存在的类"}),
-                            )
+                            for label, args in record_queries(
+                                json.loads(messages[0].parts[0].content)["catalogue"],
+                                {"year": 1627, "month": 10},
+                            ).items()
+                            if label in {"empty", "date", "date-original", "date-reordered", "unknown-key", "many"}
                         ])
                     ),
                     received[name],
@@ -415,28 +442,13 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
                 ]
                 for name, messages in received.items()
             }
-            assert all(materials.values())
-            assert all(
-                set(e) == {"kind", "key", "event_count"}
-                for messages in received.values()
-                for e in json.loads(messages[0].parts[0].content)["catalogue"]
-            )
             case = [
                 {part.tool_call_id: part.model_response_object()
                  for m in messages for part in m.parts if isinstance(part, ToolReturnPart)}
                 for messages in received.values()
             ]
-            assert all(data["empty"]["status"] == "query_required" for data in case)
-            assert all(data[label]["status"] == "not_found" for data in case for label in ("unknown-key", "unknown-kind"))
             assert all(data["unknown-key"]["names_and_aliases"]["person"]["温体仁"] == ["温体仁", "温尚书", "温阁老", "温长卿"] for data in case)
-            assert all(set(data[label]) == {"catalogue"} for data in case for label in ("class", "date"))
-            assert all(set(e) == {"kind", "key", "event_count"} for data in case for label in ("class", "date") for e in data[label]["catalogue"])
             assert all(data["date"] == data["date-original"] == data["date-reordered"] for data in case)
-            assert all(data["class-date"]["catalogue"] == [e for e in data["date"]["catalogue"] if e["kind"] == "person"] for data in case)
-            assert all(e["event_count"] > 0 for data in case for e in data["date"]["catalogue"])
-            assert all([e["key"] for e in data["one"]["entities"]] == ["温体仁"] for data in case)
-            assert all(data["dated"]["facts"] and data["dated-ym"]["facts"] for data in case)
-            assert all(data["prior"]["facts"] == [] for data in case)
             assert {f["entity_id"] for f in materials["gazette"][0]["facts"] if f["kind"] == "reported"} == {
                 e["id"] for e in ledger["entities"] if e["kind"] == "account" and e["key"] == "国库"
             }
