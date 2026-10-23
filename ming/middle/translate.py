@@ -7,7 +7,6 @@ from uuid import UUID
 from pydantic import ValidationError
 from pydantic_ai import (
     Agent,
-    ModelRetry,
     PromptedOutput,
     RunContext,
     capture_run_messages,
@@ -26,8 +25,8 @@ from ming.middle.declaration import (
 )
 from ming.middle.queries import CATALOGUE
 from ming.middle.night import read_night
-from ming.middle.opening import REFERENCES
-from ming.middle.rules import check_rules
+from ming.middle.opening import REFERENCES, resolved_office
+from ming.middle.rules import Names, check_rules, fail
 from ming.middle.invoke import ModelSource, build_agent, invoke
 
 T = TypeVar("T", bound=Declaration)
@@ -87,34 +86,34 @@ def allowed_fields(ledger: Ledger) -> dict[str, set[str]]:
     return fields
 
 
-def fail(field: str, value: object, expected: object) -> None:
-    raise ModelRetry(
-        json.dumps(
-            {
-                "field": field,
-                "current": value,
-                "expected": expected,
-                "action": "按 expected 修正此字段并重交整份；名字必须用账本正名，确无该实体不得换成另一实体。",
-            },
-            ensure_ascii=False,
-        )
-    )
-
-
 def check(ledger: Ledger, out: Declaration, source: UUID) -> None:
     names, fields = catalogue(ledger), allowed_fields(ledger)
     for i, fact in enumerate(out.facts):
         path = f"facts[{i}]"
         known = names.setdefault(fact.entity_type, {})
         if fact.entity_type not in fields:
-            fail(path + ".entity_type", fact.entity_type, list(fields))
+            fail(
+                path + ".entity_type",
+                fact.entity_type,
+                list(fields),
+                names,
+                "entity_type 改成 expected 里的类型，重交整份。",
+            )
         if fact.create and fact.entity_type in CATALOGUES:
-            fail(path + ".create", True, {"create": False, "entities": list(known)})
+            fail(
+                path + ".create",
+                True,
+                {"create": False, "entities": list(known)},
+                names,
+                "这类实体不能新建。create 改 false，entity 用 expected 里的正名，重交整份。",
+            )
         if (fact.entity in known) == fact.create:
             fail(
                 path + ".entity",
                 fact.entity,
                 {"names_and_aliases": known, "create": fact.entity not in known},
+                names,
+                "entity 用 names_and_aliases 里的正名；没有就 create=true。确无该实体不得换成另一实体。重交整份。",
             )
         if fact.create:
             known[fact.entity] = []
@@ -124,9 +123,11 @@ def check(ledger: Ledger, out: Declaration, source: UUID) -> None:
                     f"{path}.changes[{j}].field",
                     change.field,
                     sorted(fields[fact.entity_type]),
+                    names,
+                    "field 改成 expected 里的字段名，重交整份。",
                 )
-    check_fiscal(ledger, out)
-    check_rules(out, set(names.get("affair", {})))
+    check_fiscal(ledger, out, names)
+    check_rules(out, set(names.get("affair", {})), names)
     check_references(out, names)
     check_decrees(ledger, out, source, names)
 
@@ -138,20 +139,41 @@ def check_decrees(
     names: dict[str, dict[str, list[str]]],
 ) -> None:
     # Only a night has a decrees list to index. Month shares omit the source.
-    for item in [*out.facts, *out.decree_events]:
-        ref = item.decree
-        if isinstance(out, NightDeclaration):
-            if ref is not None and not 0 <= ref < len(out.decrees):
-                fail("decree", ref, "本份 decrees 的零基下标")
-            elif ref is None and (isinstance(item, DecreeEvent) or item.discovered):
-                fail("decree", ref, "指定所属旨意；只有月末本旨声明可省略来源")
-        elif ref is not None:
-            fail("decree", ref, "省略 decree")
+    labeled = (("facts", out.facts), ("decree_events", out.decree_events))
+    for label, items in labeled:
+        for i, item in enumerate(items):
+            ref = item.decree
+            path = f"{label}[{i}].decree"
+            if isinstance(out, NightDeclaration):
+                if ref is not None and not 0 <= ref < len(out.decrees):
+                    fail(
+                        path,
+                        ref,
+                        "本份 decrees 的零基下标",
+                        names,
+                        "decree 改成 expected，重交整份。",
+                    )
+                elif ref is None and (isinstance(item, DecreeEvent) or item.discovered):
+                    fail(
+                        path,
+                        ref,
+                        "指定所属旨意；只有月末本旨声明可省略来源",
+                        names,
+                        "补上所属旨意的下标，重交整份。只有月末本旨可省略。",
+                    )
+            elif ref is not None:
+                fail(path, ref, "省略 decree", names, "省略 decree，重交整份。")
     if isinstance(out, NightDeclaration) and out.decrees:
         turns = read_night(ledger, source).turns
-        for decree in out.decrees:
+        for i, decree in enumerate(out.decrees):
             if decree.turn > len(turns):
-                fail("decrees.turn", decree.turn, list(range(1, len(turns) + 1)))
+                fail(
+                    f"decrees[{i}].turn",
+                    decree.turn,
+                    list(range(1, len(turns) + 1)),
+                    names,
+                    "turn 改成 expected 里的本夜轮次，重交整份。",
+                )
     if isinstance(out, NightDeclaration):
         check_endorsements(ledger, out, source, names)
 
@@ -167,13 +189,25 @@ def check_endorsements(
         for j, endorsement in enumerate(decree.endorsements):
             path = f"decrees[{i}].endorsements[{j}]"
             if endorsement.source_chat_turn_id not in turn_ids:
-                fail(path + ".source_chat_turn_id", endorsement.source_chat_turn_id, sorted(turn_ids))
+                fail(
+                    path + ".source_chat_turn_id",
+                    endorsement.source_chat_turn_id,
+                    sorted(turn_ids),
+                    names,
+                    "source_chat_turn_id 改成 expected 里的本夜轮次 id，重交整份。",
+                )
             expected = ["御笔"] if endorsement.form == "御笔手敕" else names.get("person", {})
             if endorsement.endorser not in expected:
-                fail(path + ".endorser", endorsement.endorser, expected)
+                fail(
+                    path + ".endorser",
+                    endorsement.endorser,
+                    expected,
+                    names,
+                    "endorser 改成 expected 里的正名，重交整份。",
+                )
 
 
-def check_fiscal(ledger: Ledger, out: Declaration) -> None:
+def check_fiscal(ledger: Ledger, out: Declaration, names: Names) -> None:
     config = ledger.entities(kind="fiscal")
     expenses = {
         r["key"]: r["data"]["account"]
@@ -191,26 +225,38 @@ def check_fiscal(ledger: Ledger, out: Declaration) -> None:
             if settling(r["data"])
         ],
     }
-    for fact in out.facts:
-        for change in fact.changes:
+    for i, fact in enumerate(out.facts):
+        for j, change in enumerate(fact.changes):
+            path = f"facts[{i}].changes[{j}]"
             allowed = targets.get((fact.entity_type, change.field))
             if allowed is not None and fact.entity not in allowed:
-                fail(f"{fact.entity_type}.{change.field}的对象", fact.entity, allowed)
+                fail(
+                    path + ".entity",
+                    fact.entity,
+                    allowed,
+                    names,
+                    "对象改成 expected 里的正名，重交整份。",
+                )
             if change.field == "payment_policy":
                 try:
                     PaymentPolicy.model_validate(change.value)
-                except ValidationError as error:
-                    raise ModelRetry(str(error)) from error
-            if (
-                change.purpose == "当月饷"
-                and change.counterpart
-                and change.counterpart.entity_type == "fiscal"
-                and change.counterpart.entity not in expenses
-            ):
-                fail("当月饷义务科目", change.counterpart.entity, list(expenses))
+                except ValidationError:
+                    fail(
+                        path + ".value",
+                        change.value,
+                        PaymentPolicy.model_json_schema(),
+                        names,
+                        "按 expected 的 schema 修正 payment_policy，重交整份。",
+                    )
             if (fact.entity_type, change.field) == ("building", "output_metric"):
                 if change.value not in OUTPUT_METRICS:
-                    fail(fact.entity + ".output_metric", change.value, OUTPUT_METRICS)
+                    fail(
+                        path + ".value",
+                        change.value,
+                        OUTPUT_METRICS,
+                        names,
+                        "output_metric 改成 expected 里的计量，重交整份。",
+                    )
             if (fact.entity_type, change.field) == ("event", "terminal_reason"):
                 labels = [
                     label
@@ -218,7 +264,13 @@ def check_fiscal(ledger: Ledger, out: Declaration) -> None:
                     for label in row["data"].get("terminal_reason_labels", [])
                 ]
                 if change.value not in labels:
-                    fail(fact.entity + ".terminal_reason", change.value, labels)
+                    fail(
+                        path + ".value",
+                        change.value,
+                        labels,
+                        names,
+                        "terminal_reason 改成 expected 里的结局标签，重交整份。",
+                    )
             if fact.entity_type == "account" and change.field in {
                 "payment_order",
                 "army_order",
@@ -244,41 +296,80 @@ def check_fiscal(ledger: Ledger, out: Declaration) -> None:
                     and all(isinstance(v, str) for v in cast(list[Any], value))
                     and sorted(cast(list[str], value)) == sorted(choices)
                 ):
-                    fail(fact.entity + "." + change.field, change.value, choices)
+                    fail(
+                        path + ".value",
+                        change.value,
+                        choices,
+                        names,
+                        "按 expected 的正名交完整顺序，每个一次，重交整份。",
+                    )
 
 
-def check_references(out: Declaration, names: dict[str, dict[str, list[str]]]) -> None:
+OFFICE_HOW = (
+    "官衔只写账本官衔，例如「巡抚」，地区写进 office_region。"
+    "expected 是可用官名与别名。确无此官不得换成另一官。重交整份。"
+)
+
+
+def check_references(out: Declaration, names: Names) -> None:
     people: list[tuple[str, Any]] = []
+    offices = names.get("office", {})
+    regions = set(names.get("region", {}))
     for i, fact in enumerate(out.facts):
         for j, change in enumerate(fact.changes):
             kind = REFERENCES.get((fact.entity_type, change.field))
             if kind is not None and (change.field == "location" or change.value != ""):
-                if not isinstance(change.value, str) or change.value not in names.get(
-                    kind, {}
-                ):
+                known = isinstance(change.value, str) and (
+                    change.value in names.get(kind, {})
+                    or (
+                        kind == "office"
+                        and resolved_office(change.value, offices, regions) is not None
+                    )
+                )
+                if not known:
                     fail(
                         f"facts[{i}].changes[{j}].value",
                         change.value,
                         names.get(kind, {}),
+                        names,
+                        OFFICE_HOW
+                        if kind == "office"
+                        else "value 改成 expected 里的账本正名，重交整份。确无该实体不得换成另一实体。",
                     )
             if (fact.entity_type, change.field) == ("decree", "people"):
                 people.append((f"facts[{i}].changes[{j}].value", change.value))
     for i, report in enumerate(out.reports):
         if report.entity not in names.get(report.entity_type, {}):
             fail(
-                f"reports[{i}].entity", report.entity, names.get(report.entity_type, {})
+                f"reports[{i}].entity",
+                report.entity,
+                names.get(report.entity_type, {}),
+                names,
+                "entity 改成 expected 里的正名，重交整份。确无该实体不得换成另一实体。",
             )
     if isinstance(out, NightDeclaration):
         people.extend(("decrees.people", decree.people) for decree in out.decrees)
     for path, value in people:
         if not isinstance(value, list):
-            fail(path, value, names.get("person", {}))
+            fail(
+                path,
+                value,
+                names.get("person", {}),
+                names,
+                "people 改成名单，成员用 expected 里的人名正名，重交整份。",
+            )
         members = cast(list[Any], value)
         if any(
             not isinstance(person, str) or person not in names.get("person", {})
             for person in members
         ):
-            fail(path, members, names.get("person", {}))
+            fail(
+                path,
+                members,
+                names.get("person", {}),
+                names,
+                "people 里的名字改成 expected 里的人名正名，重交整份。确无此人不得换成另一人。",
+            )
 
 
 def declaration_agent(

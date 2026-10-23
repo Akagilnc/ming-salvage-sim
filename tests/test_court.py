@@ -383,3 +383,83 @@ def test_recorded_world_month_reply_lands(tmp_path: Path, reply: str) -> None:
     kinds = [fact.kind for fact in court.facts("audit", entity_id=source)]
     assert "landed" in kinds and "unhandled" not in kinds
     court.close()
+
+
+@pytest.mark.parametrize(
+    "reply",
+    ["r2_b_1136.txt", "r2_d_withdrawn_986.txt", "r2_d_1017.txt", "speed"],
+    ids=["B-1136", "D-withdrawn-986", "D-1017", "speed"],
+)
+def test_recorded_r2_reply_lands(tmp_path: Path, reply: str) -> None:
+    text = (
+        json.dumps(
+            {
+                "facts": [
+                    {
+                        "entity_type": "person",
+                        "entity": "洪承畴",
+                        "create": False,
+                        "changes": [{"field": "travel_speed", "value": 3}],
+                        "text": "行速。",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        )
+        if reply == "speed"
+        else (RECORDED / reply).read_text()
+    )
+    second = (
+        text.replace('"兵部尚书"', '"兵部尚书,左都御史"')
+        if reply == "r2_d_1017.txt"
+        else text
+    )
+    court = Court.new_game(tmp_path, replaying([text, second]))
+    if "关宁补饷" in text:
+        court.record(("affair", "关宁补饷"), [])
+    source = court.calendar().id
+    result = asyncio.run(
+        court.translate(court.translation_agent(Declaration), "", source)
+    )
+    court.land(result, source, monthly="landed")
+    kinds = [fact.kind for fact in court.facts("audit", entity_id=source)]
+    assert "landed" in kinds and "unhandled" not in kinds
+    rows = {(entity.kind, entity.key): entity for entity in court.entities("audit")}
+    if reply == "r2_b_1136.txt":
+        person = rows[("person", "洪承畴")]
+        assert (person.data["office"], person.data["office_region"]) == ("巡抚", "陕西")
+        appointed = [
+            fact
+            for fact in court.facts("audit", entity_id=person.id)
+            if fact.kind == "changed" and fact.detail["nominal"].get("office") == "陕西巡抚"
+        ]
+        assert appointed[-1].detail["actual"]["office"] == "巡抚"
+        assert appointed[-1].detail["actual"]["office_region"] == "陕西"
+    elif reply == "r2_d_withdrawn_986.txt":
+        region = rows[("region", "陕西")]
+        assert "arrears" not in region.data and "month_paid" not in region.data
+        assert "专项" in [
+            fact.detail["purpose"]
+            for fact in court.facts("audit", entity_id=region.id)
+            if fact.kind == "received"
+        ]
+    elif reply == "r2_d_1017.txt":
+        assert rows[("person", "崔呈秀")].data["office"] == "兵部尚书,左都御史"
+        building = rows[("building", "锦州卫军器局")]
+        assert "arrears" not in building.data
+        assert "专项" in [
+            fact.detail["purpose"]
+            for fact in court.facts("audit", entity_id=building.id)
+            if fact.kind == "received"
+        ]
+    else:
+        person = rows[("person", "洪承畴")]
+        assert person.data["travel_speed"] == 2
+        changed = [
+            fact
+            for fact in court.facts("audit", entity_id=person.id)
+            if fact.kind == "changed"
+        ]
+        assert changed[-1].detail["nominal"]["travel_speed"] == 3
+        assert changed[-1].detail["actual"]["travel_speed"] == 2
+    court.close()

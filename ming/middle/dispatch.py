@@ -16,7 +16,30 @@ from ming.middle.declaration import (
     Unhandled,
 )
 from ming.middle.rules import field_values, money_amounts
-from ming.middle.fiscal import WAN, current_paid
+from ming.middle.fiscal import WAN, current_paid, has_obligation
+from ming.middle.opening import resolved_office
+from ming.middle.translate import catalogue
+
+
+def apply_office_alias(
+    ledger: Ledger, changes: dict[str, object], detail: dict[str, Any]
+) -> None:
+    value = changes.get("office")
+    if not isinstance(value, str) or not value:
+        return
+    names = catalogue(ledger)
+    resolved = resolved_office(
+        value, names.get("office", {}), set(names.get("region", {}))
+    )
+    if not resolved:
+        return
+    title, region = resolved
+    changes["office"] = title
+    changes["office_region"] = region
+    actual = detail.get("actual")
+    if isinstance(actual, dict):
+        actual["office"] = title
+        actual["office_region"] = region
 
 
 def landing_entities(
@@ -53,6 +76,7 @@ def landing_entities(
     # location), and only an office/region change can displace its incumbents.
     origins: set[str] = set()
     offices: set[str] = set()
+    names = catalogue(ledger)
     for fact in result.facts:
         if fact.entity_type != "person":
             continue
@@ -61,7 +85,11 @@ def landing_entities(
         if "location" in changes:
             origins.add(held.get("location") or str(changes["location"]))
         if {"office", "office_region"}.intersection(changes):
-            offices.add(str(changes.get("office", held.get("office", ""))))
+            office = str(changes.get("office", held.get("office", "")))
+            resolved = resolved_office(
+                office, names.get("office", {}), set(names.get("region", {}))
+            )
+            offices.add(resolved[0] if resolved else office)
     offices.discard("")
     if origins or offices:
         for e in ledger.read(
@@ -151,6 +179,7 @@ def dispatch(
                 fact_origin["origin_ref"] = str(decrees[fact.decree].id)
             changes = detail["changes"]
             if entity.kind == "person":
+                apply_office_alias(ledger, changes, detail)
                 move_person(entity, changes, existing, record)
             record(entity, "changed", detail, changes)
             if (
@@ -230,11 +259,15 @@ def record_receipts(
         if change.counterpart and change.counterpart.entity_type != "account":
             recipient = known(change.counterpart.entity_type, change.counterpart.entity)
             changes: Item = {}
-            if change.purpose == "补欠":
+            if change.purpose == "补欠" and has_obligation(
+                "补欠", recipient.kind, recipient.data
+            ):
                 changes["arrears"] = max(
                     0, recipient.data.get("arrears", 0) + amount / WAN
                 )
-            elif change.purpose == "当月饷":
+            elif change.purpose == "当月饷" and has_obligation(
+                "当月饷", recipient.kind, recipient.data
+            ):
                 date = known("calendar", "world").data
                 changes["month_paid"] = {
                     "date": date,

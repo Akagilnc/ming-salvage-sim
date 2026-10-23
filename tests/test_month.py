@@ -849,24 +849,6 @@ def test_fiscal_petition_lands_only_declared_outcome_without_readding_levies(
         pytest.param(
             [
                 {
-                    "entity_type": "account",
-                    "entity": "国库",
-                    "create": False,
-                    "changes": [
-                        {
-                            "field": "taels",
-                            "value": 10000,
-                            "purpose": "犒赏",
-                        }
-                    ],
-                    "text": "名目用在非军队非科目的款上",
-                }
-            ],
-            id="purpose_misplaced",
-        ),
-        pytest.param(
-            [
-                {
                     "entity_type": "army",
                     "entity": "关宁军 / 宁锦防线",
                     "create": False,

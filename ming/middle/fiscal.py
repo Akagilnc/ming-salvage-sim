@@ -36,6 +36,15 @@ def payable_army(data: Item) -> bool:
     return data.get("owner_power") == MING and "salary_rate" in data
 
 
+def has_obligation(purpose: str, kind: str, data: Item) -> bool:
+    """Whether this recipient actually carries the named obligation."""
+    if purpose == "补欠":
+        return "arrears" in data
+    if purpose == "当月饷" and kind == "army":
+        return payable_army(data)
+    return purpose == "当月饷" and kind == "fiscal" and data.get("direction") == "expense"
+
+
 def levers(config: list[Item]) -> list[str]:
     """Fiscal values the month accounts read; no other value is a decree lever."""
     return [

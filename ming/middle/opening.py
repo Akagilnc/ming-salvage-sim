@@ -28,6 +28,29 @@ COLLECTIONS = [
 
 # Scalar entity references, shared by import and declaration validation.
 # Army controller/commander and historical relationship names are prose, not keys.
+# Bare regional posts. A provincial name in front is an alias, not a second office.
+REGIONAL_TITLES = ("巡抚", "总督", "布政使")
+
+
+def regional_alias(region: str, title: str) -> str:
+    return region + title
+
+
+def resolved_office(
+    value: str, offices: dict[str, list[str]], regions: set[str]
+) -> tuple[str, str] | None:
+    """Alias such as 陕西巡抚 resolves to the title plus that region; a ledger key does not."""
+    if not value or value in offices:
+        return None
+    for title, aliases in offices.items():
+        if value not in aliases:
+            continue
+        for region in regions:
+            if value == regional_alias(region, title):
+                return title, region
+    return None
+
+
 REFERENCES = {
     ("person", "office"): "office",
     ("person", "office_region"): "region",
@@ -120,6 +143,17 @@ def import_opening(ledger: Ledger, content: Path) -> None:
         )
         for title in sorted(titles - multi)
     )
+    office_by_key = {entity.key: entity for entity in entities if entity.kind == "office"}
+    region_names = set(names["region"].values())
+    for title in REGIONAL_TITLES:
+        entity = office_by_key.get(title)
+        if entity is None:
+            continue
+        entity.data["aliases"] = [
+            regional_alias(region, title)
+            for region in sorted(region_names)
+            if regional_alias(region, title) not in office_by_key
+        ]
     gazette = (content / "opening_gazette.md").read_text()
     entities.append(
         Entity("gazette", "opening", "opening_gazette.md", {"text": gazette})

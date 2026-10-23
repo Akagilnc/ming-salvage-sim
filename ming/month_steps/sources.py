@@ -11,7 +11,7 @@ from ming.middle.declaration import Petition, PendingPetition, StrictModel
 from ming.middle.invoke import ModelSource, build_agent, invoke
 from ming.middle.month_work import Materials, prompt, read_records
 from ming.middle.view import EntityView, Officials
-from ming.middle.translate import fail
+from ming.middle.rules import fail
 
 
 class UrgentPetition(Petition):
@@ -107,7 +107,8 @@ class Sources:
 
         @agent.output_validator
         def names(ctx: RunContext[Materials], output: Urgencies | Impeachments):
-            people = ctx.deps.court.catalogue()["person"]
+            catalogue = ctx.deps.court.catalogue()
+            people = catalogue["person"]
             originals = {
                 str(f.detail["id"]) for f in ctx.deps.court.returned_petitions()
             }
@@ -117,10 +118,22 @@ class Sources:
                     refs["target"] = item.target
                 for field, name in refs.items():
                     if name not in people:
-                        fail(field, name, people)
+                        fail(
+                            field,
+                            name,
+                            people,
+                            catalogue,
+                            "改成 expected 里的人名正名，重交整份。确无此人不得换成另一人。",
+                        )
                 if isinstance(item, UrgentPetition) and item.revision_of is not None:
                     if str(item.revision_of) not in originals:
-                        fail("revision_of", str(item.revision_of), sorted(originals))
+                        fail(
+                            "revision_of",
+                            str(item.revision_of),
+                            sorted(originals),
+                            catalogue,
+                            "revision_of 改成 expected 里的原奏疏 id，或省略，重交整份。",
+                        )
             return output
 
         result = await invoke(
