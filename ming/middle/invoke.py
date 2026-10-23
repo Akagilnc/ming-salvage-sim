@@ -16,7 +16,8 @@ from pydantic_ai.messages import (
     TextPartDelta,
 )
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
-from pydantic_ai.models import Model, infer_model
+from pydantic_ai.models import Model
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 from tenacity import AsyncRetrying, retry_if_exception, stop_after_attempt, wait_fixed
@@ -54,18 +55,17 @@ class Configuration(Settings):
     def complete_channel(cls, value: Any) -> Any:
         if not value:
             return None
-        data = value.model_dump(exclude_unset=True) if isinstance(value, Settings) else value
-        if isinstance(data, dict):
-            data = cast(dict[str, Any], data)
-            if not data.get("backend") or any(
-                not data.get(key, "").strip()
-                for key in REQUIRED_SETTINGS.get(data["backend"], ())
+        if isinstance(value, dict):
+            value = cast(dict[str, Any], value)
+            if not value.get("backend") or any(
+                not value.get(key, "").strip()
+                for key in REQUIRED_SETTINGS.get(value["backend"], ())
             ):
                 return None
         return value
 
 
-ModelSource = Model | Settings | str
+ModelSource = Model | Settings
 TextUpdate = str | dict[str, str]
 
 
@@ -76,28 +76,19 @@ def configured_model(settings: Settings) -> Model:
         return GrokCliModel(settings.model, effort=settings.effort)
     if settings.backend == "pi":
         return PiCliModel(settings.model, effort=settings.effort)
+    native_settings = (
+        cast(ModelSettings, {"openai_reasoning_effort": settings.effort})
+        if settings.effort else None
+    )
     if settings.backend == "codex":
-        return codex_model(settings.model)
+        return codex_model(settings.model, settings=native_settings)
     return OpenAIChatModel(
         settings.model or "gpt-4.1",
+        settings=native_settings,
         provider=OpenAIProvider(
             base_url=settings.base_url, api_key=settings.api_key or "not-configured"
         ),
     )
-
-
-def named_model(model: str) -> Model:
-    backend, _, name = model.partition(":")
-    if (
-        model == "claude-cli"
-        or backend in {"grok", "pi", "codex"}
-        or model.startswith("openai-codex:")
-    ):
-        return configured_model(Settings.model_validate({
-            "backend": "codex" if backend == "openai-codex" else backend,
-            "model": name,
-        }))
-    return infer_model(model)
 
 
 def build_agent(
@@ -108,14 +99,7 @@ def build_agent(
 ) -> Agent[Any, Any]:
     """Declare a call once, including its native transport and callable tools."""
     if isinstance(model, Settings):
-        if model.effort and model.backend in {"api", "codex"}:
-            kwargs["model_settings"] = {
-                **kwargs.get("model_settings", {}),
-                "openai_reasoning_effort": model.effort,
-            }
         model = configured_model(model)
-    elif isinstance(model, str):
-        model = named_model(model)
     declared: list[Tool[Any]] = [
         cast(Tool[Any], tool) if isinstance(tool, Tool) else Tool[Any](tool)
         for tool in tools

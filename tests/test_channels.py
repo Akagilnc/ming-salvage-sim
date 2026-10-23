@@ -405,17 +405,17 @@ def test_codex_scene_lands_and_streams(tmp_path: Path, monkeypatch, game_db: Pat
 
 
 @pytest.mark.parametrize(
-    ("scene_model", "month_options"),
-    [(model, ["--month-backend", "pi", "--month-model", PI_MODEL, "--month-effort", "high"])
-     for model in ("grok", f"pi:{PI_MODEL}:high", f"codex:{CODEX_MODEL}", f"openai-codex:{CODEX_MODEL}")]
-    + [(f"pi:{PI_MODEL}", flags) for flags in (
+    ("channel", "month_options"),
+    [(channel, ["--month-backend", "pi", "--month-model", PI_MODEL, "--month-effort", "high"])
+     for channel in (("grok", ""), ("pi", f"{PI_MODEL}:high"), ("codex", CODEX_MODEL))]
+    + [(("pi", PI_MODEL), flags) for flags in (
         [], ["--month-backend", ""], ["--month-model", "ignored"],
         ["--month-backend", "api", "--month-model", CODEX_MODEL, "--month-base-url", ""],
         ["--month-backend", "pi", "--month-model", "rejected-model", "--month-effort", "high"],
     )],
 )
-def test_cli_model_string_reaches_its_host(
-    game_db: Path, monkeypatch, capsys, scene_model: str, month_options
+def test_cli_channel_reaches_its_host(
+    game_db: Path, monkeypatch, capsys, channel: tuple[str, str], month_options
 ) -> None:
     tmp_path = game_db.parent
     monkeypatch.setenv("GROK_HOME", str(tmp_path / "grok-home"))
@@ -435,9 +435,8 @@ def test_cli_model_string_reaches_its_host(
         {"action": "say", "words": "宣"}, {"action": "dismiss"},
         {"action": "drain"}, {"action": "month"}, {"action": "drain"},
     ))))
-    backend, _, name = scene_model.partition(":")
-    main(["audience", "--db", str(game_db), "--backend",
-          "codex" if backend == "openai-codex" else backend, "--model", name,
+    backend, name = channel
+    main(["audience", "--db", str(game_db), "--backend", backend, "--model", name,
           "--effort", "medium", *month_options])
     state = json.loads(capsys.readouterr().out.splitlines()[-1])
     if "rejected-model" in month_options:
@@ -453,13 +452,12 @@ def test_cli_model_string_reaches_its_host(
             assert args[args.index("--thinking") + 1] == (
                 "high" if "--month-effort" in month_options else "medium"
             )
-    if scene_model.startswith(("codex:", "openai-codex:")):
+    if backend == "codex":
         assert bodies[0]["model"] == CODEX_MODEL
         assert all(body["reasoning"]["effort"] == "medium" for body in bodies)
         assert not [args for args, _kwargs in calls if args and args[0] == "codex"]
         return
-    binary, _, name = scene_model.partition(":")
-    model_calls = [args for args, _kwargs in calls if args[0] == binary and "--trust" not in args]
+    model_calls = [args for args, _kwargs in calls if args[0] == backend and "--trust" not in args]
     assert model_calls
     if name:
         assert model_calls[0][model_calls[0].index("--model") + 1] == name
