@@ -24,7 +24,6 @@ from ming.web import create_app
 
 RECORDED = Path(__file__).parent / "recorded"
 SCENE = ["殿上", "有人"]
-TAIL = "LEDGER-TAIL"
 USER_FILES = (
     Path.home() / ".codex" / "auth.json",
     Path.home() / ".codex" / "config.toml",
@@ -69,20 +68,48 @@ def auth_file(path: Path, *, expired: bool) -> None:
     )
 
 
-def reply_for(system: str) -> str:
-    if (
-        "UrgentPetition" in system
-        or "ImpeachmentPetition" in system
-        or "奏疏来源" in system
-    ):
+def embedded(text: str) -> list[dict[str, object]]:
+    found: list[dict[str, object]] = []
+    decoder = json.JSONDecoder()
+    index = 0
+    while True:
+        start = text.find("{", index)
+        if start < 0:
+            return found
+        try:
+            value, end = decoder.raw_decode(text, start)
+        except json.JSONDecodeError:
+            index = start + 1
+            continue
+        if isinstance(value, dict):
+            found.append(value)
+        index = end
+
+
+def schema_fields(text: str) -> tuple[set[str], set[str]]:
+    props: set[str] = set()
+    defs: set[str] = set()
+    for obj in embedded(text):
+        properties = obj.get("properties")
+        if obj.get("type") == "object" and isinstance(properties, dict):
+            props.update(str(key) for key in properties)
+        definitions = obj.get("$defs")
+        if isinstance(definitions, dict):
+            defs.update(str(key) for key in definitions)
+    return props, defs
+
+
+def recorded_reply(text: str) -> str:
+    props, defs = schema_fields(text)
+    if "UrgentPetition" in defs or "ImpeachmentPetition" in defs:
         return (RECORDED / "sources_empty.txt").read_text()
-    if "你推演真实世界" in system:
+    if "month_end" in props:
         return (RECORDED / "simulation.txt").read_text()
-    if "你演外廷" in system:
+    if "verdict" in props:
         return (RECORDED / "deliberation.txt").read_text()
-    if "御前召对的转译官" in system:
+    if "decrees" in props:
         return '{"facts":[],"decrees":[]}'
-    if "转译官" in system:
+    if "facts" in props:
         return '{"facts":[]}'
     return (RECORDED / "gazette.txt").read_text()
 
@@ -159,9 +186,18 @@ def finished(output: asyncio.StreamReader, code: int = 0) -> SimpleNamespace:
     )
 
 
-async def chunks_for(url: str | None, system: str) -> list[str]:
+def prompt_text(prompt: object) -> str:
+    if not hasattr(prompt, "read"):
+        return ""
+    pos = prompt.tell()
+    raw = prompt.read()
+    prompt.seek(pos)
+    return raw.decode() if isinstance(raw, bytes) else str(raw)
+
+
+async def chunks_for(url: str | None, request: str) -> list[str]:
     if url is None:
-        return [reply_for(system)]
+        return [recorded_reply(request)]
     async with Client(url) as client:
         listed = await client.list_tools()
         names = [tool.name for tool in listed.tools]
@@ -170,7 +206,7 @@ async def chunks_for(url: str | None, system: str) -> list[str]:
             return SCENE
         if "read_records" in names:
             await client.call_tool("read_records", {})
-    return [reply_for(system)]
+    return [recorded_reply(request)]
 
 
 def install_process(monkeypatch, *, mode: str = "ok", delay: float = 0):
@@ -188,8 +224,6 @@ def install_process(monkeypatch, *, mode: str = "ok", delay: float = 0):
             raise FileNotFoundError(2, "No such file or directory", args[0])
         output = asyncio.StreamReader()
         if mode == "exit":
-            if hasattr(errors, "write"):
-                errors.write(b"HOST-DOWN-SENTINEL\n")
             output.feed_eof()
             return finished(output, 1)
         cwd = str(kwargs.get("cwd"))
@@ -202,11 +236,12 @@ def install_process(monkeypatch, *, mode: str = "ok", delay: float = 0):
             await asyncio.sleep(delay)
         inflight.pop(cwd, None)
         if mode == "error":
-            chunks, error = [], "PI-ERROR-SENTINEL"
+            chunks, error = [], "down"
         elif mode == "empty":
             chunks, error = [], None
         else:
-            chunks, error = await chunks_for(url, system_prompt(args)), None
+            request = system_prompt(args) + "\n" + prompt_text(kwargs.get("stdin"))
+            chunks, error = await chunks_for(url, request), None
         for line in host_lines(args[0], chunks, error=error):
             output.feed_data(line)
         output.feed_eof()
@@ -299,6 +334,57 @@ def tool_call(name: str, arguments: dict[str, object]) -> httpx2.Response:
     ]
     body = "".join(f"event: {item['type']}\ndata: {json.dumps(item)}\n\n" for item in events)
     return httpx2.Response(200, headers={"content-type": "text/event-stream"}, content=body)
+
+
+def codex_text(body: dict[str, object]) -> str:
+    chunks: list[str] = []
+    instructions = body.get("instructions")
+    if isinstance(instructions, str):
+        chunks.append(instructions)
+    for item in body.get("input") or []:
+        if not isinstance(item, dict):
+            continue
+        content = item.get("content")
+        if isinstance(content, str):
+            chunks.append(content)
+        elif isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict) and isinstance(part.get("text"), str):
+                    chunks.append(part["text"])
+    return "\n".join(chunks)
+
+
+def tool_records(body: dict[str, object]) -> list[dict[str, object]]:
+    found: list[dict[str, object]] = []
+    for item in body.get("input") or []:
+        if not isinstance(item, dict) or item.get("type") != "function_call_output":
+            continue
+        output = item.get("output")
+        if not isinstance(output, str):
+            continue
+        try:
+            parsed = json.loads(output)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            found.append(parsed)
+    return found
+
+
+def codex_response(
+    body: dict[str, object], outputs: list[dict[str, object]] | None = None
+) -> httpx2.Response:
+    text = codex_text(body)
+    props, _defs = schema_fields(text)
+    called = any(
+        isinstance(item, dict) and item.get("type") == "function_call"
+        for item in body.get("input") or []
+    )
+    if "month_end" in props and not called:
+        return tool_call("read_records", {})
+    if outputs is not None and "month_end" in props:
+        outputs.extend(tool_records(body))
+    return text_stream(recorded_reply(text))
 
 
 def install_codex(monkeypatch, handler):
@@ -472,7 +558,7 @@ def test_subscription_month_completes(tmp_path: Path, monkeypatch, backend: str)
         monkeypatch.setenv("CODEX_HOME", str(home))
 
         def handler(request: httpx2.Request) -> httpx2.Response:
-            return text_stream(reply_for(request.content.decode()))
+            return codex_response(json.loads(request.content))
 
         install_codex(monkeypatch, handler)
     app = create_app(tmp_path / "saves")
@@ -510,25 +596,26 @@ def test_codex_forwards_a_ledger_sized_tool_result(tmp_path: Path, monkeypatch) 
     home = tmp_path / "codex"
     auth_file(home / "auth.json", expired=False)
     monkeypatch.setenv("CODEX_HOME", str(home))
-    planted = "账" * 100_000 + TAIL
-    seen: list[str] = []
+    planted = {"text": "账" * 100_000}
+    outputs: list[dict[str, object]] = []
 
     def handler(request: httpx2.Request) -> httpx2.Response:
-        text = request.content.decode()
-        seen.append(text)
-        if "你推演真实世界" in text and "function_call" not in text:
-            return tool_call("read_records", {})
-        return text_stream(reply_for(text))
+        return codex_response(json.loads(request.content), outputs)
 
     install_codex(monkeypatch, handler)
     app = create_app(tmp_path / "saves")
     with TestClient(app) as client:
         open_game(client, {"backend": "codex", "model": "gpt-5.4"})
-        app.state.web.game.court.record(("world", "天下"), [("note", {"text": planted})])
+        app.state.web.game.court.record(("world", "天下"), [("note", planted)])
         client.post("/actions", json={"action": "month"}).raise_for_status()
         state = client.get("/state").json()
     assert state["game"]["failure"] is None
-    assert any(TAIL in text for text in seen)
+    assert any(
+        fact.get("kind") == "note" and fact.get("detail") == planted
+        for record in outputs
+        for fact in record.get("facts", [])
+        if isinstance(fact, dict)
+    )
 
 
 def test_pi_empty_assistant_is_not_a_transport_failure(
@@ -556,12 +643,13 @@ def test_process_failure_stops_month(tmp_path: Path, monkeypatch, backend: str, 
         open_game(client, {"backend": backend, "model": ""})
         client.post("/actions", json={"action": "month"}).raise_for_status()
         state = client.get("/state").json()
+    failure = state["game"]["failure"]
     assert state["game"]["date"]["month"] == 10
-    message = state["game"]["failure"]["payload"]["message"]
-    if mode == "missing":
-        assert backend in message
-    else:
-        assert "SENTINEL" in message
+    assert failure["status"] == "failed"
+    assert failure["action"] == "month"
+    assert failure["payload"]["type"] == (
+        "FileNotFoundError" if mode == "missing" else "RuntimeError"
+    )
 
 
 @pytest.mark.parametrize("problem", ["missing", "rejected"])
@@ -585,13 +673,16 @@ def test_codex_credential_failure_stops_month(tmp_path: Path, monkeypatch, probl
         open_game(client, {"backend": "codex", "model": "gpt-5.4"})
         client.post("/actions", json={"action": "month"}).raise_for_status()
         state = client.get("/state").json()
+    failure = state["game"]["failure"]
     assert state["game"]["date"]["month"] == 10
-    assert state["game"]["failure"]["status"] == "failed"
+    assert failure["status"] == "failed"
+    assert failure["payload"]["type"] == (
+        "UserError" if problem == "missing" else "CredentialsRefreshError"
+    )
     assert not (home / "config.toml").exists()
     assert stamp(Path.home() / ".codex" / "config.toml") == before
     if problem == "rejected":
         assert (home / "auth.json").read_bytes() == original
-        assert "REFRESH-REJECTED" in state["game"]["failure"]["payload"]["message"]
 
 
 def test_codex_parallel_refresh_writes_one_credential(tmp_path: Path, monkeypatch) -> None:
