@@ -146,3 +146,23 @@ HTTP 验收从共享夜前缀复制私有库，CLI audit 验背书来源、担�
 `1953-strong-2.log` 留有本次真实强推重议失败：Claude CLI exit 1、provider `refusal`
 （request `req_011CgHMizepEMT2QkhxPXsyn`）。未伪称成功、未改宿主或模型配置绕过；
 确定性强推准／驳／传输重试案沿用既有真实判词，真实重议成功验收尚缺。
+
+## 月末声明的其余旨意（#1971）
+
+录件根：`~/WorkSpace/vault/ak-cc-wiki/raw/ming-llm-runner/2026-10-24/1967-acceptance/`。
+`night_allocation.json` 的皇帝原话取 `pi-004526/actions.jsonl`，五轮场景取
+`001-scene`–`005-scene/stdout.jsonl` 的完整 assistant 消息；工具调用仅去掉
+`mcp__court__` transport 前缀后装入原生 Pydantic AI 消息，参数、调用 ID、回话不改。
+消息信封时间是导入时间，不冒称原模型时间；整夜声明为 `texts/006-NightDeclaration.txt`。
+
+| 夹具 | 原卷 | 用途 |
+| --- | --- | --- |
+| `month_allocation_night.txt` | `texts/008-simulation.txt` | 同夜明发拨款与查库密令 |
+| `month_allocation_world.txt` | `texts/009-simulation.txt` | 含赈银起解及巡抚续奏的完整世界推演 |
+| `month_allocation.txt` | `texts/013-Declaration.txt` | 010 结构重交后的本旨声明，十万与二十万分别起解 |
+
+三份文本逐字复制，不手补字段。复用 `steps`、`game_db` 与现有月推进测试，
+从 HTTP `/actions` 进入，检查世界份 `others` 的旨意 ID、议处结构及 CLI audit 落账。
+世界声明重放既有 `month_empty.txt`，不是修复后的模型回话；确定性案只证明输入完整、
+原样声明落账，不证明模型自主避重。两路拨款不重复及 #1954 奏疏后果的真模型复验，
+按票面由 runner 在并入家族分支前执行。

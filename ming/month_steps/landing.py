@@ -92,10 +92,8 @@ class Landing:
                     route,
                     [
                         other
-                        for other, other_route, _mode in sources
-                        if other.kind == "decree"
-                        and other.id != source.id
-                        and other_route == route
+                        for other, _other_route, _mode in sources
+                        if other.kind == "decree" and other.id != source.id
                     ],
                 )
                 for source, route, _mode in sources

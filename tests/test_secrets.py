@@ -36,10 +36,14 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
     tmp_path: Path, game_db: Path, steps, audit, failure
 ) -> None:
     material = []
-    if failure == "declaration":
-        steps["Declaration"] = replaying(
-            partial(declaration_reply, response_file="month_invalid.txt")
-        )
+    declarations = []
+    steps["Declaration"] = replaying(
+        partial(
+            declaration_reply,
+            response_file="month_invalid.txt" if failure == "declaration" else "month_empty.txt",
+        ),
+        declarations,
+    )
     if failure == "report":
         steps["secret_report"] = replaying([ModelHTTPError(429, "recorded")])
     else:
@@ -110,6 +114,15 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
             assert {f.entity_id for f in court.facts("audit", kind="unhandled")} == (
                 {secret.id} if failure == "declaration" else set()
             )
+            world = next(
+                prompt for r in declarations
+                if r.kind == "request" and r.parts[0].part_kind == "user-prompt"
+                and (prompt := _declaration_prompt([r]))["scope"] == "world"
+                and prompt["date"] == exposure[-1].detail["date"]
+            )
+            assert [o["decree"]["id"] for o in world["others"]] == [
+                str(d.id) for d in orders if month == 0 or d.id == secret.id
+            ]
             for person, count in (
                 ("王承恩", month + 1),
                 ("杨嗣昌", 0),
