@@ -184,20 +184,24 @@ class ClaudeEvents:
 
 
 class GrokEvents:
-    def __init__(self) -> None:
+    def __init__(self, *, structured: bool = False) -> None:
         self.terminal: dict[str, Any] | None = None
         self.error: dict[str, Any] | None = None
+        self.structured = structured
 
     def observe(self, message: dict[str, Any]) -> Iterator[str]:
         kind = message.get("type")
         data = message.get("data")
-        if kind == "text" and isinstance(data, str) and data:
+        if kind == "text" and not self.structured and isinstance(data, str) and data:
             yield data
         elif kind == "error":
             self.error = message
             self.terminal = message
         elif kind == "end":
             self.terminal = message
+            # Text also contains intermediate tool-turn replies; this is the native result.
+            if self.structured and "structuredOutput" in message:
+                yield json.dumps(message["structuredOutput"], ensure_ascii=False)
 
     def failure(self, code: int | None, stderr: str) -> str | None:
         if code or self.error is not None or self.terminal is None:
@@ -477,6 +481,7 @@ class GrokCliModel(CliHost):
             str(slot),
             "--prompt-file",
             str(prompt_path),
+            "--verbatim",
             "--output-format",
             "streaming-json",
             "--always-approve",
@@ -489,6 +494,9 @@ class GrokCliModel(CliHost):
         ]
         if self.cli_name:
             argv.extend(["--model", self.cli_name])
+        output = info.model_request_parameters.output_object
+        if output is not None:
+            argv.extend(["--json-schema", json.dumps(output.json_schema)])
         return argv
 
     async def _stream(
@@ -496,16 +504,17 @@ class GrokCliModel(CliHost):
     ) -> AsyncIterator[str]:
         pool = slots()
         slot = await pool.acquire()
-        prompt_path = slot / "prompt.json"
+        prompt_path = slot / "prompt.txt"
         try:
             async with court_server(self.tools) as url:
                 write_grok_config(slot, url)
                 prompt_path.write_bytes(prompt_bytes(messages))
+                argv = self.argv(slot, prompt_path, info)
                 async for text in stream_process(
-                    self.argv(slot, prompt_path, info),
+                    argv,
                     cwd=str(slot),
                     prompt=asyncio.subprocess.DEVNULL,
-                    events=GrokEvents(),
+                    events=GrokEvents(structured="--json-schema" in argv),
                     env=grok_env(),
                 ):
                     yield text

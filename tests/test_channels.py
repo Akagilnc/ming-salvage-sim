@@ -108,10 +108,10 @@ def mark_trusted(slot: Path) -> None:
 
 
 def host_lines(binary: str, chunks: list[str], *, mode: str = "ok") -> list[bytes]:
-    if binary == "pi" and mode in {"ok", "empty"}:
+    if (binary in {"grok", "pi"} and mode == "ok") or (binary == "pi" and mode == "empty"):
         name = get_current_run_context().agent.name if mode == "ok" else "empty"
         return [gzip.decompress(
-            (RECORDED / "channels" / "pi" / f"{name}.jsonl.gz").read_bytes()
+            (RECORDED / "channels" / binary / f"{name}.jsonl.gz").read_bytes()
         )]
     error = "down" if mode == "error" else None
     events: list[dict[str, object]]
@@ -124,12 +124,6 @@ def host_lines(binary: str, chunks: list[str], *, mode: str = "ok") -> list[byte
             for chunk in chunks
         ]
         events.append({"type": "result", "is_error": bool(error)})
-    elif binary == "grok":
-        events = [{"type": "text", "data": chunk} for chunk in chunks]
-        events.append(
-            {"type": "error", "message": error} if error
-            else {"type": "end", "stopReason": "end_turn"}
-        )
     else:
         # Semantic host errors still await a native recording.
         events = [
@@ -173,7 +167,6 @@ def install_process(monkeypatch, *, mode: str = "ok", delay: float = 0):
 
     async def spawn(*args: str, **kwargs: object) -> SimpleNamespace:
         calls.append((args, kwargs))
-        errors = kwargs.get("stderr")
         if args[0] == "grok" and "--trust" in args:
             mark_trusted(Path(args[args.index("--cwd") + 1]))
             return finished(asyncio.StreamReader())
@@ -196,8 +189,6 @@ def install_process(monkeypatch, *, mode: str = "ok", delay: float = 0):
         for line in host_lines(args[0], chunks, mode=mode):
             output.feed_data(line)
         output.feed_eof()
-        if hasattr(errors, "write") and args[0] == "grok":
-            errors.write(b"warning: plugin slow\n")
         return finished(output)
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
@@ -290,7 +281,7 @@ def assert_scene(state: dict[str, object], events: list[dict[str, object]]) -> N
 @pytest.mark.parametrize(
     ("backend", "model"),
     [("claude-cli", ""), ("claude-cli", "sonnet"), ("grok", ""),
-     ("grok", "grok-4"), ("pi", ""), ("pi", f"{PI_MODEL}:high")],
+     ("grok", "grok-4.7"), ("pi", ""), ("pi", f"{PI_MODEL}:high")],
 )
 def test_process_subscription_scene_lands_and_streams(
     tmp_path: Path, monkeypatch, backend: str, model: str, game_db: Path
@@ -322,7 +313,12 @@ def test_process_subscription_scene_lands_and_streams(
     if backend == "grok":
         args, kwargs = next((args, kwargs) for args, kwargs in calls if "--trust" not in args)
         assert args[args.index("--tools") + 1] == "search_tool,use_tool"
+        assert Path(args[args.index("--prompt-file") + 1]).suffix != ".json"
+        assert "--verbatim" in args
         assert "--always-approve" in args and "--no-subagents" in args
+        assert "--json-schema" not in args
+        args = model_calls[-1]
+        assert "decree_events" in json.loads(args[args.index("--json-schema") + 1])["properties"]
         env = kwargs["env"]
         assert isinstance(env, dict)
         assert all(env[key] == "0" for key in GROK_OFF)
