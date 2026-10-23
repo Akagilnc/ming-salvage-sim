@@ -12,6 +12,7 @@ export interface Fact {
   detail: Record<string, unknown>;
 }
 export interface Records { entities: Entity[]; facts: Fact[] }
+export type TextUpdate = string | { replace: string };
 export interface Turn { id: string; emperor_words: string; scene: string }
 export interface Night { id: string; closed: boolean; hall: string[]; turns: Turn[]; result: 'translated' | 'unhandled' | null }
 export interface Interaction { action: string; status: string; payload: { words?: string; log?: string; type?: string } }

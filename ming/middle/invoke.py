@@ -42,6 +42,7 @@ class Settings(BaseModel):
 
 
 ModelSource = Model | Settings | str
+TextUpdate = str | dict[str, str]
 
 
 def configured_model(settings: Settings) -> Model:
@@ -108,18 +109,19 @@ def transient(error: BaseException) -> bool:
 
 
 async def stream_text(
-    on_delta: Callable[[str | None], None],
+    on_delta: Callable[[TextUpdate], None],
     _ctx: RunContext[Any],
     stream: AsyncIterable[AgentStreamEvent],
 ) -> None:
-    """Forward text; None resets the live buffer when a part is overwritten."""
+    """Forward text deltas or an atomic replacement of the live text."""
     started: set[int] = set()
     async for event in stream:
         if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
             if event.index in started:
-                on_delta(None)
+                on_delta({"replace": event.part.content})
+            else:
+                on_delta(event.part.content)
             started.add(event.index)
-            on_delta(event.part.content)
         elif isinstance(event, PartDeltaEvent) and isinstance(
             event.delta, TextPartDelta
         ):

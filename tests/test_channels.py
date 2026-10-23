@@ -427,7 +427,7 @@ def assert_scene(state: dict[str, object], events: list[dict[str, object]]) -> N
     assert len(deltas) >= 2
     live = ""
     for item in deltas:
-        live = "" if item is None else live + str(item)
+        live = item["replace"] if isinstance(item, dict) else live + str(item)
     assert live == night["turns"][-1]["scene"]
 
 

@@ -32,6 +32,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     ModelResponseStreamEvent,
     TextPart,
+    TextPartDelta,
 )
 from pydantic_ai.models import ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -225,6 +226,7 @@ class PiEvents:
     def __init__(self) -> None:
         self.error: dict[str, Any] | None = None
         self.settled = False
+        self.completed = TextPart("")
 
     def observe(self, message: dict[str, Any]) -> Iterator[str | TextPart]:
         kind = message.get("type")
@@ -239,14 +241,17 @@ class PiEvents:
         if kind == "auto_retry_start" or (
             kind == "message_start" and body is not None and body.get("role") == "assistant"
         ):
-            yield TextPart("")
+            yield self.completed
         if (
             kind == "message_end"
             and body is not None
             and body.get("role") == "assistant"
         ):
             self.error = message if body.get("stopReason") in {"error", "aborted"} else None
-            yield TextPart(pi_text(body.get("content")))
+            part = TextPartDelta(pi_text(body.get("content"))).apply(self.completed)
+            if self.error is None:
+                self.completed = part
+            yield part
         if kind == "auto_retry_end":
             self.error = None if message.get("success") else message
         if kind == "agent_settled":

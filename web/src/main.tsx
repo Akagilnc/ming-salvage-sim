@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { act, records, state } from './api';
 import { MenuPage, SettingsForm } from './components/menuPage';
 import { currentSpeaker, Scene, ScrollMessages } from './components/scrollMessages';
-import type { Action, Records, Snapshot } from './types';
+import type { Action, Records, Snapshot, TextUpdate } from './types';
 import './styles.css';
 
 export function App() {
@@ -34,8 +34,8 @@ export function App() {
     void refresh().catch(reason => setError(String(reason)));
     const events = new EventSource('/stream');
     events.addEventListener('delta', event => {
-      const chunk = JSON.parse((event as MessageEvent).data) as { text: string | null; hall: string[] };
-      setLive(text => chunk.text === null ? '' : text + chunk.text);
+      const chunk = JSON.parse((event as MessageEvent).data) as { text: TextUpdate; hall: string[] };
+      setLive(text => typeof chunk.text === 'string' ? text + chunk.text : chunk.text.replace);
       setSnapshot(value => value?.game?.night ? {
         ...value, game: { ...value.game, night: { ...value.game.night, hall: chunk.hall } },
       } : value);
@@ -43,8 +43,8 @@ export function App() {
     events.addEventListener('gazette', event => {
       if (!gazetteStreaming.current) { setReading('latest'); setLiveGazette(''); }
       gazetteStreaming.current = true;
-      const chunk = JSON.parse((event as MessageEvent).data) as string | null;
-      setLiveGazette(text => chunk === null ? '' : text + chunk);
+      const chunk = JSON.parse((event as MessageEvent).data) as TextUpdate;
+      setLiveGazette(text => typeof chunk === 'string' ? text + chunk : chunk.replace);
     });
     const receive = (event: Event) => {
       if (event.type === 'done') gazetteStreaming.current = false;
