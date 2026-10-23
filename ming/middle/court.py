@@ -1,6 +1,7 @@
 """The ledger's door: identity reads, event recording, translation and landing."""
 
 import logging
+from collections import Counter
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, TypeVar, cast
@@ -235,13 +236,32 @@ class Court:
     ) -> None:
         dispatch(self._ledger, result, source, monthly, baselines)
 
+    def record_catalogue(self, identity: Identity, date: Item | None = None) -> list[Item]:
+        """Names and counts from the existing entity/fact projections, never prose."""
+        counts = Counter(f.entity_id for f in self.facts(identity))
+        visible = {e.id for e in self.entities(identity)} | counts.keys()
+        if date is not None:
+            counts = Counter(f.entity_id for f in self.facts(identity, date=date))
+        names = names_and_aliases(self._ledger, ENTITY_ROWS.where(E.id.in_(visible)))
+        return [
+            {
+                "kind": row["kind"],
+                "key": row["key"],
+                "event_count": counts[row["id"]],
+                "aliases": names[row["kind"]][row["key"]],
+            }
+            for row in self._ledger.entities(entity_id=list(visible))
+        ]
+
     async def read_records(
-        self, identity: Identity, kind: str | None = None, key: str | None = None
+        self, identity: Identity, kind: str | None = None,
+        key: str | list[str] | None = None, date: Item | None = None,
     ) -> Item:
-        """按类型与正名取本身份材料；空参取全部可读材料，含各衙门呈报的文字。"""
-        rows = self.entities(identity, kind=kind, key=key)
+        """Read the selected identity projection; the frontend retains its full read."""
+        keys = list(dict.fromkeys(key)) if isinstance(key, list) else [key]
+        rows = [e for name in keys for e in self.entities(identity, kind=kind, key=name)]
         ids = (
-            [e.id for e in self.entities("audit", kind=kind, key=key)]
+            [e.id for name in keys for e in self.entities("audit", kind=kind, key=name)]
             if kind is not None or key is not None
             else []
         )
@@ -250,9 +270,9 @@ class Court:
             "facts": [
                 f.model_dump(mode="json")
                 for f in (
-                    self.facts(identity)
+                    self.facts(identity, date=date)
                     if kind is None and key is None
-                    else self.facts(identity, entity_id=ids)
+                    else self.facts(identity, entity_id=ids, date=date)
                 )
             ],
         }

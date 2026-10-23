@@ -102,7 +102,7 @@ class Sources:
             deps_type=Materials,
             tools=[read_records],
             retries=1,
-            instructions="月末后果已落账。你是奏疏来源，不是世界推演。用 read_records 查身份可读账本；按输入人物立场写下月开局的奏折。只交结构，正文与选项用奏报口吻，不露人物裸数值。",
+            instructions="月末后果已落账。你是奏疏来源，不是世界推演。按输入 catalogue 用 read_records 按需查身份可读账本；按输入人物立场写下月开局的奏折。只交结构，正文与选项用奏报口吻，不露人物裸数值。",
         )
 
         @agent.output_validator

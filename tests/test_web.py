@@ -146,7 +146,20 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
                             for m in messages
                             for part in m.parts
                         )
-                        else ModelResponse(parts=[ToolCallPart("read_records", {})])
+                        else ModelResponse(parts=[
+                            ToolCallPart("read_records", args, tool_call_id=label)
+                            for label, args in (
+                                ("empty", {}),
+                                ("class", {"kind": "person"}),
+                                ("date", {"date": {"id": "world", "year": 1627, "month": 10}}),
+                                ("one", {"kind": "person", "key": "温体仁"}),
+                                ("many", {"key": [e["key"] for e in json.loads(messages[0].parts[0].content)["catalogue"] if e["kind"] in {"account", "army"} or e["key"] == "杨嗣昌"]}),
+                                ("dated", {"key": "徐光启", "date": {"id": "world", "year": 1627, "month": 10}}),
+                                ("prior", {"key": "温体仁", "date": {"id": "world", "year": 1627, "month": 9}}),
+                                ("unknown-key", {"key": "不存在的人"}),
+                                ("unknown-kind", {"kind": "不存在的类"}),
+                            )
+                        ])
                     ),
                     received[name],
                 )
@@ -296,11 +309,28 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
                     part.model_response_object()
                     for m in messages
                     for part in m.parts
-                    if isinstance(part, ToolReturnPart)
+                    if isinstance(part, ToolReturnPart) and part.tool_call_id == "many"
                 ]
                 for name, messages in received.items()
             }
             assert all(materials.values())
+            case = [
+                {part.tool_call_id: part.model_response_object()
+                 for m in messages for part in m.parts if isinstance(part, ToolReturnPart)}
+                for messages in received.values()
+            ]
+            assert all(data["empty"]["status"] == "query_required" for data in case)
+            assert all(data[label]["status"] == "not_found" for data in case for label in ("unknown-key", "unknown-kind"))
+            assert all(data["unknown-key"]["names_and_aliases"]["person"]["温体仁"] == ["温体仁", "温尚书", "温阁老", "温长卿"] for data in case)
+            assert all(set(data[label]) == {"catalogue"} for data in case for label in ("class", "date"))
+            assert all(set(e) == {"kind", "key", "event_count"} for data in case for label in ("class", "date") for e in data[label]["catalogue"])
+            assert all(e["event_count"] > 0 for data in case for e in data["date"]["catalogue"])
+            assert all([e["key"] for e in data["one"]["entities"]] == ["温体仁"] for data in case)
+            assert all(data["dated"]["facts"] for data in case)
+            assert all(data["prior"]["facts"] == [] for data in case)
+            assert {f["entity_id"] for f in materials["gazette"][0]["facts"] if f["kind"] == "reported"} == {
+                e["id"] for e in ledger["entities"] if e["kind"] == "account" and e["key"] == "国库"
+            }
             assert all(
                 not [e for e in data["entities"] if e["kind"] == "account"]
                 for name in ("deliberation", "gazette")

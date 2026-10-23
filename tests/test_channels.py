@@ -202,26 +202,7 @@ def codex_stream(name: str) -> httpx2.Response:
     return httpx2.Response(200, headers={"content-type": "text/event-stream"}, content=body)
 
 
-def tool_records(body: dict[str, object]) -> list[dict[str, object]]:
-    found: list[dict[str, object]] = []
-    for item in body.get("input") or []:
-        if not isinstance(item, dict) or item.get("type") != "function_call_output":
-            continue
-        output = item.get("output")
-        if not isinstance(output, str):
-            continue
-        try:
-            parsed = json.loads(output)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(parsed, dict):
-            found.append(parsed)
-    return found
-
-
-def codex_response(
-    request: httpx2.Request, outputs: list[dict[str, object]] | None = None
-) -> httpx2.Response:
+def codex_response(request: httpx2.Request) -> httpx2.Response:
     body = json.loads(request.content)
     name = get_current_run_context().agent.name
     called = any(
@@ -230,8 +211,6 @@ def codex_response(
     )
     if name in {"scene", "simulation"} and not called:
         return codex_stream("scene-tool" if name == "scene" else "read-records")
-    if outputs is not None and name == "simulation":
-        outputs.extend(tool_records(body))
     return codex_stream(name)
 
 
@@ -437,32 +416,6 @@ def test_grok_second_month_does_not_trust_again(tmp_path: Path, monkeypatch, gam
         state = client.get("/state").json()
     assert state["game"]["failure"] is None
     assert sum("--trust" in args for args, _kwargs in calls) == trusted
-
-
-def test_codex_forwards_a_ledger_sized_tool_result(tmp_path: Path, monkeypatch, game_db: Path) -> None:
-    home = tmp_path / "codex"
-    auth_file(home / "auth.json", expired=False)
-    monkeypatch.setenv("CODEX_HOME", str(home))
-    planted = {"text": "账" * 100_000}
-    outputs: list[dict[str, object]] = []
-
-    def handler(request: httpx2.Request) -> httpx2.Response:
-        return codex_response(request, outputs)
-
-    install_codex(monkeypatch, handler)
-    app = create_app(game_db.parent)
-    with TestClient(app) as client:
-        open_game(client, {"backend": "codex", "model": CODEX_MODEL}, game_db)
-        app.state.web.game.court.record(("world", "天下"), [("note", planted)])
-        client.post("/actions", json={"action": "month"}).raise_for_status()
-        state = client.get("/state").json()
-    assert state["game"]["failure"] is None
-    assert any(
-        fact.get("kind") == "note" and fact.get("detail") == planted
-        for record in outputs
-        for fact in record.get("facts", [])
-        if isinstance(fact, dict)
-    )
 
 
 def test_pi_empty_assistant_is_not_a_transport_failure(

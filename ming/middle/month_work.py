@@ -36,11 +36,35 @@ class Materials:
 
 
 async def read_records(
-    ctx: RunContext[Materials], kind: str | None = None, key: str | None = None
+    ctx: RunContext[Materials], kind: str | None = None,
+    key: str | list[str] | None = None, date: dict[str, Any] | None = None,
 ) -> dict[str, object]:
-    """按类型与正名取本身份材料；空参取全部可读材料，含各衙门呈报的文字。"""
+    """按输入 catalogue 取阅。须带类、正名或日期，不空参读全账。
+
+    Args:
+        kind: 实体类；只给类返回正名与事件数清单，不给全文。
+        key: 一个或多个账本正名；只有点正名才取实体数据与可读事件全文。
+        date: 账本月日期（id、year、month）；点名时限定事件月份，否则列本月有事件的实体与该月事件数。
+    """
+    if kind is None and not key and date is None:
+        return {"status": "query_required", "message": "须带类、正名或日期之一，目录见输入"}
+    catalogue = ctx.deps.court.record_catalogue(ctx.deps.identity, date)
+    selected = [e for e in catalogue if kind is None or e["kind"] == kind]
+    keys = [key] if isinstance(key, str) else key
+    if (kind is not None and not selected) or (
+        keys and not set(keys) <= {e["key"] for e in selected}
+    ):
+        names: dict[str, dict[str, Any]] = {}
+        for e in catalogue:
+            names.setdefault(e["kind"], {})[e["key"]] = e["aliases"]
+        return {"status": "not_found", "message": "未找到", "names_and_aliases": names}
+    if not keys:
+        return {"catalogue": [
+            {k: v for k, v in e.items() if k != "aliases"}
+            for e in selected if date is None or e["event_count"]
+        ]}
     return character_input(
-        await ctx.deps.court.read_records(ctx.deps.identity, kind, key)
+        await ctx.deps.court.read_records(ctx.deps.identity, kind, keys, date)
     )
 
 
@@ -51,7 +75,8 @@ def prompt(court: Court, identity: Identity, context: Any) -> str:
                 "date": court.calendar().data,
                 "context": context,
                 "catalogue": [
-                    {"kind": e.kind, "key": e.key} for e in court.entities(identity)
+                    {k: v for k, v in e.items() if k != "aliases"}
+                    for e in court.record_catalogue(identity)
                 ],
             }
         ),

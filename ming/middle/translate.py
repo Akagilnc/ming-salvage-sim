@@ -5,6 +5,7 @@ from typing import Any, TypeVar, cast
 from uuid import UUID
 
 from pydantic import ValidationError
+from sqlalchemy import Select
 from pydantic_ai import (
     Agent,
     PromptedOutput,
@@ -47,9 +48,11 @@ text 保留皇帝认可的圣旨定稿全文，不改写、不摘要。origin �
 """
 
 
-def catalogue(ledger: Ledger) -> dict[str, dict[str, list[str]]]:
+def catalogue(
+    ledger: Ledger, query: Select[Any] = CATALOGUE,
+) -> dict[str, dict[str, list[str]]]:
     result: dict[str, dict[str, list[str]]] = {}
-    for row in ledger.read(CATALOGUE):
+    for row in ledger.read(query):
         aliases = row["data"].get("aliases", [])
         name = row["data"].get("name")
         if name and name != row["key"]:

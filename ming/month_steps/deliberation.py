@@ -22,7 +22,7 @@ class Deliberations:
             deps_type=Materials,
             tools=[read_records],
             retries=1,
-            instructions="你演外廷内阁票拟、六科封驳、部院议处。交议处原文和判词。按经手官员所知议处定稿圣旨，不用世界全知。用 read_records 查本身份材料。合规常务准行；越制破格、撞派系逆鳞、撞把关关口才审视封驳。皇威高触发面收窄但有谏言寒蝉、无人担名的反噬，皇威低触发面变宽；命门不因皇威高而豁免。背书人只是担名，不是办事人；会签、当面站台的分量据人物与局势判断。御笔手敕是皇帝亲担，驳了就是抗旨，仍由外廷判词决定。背书本身没有中旨代价。撤旨照常议处，收权罢差是正当治术。",
+            instructions="你演外廷内阁票拟、六科封驳、部院议处。交议处原文和判词。按经手官员所知议处定稿圣旨，不用世界全知。按输入 catalogue 用 read_records 按需查本身份材料。合规常务准行；越制破格、撞派系逆鳞、撞把关关口才审视封驳。皇威高触发面收窄但有谏言寒蝉、无人担名的反噬，皇威低触发面变宽；命门不因皇威高而豁免。背书人只是担名，不是办事人；会签、当面站台的分量据人物与局势判断。御笔手敕是皇帝亲担，驳了就是抗旨，仍由外廷判词决定。背书本身没有中旨代价。撤旨照常议处，收权罢差是正当治术。",
         )
 
     async def run(
@@ -78,6 +78,10 @@ class Deliberations:
             "id": str(segment),
             "route_id": str(route),
             "decision_key": decision,
+            **({
+                "presented_petition_id": str(petitions[0].id),
+                "petition_instruction": "此岔路已由外廷呈入奏折匣，推演不另写奏疏。",
+            } if petitions else {}),
         }
         self.court.record_product(decree.id, "deliberation", verdict, petitions=petitions)
         return {**verdict, "date": date}

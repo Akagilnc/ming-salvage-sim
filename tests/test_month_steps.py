@@ -182,7 +182,7 @@ def test_rejected_decree_is_forced_withdrawn_or_reconsidered(
                     and f["detail"].get("petition_id") is None
                 )
                 context = json.loads(original["messages"][0]["parts"][0]["content"])["context"]
-                assert [r["deliberation"]["decision_key"] for r in context["reconsidered"]] == [None]
+                assert [(r["deliberation"]["decision_key"], r["deliberation"]["presented_petition_id"]) for r in context["reconsidered"]] == [(None, petition["id"])]
                 assert len([f for f in ledger["facts"] if f["kind"] == "landed" and f["entity_id"] == decree["id"]]) == 1
                 assert not [f for f in ledger["facts"] if f["kind"] == "changed" and f["detail"]["origin_ref"] == decree["id"] and "imperial_prestige" in f["detail"]["actual"]]
                 return
@@ -385,7 +385,7 @@ def test_imperial_backing_reconsiders_the_original_decree(game_db, steps, audit,
         # The night's own segment keeps its own verdict; the push belongs to the petition's chain.
         context = json.loads(original["messages"][0]["parts"][0]["content"])["context"]
         assert context["decrees"] == []
-        assert [d["decision_key"] for d in context["deliberations"]] == [None]
+        assert [(d["decision_key"], d["presented_petition_id"]) for d in context["deliberations"]] == [(None, petition["id"])]
         assert decree["data"]["endorsements"] == [{
             "endorser": "御笔", "form": "御笔手敕",
             "decision_key": {"petition_id": petition["id"], "option": 3},
