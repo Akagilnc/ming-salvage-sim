@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, Field
 
 from ming.ledger import Entity, Item, Ledger
+from ming.middle.calendar import calendar_row
 from ming.middle.queries import LATEST_NIGHT, NIGHT_ROWS
 
 INITIAL_HALL = ("王承恩",)
@@ -33,7 +34,10 @@ def change_hall(hall: list[str], add: list[str], remove: list[str]) -> list[str]
 
 def read_night(ledger: Ledger, night_id: UUID) -> NightView:
     night = ledger.entities(entity_id=night_id, query=NIGHT_ROWS)[0]
-    date = ledger.entities(kind="calendar")[0]["data"]
+    row = calendar_row(ledger)
+    if row is None:
+        raise IndexError("calendar")
+    date = row["data"]
     turns: list[TurnView] = []
     # A turn is recorded after its scene, whose hall changes come first; the
     # turn's hall is the one present when the emperor spoke, before that scene.

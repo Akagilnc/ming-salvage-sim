@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-import sqlite3
 from pathlib import Path
 from collections.abc import AsyncIterator, Callable, Sequence
 
@@ -17,9 +16,6 @@ from ming.middle.declaration import Declaration
 from ming.middle.view import Officials
 
 RECORDED = Path(__file__).parent / "recorded"
-CORPUS = Path.home() / (
-    "WorkSpace/vault/ak-cc-wiki/raw/ming-llm-runner/2026-10-23/northstar-final"
-)
 
 
 def replaying(
@@ -370,35 +366,15 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
 
 
 @pytest.mark.parametrize(
-    ("case", "position", "copy"),
-    [
-        ("B", 1169, "northstar_b_1169.txt"),
-        ("C", 717, "northstar_c_717.txt"),
-    ],
+    "reply",
+    ["northstar_b_1169.txt", "northstar_c_717.txt"],
     ids=["B-1169", "C-717"],
 )
-def test_recorded_world_month_reply_lands(
-    tmp_path: Path, case: str, position: int, copy: str
-) -> None:
-    saves = CORPUS / case / "saves"
-    databases = list(saves.glob("*.sqlite")) if saves.is_dir() else []
-    if databases:
-        with sqlite3.connect(f"file:{databases[0]}?mode=ro", uri=True) as con:
-            detail = json.loads(
-                con.execute(
-                    "SELECT detail FROM facts WHERE position = ?", (position,)
-                ).fetchone()[0]
-            )
-        text = detail["result"]["model_text"]
-    else:
-        text = (RECORDED / copy).read_text()
+def test_recorded_world_month_reply_lands(tmp_path: Path, reply: str) -> None:
+    text = (RECORDED / reply).read_text()
     court = Court.new_game(tmp_path, replaying([text, text]))
-    known = {(entity.kind, entity.key) for entity in court.entities("audit")}
-    for fact in json.loads(text)["facts"]:
-        pair = (fact["entity_type"], fact["entity"])
-        if not fact.get("create") and pair not in known:
-            court.record(pair, [])
-            known.add(pair)
+    if reply == "northstar_b_1169.txt":
+        court.record(("affair", "白水王二起事"), [])
     source = court.calendar().id
     result = asyncio.run(
         court.translate(court.translation_agent(Declaration), "", source)

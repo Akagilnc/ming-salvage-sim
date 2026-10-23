@@ -7,7 +7,7 @@ from uuid import UUID
 
 from ming.middle.court import Court
 from ming.middle.declaration import PendingPetition
-from ming.middle.invoke import ModelSource
+from ming.middle.invoke import ModelSource, enlist, gather_or_raise
 from ming.middle.view import EntityView
 from ming.month_steps.deliberation import Deliberations
 from ming.month_steps.simulation import Simulations, continuing_options
@@ -75,7 +75,7 @@ class Month:
                 ],
                 "deliberations": [
                     {"decree": d.model_dump(mode="json"), **verdicts[d.id],
-                     "prior_interim": [p.detail for p in self.court.products(d.id, current=False, kind="interim")]}
+                     "prior_interim": self.court.prior_interim(d.id)}
                     for d in public
                 ],
             },
@@ -83,14 +83,9 @@ class Month:
 
     async def verdicts(self, decrees: list[EntityView], route: UUID) -> list[dict[str, Any]]:
         """A segment's own verdicts; a push's reconsideration is its petition's."""
-        results = await asyncio.gather(
-            *(self.deliberations.run(d, route) for d in decrees),
-            return_exceptions=True,
+        return await gather_or_raise(
+            *(self.deliberations.run(d, route) for d in decrees)
         )
-        for result in results:
-            if isinstance(result, BaseException):
-                raise result
-        return [r for r in results if not isinstance(r, BaseException)]
 
     async def resume(
         self, *, speculative: bool = False, petition_id: str | None = None
@@ -104,10 +99,9 @@ class Month:
             if petition_id is None:
                 pending = await self._resume(speculative=speculative)
             else:
-                detail = self.court.petition(petition_id).detail
-                petition = PendingPetition.model_validate(
-                    {k: v for k, v in detail.items() if k != "date"}
-                )
+                recorded = self.court.petition(petition_id)
+                petition = self.court.as_petition(recorded)
+                detail = recorded.detail
                 choice = next(
                     (
                         f.detail
@@ -147,9 +141,7 @@ class Month:
                 ),
                 *(asyncio.shield(self.simulations.pushes[pid]) for pid in pushes),
             ]
-            for result in await asyncio.gather(*jobs, return_exceptions=True):
-                if isinstance(result, BaseException):
-                    raise result
+            await gather_or_raise(*jobs)
         return self.petitions()
 
     def gaps(
@@ -203,19 +195,16 @@ class Month:
         A finished task is replaced on the next call so every pass re-checks
         the ledger; a failed one is rerun only when a caller enters again.
         """
-        task = self.originals.get(route)
-        if task is None or task.done():
+        async def produce() -> bool:
             entity = self.court.entity(route)
             decrees = self.court.current_decrees()
-            produce = (
-                self.night(
+            if entity.kind == "night":
+                return await self.night(
                     entity, [d for d in decrees if d.data["night_id"] == str(route)]
                 )
-                if entity.kind == "night"
-                else self.world(self.nights(decrees), decrees)
-            )
-            task = self.originals[route] = asyncio.create_task(produce)
-        return task
+            return await self.world(self.nights(decrees), decrees)
+
+        return enlist(self.originals, route, produce, replace=True)
 
     async def world(self, nights: list[EntityView], decrees: list[EntityView]) -> bool:
         """Verdicts on held decrees, then this month's world simulation."""
@@ -241,7 +230,7 @@ class Month:
                 ],
                 "reconsidered": [
                     {"decree": d.model_dump(mode="json"), "deliberation": v,
-                     "prior_interim": [p.detail for p in self.court.products(d.id, current=False, kind="interim")]}
+                     "prior_interim": self.court.prior_interim(d.id)}
                     for d, v in zip(old, verdicts)
                 ],
                 "prior_choices": [
@@ -263,13 +252,9 @@ class Month:
             if date != self.court.calendar().data:
                 return self.petitions()
             nights = self.nights(self.court.current_decrees())
-            results = await asyncio.gather(
-                *(self.original(night.id) for night in nights),
-                return_exceptions=True,
+            results = await gather_or_raise(
+                *(self.original(night.id) for night in nights)
             )
-            for result in results:
-                if isinstance(result, BaseException):
-                    raise result
             if not all(results) or speculative or not self.opened():
                 return self.petitions()
             if any(
@@ -290,7 +275,7 @@ class Month:
             await self.landing.run()
             self.court.settle_accounts()
             self.secrets.accumulate()
-            results = await asyncio.gather(
+            await gather_or_raise(
                 self.gazette.run(),
                 self.sources.urgent(),
                 *(
@@ -298,11 +283,7 @@ class Month:
                     for f in self.court.entities("audit", kind="faction")
                 ),
                 *(self.secrets.report(d) for d in self.court.errands()),
-                return_exceptions=True,
             )
-            for result in results:
-                if isinstance(result, BaseException):
-                    raise result
             self.court.advance_month()
             return self.petitions()
 

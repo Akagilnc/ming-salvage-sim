@@ -65,11 +65,8 @@ class Audience:
 
     def open(self, night_id: UUID | None = None) -> UUID:
         self._night_id = night_id or self.court.open_night()
-        if not self.court.night(self.night_id).closed and any(
-            f.kind == "dismiss_requested" and f.entity_id == self.night_id
-            for f in self.court.facts(
-                "audit", entity_id=self.night_id, kind="dismiss_requested"
-            )
+        if not self.court.night(self.night_id).closed and self.court.facts(
+            "audit", entity_id=self.night_id, kind="dismiss_requested"
         ):
             self._dismiss_requested = self.night_id
         return self.night_id

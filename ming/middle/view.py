@@ -9,8 +9,11 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from ming.ledger import Item, Ledger
 from ming.ledger import ENTITY_COLUMNS as E, FACT_COLUMNS as F, ENTITY_ROWS, FACT_ROWS
+from ming.middle.calendar import calendar_row
 from ming.middle.queries import IN_OFFICE, available_on, public_decree
 from ming.middle.night import known_people, read_night
+
+HIDDEN_JOURNEY = {"remaining_distance", "travel_speed"}
 
 PublicIdentity = Literal["emperor", "audit", "world", "public"]
 
@@ -47,12 +50,12 @@ def character_input(value: Any) -> Any:
     result = {
         key: character_input(item)
         for key, item in cast(Item, value).items()
-        if key not in {"remaining_distance", "travel_speed"}
+        if key not in HIDDEN_JOURNEY
     }
     if result.get("field") == "travel_speed":
         return {
             "field": "travel_pace",
-            "value": "加急" if value["value"] > 1 else "常速",
+            "value": "加急" if rushed(value["value"]) else "常速",
         }
     fields = [(key, key) for key in CHARACTER_BANDS if key in result]
     if result.get("field") in CHARACTER_BANDS and "value" in result:
@@ -77,7 +80,7 @@ def journey(data: Item, events: list[Item]) -> Item:
             e["kind"] == "travelled" for e in events[departure + 1 :]
         ),
         "total_months": detail["distance"] / speed,
-        **({"pace": "加急"} if speed > 1 else {}),
+        **({"pace": "加急"} if rushed(speed) else {}),
     }
 
 
@@ -124,9 +127,13 @@ def owned_accounts(ledger: Ledger, identity: Identity) -> set[UUID]:
     }
 
 
+def rushed(speed: Any) -> bool:
+    return speed > 1
+
+
 def month_open(ledger: Ledger) -> Item | None:
     """The month's persisted emperor projection, not execution state."""
-    calendar = next(iter(ledger.entities(kind="calendar")), None)
+    calendar = calendar_row(ledger)
     if calendar is None:
         return None
     return next(
@@ -215,7 +222,7 @@ def entities(
             row["data"] = {
                 k: v
                 for k, v in row["data"].items()
-                if k not in {"remaining_distance", "travel_speed"}
+                if k not in HIDDEN_JOURNEY
             }
             if travel:
                 row["data"]["journey"] = travel
@@ -306,7 +313,8 @@ def project(
 ) -> list[FactView]:
     selection = selection or {}
     opening = month_open(ledger) if identity == "emperor" else None
-    date = next((r["data"] for r in ledger.entities(kind="calendar")), dict[str, Any]())
+    row = calendar_row(ledger)
+    date = row["data"] if row else dict[str, Any]()
     controls = {"interaction", "petition", "choice", "gazette", "secret_report"}
     access = decree_access(ledger, identity)
     exposure = fact_exposure(identity, owned_accounts(ledger, identity), access)
@@ -366,7 +374,7 @@ def project(
             fact.detail = {
                 k: v
                 for k, v in fact.detail.items()
-                if k not in {"distance", "remaining_distance", "travel_speed"}
+                if k not in HIDDEN_JOURNEY | {"distance"}
             }
         if identity == "world" and fact.kind == "simulation":
             fact.detail = {k: v for k, v in fact.detail.items() if k != "messages"}

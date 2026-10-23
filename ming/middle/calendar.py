@@ -14,11 +14,26 @@ def next_month(date: Item) -> Item:
     }
 
 
+def calendar_row(ledger: Ledger) -> Item | None:
+    return next(iter(ledger.entities(kind="calendar")), None)
+
+
+def petition_date(date: Item, *, ended: bool = True) -> Item:
+    """When a petition can be chosen: this month, or next month once the segment ended."""
+    opened = dict(date)
+    if ended:
+        opened.update(next_month(date))
+    return opened
+
+
 def advance_month(ledger: Ledger) -> None:
     rows = ledger.entities(
         kind="person", query=ENTITY_ROWS.where(E.data["transit_to"].as_string() != "")
     )
-    calendar = ledger.get(ledger.entities(kind="calendar")[0]["id"])
+    row = calendar_row(ledger)
+    if row is None:
+        raise IndexError("calendar")
+    calendar = ledger.get(row["id"])
     date = dict(calendar.data)
     changed: list[Entity] = []
     for row in rows:

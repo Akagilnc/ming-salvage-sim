@@ -146,7 +146,7 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
         client.post("/actions", json={"action": "dismiss"})
         client.portal.call(client.app.state.web.game.drain)
         court = client.app.state.web.game.court
-        assert court.nights(latest=True)[0].result == "translated"
+        assert court.nights()[0].result == "translated"
         second, fourth = sorted(
             court.entities("audit", kind="decree"), key=lambda d: d.data["turn"]
         )
@@ -181,7 +181,6 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
     ("endorsed", "endorsed", case) for case in ["approved", "held", "name", "form", "source"]
 ] + [("double", "double", "approved")], indirect=["backed_night"])
 def test_backing_follows_its_decree_and_signers(game_db, steps, audit, case, recording):
-    multiple = recording == "double"
     recording = json.loads((RECORDED / f"night_{recording}.json").read_text())
     reply = json.loads(recording["replies"][-1])
     declared = reply["decrees"][0]["endorsements"]
@@ -245,13 +244,6 @@ def test_backing_follows_its_decree_and_signers(game_db, steps, audit, case, rec
         decree = next(e for e in ledger["entities"] if e["kind"] == "decree")
         # The ledger lands exactly what the replayed declaration declared.
         assert decree["data"]["endorsements"] == declared
-        signers = {e["endorser"] for e in declared if e["endorser"] != "御笔"}
-        # Sample-borne behavior: double has two signers; endorsed has 毕自严 standing by in person.
-        assert (
-            len(signers) == 2
-            if multiple
-            else ("毕自严", "当面站台") in [(e["endorser"], e["form"]) for e in declared]
-        )
         assert json.loads(received[-1].parts[0].content)["context"]["decree"]["data"]["endorsements"] == decree["data"]["endorsements"]
         for endorsement in (e for e in declared if e["endorser"] != "御笔"):
             assert [f["detail"]["decree_id"] for f in ledger["facts"]

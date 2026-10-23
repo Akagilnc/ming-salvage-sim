@@ -3,6 +3,7 @@
 from copy import deepcopy
 
 from ming.ledger import Entity, Item, Ledger
+from ming.middle.calendar import calendar_row
 from ming.middle.declaration import PaymentPolicy
 
 WAN = 10_000
@@ -19,6 +20,15 @@ MING = "大明"
 def remitting_region(data: Item) -> bool:
     """Land, salt and commerce remit only from a region 大明 still holds."""
     return data.get("controlled_by") == MING
+
+
+def settling(data: Item) -> bool:
+    """A region the month accounts settle, not every region row."""
+    return "settle" in data.get("fiscal", {})
+
+
+def clamp_scale(value: float) -> float:
+    return min(100, max(0, value))
 
 
 def payable_army(data: Item) -> bool:
@@ -73,7 +83,10 @@ def obligation(pair: tuple[str, str], existing: dict[tuple[str, str], Item]) -> 
 
 
 def due_levies(ledger: Ledger) -> list[Item]:
-    date = ledger.entities(kind="calendar")[0]["data"]
+    row = calendar_row(ledger)
+    if row is None:
+        raise IndexError("calendar")
+    date = row["data"]
     events = {row["data"]["id"]: row for row in ledger.entities(kind="event")}
     return [
         {"entity": row["key"], "data": row["data"]}
@@ -139,7 +152,7 @@ class Accounts:
         regions = [
             e
             for e in self.rows
-            if e.kind == "region" and "settle" in e.data.get("fiscal", {})
+            if e.kind == "region" and settling(e.data)
         ]
         land = sum(e.data["fiscal"]["settle"]["st"]["官民田"] for e in regions)
         jiao = events["剿饷开征"] == "已准" and events["剿饷议停"] != "已停"
@@ -196,7 +209,7 @@ class Accounts:
             e for e in self.rows if e.kind == "region" and remitting_region(e.data)
         ):
             fiscal = region.data.get("fiscal", {})
-            if "settle" in fiscal:
+            if settling(region.data):
                 self.income(region, "国库", fiscal["settle"]["p"]["起运定额"], "起运")
             for field, category in REGION_TAXES.items():
                 if field in fiscal:
@@ -239,7 +252,7 @@ class Accounts:
                 self.income(building, metric, amount, "建筑产出")
             elif metric:
                 field = OUTPUT_SCALES[metric]
-                actual = min(100, max(0, world.data[field] + amount))
+                actual = clamp_scale(world.data[field] + amount)
                 detail = {
                     "date": self.date,
                     "source": building.key,

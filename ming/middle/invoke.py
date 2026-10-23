@@ -1,6 +1,7 @@
 """One transport retry policy, independent of declaration validation retries."""
 
-from collections.abc import AsyncIterable, Callable, Sequence
+import asyncio
+from collections.abc import AsyncIterable, Awaitable, Callable, Coroutine, Sequence
 from typing import Any, Literal, TypeVar, cast
 
 from httpx2 import TimeoutException
@@ -105,3 +106,32 @@ async def invoke(
         with attempt:
             return await agent.run(prompt, **kwargs)
     raise AssertionError("tenacity completed without a result")
+
+
+async def gather_or_raise(*awaitables: Awaitable[T]) -> list[T]:
+    """Run the awaitables; the first failure is the result, not a swallowed one."""
+    results = await asyncio.gather(*awaitables, return_exceptions=True)
+    for result in results:
+        if isinstance(result, BaseException):
+            raise result
+    return cast(list[T], results)
+
+
+K = TypeVar("K")
+
+
+def enlist(
+    tasks: dict[K, asyncio.Task[T]],
+    key: K,
+    start: Callable[[], Coroutine[Any, Any, T]],
+    *,
+    replace: bool = False,
+    on_done: Callable[[asyncio.Task[T]], object] | None = None,
+) -> asyncio.Task[T]:
+    """One in-flight task per key. A done task is replaced only when asked."""
+    current = tasks.get(key)
+    if current is None or (replace and current.done()):
+        current = tasks[key] = asyncio.create_task(start())
+        if on_done is not None:
+            current.add_done_callback(on_done)
+    return current

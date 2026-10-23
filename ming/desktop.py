@@ -1,12 +1,12 @@
 """Package desktop/browser entry; both modes use the same loopback ASGI app."""
 
 import argparse
+import asyncio
 import errno
 import os
 import socket
 import sys
 import threading
-import time
 import webbrowser
 from concurrent.futures import Future
 from collections.abc import Callable
@@ -15,6 +15,7 @@ from pathlib import Path
 
 import uvicorn
 
+from ming.middle.cli_model import wait_until_started
 from ming.web import Web, create_app
 
 
@@ -64,12 +65,14 @@ def main() -> None:
 
         thread = threading.Thread(target=serve, name="ming-asgi")
         thread.start()
+
+        async def failed() -> None:
+            result.result()
+
         try:
-            while not server.started:
-                if result.done():
-                    result.result()
-                    raise RuntimeError("local server exited before startup")
-                time.sleep(0.01)
+            asyncio.run(
+                wait_until_started(server, result.done, asyncio.sleep, failed)
+            )
             url = f"http://127.0.0.1:{listener.getsockname()[1]}"
             if args.desktop:
                 import webview

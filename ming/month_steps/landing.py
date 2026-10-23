@@ -1,10 +1,10 @@
 """Parallel translation, then ordered per-decree landing and world last."""
 
-import asyncio
 import json
 from uuid import UUID
 
 from ming.middle.court import Court
+from ming.middle.invoke import gather_or_raise
 from ming.middle.declaration import Declaration, Unhandled
 from ming.middle.opening import CONTENT
 from ming.middle.month_work import COST_RULES
@@ -33,7 +33,7 @@ class Landing:
                     "source": source.model_dump(mode="json"),
                     "entities": [e.model_dump(mode="json") for e in entities],
                     "scope": "decree" if source.kind == "decree" else "world",
-                    "prior_interim": [f.model_dump(mode="json") for f in self.court.products(source.id, current=False, kind="interim")],
+                    "prior_interim": self.court.prior_interim(source.id),
                     "deliberation": [
                         f.model_dump(mode="json")
                         for f in self.court.products(
@@ -85,7 +85,7 @@ class Landing:
 
     async def run(self) -> None:
         sources = self.court.landing_sources()
-        results = await asyncio.gather(
+        await gather_or_raise(
             *(
                 self.translate(
                     source,
@@ -99,12 +99,8 @@ class Landing:
                     ],
                 )
                 for source, route, _mode in sources
-            ),
-            return_exceptions=True,
+            )
         )
-        for result in results:
-            if isinstance(result, BaseException):
-                raise result
         for source, _route, mode in sources:
             if self.court.products(source.id, kind=("landed", "attempted", "unhandled")):
                 continue

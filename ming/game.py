@@ -12,6 +12,12 @@ from ming.middle.invoke import ModelSource
 from ming.month import Month
 
 
+def same_call(item: dict[str, Any], action: str, payload: dict[str, Any]) -> bool:
+    return item["action"] == action and all(
+        item["payload"].get(key) == value for key, value in payload.items()
+    )
+
+
 class InvalidAction(ValueError):
     def __init__(self, message: str, status: int = 409) -> None:
         super().__init__(message)
@@ -32,7 +38,7 @@ class Game:
         self.active: asyncio.Task[Any] | None = None
         self.background: set[asyncio.Task[Any]] = set()
         self.translation: asyncio.Task[Any] | None = None
-        nights = court.nights(latest=True)
+        nights = court.nights()
         if nights:
             self.audience.open(nights[-1].id)
 
@@ -59,7 +65,7 @@ class Game:
         )
 
     def failures(self) -> list[dict[str, Any]]:
-        nights = self.court.nights(latest=True)
+        nights = self.court.nights()
         night = nights[-1] if nights else None
         return [
             i
@@ -81,7 +87,7 @@ class Game:
         month = self.court.interactions().get("month")
         if month and month["status"] == "running":
             pending = month
-        nights = self.court.nights(latest=True)
+        nights = self.court.nights()
         night = nights[-1].model_dump(mode="json") if nights else None
         failures = self.failures()
         # The translation-to-month exception must not bypass another failed action.
@@ -200,9 +206,7 @@ class Game:
     async def command(self, action: str, payload: dict[str, Any]) -> None:
         date = self.court.calendar().data
         accepted = any(
-            item["status"] == "running"
-            and item["action"] == action
-            and all(item["payload"].get(k) == v for k, v in payload.items())
+            item["status"] == "running" and same_call(item, action, payload)
             for item in self.court.interactions().values()
         )
         self.resume()
@@ -237,11 +241,7 @@ class Game:
                 (
                     item
                     for item in self.failures()
-                    if item["action"] == action
-                    and all(
-                        item["payload"].get(key) == value
-                        for key, value in payload.items()
-                    )
+                    if same_call(item, action, payload)
                 ),
                 None,
             )
@@ -262,7 +262,7 @@ class Game:
             self.interaction(action, "running", payload)
         else:
             if action == "dismiss":
-                if not self.court.nights(latest=True):
+                if not self.court.nights():
                     raise InvalidAction("请先召对")
                 self.audience.dismiss()
                 self.start_background()

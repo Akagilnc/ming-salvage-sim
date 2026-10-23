@@ -9,10 +9,10 @@ from uuid import UUID, uuid4
 from pydantic_ai import PromptedOutput
 from pydantic_ai.messages import ModelMessagesTypeAdapter
 
-from ming.middle.calendar import next_month
+from ming.middle.calendar import petition_date
 from ming.middle.court import Court
 from ming.middle.declaration import PendingPetition
-from ming.middle.invoke import ModelSource, build_agent, invoke
+from ming.middle.invoke import ModelSource, build_agent, enlist, invoke
 from ming.middle.month_work import COST_RULES, Materials, Simulation, prompt, read_records
 from ming.middle.view import EntityView
 
@@ -72,9 +72,7 @@ class Simulations:
     def publish(self, route: UUID, segment: dict[str, Any]) -> None:
         date = self.court.calendar().data
         output = Simulation.model_validate(segment["output"])
-        available = dict(date)
-        if output.month_end:
-            available.update(next_month(date))
+        available = petition_date(date, ended=output.month_end)
         petitions = [
             PendingPetition(
                 **item.model_dump(),
@@ -144,7 +142,7 @@ class Simulations:
                 "decree": self.court.entity(petition.entity_id).model_dump(mode="json")
                 if petition.entity_id != petition.route_id else None,
                 "deliberations": [f.detail for f in self.court.products(petition.entity_id, kind="deliberation")],
-                "prior_interim": [f.detail for f in self.court.products(petition.entity_id, current=False, kind="interim")],
+                "prior_interim": self.court.prior_interim(petition.entity_id),
                 "instruction": "只续写这一问的后果到本月底。其他问保持待批；强颁则续写此旨及其代价。御笔强推只追加担名，获外廷准后按正常旨办理。",
             },
             parent["messages"],
@@ -158,13 +156,12 @@ class Simulations:
     def start_forecast(
         self, petition: PendingPetition, option: int
     ) -> asyncio.Task[dict[str, Any]]:
-        key = petition.route_id, str(petition.id), option
-        if key not in self.tasks:
-            task = self.tasks[key] = asyncio.create_task(
-                self.forecast(petition, option)
-            )
-            task.add_done_callback(self.log_failure)
-        return self.tasks[key]
+        return enlist(
+            self.tasks,
+            (petition.route_id, str(petition.id), option),
+            lambda: self.forecast(petition, option),
+            on_done=self.log_failure,
+        )
 
     def log_failure(self, task: asyncio.Task[Any]) -> None:
         if not task.cancelled() and (error := task.exception()) is not None:
@@ -176,10 +173,7 @@ class Simulations:
             await asyncio.shield(task)
         except Exception:
             # Failed speculation alone may be rerun on an actual selection.
-            detail = self.court.petition(key[1]).detail
-            petition = PendingPetition.model_validate(
-                {k: v for k, v in detail.items() if k != "date"}
-            )
+            petition = self.court.as_petition(self.court.petition(key[1]))
             if self.tasks[key] is task:
                 del self.tasks[key]
             await asyncio.shield(self.start_forecast(petition, key[2]))
@@ -194,29 +188,28 @@ class Simulations:
     def start_continuation(
         self, route: UUID, segment: dict[str, Any]
     ) -> asyncio.Task[None]:
-        key = route, segment["id"]
-        if key not in self.continuations:
-            task = self.continuations[key] = asyncio.create_task(
-                self.continue_segment(route, segment)
-            )
-            task.add_done_callback(self.log_failure)
-        return self.continuations[key]
+        return enlist(
+            self.continuations,
+            (route, segment["id"]),
+            lambda: self.continue_segment(route, segment),
+            on_done=self.log_failure,
+        )
 
     def start_push(
         self, petition: PendingPetition, option: int
     ) -> asyncio.Task[dict[str, Any]]:
         """One in-flight reconsideration for this petition; a failed task stays until recovery discards it."""
         key = str(petition.id)
-        if key not in self.pushes:
-            task = self.pushes[key] = asyncio.create_task(
-                self.reconsider(
-                    self.court.entity(petition.entity_id),
-                    petition.route_id,
-                    push_key(key, option),
-                )
-            )
-            task.add_done_callback(self.log_failure)
-        return self.pushes[key]
+        return enlist(
+            self.pushes,
+            key,
+            lambda: self.reconsider(
+                self.court.entity(petition.entity_id),
+                petition.route_id,
+                push_key(key, option),
+            ),
+            on_done=self.log_failure,
+        )
 
     def hold_push(self, petition: PendingPetition, choice: dict[str, Any] | None) -> bool:
         """Start a selected imperial push the way a forecast is started. True once it no longer blocks."""
@@ -313,10 +306,7 @@ class Simulations:
         while True:
             segments = [f.detail for f in self.court.products(route, kind="simulation")]
             petitions = [
-                PendingPetition.model_validate(
-                    {k: v for k, v in f.detail.items() if k != "date"}
-                )
-                for f in self.court.route_petitions(route)
+                self.court.as_petition(f) for f in self.court.route_petitions(route)
             ]
             choices = {
                 f.detail["petition_id"]: f.detail

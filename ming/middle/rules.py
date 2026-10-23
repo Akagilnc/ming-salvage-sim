@@ -6,7 +6,7 @@ from typing import Any
 from pydantic_ai import ModelRetry
 
 from ming.middle.declaration import Change, Declaration, Fact
-from ming.middle.fiscal import WAN, current_paid, obligation
+from ming.middle.fiscal import WAN, clamp_scale, current_paid, obligation
 
 SCALE_FIELDS = ("imperial_prestige", "public_support", "satisfaction")
 
@@ -211,7 +211,7 @@ def field_values(
     for field in SCALE_FIELDS:
         if field in actual and fact.entity_type in {"world", "faction", "class"}:
             key = fact.entity_type, fact.entity, field
-            actual[field] = min(100, max(0, actual[field] + offsets.get(key, 0)))
+            actual[field] = clamp_scale(actual[field] + offsets.get(key, 0))
     changes = dict(actual)
     if "taels" in changes and fact.entity_type == "account":
         changes["taels"] += data.get("taels", 0)

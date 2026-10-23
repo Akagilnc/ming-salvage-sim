@@ -1,6 +1,6 @@
 """Land a whole declaration, query rows and events in the same transaction."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 from uuid import UUID
 
@@ -258,33 +258,39 @@ def record_receipts(
             )
 
 
+CLEARED_JOURNEY = {
+    "transit_to": "",
+    "remaining_distance": 0,
+    "waiting_audience": False,
+}
+
+
+def latest_detail(events: Sequence[tuple[str, Item]], kind: str) -> Item | None:
+    """Latest deliberation or choice of this month, the row both landing and interim use."""
+    return next(
+        (detail for event_kind, detail in reversed(events) if event_kind == kind),
+        None,
+    )
+
+
 def interim_mark(ledger: Ledger, decree: Entity, date: Item) -> str | None:
     if ledger.facts(entity_id=decree.id, kind="interim"):
         return None
     if decree.data.get("interim"):
         return decree.data["text"]
-    verdict = next(
-        (
-            e["detail"]
-            for e in ledger.facts(entity_id=decree.id, kind="deliberation", date=date)
-        ),
-        None,
+    rows = ledger.facts(
+        entity_id=decree.id, kind=("deliberation", "choice"), date=date
     )
-    forced = next(
-        (
-            e["detail"]
-            for e in ledger.facts(entity_id=decree.id, kind="choice", date=date)
-            if e["detail"]["text"] == "强颁"
-        ),
-        None,
-    )
-    if forced and verdict:
+    events = [(row["kind"], row["detail"]) for row in rows]
+    verdict = latest_detail(events, "deliberation")
+    choice = latest_detail(events, "choice")
+    if choice and choice["text"] == "强颁" and verdict:
         return ledger.facts(
             entity_id=UUID(verdict["route_id"]),
             kind="simulation",
             date=date,
             query=FACT_ROWS.where(
-                F.detail["petition_id"].as_string() == forced["petition_id"]
+                F.detail["petition_id"].as_string() == choice["petition_id"]
             ),
         )[0]["detail"]["output"]["text"]
     return None
@@ -302,7 +308,7 @@ def move_person(
     destination = changes.pop("location", person.data["location"])
     if changes.get("status") not in (None, "active"):
         # Leaving active (卒/下狱/罢黜/归场) clears the journey like offstage does.
-        changes.update(transit_to="", remaining_distance=0, waiting_audience=False)
+        changes.update(CLEARED_JOURNEY)
     elif destination != person.data.get("location") and not person.data.get(
         "transit_to"
     ):
@@ -352,8 +358,6 @@ def displace(
                     {
                         "office": "",
                         "status": "offstage",
-                        "transit_to": "",
-                        "remaining_distance": 0,
-                        "waiting_audience": False,
+                        **CLEARED_JOURNEY,
                     },
                 )

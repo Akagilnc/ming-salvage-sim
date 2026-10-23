@@ -16,9 +16,9 @@ from ming.ledger import (
 from ming.middle import queries
 
 from ming.ledger import Entity, Item, Ledger
-from ming.middle.dispatch import dispatch
+from ming.middle.dispatch import dispatch, latest_detail
 from ming.middle.fiscal import Accounts, due_levies
-from ming.middle.calendar import advance_month
+from ming.middle.calendar import advance_month, calendar_row
 from ming.middle.declaration import (
     Declaration,
     LandingMode,
@@ -87,9 +87,8 @@ class Court:
     def set_hall(self, night_id: UUID, add: list[str], remove: list[str]) -> HallResult:
         return set_hall(self._ledger, night_id, add, remove)
 
-    def nights(self, *, latest: bool = False) -> list[NightView]:
-        query = queries.LATEST_NIGHT if latest else queries.NIGHT_ROWS
-        return [self.night(e["id"]) for e in self._ledger.read(query)]
+    def nights(self) -> list[NightView]:
+        return [self.night(e["id"]) for e in self._ledger.read(queries.LATEST_NIGHT)]
 
     def pending_nights(self) -> list[UUID]:
         return [
@@ -137,7 +136,10 @@ class Court:
         advance_month(self._ledger)
 
     def calendar(self) -> EntityView:
-        return EntityView.model_validate(self._ledger.entities(kind="calendar")[0])
+        row = calendar_row(self._ledger)
+        if row is None:
+            raise IndexError("calendar")
+        return EntityView.model_validate(row)
 
     def record(
         self,
@@ -172,6 +174,14 @@ class Court:
                 entity_id=entity_id, kind=kind, date=date if current else None
             )
         ]
+
+    def prior_interim(self, entity_id: UUID) -> list[Item]:
+        return [f.detail for f in self.products(entity_id, current=False, kind="interim")]
+
+    def as_petition(self, fact: FactView) -> PendingPetition:
+        return PendingPetition.model_validate(
+            {k: v for k, v in fact.detail.items() if k != "date"}
+        )
 
     def deliberation(
         self, entity_id: UUID, decision: dict[str, Any] | None
@@ -420,10 +430,11 @@ class Court:
         ):
             decree = EntityView.model_validate(row)
             products = self.products(decree.id, kind=("deliberation", "choice"))
-            verdict = next(f.detail for f in reversed(products) if f.kind == "deliberation")
-            choice = next(
-                (f.detail for f in reversed(products) if f.kind == "choice"), None
-            )
+            events = [(f.kind, f.detail) for f in products]
+            verdict = latest_detail(events, "deliberation")
+            choice = latest_detail(events, "choice")
+            if verdict is None:
+                raise StopIteration
             if verdict["verdict"] == "准" or (choice and choice["text"] == "强颁"):
                 sources.append((decree, UUID(verdict["route_id"]), "landed"))
             elif decree.data.get("interim"):

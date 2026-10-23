@@ -11,12 +11,7 @@ class Inbox:
         self.court = court
 
     def petitions(self) -> list[PendingPetition]:
-        return [
-            PendingPetition.model_validate(
-                {k: v for k, v in f.detail.items() if k != "date"}
-            )
-            for f in self.court.pending_petitions()
-        ]
+        return [self.court.as_petition(f) for f in self.court.pending_petitions()]
 
     def choose(self, petition_id: UUID, option: int) -> None:
         petition = next((p for p in self.petitions() if p.id == petition_id), None)

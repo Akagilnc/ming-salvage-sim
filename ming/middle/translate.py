@@ -16,7 +16,7 @@ from pydantic_ai.exceptions import ToolRetryError, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelResponse
 
 from ming.ledger import Ledger
-from ming.middle.fiscal import OUTPUT_METRICS, levers, payable_army
+from ming.middle.fiscal import OUTPUT_METRICS, levers, payable_army, settling
 from ming.middle.declaration import (
     Declaration,
     DecreeEvent,
@@ -137,7 +137,6 @@ def check_decrees(
     source: UUID,
     names: dict[str, dict[str, list[str]]],
 ) -> None:
-    owner = ledger.entities(entity_id=source)[0]
     # Only a night has a decrees list to index. Month shares omit the source.
     for item in [*out.facts, *out.decree_events]:
         ref = item.decree
@@ -147,13 +146,7 @@ def check_decrees(
             elif ref is None and (isinstance(item, DecreeEvent) or item.discovered):
                 fail("decree", ref, "指定所属旨意；只有月末本旨声明可省略来源")
         elif ref is not None:
-            fail(
-                "decree",
-                ref,
-                "省略 decree，月末本旨的来源就是本旨"
-                if owner["kind"] == "decree"
-                else "省略 decree",
-            )
+            fail("decree", ref, "省略 decree")
     if isinstance(out, NightDeclaration) and out.decrees:
         turns = read_night(ledger, source).turns
         for decree in out.decrees:
@@ -195,7 +188,7 @@ def check_fiscal(ledger: Ledger, out: Declaration) -> None:
         ("region", "fiscal_surcharge"): [
             r["key"]
             for r in ledger.entities(kind="region")
-            if "settle" in r["data"].get("fiscal", {})
+            if settling(r["data"])
         ],
     }
     for fact in out.facts:
