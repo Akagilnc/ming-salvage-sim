@@ -26,7 +26,7 @@
 
 ## 安装与启动
 
-需要 Python 3.14、Node.js 20+，以及 OpenAI 兼容 API 或本机已安装且已登录的 Claude CLI。
+需要 Python 3.14、Node.js 20+，以及 OpenAI 兼容 API，或本机已登录的 Claude、Codex、Grok、Pi 订阅。
 
 ```bash
 git clone https://github.com/Akagilnc/ming-salvage-sim.git Ming_LLM
@@ -48,7 +48,9 @@ python -m ming.desktop
 
 启动先到主菜单：新开一局、继续（最新存档）、读取存档、设置。每局一个 SQLite 文件，每次落账自动保存，没有存档位或另存。默认存档与模型设置在 `~/.ming/saves/`。
 
-API 地址、key、模型或 Claude CLI 后端在主菜单设置中填写。网页／桌面设置不从 `.env` 读取；`.env.example` 仅说明命令行开发入口的可选环境变量。CLI 使用本机的 `claude`，四工具经原生 MCP、戏文经 `stream-json` 交付，不修改宿主配置或替用户登录；进程自然结束，不强杀。关窗正常退出会先等在飞工作，浏览器断线不打断已接受的说话动作。
+API 地址、key、模型，或 Claude / Codex / Grok / Pi 订阅，在主菜单设置中填写。Codex 必须填写模型 id。网页／桌面设置不从 `.env` 读取；`.env.example` 仅说明命令行开发入口的可选环境变量。订阅通道用本机已有登录，不替用户登录。工具经该通道自己的原生工具或本地 MCP 交付，戏文按该通道的流式输出增量送到界面。进程自然结束，不强杀。关窗正常退出会先等在飞工作，浏览器断线不打断已接受的说话动作。
+
+不改宿主配置，只有两处例外：Codex 刷新令牌时写回 Codex CLI 自己的 `~/.codex/auth.json`（不写 `config.toml`），刷新后 Codex CLI 仍读同一条链；Grok 每个并行槽位在 `~/.ming/grok-slots/` 下有一个固定目录，未信任过才调用 Grok 自己的 `--trust` 写入信任清单，已信任的不再写。Grok 仍会读到 `~/.grok` 里用户自己登记的 MCP，以及被关闭兼容扫描后仍列在 `~/.claude.json` 里的服务（那些服务处于关闭状态）。Pi 没有只关掉 `~/.pi/agent/mcp.json` 的开关，本局用 `--tools mcp__court__*` 把声明给模型的工具收窄到这一局的服务；Pi 对超过约 20KB 的 MCP 文本会截断并留下全文临时文件，没有关闭该截断的开关。
 
 ## 怎么玩
 
@@ -70,7 +72,7 @@ python -m ming read --db saves/<新局文件>.sqlite --identity audit --replay
 
 `new` 输出新局路径；继续操作使用该路径。默认读取皇帝材料，`audit` 用于内部对账，`--replay` 从事件重放读取。
 
-召对使用支持原生文本和工具的 Pydantic AI 模型；OpenAI 兼容端点用自己的 `OPENAI_BASE_URL`、`OPENAI_API_KEY` 环境变量。仅支持 Chat Completions 的端点选 `openai-chat:` 前缀（`openai:` 默认走 Responses）。也可选 `--scene-model claude-cli`。转译默认沿用已登录的 `claude -p`，可用逐次参数换成 API 模型，不改宿主配置：
+召对使用支持原生文本和工具的 Pydantic AI 模型；OpenAI 兼容端点用自己的 `OPENAI_BASE_URL`、`OPENAI_API_KEY` 环境变量。仅支持 Chat Completions 的端点选 `openai-chat:` 前缀（`openai:` 默认走 Responses）。订阅通道写 `claude-cli`、`codex:<模型>`、`openai-codex:<模型>`、`grok`、`grok:<模型>`、`pi` 或 `pi:<模型>`（模型段可含 `provider/id:thinking`）。转译默认沿用已登录的 `claude -p`，可用逐次参数换成上述任一通道：
 
 ```bash
 python -m ming audience --db saves/<新局文件>.sqlite \

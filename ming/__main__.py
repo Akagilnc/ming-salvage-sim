@@ -28,7 +28,7 @@ def parser() -> argparse.ArgumentParser:
     audience.add_argument(
         "--scene-model",
         required=True,
-        help="Pydantic AI model id; native text and tools required",
+        help="claude-cli, codex:<model>, grok[:model], pi[:model], or a Pydantic AI model id",
     )
     month = commands.add_parser("month", help="Advance month or resume missing work")
     choose = commands.add_parser(
@@ -49,7 +49,7 @@ def parser() -> argparse.ArgumentParser:
         sub.add_argument(
             "--translation-model",
             default="claude-cli",
-            help="claude-cli or a Pydantic AI model id",
+            help="claude-cli, codex:<model>, grok[:model], pi[:model], or a Pydantic AI model id",
         )
     return result
 
