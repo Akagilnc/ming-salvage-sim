@@ -4,13 +4,13 @@ from collections.abc import Callable
 from functools import partial
 
 from ming.middle.court import Court
-from ming.middle.invoke import ModelSource, build_agent, invoke, stream_text
+from ming.middle.invoke import ModelSource, TextUpdate, build_agent, invoke, stream_text
 from ming.middle.month_work import Materials, prompt, read_records
 
 
 class Gazette:
     def __init__(
-        self, court: Court, model: ModelSource, on_delta: Callable[[str], None] | None
+        self, court: Court, model: ModelSource, on_delta: Callable[[TextUpdate], None] | None
     ) -> None:
         self.court, self.on_delta = court, on_delta
         self.agent = build_agent(

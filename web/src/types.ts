@@ -12,11 +12,12 @@ export interface Fact {
   detail: Record<string, unknown>;
 }
 export interface Records { entities: Entity[]; facts: Fact[] }
+export type TextUpdate = string | { replace: string };
 export interface Turn { id: string; emperor_words: string; scene: string }
 export interface Night { id: string; closed: boolean; hall: string[]; turns: Turn[]; result: 'translated' | 'unhandled' | null }
 export interface Interaction { action: string; status: string; payload: { words?: string; log?: string; type?: string } }
 export interface Petition { id: string; text: string; options: string[]; signer?: string | null; target?: string | null; revision_of?: string | null }
-export interface Settings { backend: 'api' | 'claude-cli'; model: string; base_url: string; api_key: string }
+export interface Settings { backend: 'api' | 'claude-cli' | 'codex' | 'grok' | 'pi'; model: string; base_url: string; api_key: string }
 export interface Snapshot {
   saves: string[];
   save: string | null;

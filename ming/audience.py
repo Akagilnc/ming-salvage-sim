@@ -17,7 +17,7 @@ from pydantic_ai.messages import (
 
 from ming.middle.court import Court
 from ming.middle.declaration import NightDeclaration
-from ming.middle.invoke import ModelSource, build_agent, invoke, stream_text
+from ming.middle.invoke import ModelSource, TextUpdate, build_agent, invoke, stream_text
 from ming.middle.opening import CONTENT
 from ming.middle.scene import HallResult, PersonView
 
@@ -97,7 +97,7 @@ class Audience:
             self.court.land(result, night_id)
 
     async def say(
-        self, words: str, turn_id: str, on_delta: Callable[[str], None] | None = None
+        self, words: str, turn_id: str, on_delta: Callable[[TextUpdate], None] | None = None
     ) -> str:
         night = self.court.night(self.night_id)
         for turn in night.turns:
@@ -110,7 +110,7 @@ class Audience:
         return await self._turn
 
     async def _generate(
-        self, words: str, turn_id: str, on_delta: Callable[[str], None] | None
+        self, words: str, turn_id: str, on_delta: Callable[[TextUpdate], None] | None
     ) -> str:
         history: list[ModelMessage] = []
         for turn in self.court.night(self.night_id).turns:

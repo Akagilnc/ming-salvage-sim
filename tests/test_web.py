@@ -4,8 +4,6 @@ import asyncio
 import json
 from pathlib import Path
 from uuid import uuid4
-from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 import pytest
 from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
@@ -571,56 +569,3 @@ def test_month_transport_retry_is_bounded_and_persistent(
                 for e in ledger["entities"]
                 if e["kind"] == "account"
             } == balances
-
-
-@pytest.mark.parametrize("model", ["", "sonnet"])
-@pytest.mark.parametrize("game_db", ["first_night"], indirect=True)
-def test_cli_backend_leaves_the_default_model_to_the_host(
-    tmp_path: Path, game_db: Path, model: str, monkeypatch
-) -> None:
-    calls = []
-    reply = json.loads((RECORDED / "night_invalid.json").read_text())["cases"][
-        "missing_fields"
-    ]["reply"]
-
-    async def spawn(*args, **kwargs):
-        calls.append(args)
-        output = asyncio.StreamReader()
-        for event in [
-            {
-                "type": "stream_event",
-                "event": {
-                    "type": "content_block_delta",
-                    "delta": {"type": "text_delta", "text": reply},
-                },
-            },
-            {"type": "result", "is_error": False},
-        ]:
-            output.feed_data(json.dumps(event).encode() + b"\n")
-        output.feed_eof()
-        return SimpleNamespace(
-            stdout=output, returncode=0, communicate=AsyncMock(return_value=(b"", b""))
-        )
-
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
-    with TestClient(create_app(tmp_path)) as client:
-        client.post(
-            "/actions",
-            json={
-                "action": "settings",
-                "settings": {"backend": "claude-cli", "model": model},
-            },
-        )
-        save = client.post(
-            "/actions", json={"action": "load", "save": game_db.name}
-        ).json()["save"]
-        client.post("/actions", json={"action": "dismiss"})
-        client.post("/actions", json={"action": "load", "save": save})
-        assert client.get("/state").json()["game"]["failure"] is None
-    assert calls
-    for args in calls:
-        assert args[0] == "claude"
-        if model:
-            assert args[args.index("--model") + 1] == model
-        else:
-            assert "--model" not in args

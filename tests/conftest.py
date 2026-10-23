@@ -27,32 +27,29 @@ HISTORY_ACTIONS = {
 }
 
 
+INVALID_NIGHT = json.loads((RECORDED / "night_invalid.json").read_text())["cases"][
+    "missing_fields"
+]
+RECORDED_REPLIES = {
+    "scene": INVALID_NIGHT["scene"],
+    "NightDeclaration": INVALID_NIGHT["reply"],
+    "Declaration": (RECORDED / "month_empty.txt").read_text(),
+    **{
+        name: (RECORDED / "sources_empty.txt").read_text()
+        for name in ("urgent", "impeachment")
+    },
+    **{
+        name: (RECORDED / f"{name}.txt").read_text()
+        for name in ("deliberation", "simulation", "gazette", "secret_report")
+    },
+}
+
+
 @contextmanager
 def recorded_steps(case=None, start=0):
-    invalid = json.loads((RECORDED / "night_invalid.json").read_text())["cases"][
-        "missing_fields"
-    ]
     replies = {
-        "scene": TestModel(call_tools=[], custom_output_text=invalid["scene"]),
-        "NightDeclaration": TestModel(
-            call_tools=[], custom_output_text=invalid["reply"]
-        ),
-        "Declaration": TestModel(
-            call_tools=[], custom_output_text=(RECORDED / "month_empty.txt").read_text()
-        ),
-        **{
-            name: TestModel(
-                call_tools=[],
-                custom_output_text=(RECORDED / "sources_empty.txt").read_text(),
-            )
-            for name in ("urgent", "impeachment")
-        },
-        **{
-            name: TestModel(
-                call_tools=[], custom_output_text=(RECORDED / f"{name}.txt").read_text()
-            )
-            for name in ("deliberation", "simulation", "gazette", "secret_report")
-        },
+        name: TestModel(call_tools=[], custom_output_text=text)
+        for name, text in RECORDED_REPLIES.items()
     }
     if case is not None:
         case = json.loads((RECORDED / f"night_{case}.json").read_text())
@@ -202,9 +199,7 @@ def extend_history(source, directory, actions, case=None, start=0):
         if case is None:
             replies["NightDeclaration"] = TestModel(
                 call_tools=[],
-                custom_output_text=json.dumps(
-                    {"facts": [], "reports": [], "decrees": []}
-                ),
+                custom_output_text=(RECORDED / "night_empty.txt").read_text(),
             )
         client.post("/actions", json={"action": "load", "save": path.name})
         for action in actions:

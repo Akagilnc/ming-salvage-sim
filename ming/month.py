@@ -7,7 +7,7 @@ from uuid import UUID
 
 from ming.middle.court import Court
 from ming.middle.declaration import PendingPetition
-from ming.middle.invoke import ModelSource, enlist, gather_or_raise
+from ming.middle.invoke import ModelSource, TextUpdate, enlist, gather_or_raise
 from ming.middle.view import EntityView
 from ming.month_steps.deliberation import Deliberations
 from ming.month_steps.simulation import Simulations, continuing_options
@@ -23,7 +23,7 @@ class Month:
         self,
         court: Court,
         model: ModelSource,
-        on_delta: Callable[[str], None] | None = None,
+        on_delta: Callable[[TextUpdate], None] | None = None,
     ) -> None:
         self.court = court
         self.deliberations = Deliberations(court, model)
