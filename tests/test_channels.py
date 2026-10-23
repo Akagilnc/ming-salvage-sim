@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import gzip
 import io
 import json
 import os
@@ -26,6 +27,8 @@ from ming.middle.cli_model import GROK_OFF
 from ming.web import create_app
 from tests.conftest import RECORDED, RECORDED_REPLIES
 
+CODEX_MODEL = "gpt-6.1-sol"
+PI_MODEL = f"openai-codex/{CODEX_MODEL}"
 REPLIES = RECORDED_REPLIES | {
     "scene": "殿上有人",
     "NightDeclaration": (RECORDED / "night_empty.txt").read_text(),
@@ -104,7 +107,13 @@ def mark_trusted(slot: Path) -> None:
     store.write_text(existing + f"{key} = {{ trusted = true }}\n")
 
 
-def host_lines(binary: str, chunks: list[str], *, error: str | None = None) -> list[bytes]:
+def host_lines(binary: str, chunks: list[str], *, mode: str = "ok") -> list[bytes]:
+    if binary == "pi" and mode in {"ok", "empty"}:
+        name = get_current_run_context().agent.name if mode == "ok" else "empty"
+        return [gzip.decompress(
+            (RECORDED / "channels" / "pi" / f"{name}.jsonl.gz").read_bytes()
+        )]
+    error = "down" if mode == "error" else None
     events: list[dict[str, object]]
     if binary == "claude":
         events = [
@@ -122,21 +131,16 @@ def host_lines(binary: str, chunks: list[str], *, error: str | None = None) -> l
             else {"type": "end", "stopReason": "end_turn"}
         )
     else:
+        # Semantic host errors still await a native recording.
         events = [
-            {"type": "message_update", "assistantMessageEvent": {
-                "type": "text_delta", "delta": chunk,
-            }}
-            for chunk in chunks
+            {"type": "message_end", "message": {
+                "role": "assistant",
+                "content": [{"type": "text", "text": ""}],
+                "stopReason": "error",
+                "errorMessage": error,
+            }},
+            {"type": "agent_settled", "aborted": False},
         ]
-        message: dict[str, object] = {
-            "role": "assistant",
-            "content": [{"type": "text", "text": "".join(chunks)}],
-            "stopReason": "error" if error else "stop",
-        }
-        if error:
-            message["errorMessage"] = error
-        events.append({"type": "message_end", "message": message})
-        events.append({"type": "agent_settled", "aborted": False})
     return [json.dumps(item).encode() + b"\n" for item in events]
 
 
@@ -175,7 +179,7 @@ def install_process(monkeypatch, *, mode: str = "ok", delay: float = 0):
             return finished(asyncio.StreamReader())
         if mode == "missing":
             raise FileNotFoundError(2, "No such file or directory", args[0])
-        output = asyncio.StreamReader()
+        output = asyncio.StreamReader(limit=kwargs["limit"])
         if mode == "exit":
             output.feed_eof()
             return finished(output, 1)
@@ -188,13 +192,8 @@ def install_process(monkeypatch, *, mode: str = "ok", delay: float = 0):
         if delay:
             await asyncio.sleep(delay)
         inflight.pop(cwd, None)
-        if mode == "error":
-            chunks, error = [], "down"
-        elif mode == "empty":
-            chunks, error = [], None
-        else:
-            chunks, error = await chunks_for(url), None
-        for line in host_lines(args[0], chunks, error=error):
+        chunks = await chunks_for(url) if mode == "ok" else []
+        for line in host_lines(args[0], chunks, mode=mode):
             output.feed_data(line)
         output.feed_eof()
         if hasattr(errors, "write") and args[0] == "grok":
@@ -205,86 +204,8 @@ def install_process(monkeypatch, *, mode: str = "ok", delay: float = 0):
     return calls, snapshots
 
 
-def created(resp_id: str) -> dict[str, object]:
-    return {
-        "type": "response.created",
-        "response": {
-            "id": resp_id,
-            "object": "response",
-            "created_at": 1,
-            "status": "in_progress",
-            "model": "gpt-5.4",
-            "output": [],
-        },
-    }
-
-
-def text_stream(text: str) -> httpx2.Response:
-    parts = [text[: len(text) // 2], text[len(text) // 2 :]]
-    events = [created("resp_text")]
-    events.extend(
-        {
-            "type": "response.output_text.delta",
-            "item_id": "msg",
-            "output_index": 0,
-            "content_index": 0,
-            "delta": part,
-        }
-        for part in parts
-        if part
-    )
-    events.append(
-        {
-            "type": "response.completed",
-            "response": {
-                "id": "resp_text",
-                "object": "response",
-                "created_at": 1,
-                "status": "completed",
-                "model": "gpt-5.4",
-                "output": [
-                    {
-                        "id": "msg",
-                        "type": "message",
-                        "role": "assistant",
-                        "status": "completed",
-                        "content": [
-                            {"type": "output_text", "text": text, "annotations": []}
-                        ],
-                    }
-                ],
-            },
-        }
-    )
-    body = "".join(f"event: {item['type']}\ndata: {json.dumps(item)}\n\n" for item in events)
-    return httpx2.Response(200, headers={"content-type": "text/event-stream"}, content=body)
-
-
-def tool_call(name: str, arguments: dict[str, object]) -> httpx2.Response:
-    item = {
-        "type": "function_call",
-        "id": "fc_1",
-        "call_id": "call_1",
-        "name": name,
-        "arguments": json.dumps(arguments),
-        "status": "completed",
-    }
-    events = [
-        created("resp_tool"),
-        {"type": "response.output_item.done", "output_index": 0, "item": item},
-        {
-            "type": "response.completed",
-            "response": {
-                "id": "resp_tool",
-                "object": "response",
-                "created_at": 1,
-                "status": "completed",
-                "model": "gpt-5.4",
-                "output": [item],
-            },
-        },
-    ]
-    body = "".join(f"event: {item['type']}\ndata: {json.dumps(item)}\n\n" for item in events)
+def codex_stream(name: str) -> httpx2.Response:
+    body = gzip.decompress((RECORDED / "channels" / "codex" / f"{name}.sse.gz").read_bytes())
     return httpx2.Response(200, headers={"content-type": "text/event-stream"}, content=body)
 
 
@@ -306,18 +227,19 @@ def tool_records(body: dict[str, object]) -> list[dict[str, object]]:
 
 
 def codex_response(
-    body: dict[str, object], outputs: list[dict[str, object]] | None = None
+    request: httpx2.Request, outputs: list[dict[str, object]] | None = None
 ) -> httpx2.Response:
+    body = json.loads(request.content)
     name = get_current_run_context().agent.name
     called = any(
         isinstance(item, dict) and item.get("type") == "function_call"
         for item in body.get("input") or []
     )
-    if name == "simulation" and not called:
-        return tool_call("read_records", {})
+    if name in {"scene", "simulation"} and not called:
+        return codex_stream("scene-tool" if name == "scene" else "read-records")
     if outputs is not None and name == "simulation":
         outputs.extend(tool_records(body))
-    return text_stream(REPLIES[name])
+    return codex_stream(name)
 
 
 def install_codex(monkeypatch, handler):
@@ -355,6 +277,7 @@ def assert_scene(state: dict[str, object], events: list[dict[str, object]]) -> N
     assert game["failure"] is None
     night = game["night"]
     assert isinstance(night, dict)
+    assert night["result"] == "translated"
     assert "王承恩" in night["hall"]
     deltas = [event["data"] for event in events if event["event"] == "delta"]
     assert len(deltas) >= 2
@@ -367,7 +290,7 @@ def assert_scene(state: dict[str, object], events: list[dict[str, object]]) -> N
 @pytest.mark.parametrize(
     ("backend", "model"),
     [("claude-cli", ""), ("claude-cli", "sonnet"), ("grok", ""),
-     ("grok", "grok-4"), ("pi", ""), ("pi", "xai/grok-4.7:high")],
+     ("grok", "grok-4"), ("pi", ""), ("pi", f"{PI_MODEL}:high")],
 )
 def test_process_subscription_scene_lands_and_streams(
     tmp_path: Path, monkeypatch, backend: str, model: str, game_db: Path
@@ -382,6 +305,8 @@ def test_process_subscription_scene_lands_and_streams(
         open_game(client, {"backend": backend, "model": model}, game_db)
         client.post("/actions", json={"action": "open"}).raise_for_status()
         client.post("/actions", json={"action": "say", "words": "宣王承恩"}).raise_for_status()
+        client.post("/actions", json={"action": "dismiss"}).raise_for_status()
+        client.portal.call(app.state.web.game.drain)
         state = client.get("/state").json()
     assert_scene(state, events)
     assert state["settings"]["backend"] == backend
@@ -414,22 +339,15 @@ def test_codex_scene_lands_and_streams(tmp_path: Path, monkeypatch, game_db: Pat
     home = tmp_path / "codex"
     auth_file(home / "auth.json", expired=False)
     monkeypatch.setenv("CODEX_HOME", str(home))
-    bodies: list[dict[str, object]] = []
-
-    def handler(request: httpx2.Request) -> httpx2.Response:
-        payload = json.loads(request.content)
-        bodies.append(payload)
-        if len(bodies) == 1:
-            return tool_call("set_hall", {"add": ["王承恩"], "remove": []})
-        return text_stream(REPLIES["scene"])
-
-    install_codex(monkeypatch, handler)
+    install_codex(monkeypatch, codex_response)
     app = create_app(game_db.parent)
     events = watch(app)
     with TestClient(app) as client:
-        open_game(client, {"backend": "codex", "model": "gpt-5.4"}, game_db)
+        open_game(client, {"backend": "codex", "model": CODEX_MODEL}, game_db)
         client.post("/actions", json={"action": "open"}).raise_for_status()
         client.post("/actions", json={"action": "say", "words": "宣王承恩"}).raise_for_status()
+        client.post("/actions", json={"action": "dismiss"}).raise_for_status()
+        client.portal.call(app.state.web.game.drain)
         state = client.get("/state").json()
     assert_scene(state, events)
     assert {path: stamp(path) for path in USER_FILES} == before
@@ -438,7 +356,7 @@ def test_codex_scene_lands_and_streams(tmp_path: Path, monkeypatch, game_db: Pat
 
 @pytest.mark.parametrize(
     "scene_model",
-    ["grok", "pi:xai/grok-4.7:high", "codex:gpt-5.4", "openai-codex:gpt-5.4"],
+    ["grok", f"pi:{PI_MODEL}:high", f"codex:{CODEX_MODEL}", f"openai-codex:{CODEX_MODEL}"],
 )
 def test_cli_model_string_reaches_its_host(
     tmp_path: Path, monkeypatch, game_db: Path, scene_model: str
@@ -453,7 +371,7 @@ def test_cli_model_string_reaches_its_host(
 
     def handler(request: httpx2.Request) -> httpx2.Response:
         bodies.append(json.loads(request.content))
-        return text_stream("殿上")
+        return codex_stream("scene")
 
     install_codex(monkeypatch, handler)
     monkeypatch.setattr(
@@ -461,7 +379,7 @@ def test_cli_model_string_reaches_its_host(
     )
     main(["audience", "--db", str(game_db), "--scene-model", scene_model])
     if scene_model.startswith(("codex:", "openai-codex:")):
-        assert bodies[0]["model"] == "gpt-5.4"
+        assert bodies[0]["model"] == CODEX_MODEL
         assert not [args for args, _kwargs in calls if args and args[0] == "codex"]
         return
     binary, _, name = scene_model.partition(":")
@@ -491,14 +409,10 @@ def test_subscription_month_completes(tmp_path: Path, monkeypatch, backend: str,
         home = tmp_path / "codex"
         auth_file(home / "auth.json", expired=False)
         monkeypatch.setenv("CODEX_HOME", str(home))
-
-        def handler(request: httpx2.Request) -> httpx2.Response:
-            return codex_response(json.loads(request.content))
-
-        install_codex(monkeypatch, handler)
+        install_codex(monkeypatch, codex_response)
     app = create_app(game_db.parent)
     with TestClient(app) as client:
-        settings = {"backend": backend, "model": "gpt-5.4" if backend == "codex" else ""}
+        settings = {"backend": backend, "model": CODEX_MODEL if backend == "codex" else ""}
         open_game(client, settings, game_db)
         client.post("/actions", json={"action": "month"}).raise_for_status()
         state = client.get("/state").json()
@@ -535,12 +449,12 @@ def test_codex_forwards_a_ledger_sized_tool_result(tmp_path: Path, monkeypatch, 
     outputs: list[dict[str, object]] = []
 
     def handler(request: httpx2.Request) -> httpx2.Response:
-        return codex_response(json.loads(request.content), outputs)
+        return codex_response(request, outputs)
 
     install_codex(monkeypatch, handler)
     app = create_app(game_db.parent)
     with TestClient(app) as client:
-        open_game(client, {"backend": "codex", "model": "gpt-5.4"}, game_db)
+        open_game(client, {"backend": "codex", "model": CODEX_MODEL}, game_db)
         app.state.web.game.court.record(("world", "天下"), [("note", planted)])
         client.post("/actions", json={"action": "month"}).raise_for_status()
         state = client.get("/state").json()
@@ -605,7 +519,7 @@ def test_codex_credential_failure_stops_month(tmp_path: Path, monkeypatch, probl
 
     install_codex(monkeypatch, handler)
     with TestClient(create_app(game_db.parent)) as client:
-        open_game(client, {"backend": "codex", "model": "gpt-5.4"}, game_db)
+        open_game(client, {"backend": "codex", "model": CODEX_MODEL}, game_db)
         client.post("/actions", json={"action": "month"}).raise_for_status()
         state = client.get("/state").json()
     failure = state["game"]["failure"]
@@ -637,7 +551,7 @@ def test_codex_parallel_refresh_writes_one_credential(tmp_path: Path, monkeypatc
                     "refresh_token": "new-refresh",
                 },
             )
-        return text_stream(REPLIES["scene"])
+        return codex_stream("scene")
 
     install_codex(monkeypatch, handler)
 
@@ -657,7 +571,7 @@ def test_codex_parallel_refresh_writes_one_credential(tmp_path: Path, monkeypatc
                     "/actions",
                     json={
                         "action": "settings",
-                        "settings": {"backend": "codex", "model": "gpt-5.4"},
+                        "settings": {"backend": "codex", "model": CODEX_MODEL},
                     },
                 )
                 response.raise_for_status()
