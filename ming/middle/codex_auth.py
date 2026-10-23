@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from pydantic_ai.models.openai_codex import OpenAICodexModel
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.providers.openai_codex import (
     OpenAICodexCredentialSource,
@@ -64,11 +65,11 @@ class CodexAuthFile(OpenAICodexCredentialSource):
         write_auth(self.path, data)
 
 
-def codex_model(name: str) -> OpenAICodexModel:
+def codex_model(name: str, *, settings: ModelSettings | None = None) -> OpenAICodexModel:
     path = auth_path()
     key = (str(path), id(asyncio.get_running_loop()))
     provider = _PROVIDERS.get(key)
     if provider is None:
         provider = OpenAICodexProvider(credential_source=CodexAuthFile(path))
         _PROVIDERS[key] = provider
-    return OpenAICodexModel(name, provider=provider)
+    return OpenAICodexModel(name, provider=provider, settings=settings)

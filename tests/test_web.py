@@ -16,7 +16,8 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.test import TestModel
 from starlette.testclient import TestClient
 
-from ming.web import Settings, create_app
+from ming.middle.invoke import Configuration
+from ming.web import create_app
 from tests.test_court import replaying
 
 RECORDED = Path(__file__).parent / "recorded"
@@ -390,7 +391,7 @@ def test_settings_survive_reopening_and_failed_scene_retries_in_place(
     )
     working = steps[name]
     steps[name] = replaying([failure("external backend unavailable")] * 2)
-    settings = Settings(backend="claude-cli")
+    settings = Configuration(backend="claude-cli")
     with TestClient(create_app(tmp_path)) as client:
         assert (
             client.post(

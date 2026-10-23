@@ -162,7 +162,7 @@ export function App() {
       </section>
       {panel && <aside className="drawer">
         <button className="close" onClick={() => setPanel(null)}>合上</button>
-        {panel === 'settings' ? <SettingsForm initial={snapshot.settings} onSave={settings => { void action({ action: 'settings', settings }).then(() => setPanel(null)); }} /> :
+        {panel === 'settings' ? <SettingsForm initial={snapshot.settings} requiredSettings={snapshot.required_settings} onSave={settings => { void action({ action: 'settings', settings }).then(() => setPanel(null)); }} /> :
           panel === 'roster' ? <><h2>名册</h2>{people.map(person => <article key={person.id}>
             <h3>{person.key}</h3><p>{String(person.data.office ?? '')} · {String(person.data.location ?? '')} · {String(person.data.status ?? '')}</p>
             {audience && <button disabled={busy || game.running} onClick={() => void action({ action: 'say', words: `宣${person.key}。` })}>宣召</button>}

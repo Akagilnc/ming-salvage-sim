@@ -9,7 +9,7 @@ from typing import get_args
 from uuid import UUID
 
 from ming.game import Game
-from ming.middle.invoke import ModelSource
+from ming.middle.invoke import Configuration, Settings
 from ming.middle.court import Court
 from ming.middle.opening import CONTENT
 from ming.middle.view import PublicIdentity
@@ -25,19 +25,12 @@ def parser() -> argparse.ArgumentParser:
     audience = commands.add_parser(
         "audience", help="JSONL: say/dismiss/open/month/choose/drain/state"
     )
-    audience.add_argument(
-        "--scene-model",
-        required=True,
-        help="claude-cli, codex:<model>, grok[:model], pi[:model], or a Pydantic AI model id",
-    )
     month = commands.add_parser("month", help="Advance month or resume missing work")
     choose = commands.add_parser(
         "choose", help="Answer a petition by zero-based option"
     )
     choose.add_argument("--petition", type=UUID, required=True)
     choose.add_argument("--option", type=int, required=True)
-    for sub in (month, choose):
-        sub.add_argument("--model", required=True)
     for sub in (read, audience, month, choose):
         sub.add_argument("--db", type=Path, required=True)
     read.add_argument("--replay", action="store_true")
@@ -46,16 +39,23 @@ def parser() -> argparse.ArgumentParser:
             "--identity", choices=get_args(PublicIdentity), default="emperor"
         )
     for sub in (new, read, audience, month, choose):
-        sub.add_argument(
-            "--translation-model",
-            default="claude-cli",
-            help="claude-cli, codex:<model>, grok[:model], pi[:model], or a Pydantic AI model id",
-        )
+        for prefix in ("", "month-"):
+            sub.add_argument(
+                f"--{prefix}backend",
+                choices=get_args(Settings.model_fields["backend"].annotation) + (("",) if prefix else ()),
+                default="claude-cli" if not prefix else "",
+                help="Month channel falls back to the main channel unless complete",
+            )
+            for field in ("model", "base_url", "api_key", "effort"):
+                sub.add_argument(
+                    f"--{prefix}{field.replace('_', '-')}",
+                    default=Settings.model_fields[field].default if not prefix else "",
+                )
     return result
 
 
-async def conversation(court: Court, scene_model: ModelSource) -> None:
-    game = Game(court, scene_model)
+async def conversation(court: Court, settings: Configuration) -> None:
+    game = Game(court, settings, month_model=settings.month_model)
     game.resume()
     await game.drain()
     if game.presentation()["face"] != "month" and not game.presentation()["failure"]:
@@ -100,7 +100,7 @@ async def conversation(court: Court, scene_model: ModelSource) -> None:
 
 
 async def month_action(court: Court, args: argparse.Namespace) -> None:
-    game = Game(court, args.model)
+    game = Game(court, court.model, month_model=args.settings.month_model)
     await game.command(
         args.command,
         {"petition": str(args.petition), "option": args.option}
@@ -119,7 +119,11 @@ async def month_action(court: Court, args: argparse.Namespace) -> None:
 
 def main(argv: list[str] | None = None) -> None:
     args = parser().parse_args(argv)
-    model = args.translation_model
+    args.settings = Configuration.model_validate({
+        **{key: getattr(args, key) for key in Settings.model_fields},
+        "month_model": {key: getattr(args, f"month_{key}") for key in Settings.model_fields},
+    })
+    model = args.settings
     court = (
         Court.new_game(args.directory, model, args.content)
         if args.command == "new"
@@ -130,7 +134,7 @@ def main(argv: list[str] | None = None) -> None:
             asyncio.run(month_action(court, args))
             return
         if args.command == "audience":
-            asyncio.run(conversation(court, args.scene_model))
+            asyncio.run(conversation(court, model))
             return
         print(
             json.dumps(

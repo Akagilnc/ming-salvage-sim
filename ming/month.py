@@ -29,7 +29,7 @@ class Month:
         self.deliberations = Deliberations(court, model)
         self.simulations = Simulations(court, model, self.deliberations.run)
         self.inbox = Inbox(court)
-        self.landing = Landing(court)
+        self.landing = Landing(court, model)
         self.gazette = Gazette(court, model, on_delta)
         self.sources = Sources(court, model)
         self.secrets = Secrets(court, model)

@@ -40,7 +40,7 @@ def test_cli_preserves_jsonl_and_resumes_failed_month(
     monkeypatch.setattr(
         "sys.stdin", io.StringIO("\n".join(json.dumps(r) for r in requests))
     )
-    main(["audience", "--db", db, "--scene-model", "claude-cli"])
+    main(["audience", "--db", db, "--backend", "claude-cli"])
     rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     assert set(rows[0]) == {"night"}
     assert all(
@@ -65,7 +65,7 @@ def test_cli_preserves_jsonl_and_resumes_failed_month(
                     + '\n{"action":"drain"}\n{"action":"state"}\n'
                 ),
             )
-            main(["audience", "--db", db, "--scene-model", "claude-cli"])
+            main(["audience", "--db", db, "--backend", "claude-cli"])
             result = json.loads(capsys.readouterr().out.splitlines()[-1])
             assert result["petitions"] == []
             assert result["date"]["month"] == 11
@@ -76,14 +76,14 @@ def test_cli_preserves_jsonl_and_resumes_failed_month(
                     *[(RECORDED / "simulation.txt").read_text()] * 3,
                 ]
             )
-            main(["month", "--db", db, "--model", "claude-cli"])
+            main(["month", "--db", db, "--backend", "claude-cli"])
             petition = json.loads(capsys.readouterr().out)["petitions"][0]
             main(
                 [
                     "choose",
                     "--db",
                     db,
-                    "--model",
+                    "--backend",
                     "claude-cli",
                     "--petition",
                     petition["id"],
@@ -137,7 +137,7 @@ def test_cli_preserves_jsonl_and_resumes_failed_month(
             )
         ),
     )
-    main(["audience", "--db", db, "--scene-model", "claude-cli"])
+    main(["audience", "--db", db, "--backend", "claude-cli"])
     rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     assert rows[5]["month_error"]["type"] == "RuntimeError"
     assert set(rows[5]["month_error"]) == {"type", "message", "log"}
@@ -150,7 +150,7 @@ def test_cli_preserves_jsonl_and_resumes_failed_month(
         [RuntimeError("backend unavailable"), (RECORDED / "simulation.txt").read_text()]
     )
     with pytest.raises(SystemExit) as stopped:
-        main(["month", "--db", db, "--model", "claude-cli"])
+        main(["month", "--db", db, "--backend", "claude-cli"])
     assert stopped.value.code == 1
     failed_date = json.loads(capsys.readouterr().out)["date"]
     main(["read", "--db", db, "--identity", "audit"])
@@ -159,7 +159,7 @@ def test_cli_preserves_jsonl_and_resumes_failed_month(
         f["kind"] == "interaction" and f["detail"]["status"] == "failed"
         for f in ledger["facts"]
     )
-    main(["month", "--db", db, "--model", "claude-cli"])
+    main(["month", "--db", db, "--backend", "claude-cli"])
     resumed = json.loads(capsys.readouterr().out)
     assert resumed["date"]["month"] == failed_date["month"] % 12 + 1
     assert resumed["date"]["year"] == failed_date["year"] + (failed_date["month"] == 12)
@@ -172,7 +172,7 @@ def test_cli_preserves_jsonl_and_resumes_failed_month(
             *[(RECORDED / "simulation.txt").read_text()] * 3,
         ]
     )
-    main(["month", "--db", db, "--model", "claude-cli"])
+    main(["month", "--db", db, "--backend", "claude-cli"])
     petition = json.loads(capsys.readouterr().out)["petitions"][0]
     monkeypatch.setattr(
         "sys.stdin",
@@ -181,7 +181,7 @@ def test_cli_preserves_jsonl_and_resumes_failed_month(
             + '\n{"action":"drain"}\n{"action":"state"}\n'
         ),
     )
-    main(["audience", "--db", db, "--scene-model", "claude-cli"])
+    main(["audience", "--db", db, "--backend", "claude-cli"])
     rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     assert rows[0] == {"night": None}
     assert rows[-1]["date"]["month"] == 11

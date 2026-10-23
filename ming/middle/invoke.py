@@ -6,7 +6,7 @@ from typing import Any, Literal, TypeVar, cast
 
 from httpx2 import TimeoutException
 from openai import APIConnectionError
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, field_validator, model_validator
 from pydantic_ai import Agent, AgentRunResult, RunContext, Tool
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -16,7 +16,8 @@ from pydantic_ai.messages import (
     TextPartDelta,
 )
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
-from pydantic_ai.models import Model, infer_model
+from pydantic_ai.models import Model
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 from tenacity import AsyncRetrying, retry_if_exception, stop_after_attempt, wait_fixed
@@ -28,11 +29,16 @@ T = TypeVar("T")
 D = TypeVar("D")
 
 
+# Shared by the settings form and the optional channel's completeness check.
+REQUIRED_SETTINGS = {"api": ("model", "base_url"), "codex": ("model",)}
+
+
 class Settings(BaseModel):
     backend: Literal["api", "claude-cli", "codex", "grok", "pi"] = "api"
     model: str = ""
     base_url: str = "https://api.openai.com/v1"
     api_key: str = ""
+    effort: str = ""
 
     @model_validator(mode="after")
     def codex_has_model(self) -> "Settings":
@@ -41,39 +47,48 @@ class Settings(BaseModel):
         return self
 
 
-ModelSource = Model | Settings | str
+class Configuration(Settings):
+    month_model: Settings | None = None
+
+    @field_validator("month_model", mode="before")
+    @classmethod
+    def complete_channel(cls, value: Any) -> Any:
+        if not value:
+            return None
+        if isinstance(value, dict):
+            value = cast(dict[str, Any], value)
+            if not value.get("backend") or any(
+                not value.get(key, "").strip()
+                for key in REQUIRED_SETTINGS.get(value["backend"], ())
+            ):
+                return None
+        return value
+
+
+ModelSource = Model | Settings
 TextUpdate = str | dict[str, str]
 
 
 def configured_model(settings: Settings) -> Model:
     if settings.backend == "claude-cli":
-        return ClaudeCliModel(settings.model)
+        return ClaudeCliModel(settings.model, effort=settings.effort)
     if settings.backend == "grok":
-        return GrokCliModel(settings.model)
+        return GrokCliModel(settings.model, effort=settings.effort)
     if settings.backend == "pi":
-        return PiCliModel(settings.model)
+        return PiCliModel(settings.model, effort=settings.effort)
+    native_settings = (
+        cast(ModelSettings, {"openai_reasoning_effort": settings.effort})
+        if settings.effort else None
+    )
     if settings.backend == "codex":
-        return codex_model(settings.model)
+        return codex_model(settings.model, settings=native_settings)
     return OpenAIChatModel(
         settings.model or "gpt-4.1",
+        settings=native_settings,
         provider=OpenAIProvider(
             base_url=settings.base_url, api_key=settings.api_key or "not-configured"
         ),
     )
-
-
-def named_model(model: str) -> Model:
-    backend, _, name = model.partition(":")
-    if (
-        model == "claude-cli"
-        or backend in {"grok", "pi", "codex"}
-        or model.startswith("openai-codex:")
-    ):
-        return configured_model(Settings.model_validate({
-            "backend": "codex" if backend == "openai-codex" else backend,
-            "model": name,
-        }))
-    return infer_model(model)
 
 
 def build_agent(
@@ -85,14 +100,12 @@ def build_agent(
     """Declare a call once, including its native transport and callable tools."""
     if isinstance(model, Settings):
         model = configured_model(model)
-    elif isinstance(model, str):
-        model = named_model(model)
     declared: list[Tool[Any]] = [
         cast(Tool[Any], tool) if isinstance(tool, Tool) else Tool[Any](tool)
         for tool in tools
     ]
     if isinstance(model, CliHost):
-        model = type(model)(model.cli_name, declared)
+        model = type(model)(model.cli_name, declared, effort=model.effort)
     if isinstance(model, (OpenAIChatModel, OpenAIResponsesModel)):
         model.client.max_retries = 0
     return Agent(model, tools=declared, **kwargs)

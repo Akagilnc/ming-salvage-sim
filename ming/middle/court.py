@@ -214,9 +214,12 @@ class Court:
         self._ledger.commit(list(targets.values()))
 
     def translation_agent(
-        self, output_type: type[T], instructions: str = INSTRUCTIONS
+        self, output_type: type[T], instructions: str = INSTRUCTIONS,
+        *, model: ModelSource | None = None,
     ) -> Agent[UUID, T]:
-        return declaration_agent(self.model, self._ledger, output_type, instructions)
+        return declaration_agent(
+            self.model if model is None else model, self._ledger, output_type, instructions
+        )
 
     async def translate(
         self, agent: Agent[UUID, T], prompt: str, source: UUID
