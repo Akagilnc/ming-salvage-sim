@@ -6,6 +6,7 @@ import io
 import json
 import os
 import time
+import tomllib
 from pathlib import Path
 from shutil import copyfile
 from types import SimpleNamespace
@@ -128,10 +129,8 @@ def mcp_url(args: tuple[str, ...], kwargs: dict[str, object]) -> str | None:
         config = cwd / ".grok" / "config.toml"
         if not config.is_file():
             return None
-        for line in config.read_text().splitlines():
-            if line.startswith("url = "):
-                return json.loads(line.removeprefix("url = "))
-        return None
+        servers = tomllib.loads(config.read_text(encoding="utf-8")).get("mcp_servers", {})
+        return servers.get("court", {}).get("url")
     listed = cwd / ".pi" / "mcp.json"
     if not listed.is_file():
         return None
