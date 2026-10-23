@@ -151,10 +151,14 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
                             for label, args in (
                                 ("empty", {}),
                                 ("class", {"kind": "person"}),
-                                ("date", {"date": {"id": "world", "year": 1627, "month": 10}}),
+                                ("date", {"date": {"year": 1627, "month": 10}}),
+                                ("date-original", {"date": {"id": "world", "year": 1627, "month": 10}}),
+                                ("date-reordered", {"date": {"month": 10, "year": 1627, "id": "world"}}),
+                                ("class-date", {"kind": "person", "date": {"month": 10, "year": 1627}}),
                                 ("one", {"kind": "person", "key": "温体仁"}),
                                 ("many", {"key": [e["key"] for e in json.loads(messages[0].parts[0].content)["catalogue"] if e["kind"] in {"account", "army"} or e["key"] == "杨嗣昌"]}),
-                                ("dated", {"key": "徐光启", "date": {"id": "world", "year": 1627, "month": 10}}),
+                                ("dated", {"key": "徐光启", "date": {"month": 10, "year": 1627, "id": "world"}}),
+                                ("dated-ym", {"key": "徐光启", "date": {"year": 1627, "month": 10}}),
                                 ("prior", {"key": "温体仁", "date": {"id": "world", "year": 1627, "month": 9}}),
                                 ("unknown-key", {"key": "不存在的人"}),
                                 ("unknown-kind", {"kind": "不存在的类"}),
@@ -324,9 +328,11 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
             assert all(data["unknown-key"]["names_and_aliases"]["person"]["温体仁"] == ["温体仁", "温尚书", "温阁老", "温长卿"] for data in case)
             assert all(set(data[label]) == {"catalogue"} for data in case for label in ("class", "date"))
             assert all(set(e) == {"kind", "key", "event_count"} for data in case for label in ("class", "date") for e in data[label]["catalogue"])
+            assert all(data["date"] == data["date-original"] == data["date-reordered"] for data in case)
+            assert all(data["class-date"]["catalogue"] == [e for e in data["date"]["catalogue"] if e["kind"] == "person"] for data in case)
             assert all(e["event_count"] > 0 for data in case for e in data["date"]["catalogue"])
             assert all([e["key"] for e in data["one"]["entities"]] == ["温体仁"] for data in case)
-            assert all(data["dated"]["facts"] for data in case)
+            assert all(data["dated"]["facts"] and data["dated-ym"]["facts"] for data in case)
             assert all(data["prior"]["facts"] == [] for data in case)
             assert {f["entity_id"] for f in materials["gazette"][0]["facts"] if f["kind"] == "reported"} == {
                 e["id"] for e in ledger["entities"] if e["kind"] == "account" and e["key"] == "国库"

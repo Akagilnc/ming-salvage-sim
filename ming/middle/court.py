@@ -8,6 +8,7 @@ from typing import Any, TypeVar, cast
 from uuid import UUID, uuid4
 
 from pydantic_ai import Agent
+from sqlalchemy import tuple_
 from ming.ledger import (
     ENTITY_COLUMNS as E,
     FACT_COLUMNS as F,
@@ -242,13 +243,11 @@ class Court:
         visible = {e.id for e in self.entities(identity)} | counts.keys()
         if date is not None:
             counts = Counter(f.entity_id for f in self.facts(identity, date=date))
-        names = names_and_aliases(self._ledger, ENTITY_ROWS.where(E.id.in_(visible)))
         return [
             {
                 "kind": row["kind"],
                 "key": row["key"],
                 "event_count": counts[row["id"]],
-                "aliases": names[row["kind"]][row["key"]],
             }
             for row in self._ledger.entities(entity_id=list(visible))
         ]
@@ -336,8 +335,15 @@ class Court:
             )
         ]
 
-    def catalogue(self) -> dict[str, dict[str, list[str]]]:
-        return names_and_aliases(self._ledger)
+    def catalogue(self, records: list[Item] | None = None) -> dict[str, dict[str, list[str]]]:
+        if records is None:
+            return names_and_aliases(self._ledger)
+        return names_and_aliases(
+            self._ledger,
+            ENTITY_ROWS.where(
+                tuple_(E.kind, E.key).in_([(e["kind"], e["key"]) for e in records])
+            ),
+        )
 
     def returned_petitions(self, *, visible: bool = False) -> list[FactView]:
         return [

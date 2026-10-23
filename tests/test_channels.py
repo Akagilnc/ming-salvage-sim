@@ -17,6 +17,13 @@ import httpx
 import httpx2
 import pytest
 from mcp import Client
+from openai.types.responses import (
+    Response as OpenAIResponse,
+    ResponseCompletedEvent,
+    ResponseCreatedEvent,
+    ResponseFunctionToolCall,
+    ResponseOutputItemDoneEvent,
+)
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai.providers.openai_codex import OpenAICodexProvider
 from starlette.testclient import TestClient
@@ -202,13 +209,44 @@ def codex_stream(name: str) -> httpx2.Response:
     return httpx2.Response(200, headers={"content-type": "text/event-stream"}, content=body)
 
 
-def codex_response(request: httpx2.Request) -> httpx2.Response:
+def codex_response(
+    request: httpx2.Request, outputs: list[dict[str, object]] | None = None,
+    *, read_args: dict[str, object] | None = None,
+) -> httpx2.Response:
     body = json.loads(request.content)
     name = get_current_run_context().agent.name
     called = any(
         isinstance(item, dict) and item.get("type") == "function_call"
         for item in body.get("input") or []
     )
+    if outputs is not None:
+        outputs.extend(
+            json.loads(item["output"])
+            for item in body.get("input") or []
+            if isinstance(item, dict) and item.get("type") == "function_call_output"
+            and isinstance(item.get("output"), str)
+        )
+    if name == "simulation" and not called and read_args is not None:
+        # Schema-only boundary input: keep native recordings unchanged and
+        # use SDK events for the keyed query required by #1970.
+        call = ResponseFunctionToolCall(
+            type="function_call", id="fc_ledger", call_id="call_ledger",
+            name="read_records", arguments=json.dumps(read_args), status="completed",
+        )
+        response = OpenAIResponse(
+            id="resp_ledger", created_at=1792748281, model=CODEX_MODEL,
+            object="response", output=[call], status="completed",
+            parallel_tool_calls=True, tool_choice="auto", tools=[],
+        )
+        events = [
+            ResponseCreatedEvent(type="response.created", sequence_number=0, response=response.model_copy(update={"status": "in_progress", "output": []})),
+            ResponseOutputItemDoneEvent(type="response.output_item.done", sequence_number=1, output_index=0, item=call),
+            ResponseCompletedEvent(type="response.completed", sequence_number=2, response=response),
+        ]
+        return httpx2.Response(
+            200, headers={"content-type": "text/event-stream"},
+            content="".join(f"event: {event.type}\ndata: {event.model_dump_json()}\n\n" for event in events),
+        )
     if name in {"scene", "simulation"} and not called:
         return codex_stream("scene-tool" if name == "scene" else "read-records")
     return codex_stream(name)
@@ -416,6 +454,32 @@ def test_grok_second_month_does_not_trust_again(tmp_path: Path, monkeypatch, gam
         state = client.get("/state").json()
     assert state["game"]["failure"] is None
     assert sum("--trust" in args for args, _kwargs in calls) == trusted
+
+
+def test_codex_forwards_a_ledger_sized_tool_result(tmp_path: Path, monkeypatch, game_db: Path) -> None:
+    home = tmp_path / "codex"
+    auth_file(home / "auth.json", expired=False)
+    monkeypatch.setenv("CODEX_HOME", str(home))
+    planted = {"samples": list(range(60_000))}
+    outputs: list[dict[str, object]] = []
+
+    install_codex(
+        monkeypatch,
+        lambda request: codex_response(request, outputs, read_args={"kind": "world", "key": "天下"}),
+    )
+    app = create_app(game_db.parent)
+    with TestClient(app) as client:
+        open_game(client, {"backend": "codex", "model": CODEX_MODEL}, game_db)
+        app.state.web.game.court.record(("world", "天下"), [("note", planted)])
+        client.post("/actions", json={"action": "month"}).raise_for_status()
+        state = client.get("/state").json()
+    assert state["game"]["failure"] is None
+    assert any(
+        fact.get("kind") == "note" and fact.get("detail") == planted
+        for record in outputs
+        for fact in record.get("facts", [])
+        if isinstance(fact, dict)
+    )
 
 
 def test_pi_empty_assistant_is_not_a_transport_failure(
