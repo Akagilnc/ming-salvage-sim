@@ -44,7 +44,8 @@ def parser() -> argparse.ArgumentParser:
                 f"--{prefix}backend",
                 choices=get_args(Settings.model_fields["backend"].annotation) + (("",) if prefix else ()),
                 default="claude-cli" if not prefix else "",
-                help="Month channel falls back to the main channel unless complete",
+                help=("Month channel falls back to the main channel unless complete"
+                      if prefix else "Main channel for audience and night translation"),
             )
             for field in ("model", "base_url", "api_key", "effort"):
                 sub.add_argument(
