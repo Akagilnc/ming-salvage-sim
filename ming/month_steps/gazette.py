@@ -19,7 +19,7 @@ class Gazette:
             output_type=str,
             deps_type=Materials,
             tools=[read_records],
-            instructions="全部月末后果已落账。按输入账本本月日期，以朝廷公开口径写本月邸报。用 read_records() 读各衙门奏报文字，保留官员奏报说法，不套模板，不把奏报当核算数。",
+            instructions="全部月末后果已落账。按输入账本本月日期，以朝廷公开口径写本月邸报。按输入 catalogue 的正名与事件数，用 read_records 带本月日期先列有事件的实体，再点正名并带本月日期取各衙门奏报全文；不空参读全账，保留官员奏报说法，不套模板，不把奏报当核算数。",
         )
 
     async def run(self) -> None:

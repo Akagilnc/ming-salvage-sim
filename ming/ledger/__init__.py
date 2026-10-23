@@ -147,7 +147,10 @@ class Ledger:
                 else FactRow.kind == kind
             )
         if date is not None:
-            query = query.where(FactRow.date == date)
+            query = query.where(
+                FactRow.date["year"].as_integer() == date["year"],
+                FactRow.date["month"].as_integer() == date["month"],
+            )
         return self.read(query)
 
     def get(self, entity_id: UUID) -> Entity:

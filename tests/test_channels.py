@@ -18,6 +18,13 @@ import httpx
 import httpx2
 import pytest
 from mcp import Client
+from openai.types.responses import (
+    Response as OpenAIResponse,
+    ResponseCompletedEvent,
+    ResponseCreatedEvent,
+    ResponseFunctionToolCall,
+    ResponseOutputItemDoneEvent,
+)
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai.providers.openai_codex import OpenAICodexProvider
 from pydantic_ai.providers.openai import OpenAIProvider
@@ -206,26 +213,10 @@ def codex_stream(name: str) -> httpx2.Response:
     return httpx2.Response(200, headers={"content-type": "text/event-stream"}, content=body)
 
 
-def tool_records(body: dict[str, object]) -> list[dict[str, object]]:
-    found: list[dict[str, object]] = []
-    for item in body.get("input") or []:
-        if not isinstance(item, dict) or item.get("type") != "function_call_output":
-            continue
-        output = item.get("output")
-        if not isinstance(output, str):
-            continue
-        try:
-            parsed = json.loads(output)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(parsed, dict):
-            found.append(parsed)
-    return found
-
-
 def codex_response(
     request: httpx2.Request, outputs: list[dict[str, object]] | None = None,
     *, requests: list[httpx2.Request] | None = None, rejected: bool = False,
+    read_args: dict[str, object] | None = None,
 ) -> httpx2.Response:
     if requests is not None:
         requests.append(request)
@@ -252,10 +243,36 @@ def codex_response(
         isinstance(item, dict) and item.get("type") == "function_call"
         for item in body.get("input") or []
     )
+    if outputs is not None:
+        outputs.extend(
+            json.loads(item["output"])
+            for item in body.get("input") or []
+            if isinstance(item, dict) and item.get("type") == "function_call_output"
+            and isinstance(item.get("output"), str)
+        )
+    if name == "simulation" and not called and read_args is not None:
+        # Schema-only boundary input: keep native recordings unchanged and
+        # use SDK events for the keyed query required by #1970.
+        call = ResponseFunctionToolCall(
+            type="function_call", id="fc_ledger", call_id="call_ledger",
+            name="read_records", arguments=json.dumps(read_args), status="completed",
+        )
+        response = OpenAIResponse(
+            id="resp_ledger", created_at=1792748281, model=CODEX_MODEL,
+            object="response", output=[call], status="completed",
+            parallel_tool_calls=True, tool_choice="auto", tools=[],
+        )
+        events = [
+            ResponseCreatedEvent(type="response.created", sequence_number=0, response=response.model_copy(update={"status": "in_progress", "output": []})),
+            ResponseOutputItemDoneEvent(type="response.output_item.done", sequence_number=1, output_index=0, item=call),
+            ResponseCompletedEvent(type="response.completed", sequence_number=2, response=response),
+        ]
+        return httpx2.Response(
+            200, headers={"content-type": "text/event-stream"},
+            content="".join(f"event: {event.type}\ndata: {event.model_dump_json()}\n\n" for event in events),
+        )
     if name in {"scene", "simulation"} and not called:
         return codex_stream("scene-tool" if name == "scene" else "read-records")
-    if outputs is not None and name == "simulation":
-        outputs.extend(tool_records(body))
     return codex_stream(name)
 
 
@@ -597,13 +614,13 @@ def test_codex_forwards_a_ledger_sized_tool_result(tmp_path: Path, monkeypatch, 
     home = tmp_path / "codex"
     auth_file(home / "auth.json", expired=False)
     monkeypatch.setenv("CODEX_HOME", str(home))
-    planted = {"text": "账" * 100_000}
+    planted = {"samples": list(range(60_000))}
     outputs: list[dict[str, object]] = []
 
-    def handler(request: httpx2.Request) -> httpx2.Response:
-        return codex_response(request, outputs)
-
-    install_codex(monkeypatch, handler)
+    install_codex(
+        monkeypatch,
+        lambda request: codex_response(request, outputs, read_args={"kind": "world", "key": "天下"}),
+    )
     app = create_app(game_db.parent)
     with TestClient(app) as client:
         open_game(client, {"backend": "codex", "model": CODEX_MODEL}, game_db)

@@ -1,5 +1,6 @@
 """Medium: one recorded mixed night through HTTP actions and identity read doors."""
 
+import asyncio
 import json
 from functools import partial
 from pathlib import Path
@@ -11,6 +12,7 @@ from starlette.testclient import TestClient
 from ming.middle.view import Officials
 from ming.web import create_app
 from tests.test_court import replaying
+from tests.test_web import assert_record_queries
 
 RECORDED = Path(__file__).parent / "recorded"
 
@@ -105,6 +107,8 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
         for month in range(4):
             court = client.app.state.web.game.court
             assert client.get("/state").json()["game"]["failure"] is None
+            if failure is None and month < 2:
+                asyncio.run(assert_record_queries(court))
             assert {d.id for d in court.entities("public", kind="decree")} == {
                 public.id
             }

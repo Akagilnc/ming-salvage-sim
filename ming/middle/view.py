@@ -362,7 +362,10 @@ def project(
             )
             and (
                 selection.get("date") is None
-                or f["detail"].get("date") == selection["date"]
+                or all(
+                    f["detail"].get("date", {}).get(field) == selection["date"][field]
+                    for field in ("year", "month")
+                )
             )
         ]
         if opening
