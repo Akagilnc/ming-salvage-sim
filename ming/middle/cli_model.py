@@ -130,14 +130,12 @@ async def stream_process(
             limit=sys.maxsize,
         )
         assert proc.stdout is not None
-        produced = False
+        message: dict[str, Any] | None = None
         try:
             async for line in proc.stdout:
-                message = json.loads(line)
+                message = cast(dict[str, Any], json.loads(line))
                 for text in events.observe(message):
-                    if text:
-                        produced = True
-                        yield text
+                    yield text
         except asyncio.CancelledError:
             if proc.returncode is None:
                 proc.terminate()
@@ -147,9 +145,7 @@ async def stream_process(
         errors.seek(0)
         failure = events.failure(proc.returncode, errors.read().decode())
     if failure is not None:
-        raise RuntimeError(failure)
-    if not produced:
-        yield ""
+        raise RuntimeError(f"{failure}\n{json.dumps(message, ensure_ascii=False)}")
 
 
 class ClaudeEvents:
@@ -236,19 +232,20 @@ class PiEvents:
                     yield delta
             return
         body = as_dict(message.get("message"))
-        if body is not None and body.get("stopReason") in {"error", "aborted"}:
-            self.error = message
         if (
             kind == "message_end"
             and body is not None
             and body.get("role") == "assistant"
         ):
+            self.error = message if body.get("stopReason") in {"error", "aborted"} else None
             full = pi_text(body.get("content"))
             if full.startswith(self.streamed):
                 extra = full[len(self.streamed) :]
                 if extra:
                     yield extra
             self.streamed = ""
+        if kind == "auto_retry_end":
+            self.error = None if message.get("success") else message
         if kind == "agent_settled":
             self.settled = True
             if message.get("aborted"):
@@ -525,12 +522,13 @@ class PiCliModel(CliHost):
             "--no-prompt-templates",
             "--no-context-files",
             "--no-builtin-tools",
+            "--no-extensions",
             "--system-prompt",
             info.instructions or "",
         ]
         if tools:
             argv.extend(
-                ["--no-extensions", "-e", "builtin:mcp", "--tools", "mcp__court__*"]
+                ["-e", "builtin:mcp", "--tools", "mcp__court__*"]
             )
         else:
             argv.append("--no-mcp")
@@ -550,10 +548,14 @@ class PiCliModel(CliHost):
                     write_pi_mcp(Path(directory), url)
                 prompt.write(prompt_bytes(messages))
                 prompt.seek(0)
+                produced = False
                 async for text in stream_process(
                     self.argv(info, url is not None),
                     cwd=directory,
                     prompt=prompt,
                     events=PiEvents(),
                 ):
+                    produced = True
                     yield text
+                if not produced:
+                    yield ""

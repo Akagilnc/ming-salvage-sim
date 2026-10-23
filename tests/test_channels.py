@@ -7,6 +7,7 @@ import json
 import os
 import time
 from pathlib import Path
+from shutil import copyfile
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -411,9 +412,9 @@ def watch(app) -> list[dict[str, object]]:
     return events
 
 
-def open_game(client: TestClient, settings: dict[str, str]) -> None:
+def open_game(client: TestClient, settings: dict[str, str], game_db: Path) -> None:
     client.post("/actions", json={"action": "settings", "settings": settings}).raise_for_status()
-    client.post("/actions", json={"action": "new"}).raise_for_status()
+    client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
 
 
 def assert_scene(state: dict[str, object], events: list[dict[str, object]]) -> None:
@@ -433,16 +434,16 @@ def assert_scene(state: dict[str, object], events: list[dict[str, object]]) -> N
     [("grok", ""), ("pi", ""), ("pi", "xai/grok-4.7:high")],
 )
 def test_process_subscription_scene_lands_and_streams(
-    tmp_path: Path, monkeypatch, backend: str, model: str
+    tmp_path: Path, monkeypatch, backend: str, model: str, game_db: Path
 ) -> None:
     before = {path: stamp(path) for path in USER_FILES}
     monkeypatch.setenv("GROK_HOME", str(tmp_path / "grok-home"))
     monkeypatch.setenv("MING_GROK_SLOTS", str(tmp_path / "slots"))
     calls, _snapshots = install_process(monkeypatch)
-    app = create_app(tmp_path / "saves")
+    app = create_app(game_db.parent)
     events = watch(app)
     with TestClient(app) as client:
-        open_game(client, {"backend": backend, "model": model})
+        open_game(client, {"backend": backend, "model": model}, game_db)
         client.post("/actions", json={"action": "open"}).raise_for_status()
         client.post("/actions", json={"action": "say", "words": "宣王承恩"}).raise_for_status()
         state = client.get("/state").json()
@@ -472,7 +473,7 @@ def test_process_subscription_scene_lands_and_streams(
     assert {path: stamp(path) for path in USER_FILES} == before
 
 
-def test_codex_scene_lands_and_streams(tmp_path: Path, monkeypatch) -> None:
+def test_codex_scene_lands_and_streams(tmp_path: Path, monkeypatch, game_db: Path) -> None:
     before = {path: stamp(path) for path in USER_FILES}
     home = tmp_path / "codex"
     auth_file(home / "auth.json", expired=False)
@@ -487,10 +488,10 @@ def test_codex_scene_lands_and_streams(tmp_path: Path, monkeypatch) -> None:
         return text_stream("".join(SCENE))
 
     install_codex(monkeypatch, handler)
-    app = create_app(tmp_path / "saves")
+    app = create_app(game_db.parent)
     events = watch(app)
     with TestClient(app) as client:
-        open_game(client, {"backend": "codex", "model": "gpt-5.4"})
+        open_game(client, {"backend": "codex", "model": "gpt-5.4"}, game_db)
         client.post("/actions", json={"action": "open"}).raise_for_status()
         client.post("/actions", json={"action": "say", "words": "宣王承恩"}).raise_for_status()
         state = client.get("/state").json()
@@ -504,7 +505,7 @@ def test_codex_scene_lands_and_streams(tmp_path: Path, monkeypatch) -> None:
     ["grok", "pi:xai/grok-4.7:high", "codex:gpt-5.4", "openai-codex:gpt-5.4"],
 )
 def test_cli_model_string_reaches_its_host(
-    tmp_path: Path, monkeypatch, capsys, scene_model: str
+    tmp_path: Path, monkeypatch, game_db: Path, scene_model: str
 ) -> None:
     monkeypatch.setenv("GROK_HOME", str(tmp_path / "grok-home"))
     monkeypatch.setenv("MING_GROK_SLOTS", str(tmp_path / "slots"))
@@ -519,12 +520,10 @@ def test_cli_model_string_reaches_its_host(
         return text_stream("殿上")
 
     install_codex(monkeypatch, handler)
-    main(["new", "--directory", str(tmp_path / "saves")])
-    db = json.loads(capsys.readouterr().out)["db"]
     monkeypatch.setattr(
         "sys.stdin", io.StringIO(json.dumps({"action": "say", "words": "宣"}) + "\n")
     )
-    main(["audience", "--db", db, "--scene-model", scene_model])
+    main(["audience", "--db", str(game_db), "--scene-model", scene_model])
     if scene_model.startswith(("codex:", "openai-codex:")):
         assert bodies[0]["model"] == "gpt-5.4"
         assert not [args for args, _kwargs in calls if args and args[0] == "codex"]
@@ -547,7 +546,7 @@ def test_codex_settings_require_a_model(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("backend", ["grok", "pi", "codex"])
-def test_subscription_month_completes(tmp_path: Path, monkeypatch, backend: str) -> None:
+def test_subscription_month_completes(tmp_path: Path, monkeypatch, backend: str, game_db: Path) -> None:
     monkeypatch.setenv("GROK_HOME", str(tmp_path / "grok-home"))
     monkeypatch.setenv("MING_GROK_SLOTS", str(tmp_path / "slots"))
     monkeypatch.setattr("ming.middle.cli_model.GROK_SLOT_COUNT", 2)
@@ -561,10 +560,10 @@ def test_subscription_month_completes(tmp_path: Path, monkeypatch, backend: str)
             return codex_response(json.loads(request.content))
 
         install_codex(monkeypatch, handler)
-    app = create_app(tmp_path / "saves")
+    app = create_app(game_db.parent)
     with TestClient(app) as client:
         settings = {"backend": backend, "model": "gpt-5.4" if backend == "codex" else ""}
-        open_game(client, settings)
+        open_game(client, settings, game_db)
         client.post("/actions", json={"action": "month"}).raise_for_status()
         state = client.get("/state").json()
     assert state["game"]["failure"] is None
@@ -578,12 +577,12 @@ def test_subscription_month_completes(tmp_path: Path, monkeypatch, backend: str)
         assert len(trust) == len({args[args.index("--cwd") + 1] for args in trust})
 
 
-def test_grok_second_month_does_not_trust_again(tmp_path: Path, monkeypatch) -> None:
+def test_grok_second_month_does_not_trust_again(tmp_path: Path, monkeypatch, game_db: Path) -> None:
     monkeypatch.setenv("GROK_HOME", str(tmp_path / "grok-home"))
     monkeypatch.setenv("MING_GROK_SLOTS", str(tmp_path / "slots"))
     calls, _snapshots = install_process(monkeypatch)
-    with TestClient(create_app(tmp_path / "saves")) as client:
-        open_game(client, {"backend": "grok", "model": ""})
+    with TestClient(create_app(game_db.parent)) as client:
+        open_game(client, {"backend": "grok", "model": ""}, game_db)
         client.post("/actions", json={"action": "month"}).raise_for_status()
         trusted = sum("--trust" in args for args, _kwargs in calls)
         client.post("/actions", json={"action": "month"}).raise_for_status()
@@ -592,7 +591,7 @@ def test_grok_second_month_does_not_trust_again(tmp_path: Path, monkeypatch) -> 
     assert sum("--trust" in args for args, _kwargs in calls) == trusted
 
 
-def test_codex_forwards_a_ledger_sized_tool_result(tmp_path: Path, monkeypatch) -> None:
+def test_codex_forwards_a_ledger_sized_tool_result(tmp_path: Path, monkeypatch, game_db: Path) -> None:
     home = tmp_path / "codex"
     auth_file(home / "auth.json", expired=False)
     monkeypatch.setenv("CODEX_HOME", str(home))
@@ -603,9 +602,9 @@ def test_codex_forwards_a_ledger_sized_tool_result(tmp_path: Path, monkeypatch) 
         return codex_response(json.loads(request.content), outputs)
 
     install_codex(monkeypatch, handler)
-    app = create_app(tmp_path / "saves")
+    app = create_app(game_db.parent)
     with TestClient(app) as client:
-        open_game(client, {"backend": "codex", "model": "gpt-5.4"})
+        open_game(client, {"backend": "codex", "model": "gpt-5.4"}, game_db)
         app.state.web.game.court.record(("world", "天下"), [("note", planted)])
         client.post("/actions", json={"action": "month"}).raise_for_status()
         state = client.get("/state").json()
@@ -619,12 +618,12 @@ def test_codex_forwards_a_ledger_sized_tool_result(tmp_path: Path, monkeypatch) 
 
 
 def test_pi_empty_assistant_is_not_a_transport_failure(
-    tmp_path: Path, monkeypatch
+    game_db: Path, monkeypatch
 ) -> None:
     calls, _snapshots = install_process(monkeypatch, mode="empty")
-    app = create_app(tmp_path / "saves")
+    app = create_app(game_db.parent)
     with TestClient(app) as client:
-        open_game(client, {"backend": "pi", "model": ""})
+        open_game(client, {"backend": "pi", "model": ""}, game_db)
         client.post("/actions", json={"action": "open"}).raise_for_status()
         client.post("/actions", json={"action": "say", "words": "无"}).raise_for_status()
         state = client.get("/state").json()
@@ -635,12 +634,12 @@ def test_pi_empty_assistant_is_not_a_transport_failure(
 
 
 @pytest.mark.parametrize(("backend", "mode"), [("grok", "exit"), ("grok", "missing"), ("pi", "error")])
-def test_process_failure_stops_month(tmp_path: Path, monkeypatch, backend: str, mode: str) -> None:
+def test_process_failure_stops_month(tmp_path: Path, monkeypatch, backend: str, mode: str, game_db: Path) -> None:
     monkeypatch.setenv("GROK_HOME", str(tmp_path / "grok-home"))
     monkeypatch.setenv("MING_GROK_SLOTS", str(tmp_path / "slots"))
     install_process(monkeypatch, mode=mode)
-    with TestClient(create_app(tmp_path / "saves")) as client:
-        open_game(client, {"backend": backend, "model": ""})
+    with TestClient(create_app(game_db.parent)) as client:
+        open_game(client, {"backend": backend, "model": ""}, game_db)
         client.post("/actions", json={"action": "month"}).raise_for_status()
         state = client.get("/state").json()
     failure = state["game"]["failure"]
@@ -653,7 +652,7 @@ def test_process_failure_stops_month(tmp_path: Path, monkeypatch, backend: str, 
 
 
 @pytest.mark.parametrize("problem", ["missing", "rejected"])
-def test_codex_credential_failure_stops_month(tmp_path: Path, monkeypatch, problem: str) -> None:
+def test_codex_credential_failure_stops_month(tmp_path: Path, monkeypatch, problem: str, game_db: Path) -> None:
     before = stamp(Path.home() / ".codex" / "config.toml")
     home = tmp_path / "codex"
     monkeypatch.setenv("CODEX_HOME", str(home))
@@ -669,8 +668,8 @@ def test_codex_credential_failure_stops_month(tmp_path: Path, monkeypatch, probl
         return httpx2.Response(401, json={"error": {"message": "expired"}})
 
     install_codex(monkeypatch, handler)
-    with TestClient(create_app(tmp_path / "saves")) as client:
-        open_game(client, {"backend": "codex", "model": "gpt-5.4"})
+    with TestClient(create_app(game_db.parent)) as client:
+        open_game(client, {"backend": "codex", "model": "gpt-5.4"}, game_db)
         client.post("/actions", json={"action": "month"}).raise_for_status()
         state = client.get("/state").json()
     failure = state["game"]["failure"]
@@ -685,7 +684,7 @@ def test_codex_credential_failure_stops_month(tmp_path: Path, monkeypatch, probl
         assert (home / "auth.json").read_bytes() == original
 
 
-def test_codex_parallel_refresh_writes_one_credential(tmp_path: Path, monkeypatch) -> None:
+def test_codex_parallel_refresh_writes_one_credential(tmp_path: Path, monkeypatch, game_db: Path, opening_db: Path) -> None:
     home = tmp_path / "codex"
     auth_file(home / "auth.json", expired=True)
     monkeypatch.setenv("CODEX_HOME", str(home))
@@ -706,9 +705,13 @@ def test_codex_parallel_refresh_writes_one_credential(tmp_path: Path, monkeypatc
 
     install_codex(monkeypatch, handler)
 
+    second_directory = tmp_path / "b"
+    second_directory.mkdir()
+    copyfile(opening_db, second_directory / opening_db.name)
+
     async def run() -> None:
-        transport_a = httpx.ASGITransport(app=create_app(tmp_path / "a"))
-        transport_b = httpx.ASGITransport(app=create_app(tmp_path / "b"))
+        transport_a = httpx.ASGITransport(app=create_app(game_db.parent))
+        transport_b = httpx.ASGITransport(app=create_app(second_directory))
         async with (
             httpx.AsyncClient(transport=transport_a, base_url="http://a") as first,
             httpx.AsyncClient(transport=transport_b, base_url="http://b") as second,
@@ -722,7 +725,9 @@ def test_codex_parallel_refresh_writes_one_credential(tmp_path: Path, monkeypatc
                     },
                 )
                 response.raise_for_status()
-                response = await client.post("/actions", json={"action": "new"})
+                response = await client.post(
+                    "/actions", json={"action": "load", "save": opening_db.name}
+                )
                 response.raise_for_status()
                 response = await client.post("/actions", json={"action": "open"})
                 response.raise_for_status()
