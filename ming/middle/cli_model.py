@@ -530,9 +530,7 @@ class PiStreamedResponse(StreamedResponse):
     _timestamp: datetime = field(default_factory=partial(datetime.now, UTC))
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        produced = False
         async for item in self._iter:
-            produced = True
             if isinstance(item, TextPart):
                 yield self._parts_manager.handle_part(vendor_part_id="content", part=item)
             else:
@@ -540,10 +538,6 @@ class PiStreamedResponse(StreamedResponse):
                     vendor_part_id="content", content=item
                 ):
                     yield event
-        if not produced:
-            yield self._parts_manager.handle_part(
-                vendor_part_id="content", part=TextPart("")
-            )
 
     @property
     def model_name(self) -> str:

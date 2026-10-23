@@ -189,6 +189,8 @@ def install_process(monkeypatch, *, mode: str = "ok", delay: float = 0):
         for line in host_lines(args[0], chunks, mode=mode):
             output.feed_data(line)
         output.feed_eof()
+        if args[0] == "grok" and mode == "ok":
+            kwargs["stderr"].write(b"warning: plugin slow\n")
         return finished(output)
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
