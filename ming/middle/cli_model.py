@@ -195,8 +195,6 @@ class GrokEvents:
             self.terminal = message
         elif kind == "end":
             self.terminal = message
-            if grok_end_failed(message):
-                self.error = message
 
     def failure(self, code: int | None, stderr: str) -> str | None:
         if code or self.error is not None or self.terminal is None:
@@ -205,15 +203,6 @@ class GrokEvents:
                 f"{json.dumps(self.error or self.terminal, ensure_ascii=False)}"
             )
         return None
-
-
-def grok_end_failed(message: dict[str, Any]) -> bool:
-    data = as_dict(message.get("data"))
-    if data is None:
-        return False
-    if data.get("error"):
-        return True
-    return data.get("reason") in {"error", "aborted"}
 
 
 def pi_text(content: object) -> str:

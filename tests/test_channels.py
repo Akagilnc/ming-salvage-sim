@@ -126,9 +126,9 @@ def mark_trusted(slot: Path) -> None:
 def host_lines(binary: str, chunks: list[str], *, error: str | None = None) -> list[bytes]:
     if binary == "grok":
         lines = [{"type": "text", "data": chunk} for chunk in chunks]
-        end: dict[str, object] = {"type": "end", "data": {"reason": "end_turn"}}
+        end: dict[str, object] = {"type": "end", "stopReason": "end_turn"}
         if error:
-            end = {"type": "error", "data": error}
+            end = {"type": "error", "message": error}
         return [json.dumps(item).encode() + b"\n" for item in (*lines, end)]
     events: list[dict[str, object]] = []
     for chunk in chunks:
