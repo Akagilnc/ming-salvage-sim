@@ -13,7 +13,7 @@ from ming.middle.calendar import petition_date
 from ming.middle.court import Court
 from ming.middle.declaration import PendingPetition
 from ming.middle.invoke import ModelSource, build_agent, enlist, invoke
-from ming.middle.month_work import COST_RULES, Materials, Simulation, prompt, read_records
+from ming.middle.month_work import Materials, Simulation, prompt, read_records
 from ming.middle.view import EntityView
 
 
@@ -66,7 +66,7 @@ class Simulations:
             deps_type=Materials,
             tools=[read_records],
             retries=1,
-            instructions="你推演真实世界，用 read_records 查账。日期由输入账本给定，只写本月，写到本月底结束。交本段原文、零到多道奏疏及是否已写到月底。未到月底请旨是岔路；交回的每问独立，可各自续写。到月底附带奏疏是下个月开局奏折，不在本月执行。旨意推演只办输入已准各旨，不推其余世界；世界推演读各夜结果，只写其余发展和本月重议已准旨、上月已批奏疏。fiscal_events是本月到点应呈的饷率事件，写陈情与拟旨，停在本月岔路待皇帝批红，不自行准驳；留中不改征收，日后是否再上疏由人物自决。例行收支、欠额与建筑月产由落账后的月账统一核算，不再虚构一遍扣款或收入；拨款用途、减额、暂欠、改序与摊派仍由人物与旨意决定。上月急务按所选办理；弹劾按原奏疏的署名人、被劾人及所选处置，写清皇威、发难派系满意度和被劾者去留的实际后果。查实再办要读被劾人账上实有事实，写这一查费的工夫、所得及各方反应。人物异地启程按账本距离在途，所在由引擎月末倒数更新，在途不改道；事务办完只写往事，不设了结。奏报与实况分清。续写接同段对话，只写当前这一问的后果，不替其他问选择、不重复已写部分。" + COST_RULES,
+            instructions="你推演真实世界，用 read_records 查本月实况。日期由输入给定，只写本月，写到本月底结束。交本段原文、零到多道奏疏及是否已写到月底。未到月底请旨是岔路；交回的每问独立，可各自续写。到月底附带奏疏是下个月开局奏折，不在本月执行。旨意推演只办输入已准各旨，不推其余世界；世界推演读各夜结果，只写其余发展和本月重议已准旨、上月已批奏疏。fiscal_events是本月到点应呈的饷率事件，写陈情与拟旨，停在本月岔路待皇帝批红，不自行准驳；留中不改征收，日后是否再上疏由人物自决。拨款用途、减额、暂欠、改序与摊派仍由人物与旨意决定。上月急务按所选办理；弹劾按原奏疏的署名人、被劾人及所选处置，写清朝廷威望、发难派系的反应和被劾者去留的实际后果。查实再办要查被劾人实有行迹，写这一查费的工夫、所得及各方反应。人物异地启程要走完路程才能抵达，在途不改道；事务办完仍是日后人物行事的前情。强颁、中旨、撤旨与收权罢差引起的声望、人心和各方反应，据人物与局势推演；已发生的反应是前情。续写接同段对话，只写当前这一问的后果，不替其他问选择、不重复已写部分。",
         )
 
     def publish(self, route: UUID, segment: dict[str, Any]) -> None:
@@ -143,7 +143,7 @@ class Simulations:
                 if petition.entity_id != petition.route_id else None,
                 "deliberations": [f.detail for f in self.court.products(petition.entity_id, kind="deliberation")],
                 "prior_interim": self.court.prior_interim(petition.entity_id),
-                "instruction": "只续写这一问的后果到本月底。其他问保持待批；强颁则续写此旨及其代价。御笔强推只追加担名，获外廷准后按正常旨办理。",
+                "instruction": "只续写这一问的后果到本月底。其他问保持待批；强颁则续写此旨及朝野反应。御笔强推是皇帝亲自担名，获外廷准后按正常旨办理。",
             },
             parent["messages"],
         )

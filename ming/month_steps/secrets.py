@@ -14,7 +14,7 @@ class Secrets:
             model,
             name="secret_report",
             output_type=str,
-            instructions="按本月实况与风声档位，用本旨承办人复命的口吻给皇帝写这一道密令的密报。区分已成事实与查获说法，接不住如实奏明，不推定差事办完。人物的打算与文字由你发挥。",
+            instructions="按本月实况与风声，用本旨承办人复命的口吻给皇帝写这一道密令的密报。查得什么、听得什么、尚有何难处，由承办人据其所知复命。人物的打算与文字由你发挥。",
         )
 
     def accumulate(self) -> None:
