@@ -3,7 +3,7 @@
 import logging
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 from uuid import UUID, uuid4
 
 from pydantic_ai import Agent
@@ -136,10 +136,7 @@ class Court:
         advance_month(self._ledger)
 
     def calendar(self) -> EntityView:
-        row = calendar_row(self._ledger)
-        if row is None:
-            raise IndexError("calendar")
-        return EntityView.model_validate(row)
+        return EntityView.model_validate(calendar_row(self._ledger))
 
     def record(
         self,
@@ -431,10 +428,8 @@ class Court:
             decree = EntityView.model_validate(row)
             products = self.products(decree.id, kind=("deliberation", "choice"))
             events = [(f.kind, f.detail) for f in products]
-            verdict = latest_detail(events, "deliberation")
+            verdict = cast(Item, latest_detail(events, "deliberation"))
             choice = latest_detail(events, "choice")
-            if verdict is None:
-                raise StopIteration
             if verdict["verdict"] == "准" or (choice and choice["text"] == "强颁"):
                 sources.append((decree, UUID(verdict["route_id"]), "landed"))
             elif decree.data.get("interim"):

@@ -83,10 +83,7 @@ def obligation(pair: tuple[str, str], existing: dict[tuple[str, str], Item]) -> 
 
 
 def due_levies(ledger: Ledger) -> list[Item]:
-    row = calendar_row(ledger)
-    if row is None:
-        raise IndexError("calendar")
-    date = row["data"]
+    date = calendar_row(ledger)["data"]
     events = {row["data"]["id"]: row for row in ledger.entities(kind="event")}
     return [
         {"entity": row["key"], "data": row["data"]}

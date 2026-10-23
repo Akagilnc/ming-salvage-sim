@@ -65,14 +65,8 @@ def main() -> None:
 
         thread = threading.Thread(target=serve, name="ming-asgi")
         thread.start()
-
-        async def failed() -> None:
-            result.result()
-
         try:
-            asyncio.run(
-                wait_until_started(server, result.done, asyncio.sleep, failed)
-            )
+            asyncio.run(wait_until_started(server, result))
             url = f"http://127.0.0.1:{listener.getsockname()[1]}"
             if args.desktop:
                 import webview

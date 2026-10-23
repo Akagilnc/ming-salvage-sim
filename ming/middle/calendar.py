@@ -14,7 +14,11 @@ def next_month(date: Item) -> Item:
     }
 
 
-def calendar_row(ledger: Ledger) -> Item | None:
+def calendar_row(ledger: Ledger) -> Item:
+    return ledger.entities(kind="calendar")[0]
+
+
+def calendar_if_any(ledger: Ledger) -> Item | None:
     return next(iter(ledger.entities(kind="calendar")), None)
 
 
@@ -30,10 +34,7 @@ def advance_month(ledger: Ledger) -> None:
     rows = ledger.entities(
         kind="person", query=ENTITY_ROWS.where(E.data["transit_to"].as_string() != "")
     )
-    row = calendar_row(ledger)
-    if row is None:
-        raise IndexError("calendar")
-    calendar = ledger.get(row["id"])
+    calendar = ledger.get(calendar_row(ledger)["id"])
     date = dict(calendar.data)
     changed: list[Entity] = []
     for row in rows:

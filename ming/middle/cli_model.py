@@ -8,7 +8,8 @@ import asyncio
 import json
 import socket
 import sys
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Sequence
+from concurrent.futures import Future
 from functools import partial
 from contextlib import asynccontextmanager
 from tempfile import TemporaryDirectory, TemporaryFile
@@ -29,15 +30,13 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 async def wait_until_started(
     server: uvicorn.Server,
-    done: Callable[[], bool],
-    sleep: Callable[[float], Awaitable[None]],
-    failed: Callable[[], Awaitable[object]],
+    serving: asyncio.Future[Any] | Future[Any],
 ) -> None:
     while not server.started:
-        if done():
-            await failed()
+        if serving.done():
+            serving.result()
             raise RuntimeError("local server exited before startup")
-        await sleep(0.01)
+        await asyncio.sleep(0.01)
 
 
 class ClaudeCliModel(FunctionModel):
@@ -78,9 +77,7 @@ class ClaudeCliModel(FunctionModel):
             )
             serving = asyncio.create_task(server.serve(sockets=[listener]))
             try:
-                await wait_until_started(
-                    server, serving.done, asyncio.sleep, lambda: serving
-                )
+                await wait_until_started(server, serving)
                 yield {
                     "mcpServers": {
                         "court": {

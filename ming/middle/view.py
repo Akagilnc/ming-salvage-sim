@@ -9,7 +9,7 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from ming.ledger import Item, Ledger
 from ming.ledger import ENTITY_COLUMNS as E, FACT_COLUMNS as F, ENTITY_ROWS, FACT_ROWS
-from ming.middle.calendar import calendar_row
+from ming.middle.calendar import calendar_if_any
 from ming.middle.queries import IN_OFFICE, available_on, public_decree
 from ming.middle.night import known_people, read_night
 
@@ -133,7 +133,7 @@ def rushed(speed: Any) -> bool:
 
 def month_open(ledger: Ledger) -> Item | None:
     """The month's persisted emperor projection, not execution state."""
-    calendar = calendar_row(ledger)
+    calendar = calendar_if_any(ledger)
     if calendar is None:
         return None
     return next(
@@ -313,7 +313,7 @@ def project(
 ) -> list[FactView]:
     selection = selection or {}
     opening = month_open(ledger) if identity == "emperor" else None
-    row = calendar_row(ledger)
+    row = calendar_if_any(ledger)
     date = row["data"] if row else dict[str, Any]()
     controls = {"interaction", "petition", "choice", "gazette", "secret_report"}
     access = decree_access(ledger, identity)

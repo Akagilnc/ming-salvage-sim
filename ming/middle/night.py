@@ -34,10 +34,7 @@ def change_hall(hall: list[str], add: list[str], remove: list[str]) -> list[str]
 
 def read_night(ledger: Ledger, night_id: UUID) -> NightView:
     night = ledger.entities(entity_id=night_id, query=NIGHT_ROWS)[0]
-    row = calendar_row(ledger)
-    if row is None:
-        raise IndexError("calendar")
-    date = row["data"]
+    date = calendar_row(ledger)["data"]
     turns: list[TurnView] = []
     # A turn is recorded after its scene, whose hall changes come first; the
     # turn's hall is the one present when the emperor spoke, before that scene.
