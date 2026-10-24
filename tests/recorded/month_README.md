@@ -1,5 +1,14 @@
 # 月推进边界录音
 
+## #1965 J3 边镇收窄（2026-10-24）
+
+陛下 `deb03fe0-2afa-457f-9e9c-33a12b130cf4` 改定卫所仅收边镇有设官者，撤销上一轮全国历史卫所目录口径。
+`border_appointments.json` 来自本机 Claude CLI 逐次 `haiku --json-schema`，原输入、schema、原生回话见其 `source`；合成任命场景、真实模型转译，不冒充史实或完整 runner。
+在原任免 HTTP 测试内替代旧 `wei` 正向分支，并顺序验证旧称替任、军卫与驻镇辖区分立、高山卫/所及天成/镇虏各自独立；不增加平行测试。
+`cabinet_wei.json` 仍为首辅与财政错误案真源，其原始 `wei` 全国卫所案退出正向测试，不篡改混合录件。
+首录宁远未限定地域，真实入口报多候选；原卷与诊断保留于 `fixer-j3-border/record-native.json`、`initial-recording/`。施工自审撤销了仅凭同城合并军卫与辖区的尝试（`withdrawn-same-city-merge-preview.json`）；最终在 `explicit-recording/` 以司属全名“辽东都司宁远卫”真录，不给匹配加优先级。
+证据根仍为本票归档的 `fixer-j3-border/`；删除项按新裁以后实际用到再补，不靠放宽匹配或新增官地组合限制变绿。
+
 ## #1965 J1–J6 送修（2026-10-24）
 
 归档为本票证据根的 `fixer-j1-j6/`。`cabinet_wei.json` 是本机 Claude CLI 逐次 `haiku --json-schema` 的原生 `structured_output`；输入、schema 与 session 在 `source` 指向的三份原卷中。各案独立转写已发生的任免与故意错误，不手改输出；`chief_join` 正文中的异文也原样保留。它补入原任免 HTTP 测试的连续分支和现有财政拒收参数，不新建平行测试。

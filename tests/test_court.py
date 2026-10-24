@@ -115,7 +115,9 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
         assert urgent
         assert {p["name"] for p in json.loads(urgent[0].parts[0].content)["context"]["drafters"]} == {"黄立极", "王体乾"}
         case = json.loads((RECORDED / "cabinet_wei.json").read_text())["cases"]
-        for name, expected in (("chief_swap", ["施凤来"]), ("chief_exit", []), ("chief_join", ["崔呈秀"]), ("chief_invalid", ["崔呈秀"]), ("chief_vacancy", []), ("wei", [])):
+        # The retired nationwide military case is replaced, not edited in its native recording.
+        case.update(json.loads((RECORDED / "border_appointments.json").read_text())["cases"])
+        for name, expected in (("chief_swap", ["施凤来"]), ("chief_exit", []), ("chief_join", ["崔呈秀"]), ("chief_invalid", ["崔呈秀"]), ("chief_vacancy", []), ("wei", []), ("wei_replace", [])):
             received = []
             steps["Declaration"] = replaying([json.dumps(case[name], ensure_ascii=False)] * 2, received)
             urgent = []
@@ -125,7 +127,7 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
             ledger = audit(game_db)
             held = {(e["data"]["office"], e["data"]["territory"]): e["data"]["holders"] for e in ledger["entities"] if e["kind"] == "incumbency"}
             assert held[("内阁首辅", "")] == expected
-            assert (not urgent) == (name in {"chief_vacancy", "wei"})
+            assert (not urgent) == (name in {"chief_vacancy", "wei", "wei_replace"})
             if urgent:
                 assert {p["name"] for p in json.loads(urgent[0].parts[0].content)["context"]["drafters"]} == {*expected, "王体乾"}
             if name == "chief_swap":
@@ -140,11 +142,22 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
             elif name == "chief_invalid":
                 assert json.loads(next(p.content for m in received for p in m.parts if p.part_kind == "retry-prompt"))["field"] == "facts[0].changes[0].value[0]"
                 assert len([f for f in ledger["facts"] if f["kind"] == "unhandled"]) == 1
-            assert len([f for f in ledger["facts"] if f["kind"] == "unhandled"]) == int(name in {"chief_invalid", "chief_vacancy", "wei"})
+            assert len([f for f in ledger["facts"] if f["kind"] == "unhandled"]) == int(name in {"chief_invalid", "chief_vacancy", "wei", "wei_replace"})
         assert held[("正千户", "北直隶兴和千户所")] == ["杨嗣昌"]
-        assert held[("正千户", "广东大鹏千户所")] == ["李待问"]
-        assert held[("卫指挥使", "福建镇海卫")] == ["练国事"]
-        assert held[("卫指挥使", "南京留守左卫")] == ["郭允厚"]
+        assert held[("卫指挥使", "辽东宁远卫")] == ["练国事"]
+        assert held[("卫指挥使", "北直隶延庆卫")] == ["郭允厚"]
+        assert held[("卫指挥使", "山西天成卫")] == ["李待问"]
+        assert held[("总兵官", "辽东锦州")] == ["孙传庭"]
+        assert held[("总兵官", "辽东广宁中屯卫")] == ["练国事"]
+        assert held[("卫指挥使", "北直隶山海卫")] == ["郭允厚"]
+        assert held[("卫指挥使", "山海关")] == ["孙传庭"]
+        assert held[("卫指挥使", "山西高山卫")] == ["卢象升"]
+        assert held[("正千户", "山西高山守御千户所")] == ["毕自严"]
+        assert held[("卫指挥使", "山西镇虏卫")] == ["洪承畴"]
+        assert {(f["entity_id"], f["detail"]["office"], f["detail"]["territory"]) for f in ledger["facts"] if f["kind"] == "displaced"} >= {
+            (people["李待问"]["id"], "卫指挥使", "北直隶延庆卫"),
+            (people["卢象升"]["id"], "卫指挥使", "山西天成卫"),
+        }
         assert {e["key"]: e["data"] for e in ledger["entities"] if e["kind"] == "person"} == {k: e["data"] for k, e in before.items()}
         dossier = json.loads((RECORDED / "account_dossiers.json").read_text())
         received = []
@@ -162,7 +175,7 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
                     assert account["data"] == {"name": account["key"]}
         for name, amount in (("节慎库", 3), ("常盈库", 5)):
             assert all(f["detail"]["amount"] == amount for f in ledger["facts"] if f["kind"] == "monthly_income" and f["detail"]["account"] == name)
-            assert next(e["data"]["taels"] for e in ledger["entities"] if e["kind"] == "account" and e["key"] == name) == {"节慎库": 600000, "常盈库": 1200000}[name] + amount * 10000 * 7
+            assert next(e["data"]["taels"] for e in ledger["entities"] if e["kind"] == "account" and e["key"] == name) == {"节慎库": 600000, "常盈库": 1200000}[name] + amount * 10000 * 8
 
 
 @pytest.mark.parametrize("case", ["range", "purpose_region"])
