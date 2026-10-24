@@ -45,7 +45,7 @@ class Audience:
             return ctx.deps.court.set_hall(ctx.deps.night_id, add, remove)
 
         async def dismiss(ctx: RunContext[Audience]) -> None:
-            """退朝：本轮回话落账后收夜，不等后台转译。"""
+            """退朝：结束今夜召对。"""
             ctx.deps.dismiss()
 
         self.scene = build_agent(
