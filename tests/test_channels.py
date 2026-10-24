@@ -33,6 +33,7 @@ from starlette.testclient import TestClient
 from ming.__main__ import main
 from ming.middle import codex_auth
 from ming.middle.cli_model import GROK_OFF
+from ming.middle.opening import opening_template
 from ming.web import create_app
 from tests.conftest import RECORDED, RECORDED_REPLIES
 
@@ -326,6 +327,7 @@ def test_process_subscription_scene_lands_and_streams(
     before = {path: stamp(path) for path in USER_FILES}
     monkeypatch.setenv("GROK_HOME", str(tmp_path / "grok-home"))
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     calls, _snapshots = install_process(monkeypatch)
     app = create_app(game_db.parent)
     events = Mock(wraps=app.state.web.emit)
@@ -431,6 +433,7 @@ def test_cli_channel_reaches_its_host(
     tmp_path = game_db.parent
     monkeypatch.setenv("GROK_HOME", str(tmp_path / "grok-home"))
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     home = tmp_path / "codex"
     auth_file(home / "auth.json", expired=False)
     monkeypatch.setenv("CODEX_HOME", str(home))
@@ -486,8 +489,12 @@ def test_codex_settings_require_a_model(tmp_path: Path) -> None:
     ("claude-cli", "backed_night", {"deliberation", "Declaration"}),
 ], indirect=["game_db"])
 def test_subscription_month_completes(tmp_path: Path, monkeypatch, backend: str, game_db: Path, expected_calls) -> None:
+    template = opening_template()
     monkeypatch.setenv("GROK_HOME", str(tmp_path / "grok-home"))
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    opening_template().parent.mkdir(parents=True, exist_ok=True)
+    copyfile(template, opening_template())
     monkeypatch.setattr("ming.middle.cli_model.GROK_SLOT_COUNT", 2)
     calls, snapshots = install_process(monkeypatch, delay=0.05 if backend == "grok" else 0)
     if "deliberation" in expected_calls:
@@ -591,6 +598,7 @@ def test_optional_channel_falls_back_and_configure_reopens(game_db, monkeypatch,
 def test_grok_second_month_does_not_trust_again(tmp_path: Path, monkeypatch, game_db: Path) -> None:
     monkeypatch.setenv("GROK_HOME", str(tmp_path / "grok-home"))
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     calls, _snapshots = install_process(monkeypatch)
     with TestClient(create_app(game_db.parent)) as client:
         open_game(client, {"backend": "grok", "model": ""}, game_db)
@@ -648,6 +656,7 @@ def test_pi_empty_assistant_is_not_a_transport_failure(
 def test_process_failure_stops_month(tmp_path: Path, monkeypatch, backend: str, mode: str, game_db: Path) -> None:
     monkeypatch.setenv("GROK_HOME", str(tmp_path / "grok-home"))
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     install_process(monkeypatch)
     app = create_app(game_db.parent)
     with TestClient(app) as client:

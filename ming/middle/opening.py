@@ -1,11 +1,37 @@
 """Import world records, not rules; only identity is required from opening data."""
 
 import json
+import sys
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from ming.ledger import Entity, Ledger
 
 CONTENT = Path(__file__).resolve().parents[2] / "content"
+
+
+def opening_template() -> Path:
+    """Packaged builds carry their template; source runs use the local build."""
+    if getattr(sys, "frozen", False):
+        return Path(getattr(sys, "_MEIPASS")) / "opening.sqlite"
+    return Path.home() / ".ming" / "opening.sqlite"
+
+
+def build_opening(content: Path = CONTENT, output: Path | None = None) -> Path:
+    """Always rebuild, publishing only a closed, complete SQLite file."""
+    output = output if output is not None else opening_template()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with TemporaryDirectory(prefix=".opening-", dir=output.parent) as directory:
+        path = Path(directory) / "opening.sqlite"
+        ledger = Ledger(path)
+        try:
+            import_opening(ledger, content)
+        finally:
+            ledger.close()
+        path.replace(output)
+    return output
+
+
 # filename, collection, entity kind, identity fields (composite where necessary).
 COLLECTIONS = [
     ("characters", "characters", "person", ("name",)),

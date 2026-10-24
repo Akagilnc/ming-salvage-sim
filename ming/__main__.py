@@ -11,7 +11,7 @@ from uuid import UUID
 from ming.game import Game
 from ming.middle.invoke import Configuration, Settings
 from ming.middle.court import Court
-from ming.middle.opening import CONTENT
+from ming.middle.opening import CONTENT, build_opening
 from ming.middle.view import PublicIdentity
 
 
@@ -20,7 +20,9 @@ def parser() -> argparse.ArgumentParser:
     commands = result.add_subparsers(dest="command", required=True)
     new = commands.add_parser("new", help="Create a new game")
     new.add_argument("--directory", type=Path, default=Path("saves"))
-    new.add_argument("--content", type=Path, default=CONTENT)
+    build = commands.add_parser("build-opening", help="Rebuild the opening template")
+    build.add_argument("--content", type=Path, default=CONTENT)
+    build.add_argument("--output", type=Path)
     read = commands.add_parser("read", help="Read the selected game")
     audience = commands.add_parser(
         "audience", help="JSONL: say/dismiss/open/month/choose/drain/state"
@@ -120,13 +122,16 @@ async def month_action(court: Court, args: argparse.Namespace) -> None:
 
 def main(argv: list[str] | None = None) -> None:
     args = parser().parse_args(argv)
+    if args.command == "build-opening":
+        print(json.dumps({"template": str(build_opening(args.content, args.output))}))
+        return
     args.settings = Configuration.model_validate({
         **{key: getattr(args, key) for key in Settings.model_fields},
         "month_model": {key: getattr(args, f"month_{key}") for key in Settings.model_fields},
     })
     model = args.settings
     court = (
-        Court.new_game(args.directory, model, args.content)
+        Court.new_game(args.directory, model)
         if args.command == "new"
         else Court(args.db, model)
     )
