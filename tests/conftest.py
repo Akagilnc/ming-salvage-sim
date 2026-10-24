@@ -1,14 +1,14 @@
 """Recorded model boundary: native overrides selected only by the declared call name."""
 
 import asyncio
-import io
 import json
-from contextlib import contextmanager, redirect_stdout
+from contextlib import contextmanager
 from pathlib import Path
 from shutil import copyfile, copytree
 
 import pytest
-from pydantic_ai import Agent, models
+from pydantic_ai import Agent
+from pydantic_ai.models import override_allow_model_requests
 from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelResponse
 from pydantic_ai.models.test import TestModel
 from starlette.testclient import TestClient
@@ -67,8 +67,7 @@ def recorded_steps(case=None, start=0):
         with agent.override(model=replies[agent.name]):
             return await AGENT_RUN(agent, *args, **kwargs)
 
-    with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(models, "ALLOW_MODEL_REQUESTS", False)
+    with override_allow_model_requests(False), pytest.MonkeyPatch.context() as patch:
         patch.setattr(Agent, "run", recorded)
         if case is not None and "turns" in case:
             patch.setattr("ming.game.uuid4", iter(t["id"] for t in case["turns"][start:]).__next__)
@@ -256,20 +255,19 @@ def game_db(request, tmp_path):
 
 
 @pytest.fixture
-def audit():
+def audit(capsys):
     def read(db: Path, *, identity: str = "audit"):
-        output = io.StringIO()
-        with redirect_stdout(output):
-            main(
-                [
-                    "read",
-                    "--db",
-                    str(db),
-                    "--identity",
-                    identity,
-                ]
-            )
-        return json.loads(output.getvalue())
+        capsys.readouterr()
+        main(
+            [
+                "read",
+                "--db",
+                str(db),
+                "--identity",
+                identity,
+            ]
+        )
+        return json.loads(capsys.readouterr().out)
 
     return read
 
