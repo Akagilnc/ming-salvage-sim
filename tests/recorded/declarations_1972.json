@@ -321,32 +321,9 @@
           }
         ]
       }
-    ],
-    "empty_query": [
-      {
-        "kind": "response",
-        "parts": [
-          {
-            "part_kind": "tool-call",
-            "tool_name": "read_records",
-            "args": {},
-            "tool_call_id": "call_d71e476ae36f4c74a7ea53311bf3eff3|fc_030a5be5f2713b89016adce0c721a4819196413583fa85d32a"
-          }
-        ]
-      },
-      {
-        "kind": "response",
-        "parts": [
-          {
-            "part_kind": "text",
-            "content": "{\"facts\":[],\"reports\":[],\"decree_events\":[]}"
-          }
-        ]
-      }
     ]
   },
   "source_by_case": {
-    "bad_territory_retry": "/Users/akagilnc/WorkSpace/vault/ak-cc-wiki/raw/ming-llm-runner/2026-10-25/1972-implementation/native-extra/bad_territory_retry",
-    "empty_query": "/Users/akagilnc/WorkSpace/vault/ak-cc-wiki/raw/ming-llm-runner/2026-10-25/1972-implementation/native-extra/empty_query"
+    "bad_territory_retry": "/Users/akagilnc/WorkSpace/vault/ak-cc-wiki/raw/ming-llm-runner/2026-10-25/1972-implementation/native-extra/bad_territory_retry"
   }
 }

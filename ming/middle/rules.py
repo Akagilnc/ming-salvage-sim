@@ -24,9 +24,11 @@ def matching_names(names: Names, queries: list[str]) -> Names:
     }
 
 
-def name_expected(kind: str, value: str, names: Names) -> object:
+def name_expected(
+    kind: str, value: str, names: Names, directory: str = "names_and_aliases",
+) -> dict[str, Any]:
     if kind not in CATALOGUE_KINDS:
-        return {"catalogue": kind}
+        return {directory: kind}
     return matching_names({kind: names.get(kind, {})}, [value]) or {"status": "not_found", "tool": "read_records"}
 
 
@@ -40,7 +42,7 @@ def check_rules(out: Declaration, affairs: set[str], names: Names) -> None:
     for i, fact in enumerate(out.facts):
         if fact.affair is not None and fact.affair not in affairs:
             fail(f"facts[{i}].affair", fact.affair, name_expected("affair", fact.affair, names), names,
-                 "affair 改成 expected 里的事务正名，或在本份先 create 该事务，重交整份。")
+                 "事务正名查 expected 指向的输入目录，或在本份先 create 该事务，重交整份。")
         seen = [change.field for change in fact.changes
                 if (fact.entity_type, change.field) != ("account", "taels")]
         if len(set(seen)) != len(seen):
@@ -79,7 +81,7 @@ def check_money(fact: Fact, names: Names, index: int) -> None:
             fail(path + ".counterpart.entity_type", kind, list(names), names, "收方类型改成 expected，重交整份。")
         if change.counterpart.entity not in names[kind]:
             fail(path + ".counterpart.entity", change.counterpart.entity, name_expected(kind, change.counterpart.entity, names), names,
-                 "收方改成 expected 中的正名，重交整份；不必另交收方 fact。")
+                 "参照 expected 的输入目录指针或候选填写收方正名，重交整份；不必另交收方 fact。")
         if kind in {"army", "fiscal"} and change.purpose is None:
             fail(path + ".purpose", None, ["补欠", "当月饷", "犒赏", "专项"], names,
                  "付给军队或财政科目的款补上 purpose，重交整份。")

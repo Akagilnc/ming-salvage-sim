@@ -960,7 +960,7 @@ def test_exhausted_month_declaration_is_unhandled_not_a_stopped_month(
             if declared[0] == "ambiguous":
                 assert {("知县", "保定府新城县"), ("知县", "济南府新城县")} <= {(p["office"], p["territory"]) for p in failure["expected"]}
             elif declared[0] == "unknown_recipient":
-                assert failure["expected"] == {"catalogue": "account"}
+                assert failure["expected"] == {"names_and_aliases": "account"}
             elif declared[0] == "multiple":
                 assert failure["expected"] == {"maxItems": 1}
             if declared[0] == "duplicate_state":

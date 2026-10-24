@@ -109,7 +109,11 @@ class Sources:
         @agent.output_validator
         def names(ctx: RunContext[Materials], output: Urgencies | Impeachments):
             catalogue = ctx.deps.court.catalogue()
-            people = catalogue["person"]
+            allowed: dict[str, list[str]] | list[str] = catalogue["person"]
+            expected: object = name_expected("person", "", catalogue, directory="catalogue")
+            if kind == "urgent":
+                allowed = identity.people
+                expected = allowed
             originals = {
                 str(f.detail["id"]) for f in ctx.deps.court.returned_petitions()
             }
@@ -118,14 +122,13 @@ class Sources:
                 if isinstance(item, ImpeachmentPetition):
                     refs["target"] = item.target
                 for field, name in refs.items():
-                    expected = identity.people if kind == "urgent" else people
-                    if name not in expected:
+                    if name not in allowed:
                         fail(
                             f"petitions[{index}].{field}",
                             name,
-                            identity.people if kind == "urgent" else name_expected("person", name, catalogue),
+                            expected,
                             catalogue,
-                            "改成输入目录里的人名正名，重交整份。确无此人不得换成另一人。",
+                            "参照 expected 的正名清单或输入目录指针核对人名，重交整份。确无此人不得换成另一人。",
                         )
                 if isinstance(item, UrgentPetition) and item.revision_of is not None:
                     if str(item.revision_of) not in originals:

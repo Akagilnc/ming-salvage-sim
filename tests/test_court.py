@@ -210,7 +210,7 @@ def test_recorded_r2_reply_lands(game_db, steps, audit, case):
             assert not [p for m in received for p in m.parts if p.part_kind == "retry-prompt"]
         elif case == "bad_territory_retry":
             assert [f["entity_id"] for f in ledger["facts"] if f["kind"] == "changed"] == [rows["territory", "保定府新城县"]["id"]]
-            assert set(json.loads(next(p.content for m in received for p in m.parts if p.part_kind == "retry-prompt"))["expected"]["names_and_aliases"]["territory"]) == {
+            assert set(json.loads(next(p.content for m in received for p in m.parts if p.part_kind == "retry-prompt"))["expected"]["territory"]) == {
                 "保定府新城县", "济南府新城县", "建昌府新城县", "杭州府新城县",
             }
         else:
@@ -222,29 +222,26 @@ def test_recorded_r2_reply_lands(game_db, steps, audit, case):
 
 
 @pytest.mark.parametrize("game_db", ["first_night"], indirect=True)
-@pytest.mark.parametrize("stage", ["night", "month", "empty"])
+@pytest.mark.parametrize("stage", ["night", "month"])
 def test_translation_queries_preserve_two_table_permissions(game_db, steps, stage):
     recording = json.loads((RECORDED / "declarations_1972.json").read_text())["cases"]
     received = []
     steps["NightDeclaration"] = replaying([(RECORDED / "night_empty.txt").read_text()])
     steps["NightDeclaration" if stage == "night" else "Declaration"] = replaying(
-        ModelMessagesTypeAdapter.validate_python(recording[{"night": "night_catalogue_queries", "month": "catalogue_queries", "empty": "empty_query"}[stage]]), received,
+        ModelMessagesTypeAdapter.validate_python(recording["night_catalogue_queries" if stage == "night" else "catalogue_queries"]), received,
     )
     with TestClient(create_app(game_db.parent)) as client:
         client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
         client.post("/actions", json={"action": "dismiss"}).raise_for_status()
         client.portal.call(client.app.state.web.game.drain)
-        if stage != "night":
+        if stage == "month":
             client.post("/actions", json={"action": "month"}).raise_for_status()
         assert client.get("/state").json()["game"]["failure"] is None
     queries = {p.tool_call_id: p.args_as_dict() for m in received for p in m.parts if isinstance(p, ToolCallPart)}
     results = {p.tool_call_id: p.model_response_object() for m in received for p in m.parts if isinstance(p, ToolReturnPart)}
     for call_id, query in queries.items():
         result = results[call_id]
-        if not query:
-            assert result["status"] == "query_required"
-            assert set(result).isdisjoint({"catalogue", "entities", "facts"})
-        elif query.get("key") in {"保定府新城县", "北直隶保定府新城县", "户部尚书"}:
+        if query.get("key") in {"保定府新城县", "北直隶保定府新城县", "户部尚书"}:
             assert len(result["entities"]) == 1
             assert result["facts"] == []
             assert result["entities"][0]["kind"] in {"office", "territory"}

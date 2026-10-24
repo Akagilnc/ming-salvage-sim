@@ -120,9 +120,9 @@ def check(ledger: Ledger, out: Declaration, source: UUID) -> None:
             fail(
                 path + ".create",
                 True,
-                {"create": False, "entities": name_expected(fact.entity_type, fact.entity, names)},
+                {"create": False, **name_expected(fact.entity_type, fact.entity, names)},
                 names,
-                "这类实体不能新建。create 改 false，entity 用 expected 里的正名，重交整份。",
+                "这类实体不能新建。create 改 false，参照 expected 的输入目录指针或候选核对 entity，重交整份。",
             )
         if fact.entity_type == "incumbency":
             check_appointment(ledger, fact, path, names, cabinet)
@@ -130,9 +130,9 @@ def check(ledger: Ledger, out: Declaration, source: UUID) -> None:
             fail(
                 path + ".entity",
                 fact.entity,
-                {"names_and_aliases": name_expected(fact.entity_type, fact.entity, names), "create": fact.entity not in known},
+                {"create": fact.entity not in known, **name_expected(fact.entity_type, fact.entity, names)},
                 names,
-                "entity 用 names_and_aliases 里的正名；没有就 create=true。确无该实体不得换成另一实体。重交整份。",
+                "参照 expected 的输入目录指针或候选核对 entity 与 create；确无该实体不得换成另一实体，重交整份。",
             )
         if fact.create or fact.entity_type == "incumbency":
             known[fact.entity] = []
@@ -217,16 +217,19 @@ def check_endorsements(
                     names,
                     "source_chat_turn_id 改成 expected 里的本夜轮次 id，重交整份。",
                 )
+            allowed: list[str] | dict[str, list[str]] = ["御笔"]
+            expected: object = allowed
             if endorsement.form != "御笔手敕":
                 endorsement.endorser = reference_key(ledger, "person", endorsement.endorser)
-            expected = ["御笔"] if endorsement.form == "御笔手敕" else names.get("person", {})
-            if endorsement.endorser not in expected:
+                allowed = names.get("person", {})
+                expected = name_expected("person", endorsement.endorser, names)
+            if endorsement.endorser not in allowed:
                 fail(
                     path + ".endorser",
                     endorsement.endorser,
-                    ["御笔"] if endorsement.form == "御笔手敕" else name_expected("person", endorsement.endorser, names),
+                    expected,
                     names,
-                    "endorser 改成 expected 里的正名，重交整份。",
+                    "参照 expected 的正名清单或输入目录指针核对 endorser，重交整份。",
                 )
 
 
@@ -334,7 +337,7 @@ def check_appointment(ledger: Ledger, fact: Fact, path: str, names: Names, cabin
         fail(path + ".entity", fact.entity,
              [{"office": office, "territory": territory} for office, territory in pairs]
              if pairs else {kind: name_expected(kind, fact.entity, names) for kind in CATALOGUE_KINDS},
-             names, "写出能唯一对上两表的官名；歧义时用候选属地全名。重交整份。")
+             names, "按 expected 的两表候选核对官名；查无时用 read_records 查询官职、属地，歧义时用候选属地全名，重交整份。")
     office = ledger.entities(kind="office", key=pairs[0][0])[0]
     fact.entity = incumbency_record(pairs[0], [])[0]
     for j, change in enumerate(fact.changes):
@@ -350,7 +353,7 @@ def check_appointment(ledger: Ledger, fact: Fact, path: str, names: Names, cabin
             fail(field, holders, {"maxItems": 1}, names, "一员只能任一人，重交整份。")
         for k, person in enumerate(holders):
             if person not in names.get("person", {}):
-                fail(f"{field}[{k}]", person, name_expected("person", person, names), names, "在任者用人物正名，重交整份。")
+                fail(f"{field}[{k}]", person, name_expected("person", person, names), names, "在任者用 expected 指向的输入人物目录中的正名，重交整份。")
         if office["key"] == "内阁首辅":
             eligible = sorted(cabinet_members(cabinet))
             for k, person in enumerate(holders):
@@ -377,7 +380,7 @@ def check_references(ledger: Ledger, out: Declaration, names: Names) -> None:
                         change.value,
                         name_expected(kind, str(change.value), names),
                         names,
-                        "value 改成 expected 里的账本正名，重交整份。确无该实体不得换成另一实体。",
+                        "参照 expected 的输入目录指针或候选填写 value，重交整份。确无该实体不得换成另一实体。",
                     )
             if (fact.entity_type, change.field) == ("decree", "people"):
                 people.append((f"facts[{i}].changes[{j}].value", change.value))
@@ -389,7 +392,7 @@ def check_references(ledger: Ledger, out: Declaration, names: Names) -> None:
                 report.entity,
                 name_expected(report.entity_type, report.entity, names),
                 names,
-                "entity 改成 expected 里的正名，重交整份。确无该实体不得换成另一实体。",
+                "参照 expected 的输入目录指针或候选填写 entity，重交整份。确无该实体不得换成另一实体。",
             )
     if isinstance(out, NightDeclaration):
         people.extend((f"decrees[{i}].people", decree.people) for i, decree in enumerate(out.decrees))
@@ -400,14 +403,14 @@ def check_references(ledger: Ledger, out: Declaration, names: Names) -> None:
                 value,
                 name_expected("person", "", names),
                 names,
-                "people 改成名单，成员用 expected 里的人名正名，重交整份。",
+                "people 改成名单，成员用 expected 指向的输入人物目录中的正名，重交整份。",
             )
         members = cast(list[Any], value)
         for i, person in enumerate(members):
             members[i] = person = reference_key(ledger, "person", person) if isinstance(person, str) else person
             if not isinstance(person, str) or person not in names.get("person", {}):
                 fail(f"{path}[{i}]", person, name_expected("person", str(person), names), names,
-                     "people 里的名字改成 expected 里的人名正名，重交整份。确无此人不得换成另一人。")
+                     "people 里的名字用 expected 指向的输入人物目录中的正名，重交整份。确无此人不得换成另一人。")
 
 
 def declaration_agent(

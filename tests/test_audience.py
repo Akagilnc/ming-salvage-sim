@@ -189,11 +189,13 @@ def test_backing_follows_its_decree_and_signers(game_db, steps, audit, case, rec
                 failure = json.loads(retries[0].content)
                 assert failure["field"] == ("decrees[0].endorsements[0].endorser" if case == "name" else "decrees[0].people[0]")
                 assert failure["current"] == ("不存在的担名人" if case == "name" else "不存在的领旨者")
-                assert failure["expected"] == {"catalogue": "person"}
+                assert failure["expected"] == {"names_and_aliases": "person"}
                 assert set(failure) == {"field", "current", "expected", "action"}
             assert len([f for f in audit(game_db)["facts"] if f["kind"] == "unhandled"]) == 1
             assert [f["detail"] for f in client.get("/records").json()["facts"] if f["kind"] == "unhandled"] == [{}]
             client.post("/actions", json={"action": "month"}).raise_for_status()
+            state = client.get("/state").json()["game"]
+            assert (state["face"], state["failure"], state["unhandled_monthly"]) == ("desk", None, [])
             client.post("/actions", json={"action": "open"}).raise_for_status()
             assert client.get("/state").json()["game"]["night"]["turns"] == []
             return
