@@ -19,7 +19,14 @@ from ming.web import create_app
 RECORDED = Path(__file__).parent / "recorded"
 
 
-@pytest.mark.parametrize("pending_histories", ["night", "month"], indirect=True)
+@pytest.mark.parametrize(
+    "pending_histories",
+    [
+        pytest.param("night", marks=pytest.mark.xdist_group("history-night")),
+        pytest.param("month", marks=pytest.mark.xdist_group("history-month")),
+    ],
+    indirect=True,
+)
 @pytest.mark.parametrize("action", ["state", "say", "month", "choose"])
 def test_http_read_work_ignores_unrelated_history(
     tmp_path, steps, action, pending_histories

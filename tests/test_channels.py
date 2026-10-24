@@ -12,7 +12,7 @@ from pathlib import Path
 from functools import partial
 from shutil import copyfile
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import httpx
 import httpx2
@@ -288,25 +288,13 @@ def install_codex(monkeypatch, handler, provider=OpenAICodexProvider):
     monkeypatch.setattr(provider, "__init__", init)
 
 
-def watch(app) -> list[dict[str, object]]:
-    events: list[dict[str, object]] = []
-    original = app.state.web.emit
-
-    def spy(event: dict[str, object]) -> None:
-        events.append(dict(event))
-        original(event)
-
-    app.state.web.emit = spy
-    return events
-
-
 def open_game(client: TestClient, settings: dict[str, object], game_db: Path | None) -> None:
     client.post("/actions", json={"action": "settings", "settings": settings}).raise_for_status()
     client.post("/actions", json={"action": "load", "save": game_db.name}
                 if game_db else {"action": "new"}).raise_for_status()
 
 
-def assert_scene(state: dict[str, object], events: list[dict[str, object]]) -> None:
+def assert_scene(state: dict[str, object], events: Mock) -> None:
     game = state["game"]
     assert isinstance(game, dict)
     assert game["failure"] is None
@@ -314,7 +302,10 @@ def assert_scene(state: dict[str, object], events: list[dict[str, object]]) -> N
     assert isinstance(night, dict)
     assert night["result"] == "translated"
     assert "王承恩" in night["hall"]
-    deltas = [event["data"] for event in events if event["event"] == "delta"]
+    deltas = [
+        call.args[0]["data"] for call in events.call_args_list
+        if call.args[0]["event"] == "delta"
+    ]
     assert len(deltas) >= 2
     live = ""
     for item in deltas:
@@ -337,7 +328,8 @@ def test_process_subscription_scene_lands_and_streams(
     monkeypatch.setenv("HOME", str(tmp_path))
     calls, _snapshots = install_process(monkeypatch)
     app = create_app(game_db.parent)
-    events = watch(app)
+    events = Mock(wraps=app.state.web.emit)
+    monkeypatch.setattr(app.state.web, "emit", events)
     with TestClient(app) as client:
         open_game(client, {"backend": backend, "model": model, "effort": effort}, game_db)
         client.post("/actions", json={"action": "open"}).raise_for_status()
@@ -396,7 +388,8 @@ def test_codex_scene_lands_and_streams(tmp_path: Path, monkeypatch, game_db: Pat
                                       rejected=channel[1] == "native-unknown"),
                   OpenAICodexProvider if channel[0] == "codex" else OpenAIProvider)
     app = create_app(game_db.parent)
-    events = watch(app)
+    events = Mock(wraps=app.state.web.emit)
+    monkeypatch.setattr(app.state.web, "emit", events)
     with TestClient(app) as client:
         open_game(client, {"backend": channel[0], "model": CODEX_MODEL, "effort": channel[1],
                            "base_url": "https://api.example.test/v1", "api_key": "test-key"}, game_db)
