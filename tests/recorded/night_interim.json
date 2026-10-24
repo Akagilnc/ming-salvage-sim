@@ -23,6 +23,24 @@
     }
   ],
   "replies": [
-    "{\"facts\":[{\"entity_type\":\"person\",\"entity\":\"洪承畴\",\"create\":false,\"decree\":0,\"changes\":[{\"field\":\"office\",\"value\":\"巡抚\"},{\"field\":\"office_region\",\"value\":\"陕西\"}],\"text\":\"特旨钦命陕西督粮参政洪承畴加都察院右副都御史衔，巡抚陕西，一切事务便宜行事。\"}],\"reports\":[],\"decree_events\":[{\"decree\":0,\"kind\":\"handled\",\"text\":\"王承恩捧皇帝亲笔手敕装匣，不走司礼监文书房，连夜亲自出东华门，往毕自严、王绍徽府上当面交割，并令两部在回执上写明收到时辰。\"}],\"decrees\":[{\"text\":\"敕谕吏部、户部：\\n陕西连年大旱，延安、庆阳、平凉几府的百姓吃草根树皮过活，流亡的一天比一天多，事情急，等不得按常规廷推。特命陕西督粮参政洪承畴加都察院右副都御史衔，巡抚陕西，一切事务便宜行事。吏部马上给他办官凭敕书，催他尽快到任。\\n户部从太仓银里拨三十万两，专门用来赈济陕西饥民。另由户部密派一名稽查官员随银押运，沿途经过的布政司、府、县都要逐月核对数目，报给户部，再上奏给朕。经手官员敢克扣挪用一两的，稽查官员可以直接参劾，按侵盗钱粮治罪，决不宽恕。\\n洪承畴到任以后，赈银怎么用、粮米从哪里买、发到哪里，他要把详细数目开列上奏。\\n此系朕亲笔，即日施行。钦此。\",\"origin\":\"emperor\",\"secret\":false,\"turn\":4,\"endorsements\":[{\"endorser\":\"毕自严\",\"form\":\"当面站台\",\"source_chat_turn_id\":\"north-star-backing\"},{\"endorser\":\"御笔\",\"form\":\"御笔手敕\",\"source_chat_turn_id\":\"north-star-approval\"}],\"interim\":true,\"people\":[\"洪承畴\",\"王承恩\",\"王绍徽\",\"毕自严\"]}]}"
-  ]
+    "{\"facts\": [], \"decrees\": [{\"text\": \"敕谕吏部、户部：\\n陕西连年大旱，延安、庆阳、平凉几府的百姓吃草根树皮过活，流亡的一天比一天多，事情急，等不得按常规廷推。特命陕西督粮参政洪承畴加都察院右副都御史衔，巡抚陕西，一切事务便宜行事。吏部马上给他办官凭敕书，催他尽快到任。\\n户部从太仓银里拨三十万两，专门用来赈济陕西饥民。另由户部密派一名稽查官员随银押运，沿途经过的布政司、府、县都要逐月核对数目，报给户部，再上奏给朕。经手官员敢克扣挪用一两的，稽查官员可以直接参劾，按侵盗钱粮治罪，决不宽恕。\\n洪承畴到任以后，赈银怎么用、粮米从哪里买、发到哪里，他要把详细数目开列上奏。\\n此系朕亲笔，即日施行。钦此。\", \"origin\": \"emperor\", \"secret\": false, \"turn\": 4, \"endorsements\": [{\"endorser\": \"毕自严\", \"form\": \"当面站台\", \"source_chat_turn_id\": \"north-star-backing\"}, {\"endorser\": \"皇帝\", \"form\": \"御笔手敕\", \"source_chat_turn_id\": \"north-star-imperial\"}], \"interim\": true, \"people\": [\"洪承畴\", \"毕自严\", \"王绍徽\", \"王承恩\"]}]}",
+    "{\"facts\": [], \"decrees\": [{\"text\": \"敕谕吏部、户部：\\n陕西连年大旱，延安、庆阳、平凉几府的百姓吃草根树皮过活，流亡的一天比一天多，事情急，等不得按常规廷推。特命陕西督粮参政洪承畴加都察院右副都御史衔，巡抚陕西，一切事务便宜行事。吏部马上给他办官凭敕书，催他尽快到任。\\n户部从太仓银里拨三十万两，专门用来赈济陕西饥民。另由户部密派一名稽查官员随银押运，沿途经过的布政司、府、县都要逐月核对数目，报给户部，再上奏给朕。经手官员敢克扣挪用一两的，稽查官员可以直接参劾，按侵盗钱粮治罪，决不宽恕。\\n洪承畴到任以后，赈银怎么用、粮米从哪里买、发到哪里，他要把详细数目开列上奏。\\n此系朕亲笔，即日施行。钦此。\", \"origin\": \"emperor\", \"secret\": false, \"turn\": 4, \"endorsements\": [{\"endorser\": \"毕自严\", \"form\": \"当面站台\", \"source_chat_turn_id\": \"north-star-backing\"}, {\"endorser\": \"御笔\", \"form\": \"御笔手敕\", \"source_chat_turn_id\": \"north-star-imperial\"}], \"interim\": true, \"people\": [\"洪承畴\", \"毕自严\", \"王绍徽\", \"王承恩\"]}]}"
+  ],
+  "translation_source": {
+    "attempts": [
+      {
+        "host": "claude-cli",
+        "session_id": "ac20600a-1bc1-42a1-a7c0-a7c3312334b2",
+        "native": "/Users/akagilnc/WorkSpace/vault/ak-cc-wiki/raw/ming-llm-runner/2026-10-24/1965/interim-v2/native.json",
+        "input": "/Users/akagilnc/WorkSpace/vault/ak-cc-wiki/raw/ming-llm-runner/2026-10-24/1965/interim-v2/input.json"
+      },
+      {
+        "host": "claude-cli",
+        "session_id": "a5a24388-929a-44d8-81ef-25ec7b7a3c3d",
+        "native": "/Users/akagilnc/WorkSpace/vault/ak-cc-wiki/raw/ming-llm-runner/2026-10-24/1965/interim-v3/native.json",
+        "input": "/Users/akagilnc/WorkSpace/vault/ak-cc-wiki/raw/ming-llm-runner/2026-10-24/1965/interim-v3/input.json"
+      }
+    ],
+    "feedback": "/Users/akagilnc/WorkSpace/vault/ak-cc-wiki/raw/ming-llm-runner/2026-10-24/1965/interim-v3/feedback.json"
+  }
 }

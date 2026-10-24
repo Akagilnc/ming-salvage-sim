@@ -7,6 +7,15 @@
     "{\"text\":\"崇祯十三年正月，毕自严停剿饷之议留中，御前未予批示，此案不作更改。\\n\\n剿饷仍照旧征收。户部依原额行文各省州县，催科如常，逐省加派的数目不减，亦无减负之策。州县在民力已竭、逃户日增的情形下继续催征，逃亡之数或将续增，所征之实数未必与额数相符。\\n\\n毕自严所请的减负补饷之策未曾议定，户部与兵部亦无会商之据。杨嗣昌、洪承畴等剿寇诸军饷项仍按国库现存银三百二十万两及既定次第支应，未因此议而另生变动。\\n\\n留中一事本身不引起皇威、当事大臣或派系的正面或负面反应。毕自严是否在此后另行上疏，由其自决，本月内未见其再具奏。\\n\\n本月事务至此已写到月底。\",\"petitions\":[],\"month_end\":true}"
   ],
   "Declaration": [
-    "{\"facts\":[{\"entity_type\":\"event\",\"entity\":\"剿饷议停\",\"create\":false,\"affair\":null,\"changes\":[{\"field\":\"terminal_reason\",\"value\":\"已停\"}],\"text\":\"崇祯十三年正月，皇帝准户部尚书毕自严之请，停征剿饷，并旨令户部会同兵部另议减负补饷之策。各省州县停止续征，已入库未解者照旧解部，未征者不再催科。\"},{\"entity_type\":\"faction\",\"entity\":\"军队\",\"create\":false,\"affair\":null,\"changes\":[{\"field\":\"satisfaction\",\"value\":45}],\"text\":\"剿饷停征后，剿寇诸军饷源未定，本月仍按旧额领饷，但补饷之策未颁，军中对接续饷项存有疑虑。\"},{\"entity_type\":\"class\",\"entity\":\"农民\",\"create\":false,\"affair\":null,\"changes\":[{\"field\":\"satisfaction\",\"value\":36}],\"text\":\"剿饷停征，逃户与催科吏役稍得喘息，农民所请减负一节得以应允。\"},{\"entity_type\":\"class\",\"entity\":\"士绅\",\"create\":false,\"affair\":null,\"changes\":[{\"field\":\"satisfaction\",\"value\":52}],\"text\":\"士绅上书言剿饷之苦，本月准停，所请减负一节得以应允。\"}],\"reports\":[]}"
-  ]
+    "{\"facts\": [{\"entity_type\": \"historical_event\", \"entity\": \"剿饷议停\", \"create\": false, \"changes\": [{\"field\": \"terminal_reason\", \"value\": \"已停\"}], \"text\": \"崇祯十三年正月，皇帝批红准户部尚书毕自严所请，停征剿饷，并令户部会同兵部另议减负补饷之策。各省州县停止续征剿饷，已入库未解者照旧解部，未征者不再催科。\"}, {\"entity_type\": \"affair\", \"entity\": \"剿饷停征后补饷之议\", \"create\": true, \"changes\": [], \"text\": \"崇祯十三年正月准停剿饷后，旨令户部会同兵部另议减负补饷之策。户部议以国库现存银三百二十万两为底，拟先保边军与剿寇主力，其余各军分别减额或暂欠，但细数未定，须待户部、兵部会商后另行呈报。本月剿寇诸军仍照旧额领饷，未见断饷；补饷之策尚未正式颁行，各路饷项如何接续留待下月。\"}, {\"entity_type\": \"person\", \"entity\": \"毕自严\", \"create\": false, \"affair\": \"剿饷停征后补饷之议\", \"changes\": [], \"text\": \"崇祯十三年正月，奏请停征剿饷获准，奉旨会同兵部另议减负补饷之策；拟以国库现银为底，先保边军与剿寇主力，细数尚在会商。\"}, {\"entity_type\": \"person\", \"entity\": \"杨嗣昌\", \"create\": false, \"affair\": \"剿饷停征后补饷之议\", \"changes\": [], \"text\": \"崇祯十三年正月，闻剿饷准停，以为剿寇军需一时无着，恐十面张网之策难以为继，与户部往复商议补饷之数。\"}, {\"entity_type\": \"person\", \"entity\": \"洪承畴\", \"create\": false, \"affair\": \"剿饷停征后补饷之议\", \"changes\": [], \"text\": \"崇祯十三年正月剿饷停征，所辖诸军担心饷源未定，请朝廷速定拨付先后；本月仍照旧额领饷。\"}], \"reports\": [{\"entity_type\": \"person\", \"entity\": \"毕自严\", \"audience\": \"official\", \"text\": \"户部议：以国库现存银三百二十万两为底，先保边军与剿寇主力，其余各军分别减额或暂欠；各项细数尚待户部与兵部会商，另行呈报。\"}, {\"entity_type\": \"person\", \"entity\": \"杨嗣昌\", \"audience\": \"official\", \"text\": \"剿寇军需全赖剿饷，骤然停征，各路兵饷一时无着，十面张网之策恐难维持，请速定补饷之数。\"}], \"decree_events\": []}"
+  ],
+  "translation_source": {
+    "host": "claude-cli",
+    "session_id": "087966b3-62b7-4324-8c85-a7ad215fe821",
+    "input_recording": "/Users/akagilnc/WorkSpace/vault/ak-cc-wiki/raw/ming-llm-runner/2026-10-24/1965/ming-1965-fiscal-v9/1640-approved.json",
+    "simulation_indices": [
+      0,
+      1
+    ]
+  }
 }

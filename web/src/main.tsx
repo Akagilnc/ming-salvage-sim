@@ -164,7 +164,7 @@ export function App() {
         <button className="close" onClick={() => setPanel(null)}>合上</button>
         {panel === 'settings' ? <SettingsForm initial={snapshot.settings} requiredSettings={snapshot.required_settings} onSave={settings => { void action({ action: 'settings', settings }).then(() => setPanel(null)); }} /> :
           panel === 'roster' ? <><h2>名册</h2>{people.map(person => <article key={person.id}>
-            <h3>{person.key}</h3><p>{String(person.data.office ?? '')} · {String(person.data.location ?? '')} · {String(person.data.status ?? '')}</p>
+            <h3>{person.key}</h3><p>{((person.data.appointments ?? []) as { office: string; territory: string }[]).map(a => `${a.territory}${a.office}`).join('、')} · {String(person.data.location ?? '')} · {String(person.data.status ?? '')}</p>
             {audience && <button disabled={busy || game.running} onClick={() => void action({ action: 'say', words: `宣${person.key}。` })}>宣召</button>}
           </article>)}</> : panel === 'orders' ? <><h2>旨意去向</h2>{book.entities.filter(entity => entity.kind === 'decree').map(entity => <article key={entity.id}>
             <p>{String(entity.data.text)}</p><small>{String(entity.data.origin)} · {String(entity.data.people)}</small>

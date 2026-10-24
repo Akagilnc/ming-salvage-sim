@@ -58,7 +58,7 @@ class Sources:
                 "drafters": [
                     {
                         "name": e.key,
-                        "office": e.data["office"],
+                        "appointments": self.court.appointments(e.key),
                         "faction": e.data.get("faction"),
                         "style": e.data.get("style"),
                     }
@@ -112,23 +112,24 @@ class Sources:
             originals = {
                 str(f.detail["id"]) for f in ctx.deps.court.returned_petitions()
             }
-            for item in output.petitions:
+            for index, item in enumerate(output.petitions):
                 refs = {"signer": item.signer}
                 if isinstance(item, ImpeachmentPetition):
                     refs["target"] = item.target
                 for field, name in refs.items():
-                    if name not in people:
+                    expected = identity.people if kind == "urgent" else people
+                    if name not in expected:
                         fail(
-                            field,
+                            f"petitions[{index}].{field}",
                             name,
-                            people,
+                            expected,
                             catalogue,
                             "改成 expected 里的人名正名，重交整份。确无此人不得换成另一人。",
                         )
                 if isinstance(item, UrgentPetition) and item.revision_of is not None:
                     if str(item.revision_of) not in originals:
                         fail(
-                            "revision_of",
+                            f"petitions[{index}].revision_of",
                             str(item.revision_of),
                             sorted(originals),
                             catalogue,

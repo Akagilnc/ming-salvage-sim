@@ -54,11 +54,9 @@ def recorded_steps(case=None, start=0):
     if case is not None:
         case = json.loads((RECORDED / f"night_{case}.json").read_text())
         replies["scene"] = replaying(
+            [m for m in ModelMessagesTypeAdapter.validate_python(case["scene_responses"])
+             if isinstance(m, ModelResponse)] if "scene_responses" in case else
             [turn["scene"] for turn in case["turns"][start:]]
-            if "turns" in case else [
-                m for m in ModelMessagesTypeAdapter.validate_python(case["scene_responses"])
-                if isinstance(m, ModelResponse)
-            ]
         )
         replies["NightDeclaration"] = replaying(case["replies"])
 

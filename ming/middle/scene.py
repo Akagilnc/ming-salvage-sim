@@ -8,13 +8,16 @@ from pydantic import BaseModel, Field
 from ming.ledger import Ledger
 from ming.middle.calendar import CAPITAL
 from ming.middle.night import change_hall
-from ming.middle.view import Officials, entities, journey, project
+from ming.middle.view import EntityView, Officials, entities, journey, project
+from ming.middle.appointments import held_by
 
 
 class PersonView(BaseModel):
     found: bool
     person: dict[str, Any] = Field(default_factory=dict)
     events: list[dict[str, Any]] = Field(default_factory=list[dict[str, Any]])
+    appointments: list[dict[str, Any]] = Field(default_factory=list[dict[str, Any]])
+    accounts: list[EntityView] = Field(default_factory=list[EntityView])
 
 
 class HallResult(BaseModel):
@@ -25,9 +28,8 @@ class HallResult(BaseModel):
 
 PERSON_FIELDS = {
     "name",
-    "office",
-    "office_type",
-    "office_region",
+    "identity_description",
+    "historical_office",
     "location",
     "status",
     "faction",
@@ -63,12 +65,14 @@ def read_person(ledger: Ledger, name: str) -> PersonView:
             **{
                 k: v
                 for k, v in e.detail.items()
-                if k in {"date", "text", "successor", "endorser", "form", "source_chat_turn_id"}
+                if k in {"date", "text", "office", "territory", "holders", "decree_id", "endorser", "form", "source_chat_turn_id"}
             },
         }
         for e in project(ledger, identity, {"entity_id": [person["id"], *decrees]})
     ]
-    return PersonView(found=True, person=data, events=events)
+    return PersonView(found=True, person=data, events=events,
+                      appointments=[r["data"] for r in held_by(ledger, [name])],
+                      accounts=entities(ledger, identity, {"kind": "account"}))
 
 
 def set_hall(

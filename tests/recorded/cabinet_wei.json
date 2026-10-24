@@ -1,0 +1,148 @@
+{
+  "source": {
+    "host": "claude-cli",
+    "session_id": "16ed289f-616f-48cb-a996-b045833b4e6f",
+    "native": "/Users/akagilnc/WorkSpace/vault/ak-cc-wiki/raw/ming-llm-runner/2026-10-24/1965/fixer-j1-j6/declarations-native.json",
+    "input": "/Users/akagilnc/WorkSpace/vault/ak-cc-wiki/raw/ming-llm-runner/2026-10-24/1965/fixer-j1-j6/declarations-input.json",
+    "schema": "/Users/akagilnc/WorkSpace/vault/ak-cc-wiki/raw/ming-llm-runner/2026-10-24/1965/fixer-j1-j6/declarations-schema.json"
+  },
+  "cases": {
+    "chief_swap": {
+      "facts": [
+        {
+          "entity_type": "incumbency",
+          "entity": "内阁首辅",
+          "create": false,
+          "changes": [
+            {
+              "field": "holders",
+              "value": [
+                "施凤来"
+              ]
+            }
+          ],
+          "text": "皇帝命施凤来为内阁首辅，任命已生效。现任首辅黄立极仍为阁臣，此条只声明首辅职务，其他职位不动。"
+        }
+      ]
+    },
+    "chief_exit": {
+      "facts": [
+        {
+          "entity_type": "incumbency",
+          "entity": "内阁大学士",
+          "create": false,
+          "changes": [
+            {
+              "field": "holders",
+              "value": [
+                "黄立极",
+                "张瑞图",
+                "韩爌",
+                "毕自严"
+              ]
+            }
+          ],
+          "text": "任免已生效：内阁大学士现任完整名单改为黄立极、张瑞图、韩爌、毕自严，施凤来离开所有阁职。"
+        }
+      ]
+    },
+    "chief_join": {
+      "facts": [
+        {
+          "entity_type": "incumbency",
+          "entity": "内阁大学士",
+          "create": false,
+          "changes": [
+            {
+              "field": "holders",
+              "value": [
+                "黄立极",
+                "张瑞图",
+                "韩爌",
+                "毕自严",
+                "崔呈秀"
+              ]
+            }
+          ],
+          "text": "先增任崔呈秀为内阁大학士，原任黄立极、张瑞图、韩爌、毕自严均留任。崔呈秀原任兵部尚书不动。"
+        },
+        {
+          "entity_type": "incumbency",
+          "entity": "内阁首辅",
+          "create": false,
+          "changes": [
+            {
+              "field": "holders",
+              "value": [
+                "崔呈秀"
+              ]
+            }
+          ],
+          "text": "再命崔呈秀为内阁首辅，任命已生效。"
+        }
+      ]
+    },
+    "chief_invalid": {
+      "facts": [
+        {
+          "entity_type": "incumbency",
+          "entity": "内阁首辅",
+          "create": false,
+          "changes": [
+            {
+              "field": "holders",
+              "value": [
+                "李待问"
+              ]
+            }
+          ],
+          "text": "皇帝命李待问为内阁首辅，任命已经宣布。李待问并无任何阁职，此条只转写首辅任命，交引擎校验。"
+        }
+      ]
+    },
+    "chief_vacancy": {
+      "facts": [
+        {
+          "entity_type": "incumbency",
+          "entity": "内阁首辅",
+          "create": false,
+          "changes": [
+            {
+              "field": "holders",
+              "value": []
+            }
+          ],
+          "text": "免崔呈秀的内阁首辅职务，首辅职位空缺，任免已生效。"
+        },
+        {
+          "entity_type": "incumbency",
+          "entity": "司礼监掌印太监",
+          "create": false,
+          "changes": [
+            {
+              "field": "holders",
+              "value": []
+            }
+          ],
+          "text": "免王体乾的司礼监掌印太监职务，职位空缺，任免已生效。其他职位不免。"
+        }
+      ]
+    },
+    "fiscal_target": {
+      "facts": [
+        {
+          "entity_type": "account",
+          "entity": "内库",
+          "create": false,
+          "changes": [
+            {
+              "field": "army_order",
+              "value": []
+            }
+          ],
+          "text": "内库的 army_order 现在已改为空名单。此条只转写现状，不改动其他账户，不纠正既有记录。"
+        }
+      ]
+    }
+  }
+}

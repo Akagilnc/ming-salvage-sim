@@ -148,7 +148,9 @@ async def assert_record_queries(court: Court) -> None:
                 (e["id"], frozenset(e["data"])) for e in expected["entities"]
             )
         if isinstance(identity, Officials):
-            assert {e["key"] for e in results["named"]["entities"] if e["kind"] == "account"} == {"国库"}
+            accounts = {e["key"]: e["data"] for e in results["named"]["entities"] if e["kind"] == "account"}
+            assert {k for k, data in accounts.items() if data == {"name": k}} == {"节慎库"}
+            assert accounts.keys() == {"国库", "内库", "节慎库", "常盈库"}
         if "secret" in results:
             if identity in ("world", "emperor"):
                 assert [e["key"] for e in results["secret"]["entities"]] == [queries["secret"]["key"]]
@@ -192,7 +194,7 @@ def test_menu_creates_distinct_games_and_opens_only_existing_saves(
             "gazette",
         }
         assert all(
-            set(e["data"]) <= {"name", "office", "location", "status"}
+            set(e["data"]) <= {"name", "appointments", "location", "status"}
             for e in records["entities"]
             if e["kind"] == "person"
         )
@@ -236,7 +238,7 @@ def test_menu_creates_distinct_games_and_opens_only_existing_saves(
 def test_http_month_dispatches_choices_and_retries_missing_step(
     game_db: Path, path: str, steps, audit, clock
 ) -> None:
-    money = (RECORDED / "month_money_300000.txt").read_text()
+    money = json.loads((RECORDED / "month_money_once_300000.json").read_text())["reply"]
     received = {name: [] for name in ("deliberation", "simulation", "gazette")}
     if path in {"petition", "multiple-petitions", "choice-error"}:
         case = (
@@ -454,15 +456,16 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
                 e["id"] for e in ledger["entities"] if e["kind"] == "account" and e["key"] == "国库"
             }
             assert all(
-                not [e for e in data["entities"] if e["kind"] == "account"]
-                for name in ("deliberation", "gazette")
-                for data in materials[name]
+                {e["key"]: e["data"] for e in data["entities"] if e["kind"] == "account"}
+                == {name: {"name": name} for name in ("国库", "内库", "节慎库", "常盈库")}
+                for data in materials["deliberation"]
             )
+            assert all(not [e for e in data["entities"] if e["kind"] == "account"] for data in materials["gazette"])
             assert {
                 e["key"]: e["data"]["taels"]
                 for e in materials["simulation"][0]["entities"]
                 if e["kind"] == "account"
-            } == {"国库": 3200000, "内库": 4400000}
+            } == {"国库": 3200000, "内库": 4400000, "节慎库": 600000, "常盈库": 1200000}
             assert (
                 next(
                     e["data"]

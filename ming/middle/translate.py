@@ -5,28 +5,31 @@ from typing import Any, TypeVar, cast
 from uuid import UUID
 
 from pydantic import ValidationError
-from sqlalchemy import Select
+from sqlalchemy import Select, func, select, true
 from pydantic_ai import (
     Agent,
     PromptedOutput,
     RunContext,
+    Tool,
     capture_run_messages,
 )
 from pydantic_ai.exceptions import ToolRetryError, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelResponse
 
-from ming.ledger import Ledger
+from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS, Item, Ledger
 from ming.middle.fiscal import OUTPUT_METRICS, levers, payable_army, settling
 from ming.middle.declaration import (
     Declaration,
     DecreeEvent,
+    Fact,
     NightDeclaration,
     PaymentPolicy,
     Unhandled,
 )
 from ming.middle.queries import CATALOGUE
 from ming.middle.night import read_night
-from ming.middle.opening import REFERENCES, resolved_office
+from ming.middle.opening import REFERENCES
+from ming.middle.appointments import CATALOGUE_KINDS, cabinet_members, cabinet_records, incumbency_record, office_pairs, reference_key
 from ming.middle.rules import Names, check_rules, fail
 from ming.middle.invoke import ModelSource, build_agent, invoke
 
@@ -39,8 +42,10 @@ text 保留皇帝认可的圣旨定稿全文，不改写、不摘要。origin �
 当场已经发生的事实用 facts：哪个实体、是否新建、字段变更列表、一段文字。不分类，不设动作枚举。
 只记今夜新发生的实况，不把邸报旧事、档案履历或大臣奏报中的说法当成今夜已经发生的事实。
 是待执行旨意还是当场实况，照整夜戏文判断；未认可的拟旨不能当成已经执行的事实。
-人名、账户、官衔、地区都写账本正名。官职只写官衔，任职地区另写 office_region。
-人在外地也可以当场起复或任职，不核在任与否，location 不因此改变。新建实体明确 create=true，已有实体用 false。
+名字用账本正名或所列别名。任免写 entity_type=incumbency，entity 写史书官名（如户部右侍郎、南京户部尚书、陕西巡抚、西安知府），create=false。changes 的 holders 写变更后完整人名名单；一员最多一人，空名单为免职。首次任职由引擎创建在任记录；人物不存任职字段。一人可兼多职，任免不改变状态、所在、在场或行程。尚书现任只算掌部的一员；阁臣的尚书兼衔只记身份与履历文字，不写入在任记录。
+戏文已经宣布任命生效、受命者当场领受的，记在任记录；赴任、查账、造炮等尚待办理，不等于已经生效的任命也要等到月末。尚未获准的任命不提前记。
+内阁首辅为单员职务，须为在任阁臣；同份声明可先任大学士再任首辅。离开全部阁职时同时卸首辅，新首辅只替原首辅这一职。次辅只记身份。
+人在外地也可以当场起复或任职；除首辅须在任阁臣外，不以在任与否限制任命，location 不因此改变。新建实体明确 create=true，已有实体用 false。
 无字段变化可以只记文字；对象模型之外的伤情等记入所涉实体履历，不长新字段。
 奏报与公开说法单列 reports，只交实体、文字和 audience；facts 只记物理实况。
 在场进出归场景名单工具，退朝归场景退朝工具；不声明进出、退朝、说话人分段、可闻性或御前主角。
@@ -49,12 +54,14 @@ text 保留皇帝认可的圣旨定稿全文，不改写、不摘要。origin �
 
 
 def catalogue(
-    ledger: Ledger, query: Select[Any] = CATALOGUE,
+    ledger: Ledger, query: Select[Any] = CATALOGUE, exclude: tuple[str, ...] = (),
 ) -> dict[str, dict[str, list[str]]]:
     result: dict[str, dict[str, list[str]]] = {}
-    for row in ledger.read(query):
-        aliases = row["data"].get("aliases", [])
-        name = row["data"].get("name")
+    for row in ledger.read(query.with_only_columns(
+        E.kind, E.key, E.data["aliases"].label("aliases"), E.data["name"].as_string().label("name"),
+    ).where(E.kind.not_in(exclude))):
+        aliases: list[str] = row["aliases"] or []
+        name = row["name"]
         if name and name != row["key"]:
             aliases = [*aliases, name]
         result.setdefault(row["kind"], {})[row["key"]] = aliases
@@ -63,7 +70,7 @@ def catalogue(
 
 # Content catalogues the month accounts and levy timeline iterate: only the
 # imported rows exist, so a declaration may change them but never add one.
-CATALOGUES = {"event", "fiscal"}
+CATALOGUES = {"historical_event", "fiscal", "account", "office", "territory", "incumbency"}
 
 
 def allowed_fields(ledger: Ledger) -> dict[str, set[str]]:
@@ -71,13 +78,17 @@ def allowed_fields(ledger: Ledger) -> dict[str, set[str]]:
         "affair": {"text"},
         "decree": {"text", "origin", "people"},
     }
-    for row in ledger.read(CATALOGUE):
-        if row["source"] and row["kind"] != "calendar":
-            fields.setdefault(row["kind"], set()).update(row["data"])
+    keys = func.json_each(E.data).table_valued("key")
+    for row in ledger.read(select(E.kind, keys.c.key.label("field")).select_from(
+        E.id.table.join(keys, true())
+    ).where(E.source != "", E.kind != "calendar").distinct()):
+        fields.setdefault(row["kind"], set()).add(row["field"])
+    fields["incumbency"] = {"holders"}
     # Fiscal settlement, arrears and the content catalogues are engine-owned;
     # translation writes only the levers the month accounts read.
     fields["region"] = (fields.get("region", set()) - {"fiscal"}) | {"fiscal_surcharge"}
-    fields["event"] = {"terminal_reason"}
+    fields["historical_event"] = {"terminal_reason"}
+    fields["account"] = {"taels", "payment_order", "army_order"}
     fields["fiscal"] = {"value", "payment_policy"}
     fields["army"] = (fields.get("army", set()) - {"arrears", "month_paid"}) | {
         "payment_policy"
@@ -91,8 +102,11 @@ def allowed_fields(ledger: Ledger) -> dict[str, set[str]]:
 
 def check(ledger: Ledger, out: Declaration, source: UUID) -> None:
     names, fields = catalogue(ledger), allowed_fields(ledger)
+    cabinet = cabinet_records(ledger)
     for i, fact in enumerate(out.facts):
         path = f"facts[{i}]"
+        if fact.entity_type != "incumbency":
+            fact.entity = reference_key(ledger, fact.entity_type, fact.entity)
         known = names.setdefault(fact.entity_type, {})
         if fact.entity_type not in fields:
             fail(
@@ -110,7 +124,9 @@ def check(ledger: Ledger, out: Declaration, source: UUID) -> None:
                 names,
                 "这类实体不能新建。create 改 false，entity 用 expected 里的正名，重交整份。",
             )
-        if (fact.entity in known) == fact.create:
+        if fact.entity_type == "incumbency":
+            check_appointment(ledger, fact, path, names, cabinet)
+        elif (fact.entity in known) == fact.create:
             fail(
                 path + ".entity",
                 fact.entity,
@@ -118,9 +134,11 @@ def check(ledger: Ledger, out: Declaration, source: UUID) -> None:
                 names,
                 "entity 用 names_and_aliases 里的正名；没有就 create=true。确无该实体不得换成另一实体。重交整份。",
             )
-        if fact.create:
+        if fact.create or fact.entity_type == "incumbency":
             known[fact.entity] = []
         for j, change in enumerate(fact.changes):
+            if change.counterpart:
+                change.counterpart.entity = reference_key(ledger, change.counterpart.entity_type, change.counterpart.entity)
             if change.field not in fields[fact.entity_type]:
                 fail(
                     f"{path}.changes[{j}].field",
@@ -131,7 +149,7 @@ def check(ledger: Ledger, out: Declaration, source: UUID) -> None:
                 )
     check_fiscal(ledger, out, names)
     check_rules(out, set(names.get("affair", {})), names)
-    check_references(out, names)
+    check_references(ledger, out, names)
     check_decrees(ledger, out, source, names)
 
 
@@ -199,6 +217,8 @@ def check_endorsements(
                     names,
                     "source_chat_turn_id 改成 expected 里的本夜轮次 id，重交整份。",
                 )
+            if endorsement.form != "御笔手敕":
+                endorsement.endorser = reference_key(ledger, "person", endorsement.endorser)
             expected = ["御笔"] if endorsement.form == "御笔手敕" else names.get("person", {})
             if endorsement.endorser not in expected:
                 fail(
@@ -234,7 +254,7 @@ def check_fiscal(ledger: Ledger, out: Declaration, names: Names) -> None:
             allowed = targets.get((fact.entity_type, change.field))
             if allowed is not None and fact.entity not in allowed:
                 fail(
-                    path + ".entity",
+                    f"facts[{i}].entity",
                     fact.entity,
                     allowed,
                     names,
@@ -260,10 +280,10 @@ def check_fiscal(ledger: Ledger, out: Declaration, names: Names) -> None:
                         names,
                         "output_metric 改成 expected 里的计量，重交整份。",
                     )
-            if (fact.entity_type, change.field) == ("event", "terminal_reason"):
+            if (fact.entity_type, change.field) == ("historical_event", "terminal_reason"):
                 labels = [
                     label
-                    for row in ledger.entities(kind="event", key=fact.entity)
+                    for row in ledger.entities(kind="historical_event", key=fact.entity)
                     for label in row["data"].get("terminal_reason_labels", [])
                 ]
                 if change.value not in labels:
@@ -308,26 +328,48 @@ def check_fiscal(ledger: Ledger, out: Declaration, names: Names) -> None:
                     )
 
 
-OFFICE_HOW = (
-    "官衔只写账本官衔，例如「巡抚」，地区写进 office_region。"
-    "expected 是可用官名与别名。确无此官不得换成另一官。重交整份。"
-)
+def check_appointment(ledger: Ledger, fact: Fact, path: str, names: Names, cabinet: dict[tuple[str, str], Item]) -> None:
+    pairs = office_pairs(ledger, fact.entity)
+    if len(pairs) != 1:
+        fail(path + ".entity", fact.entity,
+             [{"office": office, "territory": territory} for office, territory in pairs]
+             if pairs else {"office": names.get("office", {}), "territory": names.get("territory", {})},
+             names, "写出能唯一对上两表的官名；歧义时用候选属地全名。重交整份。")
+    office = ledger.entities(kind="office", key=pairs[0][0])[0]
+    fact.entity = incumbency_record(pairs[0], [])[0]
+    for j, change in enumerate(fact.changes):
+        if change.field != "holders":
+            continue
+        field = f"{path}.changes[{j}].value"
+        value: Any = change.value
+        if not isinstance(value, list) or not all(isinstance(p, str) for p in cast(list[Any], value)):
+            fail(field, change.value, {"type": "array", "items": {"type": "string"}}, names, "holders 写完整人名名单，重交整份。")
+        holders = [reference_key(ledger, "person", person) for person in cast(list[str], value)]
+        change.value = holders
+        if not office["data"]["multiple"] and len(holders) > 1:
+            fail(field, holders, {"maxItems": 1}, names, "一员只能任一人，重交整份。")
+        for k, person in enumerate(holders):
+            if person not in names.get("person", {}):
+                fail(f"{field}[{k}]", person, names.get("person", {}), names, "在任者用人物正名，重交整份。")
+        if office["key"] == "内阁首辅":
+            eligible = sorted(cabinet_members(cabinet))
+            for k, person in enumerate(holders):
+                if person not in eligible:
+                    fail(f"{field}[{k}]", person, eligible, names, "首辅须为在任阁臣；可在同份声明中先任大学士，再任首辅。重交整份。")
+        cabinet[("incumbency", fact.entity)] = {
+            "kind": "incumbency", "data": incumbency_record(pairs[0], holders)[1],
+        }
 
 
-def check_references(out: Declaration, names: Names) -> None:
+def check_references(ledger: Ledger, out: Declaration, names: Names) -> None:
     people: list[tuple[str, Any]] = []
-    offices = names.get("office", {})
-    regions = set(names.get("region", {}))
     for i, fact in enumerate(out.facts):
         for j, change in enumerate(fact.changes):
             kind = REFERENCES.get((fact.entity_type, change.field))
             if kind is not None and (change.field == "location" or change.value != ""):
+                change.value = reference_key(ledger, kind, change.value) if isinstance(change.value, str) else change.value
                 known = isinstance(change.value, str) and (
                     change.value in names.get(kind, {})
-                    or (
-                        kind == "office"
-                        and resolved_office(change.value, offices, regions) is not None
-                    )
                 )
                 if not known:
                     fail(
@@ -335,13 +377,12 @@ def check_references(out: Declaration, names: Names) -> None:
                         change.value,
                         names.get(kind, {}),
                         names,
-                        OFFICE_HOW
-                        if kind == "office"
-                        else "value 改成 expected 里的账本正名，重交整份。确无该实体不得换成另一实体。",
+                        "value 改成 expected 里的账本正名，重交整份。确无该实体不得换成另一实体。",
                     )
             if (fact.entity_type, change.field) == ("decree", "people"):
                 people.append((f"facts[{i}].changes[{j}].value", change.value))
     for i, report in enumerate(out.reports):
+        report.entity = reference_key(ledger, report.entity_type, report.entity)
         if report.entity not in names.get(report.entity_type, {}):
             fail(
                 f"reports[{i}].entity",
@@ -351,7 +392,7 @@ def check_references(out: Declaration, names: Names) -> None:
                 "entity 改成 expected 里的正名，重交整份。确无该实体不得换成另一实体。",
             )
     if isinstance(out, NightDeclaration):
-        people.extend(("decrees.people", decree.people) for decree in out.decrees)
+        people.extend((f"decrees[{i}].people", decree.people) for i, decree in enumerate(out.decrees))
     for path, value in people:
         if not isinstance(value, list):
             fail(
@@ -362,17 +403,11 @@ def check_references(out: Declaration, names: Names) -> None:
                 "people 改成名单，成员用 expected 里的人名正名，重交整份。",
             )
         members = cast(list[Any], value)
-        if any(
-            not isinstance(person, str) or person not in names.get("person", {})
-            for person in members
-        ):
-            fail(
-                path,
-                members,
-                names.get("person", {}),
-                names,
-                "people 里的名字改成 expected 里的人名正名，重交整份。确无此人不得换成另一人。",
-            )
+        for i, person in enumerate(members):
+            members[i] = person = reference_key(ledger, "person", person) if isinstance(person, str) else person
+            if not isinstance(person, str) or person not in names.get("person", {}):
+                fail(f"{path}[{i}]", person, names.get("person", {}), names,
+                     "people 里的名字改成 expected 里的人名正名，重交整份。确无此人不得换成另一人。")
 
 
 def declaration_agent(
@@ -381,22 +416,35 @@ def declaration_agent(
     output_type: type[T],
     instructions: str = INSTRUCTIONS,
 ) -> Agent[UUID, T]:
+    async def read_catalogues() -> Item:
+        """需要核对官职、属地时取两张目录；含正名、别名、衙门及员额。"""
+        tables: Item = {kind: {} for kind in CATALOGUE_KINDS}
+        for row in ledger.read(ENTITY_ROWS.with_only_columns(
+            E.kind, E.key, E.data["aliases"].label("aliases"),
+            E.data["department"].as_string().label("department"),
+            E.data["multiple"].as_boolean().label("multiple"),
+            E.data["region"].as_string().label("region"),
+        ).where(E.kind.in_(tables))):
+            tables[row["kind"]][row["key"]] = {k: v for k, v in row.items() if k not in {"kind", "key"} and v is not None}
+        return tables
+
     agent = build_agent(
         model,
+        tools=[Tool(read_catalogues, takes_ctx=False)],
         name=output_type.__name__,
         deps_type=UUID,
         output_type=PromptedOutput(output_type),
-        instructions=instructions,
+        instructions=instructions + "\n官职和属地不混在实况名册里；需要核对官名、地名、别名、所属衙门或员额时，用 read_catalogues 取两张目录。",
         retries=1,
     )
 
     @agent.instructions
     async def names() -> str:
-        # These local ledger reads stay on the caller's event loop, like tools;
-        # only model I/O needs to yield. No thread-pool hop for a tiny catalogue.
+        # Queries and JSON encoding stay on the caller's loop, like tools;
+        # only model I/O yields.
         return json.dumps(
             {
-                "names_and_aliases": catalogue(ledger),
+                "names_and_aliases": catalogue(ledger, exclude=CATALOGUE_KINDS),
                 "field_schemas": {"payment_policy": PaymentPolicy.model_json_schema()},
                 "allowed_fields": {
                     k: sorted(v) for k, v in allowed_fields(ledger).items()

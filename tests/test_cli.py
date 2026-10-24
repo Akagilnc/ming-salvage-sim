@@ -21,7 +21,7 @@ def test_cli_preserves_jsonl_and_resumes_failed_month(
     case = json.loads((RECORDED / "night_approved.json").read_text())
     steps["Declaration"] = TestModel(
         call_tools=[],
-        custom_output_text=(RECORDED / "month_money_300000.txt").read_text(),
+        custom_output_text=json.loads((RECORDED / "month_money_once_300000.json").read_text())["reply"],
     )
     steps["simulation"] = replaying(
         [

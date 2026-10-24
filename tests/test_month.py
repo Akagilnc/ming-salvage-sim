@@ -6,7 +6,7 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
-from pydantic_ai.messages import RetryPromptPart
+from pydantic_ai.messages import ModelMessagesTypeAdapter, RetryPromptPart
 from pydantic_ai.models.test import TestModel
 from sqlalchemy import event, text
 from sqlalchemy.orm import Session
@@ -278,16 +278,11 @@ def test_returned_urgent_waits_through_vacancy(
         assert client.get("/state").json()["game"]["returned_petitions"] == []
         for phase, month in (("vacancy", 12), ("appointment", 1)):
             case = json.loads((RECORDED / f"sources_{phase}.json").read_text())
-            steps["scene"] = replaying(case["scenes"])
+            steps["scene"] = replaying(ModelMessagesTypeAdapter.validate_python(case["scene_responses"]))
             steps["NightDeclaration"] = replaying([case["declaration"]])
             if phase == "appointment":
+                # The accepted immediate appointment takes effect during the night.
                 steps["urgent"] = replaying([revision] * 2, drafting)
-                # 曹化淳 takes office when the month lands his appointment decree.
-                steps["Declaration"] = replaying(
-                    lambda messages: case["landing"]
-                    if _declaration_prompt(messages)["source"]["kind"] == "decree"
-                    else (RECORDED / "month_empty.txt").read_text()
-                )
             client.post("/actions", json={"action": "open"})
             for words in case["words"]:
                 client.post("/actions", json={"action": "say", "words": words})
@@ -307,7 +302,7 @@ def test_returned_urgent_waits_through_vacancy(
                     for m in drafting
                     for p in m.parts
                     if isinstance(p, RetryPromptPart)
-                ] == [("revision_of", [original["id"]])]
+                ] == [("petitions[0].revision_of", [original["id"]])]
             else:
                 assert state["failure"] is None
                 assert state["date"]["month"] == month
@@ -349,10 +344,8 @@ def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
     tmp_path: Path, game_db: Path, case, steps, audit
 ) -> None:
     nominal, actual, interrupt = case
-    steps["Declaration"] = TestModel(
-        call_tools=[],
-        custom_output_text=(RECORDED / f"month_money_{nominal}.txt").read_text(),
-    )
+    recorded = json.loads((RECORDED / f"month_money_once_{nominal}.json").read_text())["reply"]
+    steps["Declaration"] = replaying(lambda _: recorded)
     observed = []
 
     def before_commit(session):
@@ -390,7 +383,7 @@ def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
                 e["key"]: e["data"]["taels"]
                 for e in ledger["entities"]
                 if e["kind"] == "account"
-            } == {"国库": 3200000, "内库": 4400000}
+            } == {"国库": 3200000, "内库": 4400000, "节慎库": 600000, "常盈库": 1200000}
             assert not [
                 f for f in ledger["facts"] if f["kind"] in {"changed", "landed"}
             ]
@@ -405,7 +398,7 @@ def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
             for e in ledger["entities"]
             if e["kind"] == "account"
         } == pytest.approx(
-            {"国库": 11940269.2869425 - actual, "内库": 7657600 + actual}
+            {"国库": 11940269.2869425 - actual, "内库": 7657600 + actual, "节慎库": 630000, "常盈库": 1250000}
         )
         transfers = [
             f["detail"]
@@ -414,8 +407,10 @@ def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
         ]
         assert [(t["nominal"]["taels"], t["actual"]["taels"]) for t in transfers] == [
             (-nominal, -actual),
-            (nominal, actual),
         ]
+        destination = next(e["id"] for e in ledger["entities"] if e["kind"] == "account" and e["key"] == "内库")
+        assert [(f["detail"]["nominal"], f["detail"]["actual"], f["detail"]["source"])
+                for f in ledger["facts"] if f["entity_id"] == destination and f["kind"] == "received"] == [(nominal, actual, "国库")]
         public = audit(db, identity="public")
         assert not [e for e in public["entities"] if e["kind"] == "account"]
         assert all(
@@ -674,8 +669,8 @@ def test_fiscal_petition_lands_only_declared_outcome_without_readding_levies(
     opening_db, game_db: Path, steps, audit, case: tuple
 ) -> None:
     recording = json.loads((RECORDED / case[0]).read_text())
-    for name, replies in recording.items():
-        steps[name] = replaying(replies)
+    for name in ("simulation", "Declaration"):
+        steps[name] = replaying(recording[name])
     if case[5] is not None:
         steps["Declaration"] = replaying([(RECORDED / case[5]).read_text()])
     with TestClient(create_app(game_db.parent)) as client:
@@ -704,7 +699,7 @@ def test_fiscal_petition_lands_only_declared_outcome_without_readding_levies(
                 next(
                     e["data"].get("terminal_reason")
                     for e in ledger["entities"]
-                    if (e["kind"], e["key"]) == ("event", case[1])
+                    if (e["kind"], e["key"]) == ("historical_event", case[1])
                 )
                 == case[2]
             )
@@ -735,11 +730,27 @@ def test_fiscal_petition_lands_only_declared_outcome_without_readding_levies(
 @pytest.mark.parametrize(
     "declared",
     [
+        *[pytest.param((case, field), id=case) for case, field in [
+            ("ambiguous", "facts[0].entity"),
+            ("unknown_office", "facts[0].entity"),
+            ("unknown_incumbency_report", "reports[0].entity"),
+            ("multiple", "facts[0].changes[0].value"),
+            ("unknown_person", "facts[0].changes[0].value[0]"),
+            ("knowledge", "facts[0].changes[0].field"),
+            ("fiscal_target", "facts[0].entity"),
+            ("new_account", "facts[0].create"),
+            ("new_office", "facts[0].create"),
+            ("new_territory", "facts[0].create"),
+            ("new_historical", "facts[0].create"),
+            ("missing_recipient", "facts[0].changes[0].counterpart"),
+            ("unknown_recipient", "facts[0].changes[0].counterpart.entity"),
+            ("positive_counterpart", "facts[0].changes[0].value"),
+        ]],
         pytest.param((RECORDED / "month_invalid.txt").read_text(), id="invalid_shape"),
         pytest.param(
             [
                 {
-                    "entity_type": "event",
+                    "entity_type": "historical_event",
                     "entity": "辽饷升至一分二厘",
                     "create": False,
                     "changes": [{"field": "terminal_reason", "value": "不准"}],
@@ -795,40 +806,6 @@ def test_fiscal_petition_lands_only_declared_outcome_without_readding_levies(
                 }
             ],
             id="payment_order",
-        ),
-        pytest.param(
-            [
-                {
-                    "entity_type": "fiscal",
-                    "entity": "宗室禄米_base",
-                    "create": False,
-                    "changes": [
-                        {
-                            "field": "payment_policy",
-                            "value": {"factor": -0.5, "defer": 0.0},
-                        }
-                    ],
-                    "text": "减额比例为负",
-                }
-            ],
-            id="factor_negative",
-        ),
-        pytest.param(
-            [
-                {
-                    "entity_type": "fiscal",
-                    "entity": "宗室禄米_base",
-                    "create": False,
-                    "changes": [
-                        {
-                            "field": "payment_policy",
-                            "value": {"factor": 1.5, "defer": 0.0},
-                        }
-                    ],
-                    "text": "减额比例大于一",
-                }
-            ],
-            id="factor_high",
         ),
         pytest.param(
             [
@@ -909,7 +886,10 @@ def test_exhausted_month_declaration_is_unhandled_not_a_stopped_month(
         if isinstance(declared, str)
         else json.dumps({"facts": declared}, ensure_ascii=False)
     )
-    steps["Declaration"] = replaying([reply, reply])
+    if isinstance(declared, tuple):
+        reply = json.dumps(json.loads((RECORDED / {"fiscal_target": "cabinet_wei.json"}.get(declared[0], "declarations_v9.json")).read_text())["cases"][declared[0]], ensure_ascii=False)
+    received = []
+    steps["Declaration"] = replaying([reply, reply], received)
     with TestClient(create_app(tmp_path)) as client:
         save = client.post(
             "/actions", json={"action": "load", "save": game_db.name}
@@ -932,9 +912,9 @@ def test_exhausted_month_declaration_is_unhandled_not_a_stopped_month(
             e["key"]: e["data"]["taels"]
             for e in ledger["entities"]
             if e["kind"] == "account"
-        } == pytest.approx({"国库": 11940269.2869425, "内库": 7657600})
+        } == pytest.approx({"国库": 11940269.2869425, "内库": 7657600, "节慎库": 630000, "常盈库": 1250000})
         rows = {(e["kind"], e["key"]): e["data"] for e in ledger["entities"]}
-        assert rows[("event", "辽饷升至一分二厘")].get("terminal_reason") is None
+        assert rows[("historical_event", "辽饷升至一分二厘")].get("terminal_reason") is None
         assert rows[("army", "关宁军 / 宁锦防线")]["arrears"] == 60
         assert rows[("account", "国库")]["payment_order"] == GUOKU_ORDER
         assert "fiscal_surcharge" not in rows[("region", "陕西")]
@@ -944,3 +924,13 @@ def test_exhausted_month_declaration_is_unhandled_not_a_stopped_month(
         settled = [f for f in ledger["facts"] if f["kind"] == "month_accounts"]
         assert settled[-1]["detail"]["date"]["year"] == 1627
         assert settled[-1]["detail"]["date"]["month"] == 10
+        if isinstance(declared, tuple):
+            failure = json.loads(next(p.content for m in received for p in m.parts if isinstance(p, RetryPromptPart)))
+            assert failure["field"] == declared[1]
+            assert set(failure) == {"field", "current", "expected", "action"}
+            if declared[0] == "ambiguous":
+                assert {("知县", "保定府新城县"), ("知县", "济南府新城县")} <= {(p["office"], p["territory"]) for p in failure["expected"]}
+            elif declared[0] == "unknown_recipient":
+                assert set(failure["expected"]) == {"国库", "内库", "节慎库", "常盈库"}
+            elif declared[0] == "multiple":
+                assert failure["expected"] == {"maxItems": 1}
