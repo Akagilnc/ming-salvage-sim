@@ -77,7 +77,7 @@
       "status": "offstage",
       "reason_code": "自请",
       "status_reason": "前内阁首辅，罢居蒲州",
-      "historical_office": "内阁首辅",
+      "historical_office": {"office": "内阁大学士", "territory": ""},
       "appointments": [],
       "identity_description": "前内阁首辅，罢居蒲州",
       "source": "《明史》卷240·韩爌传：天启中被逐，崇祯元年召还；卷41·地理志山西蒲州。开局居蒲州，不在京师。"
@@ -306,6 +306,7 @@
       "location": "shandong",
       "appointments": [],
       "identity_description": "原任南京户部尚书，告归家居",
+      "historical_office": {"office": "南京户部尚书", "territory": ""},
       "source": "《明史》卷256·毕自严传；天启六年迁南京户部尚书、旋告归。",
       "status": "offstage"
     },
@@ -492,7 +493,7 @@
       "status": "dismissed",
       "reason_code": "获罪削籍",
       "status_reason": "忤魏忠贤削籍，家居松江",
-      "historical_office": "南京吏部右侍郎",
+      "historical_office": {"office": "南京吏部右侍郎", "territory": ""},
       "appointments": [],
       "identity_description": "前南京吏部右侍郎，家居松江",
       "source": "《明史》卷251·钱龙锡传：天启五年改南京吏部右侍郎，忤魏削籍；卷23记天启七年十二月拜礼部尚书兼东阁大学士，明年六月入朝。十月不预记阁职，家居松江为游戏设定。"
@@ -529,7 +530,7 @@
       "appointments": [],
       "identity_description": "前少詹事，削籍在乡",
       "source": "《明史》卷251·刘鸿训传：天启六年冬起少詹事，忤魏斥为民；卷23记天启七年十二月拜大学士，崇祯元年四月还朝。十月不预记阁职，家居山东为游戏设定。",
-      "historical_office": "少詹事",
+      "historical_office": {"office": "少詹事", "territory": ""},
       "status": "dismissed",
       "reason_code": "获罪削籍",
       "status_reason": "忤魏忠贤斥为民"
@@ -566,7 +567,7 @@
       "status": "dismissed",
       "reason_code": "获罪削籍",
       "status_reason": "前礼部右侍郎,罢居常熟",
-      "historical_office": "礼部右侍郎",
+      "historical_office": {"office": "礼部右侍郎", "territory": ""},
       "appointments": [],
       "identity_description": "前礼部右侍郎,罢居常熟",
       "source": "游戏设定：开局取失势文臣、罢居常熟，身份、派系、能力沿用本局设定；常熟属南直隶苏州府，见《明史》卷40，所在地不再误写京师。"
@@ -625,7 +626,7 @@
       "appointments": [],
       "identity_description": "前礼部右侍郎，引疾家居",
       "source": "《明史》卷251·李标传：天启中任礼部右侍郎，惧祸引疾归；卷23记天启七年十二月即家拜大学士，崇祯元年三月入朝。十月不预记阁职，家居高邑为游戏设定。",
-      "historical_office": "礼部右侍郎",
+      "historical_office": {"office": "礼部右侍郎", "territory": ""},
       "status": "dismissed",
       "reason_code": "自请",
       "status_reason": "惧祸引疾归里"
@@ -664,7 +665,7 @@
       "status": "offstage",
       "reason_code": "自请",
       "status_reason": "前蓟辽督师,罢居高阳",
-      "historical_office": "蓟辽督师",
+      "historical_office": {"office": "总督", "territory": "蓟辽"},
       "appointments": [],
       "identity_description": "前蓟辽督师,罢居高阳",
       "source": "游戏设定：1627年10月开局人物；身份、派系、能力与未注明史证的在任/在籍取本局设定，不以非官身份建官职。"
@@ -785,7 +786,7 @@
       "status": "offstage",
       "reason_code": "自请",
       "status_reason": "前礼部右侍郎，落职闲住上海",
-      "historical_office": "礼部右侍郎",
+      "historical_office": {"office": "礼部右侍郎", "territory": ""},
       "appointments": [],
       "identity_description": "前礼部右侍郎，落职闲住上海",
       "source": "《明史》卷251·徐光启传：天启三年擢礼部右侍郎，五年落职闲住，崇祯元年召还。上海归南直隶盘面。"
@@ -934,7 +935,7 @@
       "status": "offstage",
       "reason_code": "自请",
       "status_reason": "前登莱巡抚,罢居睢州",
-      "historical_office": "登莱巡抚",
+      "historical_office": {"office": "巡抚", "territory": "登莱"},
       "appointments": [],
       "identity_description": "前登莱巡抚,罢居睢州",
       "source": "游戏设定：1627年10月开局人物；身份、派系、能力与未注明史证的在任/在籍取本局设定，不以非官身份建官职。"
@@ -1053,6 +1054,7 @@
       "status": "offstage",
       "appointments": [],
       "identity_description": "原翰林院编修，丁母忧家居漳浦",
+      "historical_office": {"office": "翰林院编修", "territory": ""},
       "source": "《明史》卷255·黄道周传：天启二年授编修，内艰归；崇祯二年起故官。开局不提前复职。"
     },
     {
@@ -1388,7 +1390,7 @@
       "status": "offstage",
       "reason_code": "自请",
       "status_reason": "前辽东巡抚,罢居东莞",
-      "historical_office": "辽东巡抚",
+      "historical_office": {"office": "巡抚", "territory": "辽东"},
       "appointments": [],
       "identity_description": "前辽东巡抚,罢居东莞",
       "source": "游戏设定：1627年10月开局人物；身份、派系、能力与未注明史证的在任/在籍取本局设定，不以非官身份建官职。"
@@ -1729,6 +1731,7 @@
       "location": "shanxi",
       "appointments": [],
       "identity_description": "原任吏部稽勋郎中，请告家居",
+      "historical_office": {"office": "吏部稽勋清吏司郎中", "territory": ""},
       "source": "《明史》卷262·孙传庭传：天启初擢吏部验封主事，屡迁稽勋郎中，请告归，家居久不出。",
       "status": "offstage"
     },
@@ -1763,6 +1766,7 @@
       "power_id": "ming",
       "appointments": [],
       "identity_description": "延绥兵变弹压不力，革职候勘",
+      "historical_office": {"office": "巡抚", "territory": "陕西"},
       "source": "游戏设定：1627年10月开局人物；身份、派系、能力与未注明史证的在任/在籍取本局设定，不以非官身份建官职。"
     },
     {
@@ -3167,6 +3171,7 @@
       },
       "appointments": [],
       "identity_description": "原御史，削籍家居永城",
+      "historical_office": {"office": "监察御史", "territory": ""},
       "source": "《明史》卷260·练国事传：天启中削籍，崇祯元年复官，擢太仆少卿。开局居永城取游戏设定，不提前授太仆少卿或陕西巡抚。"
     },
     {
@@ -3462,6 +3467,7 @@
       },
       "appointments": [],
       "identity_description": "原江西永丰知县，丁忧家居常熟",
+      "historical_office": {"office": "知县", "territory": "吉安府永丰县"},
       "source": "《明史》卷280·瞿式耜传：天启元年调江陵而永丰民乞留，再任后以忧归；崇祯元年擢户科给事中。开局家居常熟取游戏设定，不提前授给事中。"
     },
     {

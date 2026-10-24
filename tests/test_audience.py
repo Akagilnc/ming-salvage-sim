@@ -138,21 +138,20 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
 @pytest.mark.usefixtures("backed_night")
 @pytest.mark.parametrize("game_db", ["backed_night"], indirect=True)
 @pytest.mark.parametrize("backed_night,recording,case", [
-    ("endorsed", "endorsed", case) for case in ["approved", "held", "form", "source"]
+    ("endorsed", "endorsed", case) for case in ["approved", "held", "form", "source", "name", "person"]
 ] + [("double", "double", "approved")], indirect=["backed_night"])
 def test_backing_follows_its_decree_and_signers(game_db, steps, audit, case, recording):
     recording = json.loads((RECORDED / f"night_{recording}.json").read_text())
     reply = json.loads(recording["replies"][-1])
     declared = reply["decrees"][0]["endorsements"]
     received = []
-    if case in {"form", "source"}:
+    if case in {"form", "source", "name", "person"}:
         endorsement = dict(declared[0])
         reply["decrees"][0]["endorsements"] = [endorsement, *declared[1:]]
+        endorsement.update({"form": {"form": "力保"}, "source": {"source_chat_turn_id": "other-night"}, "name": {"endorser": "不存在的担名人"}, "person": {}}[case])
+        reply["decrees"][0]["people"][0] = "不存在的领旨者" if case == "person" else reply["decrees"][0]["people"][0]
         if case == "form":
             del endorsement["endorser"]
-            endorsement["form"] = "力保"
-        else:
-            endorsement["source_chat_turn_id"] = "other-night"
         steps["NightDeclaration"] = replaying([json.dumps(reply, ensure_ascii=False)] * 2, received)
     else:
         steps["NightDeclaration"] = replaying(recording["replies"])
@@ -186,6 +185,12 @@ def test_backing_follows_its_decree_and_signers(game_db, steps, audit, case, rec
                     and item["input"] == "力保"
                     for item in errors
                 )
+            if case in {"name", "person"}:
+                failure = json.loads(retries[0].content)
+                assert failure["field"] == ("decrees[0].endorsements[0].endorser" if case == "name" else "decrees[0].people[0]")
+                assert failure["current"] == ("不存在的担名人" if case == "name" else "不存在的领旨者")
+                assert "毕自严" in failure["expected"]
+                assert set(failure) == {"field", "current", "expected", "action"}
             assert len([f for f in audit(game_db)["facts"] if f["kind"] == "unhandled"]) == 1
             assert [f["detail"] for f in client.get("/records").json()["facts"] if f["kind"] == "unhandled"] == [{}]
             client.post("/actions", json={"action": "month"}).raise_for_status()

@@ -11,7 +11,7 @@ from ming.ledger import Item, Ledger
 from ming.ledger import ENTITY_COLUMNS as E, FACT_COLUMNS as F, ENTITY_ROWS, FACT_ROWS
 from ming.middle.calendar import calendar_if_any
 from ming.middle.queries import available_on, public_decree
-from ming.middle.appointments import held_by
+from ming.middle.appointments import CATALOGUE_KINDS, held_by
 from ming.middle.night import known_people, read_night
 
 HIDDEN_JOURNEY = {"remaining_distance", "travel_speed"}
@@ -182,6 +182,8 @@ def entities(
     )
     if sourced:
         query = query.where(E.source != "")
+    if identity == "world" and selection.get("kind") is None:
+        query = query.where(E.kind.not_in(CATALOGUE_KINDS))
     rows = ledger.entities(**selection, query=query)
     appointments = held_by(ledger, [row["key"] for row in rows if row["kind"] == "person"]) if identity != "audit" else []
     result: list[EntityView] = []
@@ -383,7 +385,7 @@ def project(
                         for k, v in fact.detail.items()
                         if item["exposure"] == "dated"
                         and k in (
-                            {"date", "successor"}
+                            {"date", "office", "territory", "holders"}
                             | ({"decree_id", "endorser", "form"} if fact.kind == "endorsed" else set())
                         )
                     },

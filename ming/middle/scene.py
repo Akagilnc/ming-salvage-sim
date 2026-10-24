@@ -29,6 +29,7 @@ class HallResult(BaseModel):
 PERSON_FIELDS = {
     "name",
     "identity_description",
+    "historical_office",
     "location",
     "status",
     "faction",
@@ -64,7 +65,7 @@ def read_person(ledger: Ledger, name: str) -> PersonView:
             **{
                 k: v
                 for k, v in e.detail.items()
-                if k in {"date", "text", "successor", "decree_id", "endorser", "form", "source_chat_turn_id"}
+                if k in {"date", "text", "office", "territory", "holders", "decree_id", "endorser", "form", "source_chat_turn_id"}
             },
         }
         for e in project(ledger, identity, {"entity_id": [person["id"], *decrees]})

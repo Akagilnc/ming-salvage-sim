@@ -44,7 +44,8 @@ def replaying(
 def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(game_db, steps, audit):
     case = json.loads((RECORDED / "appointments.json").read_text())
     replacement = json.loads((RECORDED / "appointments_replace_aliases.json").read_text())
-    steps["NightDeclaration"] = replaying([case["reply"], replacement["reply"], replacement["reply"]])
+    received = []
+    steps["NightDeclaration"] = replaying([*ModelMessagesTypeAdapter.validate_python(case["responses"]), replacement["reply"], replacement["reply"]], received)
     before = {e["key"]: e for e in audit(game_db)["entities"] if e["kind"] == "person"}
     with TestClient(create_app(game_db.parent)) as client:
         client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
@@ -53,12 +54,21 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
         state = client.get("/state").json()["game"]
         assert state["failure"] is None
         assert state["night"]["result"] == "translated"
+        directory = next(p.model_response_object() for m in received for p in m.parts if isinstance(p, ToolReturnPart) and p.tool_name == "read_catalogues")
+        assert directory["office"]["户部尚书"]["multiple"] is False
+        assert directory["office"]["内阁大学士"]["multiple"] is True
+        assert "西安" in directory["territory"]["陕西西安府"]["aliases"]
         ledger = audit(game_db)
         held = {(e["data"]["office"], e["data"]["territory"]): e["data"]["holders"] for e in ledger["entities"] if e["kind"] == "incumbency"}
         assert held[("户部右侍郎", "")] == ["杨嗣昌"]
         assert held[("户部尚书", "")] == ["徐光启"]
         assert held[("內承運庫掌印太监", "")] == ["徐光启"]
-        assert held[("内阁大学士", "")] == ["韩爌", "毕自严"]
+        assert set(held[("内阁大学士", "")]) == {"黄立极", "施凤来", "张瑞图", "韩爌", "毕自严"}
+        assert held[("中极殿大学士", "")] == ["李国普"]
+        assert held[("知府", "陕西西安府")] == ["李待问"]
+        assert held[("巡抚", "山西大同镇")] == ["王绍徽"]
+        xian = next(e for e in ledger["entities"] if e["kind"] == "incumbency" and e["data"]["office"] == "知府" and e["data"]["territory"] == "陕西西安府")
+        assert [f["detail"]["actual"]["holders"] for f in ledger["facts"] if f["entity_id"] == xian["id"] and f["kind"] == "changed"] == [["杨嗣昌"], ["李待问"]]
         shown = next(e for e in client.get("/records").json()["entities"] if e["kind"] == "person" and e["key"] == "徐光启")
         assert {(a["office"], a["territory"]) for a in shown["data"]["appointments"]} == {("户部尚书", ""), ("內承運庫掌印太监", "")}
         assert held[("知县", "保定府新城县")] == ["李待问"]
@@ -82,6 +92,7 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
         assert "taels" not in returned["韩爌"]["accounts"][0]["data"]
         assert {(a["office"], a["territory"]) for a in returned["徐光启"]["appointments"]} == {("户部尚书", ""), ("內承運庫掌印太监", "")}
         assert returned["郭允厚"]["appointments"] == []
+        assert [(e["office"], e["territory"], e["holders"]) for e in returned["郭允厚"]["events"] if e["kind"] == "displaced"] == [("户部尚书", "", ["徐光启"])]
         urgent = []
         steps["urgent"] = replaying([(RECORDED / "sources_empty.txt").read_text()], urgent)
         client.post("/actions", json={"action": "dismiss"}).raise_for_status()
@@ -102,20 +113,23 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
         assert client.get("/state").json()["game"]["failure"] is None
         assert client.get("/state").json()["game"]["date"]["month"] == 11
         assert urgent
-        assert {p["name"] for p in json.loads(urgent[0].parts[0].content)["context"]["drafters"]} == {"韩爌", "毕自严", "李国普", "王体乾"}
+        assert {p["name"] for p in json.loads(urgent[0].parts[0].content)["context"]["drafters"]} == {"黄立极", "施凤来", "张瑞图", "韩爌", "毕自严", "李国普", "王体乾"}
 
 
 @pytest.mark.parametrize("case", ["range", "purpose_region"])
 def test_recorded_r2_reply_lands(game_db, steps, audit, case):
     reply = (json.loads((RECORDED / "range_v9.json").read_text())["reply"] if case == "range" else
              json.dumps(json.loads((RECORDED / "declarations_v9.json").read_text())["cases"][case], ensure_ascii=False))
-    steps["Declaration"] = replaying([reply, reply])
+    received = []
+    steps["Declaration"] = replaying([reply, reply], received)
     with TestClient(create_app(game_db.parent)) as client:
         client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
         client.post("/actions", json={"action": "month"}).raise_for_status()
         state = client.get("/state").json()["game"]
         assert state["failure"] is None
         assert state["date"]["month"] == 11
+        material = json.loads(received[0].parts[0].content.split("\n", 1)[1])
+        assert not {"office", "territory"}.intersection(e["kind"] for e in material["entities"])
         ledger = audit(game_db)
         assert not [f for f in ledger["facts"] if f["kind"] == "unhandled"]
         rows = {(e["kind"], e["key"]): e for e in ledger["entities"]}

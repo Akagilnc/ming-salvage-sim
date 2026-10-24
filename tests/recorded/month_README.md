@@ -1,5 +1,19 @@
 # 月推进边界录音
 
+## #1965 御史台重交（2026-10-24）
+
+证据在下述归档根的 `r2/`：`appointments.json` 按当前 NightDeclaration 重录，
+源输入、定稿 schema 与原生回话见夹具 `source` 指针。`record-appointments.py` 的输入明写“增任，原阁臣全部留任”，
+并录出 `西安知府` / `西安府知府` 的两次先后任职与 `大同巡抚`；不是手改 holders。
+第一份新录未带员额，且把户部尚书写为两人，留在 `appointments-live/`，未用于夹具；
+补齐实际目录的员额后再录 `appointments-retry-live/`，得到合法草稿。最终夹具采用
+`live-catalogue-lookup-final/` 中生产 `Court.translation_agent` 的原生 `read_catalogues` 调用及最终回话，
+保留工具参数、call id 与正文，仅去 MCP transport 前缀；重放也走真实两表查询。
+测试里恢复了查无背书人及旨意 people 单项查无两条负向案，均由既有真回复改一个引用字段，不改被测行为。
+五份旧 northstar/r2 孤儿录件移至 `r2/retired-recordings/`，路径记入 `artifact-relocation.json`。
+静态两表由转译的原生 `read_catalogues` 工具在需要时供给，不再写进每次世界实况与名册提示两遍；
+审计读仍保留完整账本，世界按 kind 显式查目录仍可读，普通全量世界读不夹带目录。
+
 ## #1965 官职、知情与单笔钱粮迁移（2026-10-24）
 
 归档根：`~/WorkSpace/vault/ak-cc-wiki/raw/ming-llm-runner/2026-10-24/1965/`。

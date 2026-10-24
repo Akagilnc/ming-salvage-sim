@@ -18,7 +18,7 @@ from ming.middle.declaration import (
 )
 from ming.middle.rules import field_values, money_amounts
 from ming.middle.fiscal import WAN, current_paid, has_obligation
-from ming.middle.appointments import reference_key
+from ming.middle.appointments import incumbency_record
 
 def landing_entities(
     ledger: Ledger, result: Declaration | Unhandled, owner: Entity
@@ -26,7 +26,7 @@ def landing_entities(
     pairs = {("calendar", "world"), (owner.kind, owner.key)}
     if not isinstance(result, Unhandled):
         pairs.update(
-            (f.entity_type, reference_key(ledger, f.entity_type, f.entity))
+            (f.entity_type, f.entity)
             for f in [*result.facts, *result.reports]
         )
         pairs.update(
@@ -94,13 +94,12 @@ def dispatch(
     )
 
     def known(kind: str, key: str) -> Entity:
-        pair = kind, reference_key(ledger, kind, key)
+        pair = kind, key
         if pair not in changed:
             if pair in existing:
                 changed[pair] = ledger.get(existing[pair]["id"])
             else:
-                data: Item = (dict(zip(("office", "territory"), json.loads(pair[1]))) | {"holders": []}
-                        if kind == "incumbency" else {})
+                data: Item = incumbency_record(json.loads(key), [])[1] if kind == "incumbency" else {}
                 changed[pair] = Entity(*pair, "", data)
         return changed[pair]
 
@@ -130,7 +129,7 @@ def dispatch(
             if key[:2] in existing
         }
         for fact in result.facts:
-            pair = fact.entity_type, reference_key(ledger, fact.entity_type, fact.entity)
+            pair = fact.entity_type, fact.entity
             if (fact.create or fact.entity_type == "incumbency") and pair not in existing:
                 existing[pair] = known(fact.entity_type, fact.entity).snapshot()
         amounts, reasons = money_amounts(result.facts, existing)

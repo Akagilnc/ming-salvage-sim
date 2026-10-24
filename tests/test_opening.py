@@ -88,6 +88,14 @@ def test_new_game_imports_complete_world_records_and_separates_identities(
         assert [{k: a[k] for k in ("office", "territory")} for a in shown[name]["appointments"]] == characters[name]["appointments"]
     assert shown["孙传庭"]["appointments"] == []
     assert shown["毕自严"]["appointments"] == []
+    people = {e["key"]: e["data"] for e in entities if e["kind"] == "person"}
+    assert people["毕自严"]["historical_office"] == {"office": "南京户部尚书", "territory": ""}
+    assert people["孙传庭"]["historical_office"] == {"office": "吏部稽勋清吏司郎中", "territory": ""}
+    territories = {e["key"] for e in entities if e["kind"] == "territory"}
+    for person in people.values():
+        if former := person.get("historical_office"):
+            assert former["office"] in offices
+            assert not former["territory"] or former["territory"] in territories
     assert all(shown[name]["appointments"] == [] for name in ("黄道周", "练国事", "何腾蛟", "瞿式耜", "钱龙锡", "刘鸿训", "李标"))
     assert shown["韩爌"]["location"] == "山西"
     assert shown["来宗道"]["appointments"] == [{"office": "礼部尚书", "territory": "", "holders": ["来宗道"]}]

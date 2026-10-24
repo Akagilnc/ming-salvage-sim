@@ -1,10 +1,19 @@
 """Exact catalogue references and current appointments, independent of people."""
 
 import json
+from collections.abc import Sequence
 
 from sqlalchemy import func, literal, or_, select
 
 from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS, Item, Ledger
+
+CATALOGUE_KINDS = ("office", "territory")
+
+
+def incumbency_record(pair: Sequence[str], holders: list[str]) -> tuple[str, Item]:
+    return json.dumps(pair, ensure_ascii=False), {
+        "office": pair[0], "territory": pair[1], "holders": holders,
+    }
 
 
 def named(ledger: Ledger, kind: str, value: str) -> list[Item]:
@@ -35,7 +44,7 @@ def office_pairs(ledger: Ledger, value: str) -> list[tuple[str, str]]:
 
 def reference_key(ledger: Ledger, kind: str, value: str) -> str:
     matches = (
-        [json.dumps(pair, ensure_ascii=False) for pair in office_pairs(ledger, value)]
+        [incumbency_record(pair, [])[0] for pair in office_pairs(ledger, value)]
         if kind == "incumbency"
         else [row["key"] for row in named(ledger, kind, value)]
     )

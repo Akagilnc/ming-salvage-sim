@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from ming.ledger import Entity, Ledger
+from ming.middle.appointments import incumbency_record
 
 CONTENT = Path(__file__).resolve().parents[2] / "content"
 COLLECTIONS = [
@@ -69,11 +70,9 @@ def import_opening(ledger: Ledger, content: Path) -> None:
                 entities.append(Entity(kind, key, f"{path.name}/{collection}", record))
             except (KeyError, TypeError) as exc:
                 raise ValueError(f"{path}/{collection}[{index}]: {record!r}: {exc}") from exc
-    entities.extend(
-        Entity("incumbency", json.dumps(pair, ensure_ascii=False), "characters.json/appointments", {
-            "office": pair[0], "territory": pair[1], "holders": holders,
-        }) for pair, holders in appointments.items()
-    )
+    for pair, holders in appointments.items():
+        key, data = incumbency_record(pair, holders)
+        entities.append(Entity("incumbency", key, "characters.json/appointments", data))
     matrix = json.loads((content / "distance_matrix.json").read_text())["matrix"]
     entities.extend(
         Entity("distance", names["region"][origin], "distance_matrix.json", {

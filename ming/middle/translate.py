@@ -5,16 +5,18 @@ from typing import Any, TypeVar, cast
 from uuid import UUID
 
 from pydantic import ValidationError
+from sqlalchemy import func, select, true
 from pydantic_ai import (
     Agent,
     PromptedOutput,
     RunContext,
+    Tool,
     capture_run_messages,
 )
 from pydantic_ai.exceptions import ToolRetryError, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelResponse
 
-from ming.ledger import Ledger
+from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS, Item, Ledger
 from ming.middle.fiscal import OUTPUT_METRICS, levers, payable_army, settling
 from ming.middle.declaration import (
     Declaration,
@@ -27,7 +29,7 @@ from ming.middle.declaration import (
 from ming.middle.queries import CATALOGUE
 from ming.middle.night import read_night
 from ming.middle.opening import REFERENCES
-from ming.middle.appointments import office_pairs, reference_key
+from ming.middle.appointments import CATALOGUE_KINDS, incumbency_record, office_pairs, reference_key
 from ming.middle.rules import Names, check_rules, fail
 from ming.middle.invoke import ModelSource, build_agent, invoke
 
@@ -50,11 +52,13 @@ text 保留皇帝认可的圣旨定稿全文，不改写、不摘要。origin �
 """
 
 
-def catalogue(ledger: Ledger) -> dict[str, dict[str, list[str]]]:
+def catalogue(ledger: Ledger, exclude: tuple[str, ...] = ()) -> dict[str, dict[str, list[str]]]:
     result: dict[str, dict[str, list[str]]] = {}
-    for row in ledger.read(CATALOGUE):
-        aliases = row["data"].get("aliases", [])
-        name = row["data"].get("name")
+    for row in ledger.read(CATALOGUE.with_only_columns(
+        E.kind, E.key, E.data["aliases"].label("aliases"), E.data["name"].as_string().label("name"),
+    ).where(E.kind.not_in(exclude))):
+        aliases: list[str] = row["aliases"] or []
+        name = row["name"]
         if name and name != row["key"]:
             aliases = [*aliases, name]
         result.setdefault(row["kind"], {})[row["key"]] = aliases
@@ -70,16 +74,17 @@ def allowed_fields(ledger: Ledger) -> dict[str, set[str]]:
     fields: dict[str, set[str]] = {
         "affair": {"text"},
         "decree": {"text", "origin", "people"},
-        "incumbency": {"holders"},
     }
-    for row in ledger.read(CATALOGUE):
-        if row["source"] and row["kind"] != "calendar":
-            fields.setdefault(row["kind"], set()).update(row["data"])
+    keys = func.json_each(E.data).table_valued("key")
+    for row in ledger.read(select(E.kind, keys.c.key.label("field")).select_from(
+        E.id.table.join(keys, true())
+    ).where(E.source != "", E.kind != "calendar").distinct()):
+        fields.setdefault(row["kind"], set()).add(row["field"])
+    fields["incumbency"] = {"holders"}
     # Fiscal settlement, arrears and the content catalogues are engine-owned;
     # translation writes only the levers the month accounts read.
     fields["region"] = (fields.get("region", set()) - {"fiscal"}) | {"fiscal_surcharge"}
     fields["historical_event"] = {"terminal_reason"}
-    fields["incumbency"] = {"holders"}
     fields["account"] = {"taels", "payment_order", "army_order"}
     fields["fiscal"] = {"value", "payment_policy"}
     fields["army"] = (fields.get("army", set()) - {"arrears", "month_paid"}) | {
@@ -126,7 +131,7 @@ def check(ledger: Ledger, out: Declaration, source: UUID) -> None:
                 "entity 用 names_and_aliases 里的正名；没有就 create=true。确无该实体不得换成另一实体。重交整份。",
             )
         if fact.create or fact.entity_type == "incumbency":
-            known[reference_key(ledger, fact.entity_type, fact.entity)] = []
+            known[fact.entity] = []
         for j, change in enumerate(fact.changes):
             if change.counterpart:
                 change.counterpart.entity = reference_key(ledger, change.counterpart.entity_type, change.counterpart.entity)
@@ -327,6 +332,7 @@ def check_appointment(ledger: Ledger, fact: Fact, path: str, names: Names) -> No
              if pairs else {"office": names.get("office", {}), "territory": names.get("territory", {})},
              names, "写出能唯一对上两表的官名；歧义时用候选属地全名。重交整份。")
     office = ledger.entities(kind="office", key=pairs[0][0])[0]
+    fact.entity = incumbency_record(pairs[0], [])[0]
     for j, change in enumerate(fact.changes):
         if change.field != "holders":
             continue
@@ -398,22 +404,35 @@ def declaration_agent(
     output_type: type[T],
     instructions: str = INSTRUCTIONS,
 ) -> Agent[UUID, T]:
+    async def read_catalogues() -> Item:
+        """需要核对官职、属地时取两张目录；含正名、别名、衙门及员额。"""
+        tables: Item = {kind: {} for kind in CATALOGUE_KINDS}
+        for row in ledger.read(ENTITY_ROWS.with_only_columns(
+            E.kind, E.key, E.data["aliases"].label("aliases"),
+            E.data["department"].as_string().label("department"),
+            E.data["multiple"].as_boolean().label("multiple"),
+            E.data["region"].as_string().label("region"),
+        ).where(E.kind.in_(tables))):
+            tables[row["kind"]][row["key"]] = {k: v for k, v in row.items() if k not in {"kind", "key"} and v is not None}
+        return tables
+
     agent = build_agent(
         model,
+        tools=[Tool(read_catalogues, takes_ctx=False)],
         name=output_type.__name__,
         deps_type=UUID,
         output_type=PromptedOutput(output_type),
-        instructions=instructions,
+        instructions=instructions + "\n官职和属地不混在实况名册里；需要核对官名、地名、别名、所属衙门或员额时，用 read_catalogues 取两张目录。",
         retries=1,
     )
 
     @agent.instructions
     async def names() -> str:
-        # These local ledger reads stay on the caller's event loop, like tools;
-        # only model I/O needs to yield. No thread-pool hop for a tiny catalogue.
+        # Queries and JSON encoding stay on the caller's loop, like tools;
+        # only model I/O yields.
         return json.dumps(
             {
-                "names_and_aliases": catalogue(ledger),
+                "names_and_aliases": catalogue(ledger, exclude=CATALOGUE_KINDS),
                 "field_schemas": {"payment_policy": PaymentPolicy.model_json_schema()},
                 "allowed_fields": {
                     k: sorted(v) for k, v in allowed_fields(ledger).items()
