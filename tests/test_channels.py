@@ -33,6 +33,7 @@ from starlette.testclient import TestClient
 from ming.__main__ import main
 from ming.middle import codex_auth
 from ming.middle.cli_model import GROK_OFF
+from ming.middle.opening import opening_template
 from ming.web import create_app
 from tests.conftest import RECORDED, RECORDED_REPLIES
 
@@ -493,8 +494,11 @@ def test_codex_settings_require_a_model(tmp_path: Path) -> None:
     ("claude-cli", "backed_night", {"deliberation", "Declaration"}),
 ], indirect=["game_db"])
 def test_subscription_month_completes(tmp_path: Path, monkeypatch, backend: str, game_db: Path, expected_calls) -> None:
+    template = opening_template()
     monkeypatch.setenv("GROK_HOME", str(tmp_path / "grok-home"))
     monkeypatch.setenv("HOME", str(tmp_path))
+    opening_template().parent.mkdir(parents=True, exist_ok=True)
+    copyfile(template, opening_template())
     monkeypatch.setattr("ming.middle.cli_model.GROK_SLOT_COUNT", 2)
     calls, snapshots = install_process(monkeypatch, delay=0.05 if backend == "grok" else 0)
     if "deliberation" in expected_calls:
