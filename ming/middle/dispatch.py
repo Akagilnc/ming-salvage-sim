@@ -41,6 +41,12 @@ def landing_entities(
     if isinstance(result, NightDeclaration):
         pairs.update(("person", p) for d in result.decrees for p in d.people)
         pairs.update(("person", e.endorser) for d in result.decrees for e in d.endorsements if e.endorser != "御笔")
+    if not isinstance(result, Unhandled) and any(f.entity_type == "incumbency" for f in result.facts):
+        offices = ledger.entities(kind="office", query=ENTITY_ROWS.where(E.data["department"].as_string() == "内阁"))
+        pairs.update(("office", r["key"]) for r in offices)
+        pairs.update(("incumbency", r["key"]) for r in ledger.entities(
+            kind="incumbency", query=ENTITY_ROWS.where(E.data["office"].as_string().in_([r["key"] for r in offices]))
+        ))
     found = {
         (e["kind"], e["key"]): e
         for kind, key in sorted(pairs)
@@ -153,6 +159,7 @@ def dispatch(
             if entity.kind == "incumbency" and "holders" in changes:
                 displace(entity, changes["holders"], known, record, {**association, "text": fact.text})
             record(entity, "changed", detail, changes)
+            retire_chief(existing, known, record, {**association, "text": fact.text})
             if i in amounts:
                 record_receipts(fact, amounts[i], reasons[i], known, record)
         fact_origin = {}
@@ -332,6 +339,27 @@ def move_person(
         changes["status"] = "active"
     elif person.data.get("transit_to"):
         changes["status"] = "active"
+
+
+def retire_chief(
+    existing: dict[tuple[str, str], Item],
+    known: Callable[[str, str], Entity],
+    record: Callable[[Entity, str, Item, Item], None],
+    association: Item,
+) -> None:
+    chief = existing.get(("incumbency", incumbency_record(("内阁首辅", ""), [])[0]))
+    if not chief or not chief["data"]["holders"]:
+        return
+    if any(
+        row["data"]["office"] != "内阁首辅"
+        and chief["data"]["holders"][0] in row["data"]["holders"]
+        and existing.get(("office", row["data"]["office"]), {"data": {}})["data"].get("department") == "内阁"
+        for (kind, _), row in existing.items() if kind == "incumbency"
+    ):
+        return
+    appointment = known("incumbency", chief["key"])
+    displace(appointment, [], known, record, association)
+    record(appointment, "changed", {**association, "changes": {"holders": []}}, {"holders": []})
 
 
 # This rule is shared by immediate and monthly landing, not a second dispatch path.

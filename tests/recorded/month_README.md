@@ -1,5 +1,13 @@
 # 月推进边界录音
 
+## #1965 J1–J6 送修（2026-10-24）
+
+归档为本票证据根的 `fixer-j1-j6/`。`cabinet_wei.json` 是本机 Claude CLI 逐次 `haiku --json-schema` 的原生 `structured_output`；输入、schema 与 session 在 `source` 指向的三份原卷中。各案独立转写已发生的任免与故意错误，不手改输出；`chief_join` 正文中的异文也原样保留。它补入原任免 HTTP 测试的连续分支和现有财政拒收参数，不新建平行测试。
+
+`account_dossiers.json` 来自生产 `Audience` 的本机 Claude CLI 逐次 `sonnet`；原生 JSONL 为 `dossiers-v2-native.jsonl`。仅去 MCP 工具名前缀，参数、工具调用 ID、最终文字原样保留；Pydantic 消息信封时间是导入时间，不冒充原生元数据。重放在真实 `read_person` 上取当前档案，不重放工具返回值。首份 `dossiers-native.json` 只有宿主最终文本，缺原生工具调用，不用作夹具；原失败取证保留。
+
+首辅出阁、同份先入阁后任首辅、双缺位、非阁臣重交、跨地区卫所任命，以及所有账户名称和新库按月入账，均在已有 HTTP → CLI audit / 场景工具返回的结构化断言上验证。不锁正文措辞，不把录件当作历史正确性的证明。
+
 ## #1965 御史台重交（2026-10-24）
 
 证据在下述归档根的 `r2/`：`appointments.json` 按当前 NightDeclaration 重录，

@@ -195,10 +195,8 @@ def entities(
                     for k, v in row["data"].items()
                     if k in {"name", "location", "status"}
                 }
-            elif row["exposure"] == "treasury":
-                row["data"] = {"name": row["key"], "condition": (
-                    "无银可支", "极度紧绌", "大概缺钱", "尚有余裕"
-                )[sum(row["data"]["taels"] >= cutoff for cutoff in (1, 1000000, 5000000))]}
+            elif row["exposure"] == "account_name":
+                row["data"] = {"name": row["key"]}
             elif row["exposure"] == "night":
                 row["data"] = read_night(ledger, row["id"]).model_dump(mode="json")
             elif row["exposure"] == "decree":
@@ -238,7 +236,7 @@ def entity_exposure(
         (E.id.in_(access["known"]), "decree"),
     ]
     if isinstance(identity, Officials):
-        rules.append(((E.kind == "account") & (E.key == "国库"), "treasury"))
+        rules.append((E.kind == "account", "account_name"))
     if identity == "emperor":
         rules.append((E.kind == "night", "night"))
     return case(*rules)

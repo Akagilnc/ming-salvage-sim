@@ -16,6 +16,11 @@
     {"key": "central_jingyun_human_loss_rate", "value": 4, "kind": "rate", "budget_role": "dynamic", "note": "京运转运人为克扣率%，可追赃回收"},
     {"key": "central_jingyun_sink_loss_rate", "value": 2, "kind": "rate", "budget_role": "dynamic", "note": "京运转运自然运损率%，不可回收 sink"},
 
+    {"key": "抽分匠班银_base", "value": 3, "kind": "base", "budget_role": "fixed", "account": "节慎库", "direction": "income", "display": "抽分匠班银", "order": 40, "note": "游戏设定：工部抽分折银、匠班折银合为月额3万两，不含在国库省级盐商税或起运内；营缮储备须经旨意另行拨用。制度参考《明史》卷72工部、卷78役法。"},
+    {"key": "抽分匠班银_rate", "value": 100, "kind": "rate", "budget_role": "fixed", "note": "抽分匠班银实收率%，游戏设定。"},
+    {"key": "马价银_base", "value": 5, "kind": "base", "budget_role": "fixed", "account": "常盈库", "direction": "income", "display": "马价银", "order": 50, "note": "《明史》卷92马政：南土不产马改征银，常盈库贮备用马价。月额5万两为游戏设定，不在国库常赋或内库皇庄收入重复计。"},
+    {"key": "马价银_rate", "value": 100, "kind": "rate", "budget_role": "fixed", "note": "马价银实收率%，游戏设定。"},
+
     {"key": "矿税_base",     "value": 3,   "kind": "base", "budget_role": "fixed", "account": "内库", "direction": "income", "display": "矿税", "order": 30, "note": "矿税残余月额，万两"},
     {"key": "矿税_rate",     "value": 100, "kind": "rate", "budget_role": "fixed", "note": "矿税实收率%"},
     {"key": "织造_base",     "value": 12,  "kind": "base", "budget_role": "fixed", "account": "内库", "direction": "income", "display": "织造", "order": 20, "note": "苏杭织造局月上缴内库，万两"},

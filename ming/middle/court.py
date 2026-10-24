@@ -7,7 +7,6 @@ from typing import Any, TypeVar, cast
 from uuid import UUID, uuid4
 
 from pydantic_ai import Agent
-from sqlalchemy import or_, select
 from ming.ledger import (
     ENTITY_COLUMNS as E,
     FACT_COLUMNS as F,
@@ -15,6 +14,7 @@ from ming.ledger import (
     FACT_ROWS,
 )
 from ming.middle import queries
+from ming.middle.appointments import held_by
 
 from ming.ledger import Entity, Item, Ledger
 from ming.middle.dispatch import dispatch, latest_detail
@@ -84,6 +84,9 @@ class Court:
 
     def read_person(self, name: str) -> PersonView:
         return read_person(self._ledger, name)
+
+    def appointments(self, name: str) -> list[Item]:
+        return [r["data"] for r in held_by(self._ledger, [name])]
 
     def set_hall(self, night_id: UUID, add: list[str], remove: list[str]) -> HallResult:
         return set_hall(self._ledger, night_id, add, remove)
@@ -311,12 +314,7 @@ class Court:
                     E.data["faction"].as_string() == faction
                     if faction is not None
                     else queries.CURRENT_APPOINTMENT.where(
-                        or_(
-                            queries.APPOINTMENT.data["office"].as_string().in_(
-                                select(E.key).where(E.kind == "office", E.data["department"].as_string() == "内阁").correlate(None)
-                            ),
-                            queries.APPOINTMENT.data["office"].as_string() == "司礼监掌印太监",
-                        )
+                        queries.APPOINTMENT.data["office"].as_string().in_(("内阁首辅", "司礼监掌印太监"))
                     ).exists(),
                 ),
             )

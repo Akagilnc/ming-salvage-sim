@@ -58,14 +58,14 @@ class Sources:
                 "drafters": [
                     {
                         "name": e.key,
-                        "appointments": self.court.read_person(e.key).appointments,
+                        "appointments": self.court.appointments(e.key),
                         "faction": e.data.get("faction"),
                         "style": e.data.get("style"),
                     }
                     for e in people
                 ],
                 "returned": [f.detail for f in self.court.returned_petitions()],
-                "instruction": "以在职阁臣、司礼监掌印的立场择本月急务、排先后，附事实与拟旨成奏折。署名由你定，不以首辅优先。可以交空；发回原案由在职者改票并填写 revision_of，不复述原案充作新案。选项由你拟，不附发回改票按钮。",
+                "instruction": "以在职首辅、司礼监掌印的立场择本月急务、排先后，附事实与拟旨成奏折。署名由你定，不以首辅优先。可以交空；发回原案由在职者改票并填写 revision_of，不复述原案充作新案。选项由你拟，不附发回改票按钮。",
             },
         )
 
@@ -112,23 +112,24 @@ class Sources:
             originals = {
                 str(f.detail["id"]) for f in ctx.deps.court.returned_petitions()
             }
-            for item in output.petitions:
+            for index, item in enumerate(output.petitions):
                 refs = {"signer": item.signer}
                 if isinstance(item, ImpeachmentPetition):
                     refs["target"] = item.target
                 for field, name in refs.items():
-                    if name not in people:
+                    expected = identity.people if kind == "urgent" else people
+                    if name not in expected:
                         fail(
-                            field,
+                            f"petitions[{index}].{field}",
                             name,
-                            people,
+                            expected,
                             catalogue,
                             "改成 expected 里的人名正名，重交整份。确无此人不得换成另一人。",
                         )
                 if isinstance(item, UrgentPetition) and item.revision_of is not None:
                     if str(item.revision_of) not in originals:
                         fail(
-                            "revision_of",
+                            f"petitions[{index}].revision_of",
                             str(item.revision_of),
                             sorted(originals),
                             catalogue,

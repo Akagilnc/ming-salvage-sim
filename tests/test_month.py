@@ -261,7 +261,7 @@ def test_returned_urgent_waits_through_vacancy(
                     for m in drafting
                     for p in m.parts
                     if isinstance(p, RetryPromptPart)
-                ] == [("revision_of", [original["id"]])]
+                ] == [("petitions[0].revision_of", [original["id"]])]
             else:
                 assert state["failure"] is None
                 assert state["date"]["month"] == month
@@ -342,7 +342,7 @@ def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
                 e["key"]: e["data"]["taels"]
                 for e in ledger["entities"]
                 if e["kind"] == "account"
-            } == {"国库": 3200000, "内库": 4400000}
+            } == {"国库": 3200000, "内库": 4400000, "节慎库": 600000, "常盈库": 1200000}
             assert not [
                 f for f in ledger["facts"] if f["kind"] in {"changed", "landed"}
             ]
@@ -357,7 +357,7 @@ def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
             for e in ledger["entities"]
             if e["kind"] == "account"
         } == pytest.approx(
-            {"国库": 11940269.2869425 - actual, "内库": 7657600 + actual}
+            {"国库": 11940269.2869425 - actual, "内库": 7657600 + actual, "节慎库": 630000, "常盈库": 1250000}
         )
         transfers = [
             f["detail"]
@@ -696,6 +696,7 @@ def test_fiscal_petition_lands_only_declared_outcome_without_readding_levies(
             ("multiple", "facts[0].changes[0].value"),
             ("unknown_person", "facts[0].changes[0].value[0]"),
             ("knowledge", "facts[0].changes[0].field"),
+            ("fiscal_target", "facts[0].entity"),
             ("new_account", "facts[0].create"),
             ("new_office", "facts[0].create"),
             ("new_territory", "facts[0].create"),
@@ -845,7 +846,7 @@ def test_exhausted_month_declaration_is_unhandled_not_a_stopped_month(
         else json.dumps({"facts": declared}, ensure_ascii=False)
     )
     if isinstance(declared, tuple):
-        reply = json.dumps(json.loads((RECORDED / "declarations_v9.json").read_text())["cases"][declared[0]], ensure_ascii=False)
+        reply = json.dumps(json.loads((RECORDED / {"fiscal_target": "cabinet_wei.json"}.get(declared[0], "declarations_v9.json")).read_text())["cases"][declared[0]], ensure_ascii=False)
     received = []
     steps["Declaration"] = replaying([reply, reply], received)
     with TestClient(create_app(tmp_path)) as client:
@@ -870,7 +871,7 @@ def test_exhausted_month_declaration_is_unhandled_not_a_stopped_month(
             e["key"]: e["data"]["taels"]
             for e in ledger["entities"]
             if e["kind"] == "account"
-        } == pytest.approx({"国库": 11940269.2869425, "内库": 7657600})
+        } == pytest.approx({"国库": 11940269.2869425, "内库": 7657600, "节慎库": 630000, "常盈库": 1250000})
         rows = {(e["kind"], e["key"]): e["data"] for e in ledger["entities"]}
         assert rows[("historical_event", "辽饷升至一分二厘")].get("terminal_reason") is None
         assert rows[("army", "关宁军 / 宁锦防线")]["arrears"] == 60
@@ -889,6 +890,6 @@ def test_exhausted_month_declaration_is_unhandled_not_a_stopped_month(
             if declared[0] == "ambiguous":
                 assert {("知县", "保定府新城县"), ("知县", "济南府新城县")} <= {(p["office"], p["territory"]) for p in failure["expected"]}
             elif declared[0] == "unknown_recipient":
-                assert set(failure["expected"]) == {"国库", "内库"}
+                assert set(failure["expected"]) == {"国库", "内库", "节慎库", "常盈库"}
             elif declared[0] == "multiple":
                 assert failure["expected"] == {"maxItems": 1}

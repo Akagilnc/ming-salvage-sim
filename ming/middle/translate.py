@@ -44,7 +44,8 @@ text 保留皇帝认可的圣旨定稿全文，不改写、不摘要。origin �
 是待执行旨意还是当场实况，照整夜戏文判断；未认可的拟旨不能当成已经执行的事实。
 名字用账本正名或所列别名。任免写 entity_type=incumbency，entity 写史书官名（如户部右侍郎、南京户部尚书、陕西巡抚、西安知府），create=false。changes 的 holders 写变更后完整人名名单；一员最多一人，空名单为免职。首次任职由引擎创建在任记录；人物不存任职字段。一人可兼多职，任免不改变状态、所在、在场或行程。尚书现任只算掌部的一员；阁臣的尚书兼衔只记身份与履历文字，不写入在任记录。
 戏文已经宣布任命生效、受命者当场领受的，记在任记录；赴任、查账、造炮等尚待办理，不等于已经生效的任命也要等到月末。尚未获准的任命不提前记。
-人在外地也可以当场起复或任职，不核在任与否，location 不因此改变。新建实体明确 create=true，已有实体用 false。
+内阁首辅为单员职务，须为在任阁臣；同份声明可先任大学士再任首辅。离开全部阁职时同时卸首辅，新首辅只替原首辅这一职。次辅只记身份。
+人在外地也可以当场起复或任职；除首辅须在任阁臣外，不以在任与否限制任命，location 不因此改变。新建实体明确 create=true，已有实体用 false。
 无字段变化可以只记文字；对象模型之外的伤情等记入所涉实体履历，不长新字段。
 奏报与公开说法单列 reports，只交实体、文字和 audience；facts 只记物理实况。
 在场进出归场景名单工具，退朝归场景退朝工具；不声明进出、退朝、说话人分段、可闻性或御前主角。
@@ -99,6 +100,11 @@ def allowed_fields(ledger: Ledger) -> dict[str, set[str]]:
 
 def check(ledger: Ledger, out: Declaration, source: UUID) -> None:
     names, fields = catalogue(ledger), allowed_fields(ledger)
+    cabinet = {r["key"]: r["data"]["holders"] for r in ledger.entities(
+        kind="incumbency", query=ENTITY_ROWS.where(E.data["office"].as_string().in_(
+            select(E.key).where(E.kind == "office", E.data["department"].as_string() == "内阁").correlate(None)
+        ))
+    )}
     for i, fact in enumerate(out.facts):
         path = f"facts[{i}]"
         if fact.entity_type != "incumbency":
@@ -121,7 +127,7 @@ def check(ledger: Ledger, out: Declaration, source: UUID) -> None:
                 "这类实体不能新建。create 改 false，entity 用 expected 里的正名，重交整份。",
             )
         if fact.entity_type == "incumbency":
-            check_appointment(ledger, fact, path, names)
+            check_appointment(ledger, fact, path, names, cabinet)
         elif (fact.entity in known) == fact.create:
             fail(
                 path + ".entity",
@@ -250,7 +256,7 @@ def check_fiscal(ledger: Ledger, out: Declaration, names: Names) -> None:
             allowed = targets.get((fact.entity_type, change.field))
             if allowed is not None and fact.entity not in allowed:
                 fail(
-                    path + ".entity",
+                    f"facts[{i}].entity",
                     fact.entity,
                     allowed,
                     names,
@@ -324,7 +330,7 @@ def check_fiscal(ledger: Ledger, out: Declaration, names: Names) -> None:
                     )
 
 
-def check_appointment(ledger: Ledger, fact: Fact, path: str, names: Names) -> None:
+def check_appointment(ledger: Ledger, fact: Fact, path: str, names: Names, cabinet: dict[str, list[str]]) -> None:
     pairs = office_pairs(ledger, fact.entity)
     if len(pairs) != 1:
         fail(path + ".entity", fact.entity,
@@ -347,6 +353,13 @@ def check_appointment(ledger: Ledger, fact: Fact, path: str, names: Names) -> No
         for k, person in enumerate(holders):
             if person not in names.get("person", {}):
                 fail(f"{field}[{k}]", person, names.get("person", {}), names, "在任者用人物正名，重交整份。")
+        if office["key"] == "内阁首辅":
+            eligible = sorted({p for key, people in cabinet.items() if json.loads(key)[0] != "内阁首辅" for p in people})
+            for k, person in enumerate(holders):
+                if person not in eligible:
+                    fail(f"{field}[{k}]", person, eligible, names, "首辅须为在任阁臣；可在同份声明中先任大学士，再任首辅。重交整份。")
+        if office["data"]["department"] == "内阁":
+            cabinet[fact.entity] = holders
 
 
 def check_references(ledger: Ledger, out: Declaration, names: Names) -> None:

@@ -100,7 +100,10 @@ def test_new_game_imports_complete_world_records_and_separates_identities(
     assert shown["韩爌"]["location"] == "山西"
     assert shown["来宗道"]["appointments"] == [{"office": "礼部尚书", "territory": "", "holders": ["来宗道"]}]
     assert [e["data"]["holders"] for e in entities if e["kind"] == "incumbency" and e["data"]["office"] == "礼部尚书"] == [["来宗道"]]
-    assert all({a["office"] for a in shown[name]["appointments"]} <= {"内阁大学士", "中极殿大学士"} for name in ("黄立极", "施凤来", "张瑞图", "李国普"))
+    assert {a["office"] for a in shown["黄立极"]["appointments"]} == {"内阁大学士", "内阁首辅"}
+    assert offices["内阁首辅"]["multiple"] is False
+    assert offices["内阁首辅"]["department"] == "内阁"
+    assert all({a["office"] for a in shown[name]["appointments"]} <= {"内阁大学士", "中极殿大学士"} for name in ("施凤来", "张瑞图", "李国普"))
     assert shown["曾樱"]["appointments"] == [{"office": "知府", "territory": "南直隶常州府", "holders": ["曾樱"]}]
     assert shown["卢象升"]["location"] == "北直隶 / 京师"
     assert shown["卢象升"]["appointments"] == [{"office": "知府", "territory": "北直隶大名府", "holders": ["卢象升"]}]

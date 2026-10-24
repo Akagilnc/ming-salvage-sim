@@ -305,7 +305,7 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
             assert all(materials.values())
             assert all(
                 {e["key"]: e["data"] for e in data["entities"] if e["kind"] == "account"}
-                == {"国库": {"name": "国库", "condition": "大概缺钱"}}
+                == {name: {"name": name} for name in ("国库", "内库", "节慎库", "常盈库")}
                 for data in materials["deliberation"]
             )
             assert all(not [e for e in data["entities"] if e["kind"] == "account"] for data in materials["gazette"])
@@ -313,7 +313,7 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
                 e["key"]: e["data"]["taels"]
                 for e in materials["simulation"][0]["entities"]
                 if e["kind"] == "account"
-            } == {"国库": 3200000, "内库": 4400000}
+            } == {"国库": 3200000, "内库": 4400000, "节慎库": 600000, "常盈库": 1200000}
             assert (
                 next(
                     e["data"]

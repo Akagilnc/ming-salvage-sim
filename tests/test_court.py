@@ -87,9 +87,9 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
                     for m in received for p in m.parts
                     if isinstance(p, ToolReturnPart) and p.tool_name == "read_person"}
         for name in ("徐光启", "王体乾", "郭允厚"):
-            assert {a["key"]: a["data"]["taels"] for a in returned[name]["accounts"]} == {"国库": 3200000, "内库": 4400000}
-        assert {a["key"] for a in returned["韩爌"]["accounts"]} == {"国库"}
-        assert "taels" not in returned["韩爌"]["accounts"][0]["data"]
+            assert {a["key"]: a["data"]["taels"] for a in returned[name]["accounts"] if "taels" in a["data"]} == {"国库": 3200000, "内库": 4400000, **({"常盈库": 1200000} if name != "徐光启" else {})}
+            assert {a["key"] for a in returned[name]["accounts"]} == {"国库", "内库", "节慎库", "常盈库"}
+        assert {a["key"]: a["data"] for a in returned["韩爌"]["accounts"]} == {name: {"name": name} for name in ("国库", "内库", "节慎库", "常盈库")}
         assert {(a["office"], a["territory"]) for a in returned["徐光启"]["appointments"]} == {("户部尚书", ""), ("內承運庫掌印太监", "")}
         assert returned["郭允厚"]["appointments"] == []
         assert [(e["office"], e["territory"], e["holders"]) for e in returned["郭允厚"]["events"] if e["kind"] == "displaced"] == [("户部尚书", "", ["徐光启"])]
@@ -113,7 +113,56 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
         assert client.get("/state").json()["game"]["failure"] is None
         assert client.get("/state").json()["game"]["date"]["month"] == 11
         assert urgent
-        assert {p["name"] for p in json.loads(urgent[0].parts[0].content)["context"]["drafters"]} == {"黄立极", "施凤来", "张瑞图", "韩爌", "毕自严", "李国普", "王体乾"}
+        assert {p["name"] for p in json.loads(urgent[0].parts[0].content)["context"]["drafters"]} == {"黄立极", "王体乾"}
+        case = json.loads((RECORDED / "cabinet_wei.json").read_text())["cases"]
+        for name, expected in (("chief_swap", ["施凤来"]), ("chief_exit", []), ("chief_join", ["崔呈秀"]), ("chief_invalid", ["崔呈秀"]), ("chief_vacancy", []), ("wei", [])):
+            received = []
+            steps["Declaration"] = replaying([json.dumps(case[name], ensure_ascii=False)] * 2, received)
+            urgent = []
+            steps["urgent"] = replaying([(RECORDED / "sources_empty.txt").read_text()], urgent)
+            client.post("/actions", json={"action": "month"}).raise_for_status()
+            assert client.get("/state").json()["game"]["failure"] is None
+            ledger = audit(game_db)
+            held = {(e["data"]["office"], e["data"]["territory"]): e["data"]["holders"] for e in ledger["entities"] if e["kind"] == "incumbency"}
+            assert held[("内阁首辅", "")] == expected
+            assert (not urgent) == (name in {"chief_vacancy", "wei"})
+            if urgent:
+                assert {p["name"] for p in json.loads(urgent[0].parts[0].content)["context"]["drafters"]} == {*expected, "王体乾"}
+            if name == "chief_swap":
+                assert "黄立极" in held[("内阁大学士", "")]
+                assert any(f["kind"] == "displaced" and f["detail"]["office"] == "内阁首辅" and f["entity_id"] == people["黄立极"]["id"] for f in ledger["facts"])
+            elif name == "chief_exit":
+                assert "施凤来" not in held[("内阁大学士", "")]
+                assert {f["detail"]["office"] for f in ledger["facts"] if f["kind"] == "displaced" and f["entity_id"] == people["施凤来"]["id"]} >= {"内阁大学士", "内阁首辅"}
+            elif name == "chief_join":
+                assert "崔呈秀" in held[("内阁大学士", "")]
+                assert held[("兵部尚书", "")] == ["崔呈秀"]
+            elif name == "chief_invalid":
+                assert json.loads(next(p.content for m in received for p in m.parts if p.part_kind == "retry-prompt"))["field"] == "facts[0].changes[0].value[0]"
+                assert len([f for f in ledger["facts"] if f["kind"] == "unhandled"]) == 1
+            assert len([f for f in ledger["facts"] if f["kind"] == "unhandled"]) == int(name in {"chief_invalid", "chief_vacancy", "wei"})
+        assert held[("正千户", "北直隶兴和千户所")] == ["杨嗣昌"]
+        assert held[("正千户", "广东大鹏千户所")] == ["李待问"]
+        assert held[("卫指挥使", "福建镇海卫")] == ["练国事"]
+        assert held[("卫指挥使", "南京留守左卫")] == ["郭允厚"]
+        assert {e["key"]: e["data"] for e in ledger["entities"] if e["kind"] == "person"} == {k: e["data"] for k, e in before.items()}
+        dossier = json.loads((RECORDED / "account_dossiers.json").read_text())
+        received = []
+        steps["scene"] = replaying(ModelMessagesTypeAdapter.validate_python(dossier["messages"]), received)
+        client.post("/actions", json={"action": "open"}).raise_for_status()
+        client.post("/actions", json={"action": "say", "words": dossier["words"]}).raise_for_status()
+        assert client.get("/state").json()["game"]["failure"] is None
+        returned = {p.model_response_object()["person"]["name"]: p.model_response_object() for m in received for p in m.parts if isinstance(p, ToolReturnPart) and p.tool_name == "read_person"}
+        for name, known in (("李从心", {"国库", "内库", "节慎库", "常盈库"}), ("魏忠贤", {"国库", "内库", "常盈库"}), ("韩爌", set())):
+            assert {a["key"] for a in returned[name]["accounts"]} == {"国库", "内库", "节慎库", "常盈库"}
+            for account in returned[name]["accounts"]:
+                if account["key"] in known:
+                    assert account["data"]["taels"] == next(e["data"]["taels"] for e in ledger["entities"] if e["kind"] == "account" and e["key"] == account["key"])
+                else:
+                    assert account["data"] == {"name": account["key"]}
+        for name, amount in (("节慎库", 3), ("常盈库", 5)):
+            assert all(f["detail"]["amount"] == amount for f in ledger["facts"] if f["kind"] == "monthly_income" and f["detail"]["account"] == name)
+            assert next(e["data"]["taels"] for e in ledger["entities"] if e["kind"] == "account" and e["key"] == name) == {"节慎库": 600000, "常盈库": 1200000}[name] + amount * 10000 * 7
 
 
 @pytest.mark.parametrize("case", ["range", "purpose_region"])
