@@ -4,6 +4,7 @@ import logging
 from collections import Counter
 from collections.abc import Callable, Sequence
 from pathlib import Path
+from shutil import copyfileobj
 from typing import Any, TypeVar, cast
 from uuid import UUID, uuid4
 
@@ -28,7 +29,7 @@ from ming.middle.declaration import (
     Unhandled,
 )
 from ming.middle.invoke import ModelSource
-from ming.middle.opening import CONTENT, import_opening
+from ming.middle.opening import opening_template
 from ming.middle.night import NightView, dismiss, known_people, open_night, read_night
 from ming.middle.scene import HallResult, PersonView, read_person, set_hall
 from ming.middle.translate import INSTRUCTIONS, declaration_agent, translate
@@ -61,18 +62,21 @@ class Court:
 
     @classmethod
     def new_game(
-        cls, directory: Path, model: ModelSource, content: Path = CONTENT
+        cls, directory: Path, model: ModelSource, template: Path | None = None
     ) -> "Court":
-        directory.mkdir(parents=True, exist_ok=True)
-        path = directory / f"{uuid4()}.sqlite"
-        path.touch(exist_ok=False)
-        court = cls(path, model)
+        template = template if template is not None else opening_template()
         try:
-            import_opening(court._ledger, content)
-        except Exception:
-            court.close()
-            raise
-        return court
+            source = template.open("rb")
+        except FileNotFoundError as exc:
+            raise FileNotFoundError(
+                f"{template}: run `python -m ming build-opening` first"
+            ) from exc
+        with source:
+            directory.mkdir(parents=True, exist_ok=True)
+            path = directory / f"{uuid4()}.sqlite"
+            with path.open("xb") as destination:
+                copyfileobj(source, destination)
+        return cls(path, model)
 
     def open_night(self) -> UUID:
         return open_night(self._ledger)

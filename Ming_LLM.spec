@@ -15,6 +15,8 @@
 
 from PyInstaller.utils.hooks import collect_all, collect_submodules, copy_metadata
 from pathlib import Path
+import subprocess
+import sys
 
 # The new package's persistence/provider plugins use dynamic imports.
 _bundles = [collect_all(name) for name in (
@@ -44,8 +46,6 @@ def tree_datas(root: str, dest: str, exclude_parts=()):
 #   2) 前端：web/dist 被 .gitignore 排除；从干净 clone 跳过 `npm run build` 直接打包，
 #      tree_datas 对缺失目录静默返 0 行 → 得到 import 全成功、运行期前端缺失的「假成功」坏包。
 def _release_guard():
-    import subprocess
-
     # 1) 前端构建产物必须在且非空（否则运行期 StaticFiles 指向空目录）
     if not Path("web/dist/index.html").is_file():
         raise SystemExit(
@@ -92,6 +92,13 @@ def _release_guard():
 
 _release_guard()
 
+# Build separately from every runtime entry; a failed build aborts packaging.
+opening_template = Path("build/opening.sqlite")
+subprocess.run(
+    [sys.executable, "-m", "ming", "build-opening", "--output", str(opening_template)],
+    check=True,
+)
+
 
 # New package and ASGI runtime only; no legacy engine or interfaces.
 hiddenimports = (
@@ -121,6 +128,7 @@ datas = (
     + tree_datas("web/dist", "web/dist", exclude_parts={"_backup_rgb", "_original_before_cutout"})
     + [
         ("content", "content"),
+        (str(opening_template), "."),
         ("requirements.txt", "."),
     ]
 )
@@ -188,7 +196,6 @@ coll = COLLECT(
 )
 
 # macOS .app bundle
-import sys
 if sys.platform == "darwin":
     app = BUNDLE(
         coll,

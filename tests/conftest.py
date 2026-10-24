@@ -15,7 +15,7 @@ from starlette.testclient import TestClient
 
 from ming.__main__ import main
 from ming.middle.court import Court
-from ming.middle.opening import CONTENT
+from ming.middle.opening import CONTENT, build_opening
 from ming.web import create_app
 from tests.test_court import replaying
 
@@ -81,8 +81,18 @@ def steps(request):
         yield replies
 
 
+@pytest.fixture(scope="session", autouse=True)
+def opening_template_db(tmp_path_factory):
+    home = tmp_path_factory.mktemp("home")
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("HOME", str(home))
+        patch.setenv("CODEX_HOME", str(home / ".codex"))
+        patch.setenv("GROK_HOME", str(home / ".grok"))
+        yield build_opening()
+
+
 @pytest.fixture(scope="session")
-def opening_db(request, tmp_path_factory):
+def opening_db(request, tmp_path_factory, opening_template_db):
     directory = tmp_path_factory.mktemp("opening")
     if getattr(request, "param", None) is not None:
         content = copytree(CONTENT, directory / "content")
@@ -106,7 +116,8 @@ def opening_db(request, tmp_path_factory):
                 "terminal_reason"
             ] = "已准"
             (content / "events.json").write_text(json.dumps(events))
-        court = Court.new_game(directory, TestModel(), content)
+        template = build_opening(content, content / "opening.sqlite")
+        court = Court.new_game(directory, TestModel(), template)
         court.close()
         return court.db_path
     with TestClient(create_app(directory)) as client:

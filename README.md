@@ -34,6 +34,7 @@ cd Ming_LLM
 python3.14 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
+python -m ming build-opening
 ./start.sh
 ```
 
@@ -45,6 +46,8 @@ python -m ming.desktop
 # 原生桌面窗口：python -m ming.desktop --desktop
 # 开发数据目录：python -m ming.desktop --directory /tmp/ming-dev
 ```
+
+开局模板是独立构建产物，源码运行放在 `~/.ming/opening.sqlite`，不进 git。改了 `content/` 或导入代码后，自己再跑 `python -m ming build-opening`；每跑一次整份重建，成功才原子替换，失败非零退出并保留旧模板。所有启动入口（含 `start.sh`）都不构建；新开局只复制现有模板，没有模板时报错，不留存档。忘记构建会继续使用旧模板，不自动检查。不同 content 可用 `build-opening --content <目录> --output <模板路径>` 构建，再由 `Court.new_game(..., template=<模板路径>)` 复制，不改统一模板。
 
 启动先到主菜单：新开一局、继续（最新存档）、读取存档、设置。每局一个 SQLite 文件，每次落账自动保存，没有存档位或另存。默认存档与模型设置在 `~/.ming/saves/`。
 
@@ -62,9 +65,10 @@ python -m ming.desktop
 
 ## 命令行开发入口
 
-开局导入与对账不调用模型：
+构建模板、新开局与对账不调用模型：
 
 ```bash
+python -m ming build-opening  # 首次运行或改过 content / 导入代码后
 python -m ming new --directory saves
 python -m ming read --db saves/<新局文件>.sqlite --identity audit
 python -m ming read --db saves/<新局文件>.sqlite --identity audit --replay
@@ -72,7 +76,7 @@ python -m ming read --db saves/<新局文件>.sqlite --identity audit --replay
 
 `new` 输出新局路径；继续操作使用该路径。默认读取皇帝材料，`audit` 用于内部对账，`--replay` 从事件重放读取。
 
-所有子命令用同一套两槽旗：`--backend`、`--model`、`--base-url`、`--api-key`、`--effort` 是主模型；加 `month-` 前缀就是过月模型（例如 `--month-backend`、`--month-effort`）。后端选 `api`（OpenAI 兼容 Chat Completions）、`claude-cli`、`codex`、`grok` 或 `pi`；模型填宿主自己的 id，Pi 的 `provider/id:thinking` 后缀仍原样传入。主模型默认已登录的 `claude -p`。过月栏后端未选或必填项不全则沿用主模型，规则同网页设置。CLI 不读取网页的 settings.json；两边各自显式配置。旧的 scene/translation 分槽已移除。
+除 `build-opening` 外，子命令用同一套两槽旗：`--backend`、`--model`、`--base-url`、`--api-key`、`--effort` 是主模型；加 `month-` 前缀就是过月模型（例如 `--month-backend`、`--month-effort`）。后端选 `api`（OpenAI 兼容 Chat Completions）、`claude-cli`、`codex`、`grok` 或 `pi`；模型填宿主自己的 id，Pi 的 `provider/id:thinking` 后缀仍原样传入。主模型默认已登录的 `claude -p`。过月栏后端未选或必填项不全则沿用主模型，规则同网页设置。CLI 不读取网页的 settings.json；两边各自显式配置。旧的 scene/translation 分槽已移除。
 
 例如召对 medium、过月 high：
 
@@ -173,7 +177,7 @@ scripts\build_release.bat       # Windows
 # Windows → dist/Ming_LLM-windows.zip → Ming_LLM.exe + _internal\
 ```
 
-脚本先构建前端，再走 `Ming_LLM.spec`，最后打 zip。`web/dist` 被 `.gitignore` 排除，不先 build 会缺前端。spec 在前端未构建、`content/buildings.json` 带金手指或有未提交改动时响亮中止。
+脚本先构建前端，再走 `Ming_LLM.spec`（调用同一构建命令生成开局模板并随包发），最后打 zip。打包版新开局只复制包内模板，不在运行时构建。`web/dist` 被 `.gitignore` 排除，不先 build 会缺前端。spec 在前端未构建、`content/buildings.json` 带金手指或有未提交改动时响亮中止。
 
 解压后启动应用，自动开 webview 原生窗口；`MING_DEBUG=1` 开 devtools。默认数据位置与后端设置见「安装与启动」。
 

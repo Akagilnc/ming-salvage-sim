@@ -6,17 +6,28 @@ from pathlib import Path
 
 import pytest
 from pydantic_ai.models.test import TestModel
+from starlette.testclient import TestClient
 
 from ming.__main__ import main
 from ming.middle.court import Court
+from ming.web import create_app
 
 CONTENT = Path(__file__).parents[1] / "content"
 
 
+@pytest.mark.parametrize("entry", ["cli", "web"])
 def test_new_game_imports_complete_world_records_and_separates_identities(
-    tmp_path: Path,
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], entry: str,
 ) -> None:
-    court = Court.new_game(tmp_path, TestModel())
+    if entry == "cli":
+        main(["new", "--directory", str(tmp_path)])
+        path = Path(json.loads(capsys.readouterr().out)["db"])
+    else:
+        with TestClient(create_app(tmp_path)) as client:
+            save = client.post("/actions", json={"action": "new"}).json()["save"]
+            assert client.get("/state").json()["saves"] == [save]
+            path = tmp_path / save
+    court = Court(path, TestModel())
     entities = court.entities("audit")
     # Pinyin keys between content records become the Chinese name they key.
     names = {
@@ -87,6 +98,8 @@ def test_new_game_imports_complete_world_records_and_separates_identities(
             k: v for k, v in canonical(characters[name]).items() if k in visible_fields
         }
     assert court.facts("audit") == []
+    assert court.entities("audit", replay=True) == entities
+    assert court.night(court.open_night()).closed is False
     court.close()
 
 
@@ -123,8 +136,62 @@ def test_cli_new_games_never_overwrite_and_missing_game_is_not_created(
     assert not absent.exists()
 
 
-@pytest.mark.parametrize("broken", ["json", "identity"])
-def test_bad_opening_data_leaves_no_partial_world(tmp_path: Path, broken: str) -> None:
+def test_build_is_explicit_and_new_games_copy_the_last_successful_template(
+    tmp_path: Path, monkeypatch, capsys: pytest.CaptureFixture[str],
+    opening_template_db: Path, audit,
+) -> None:
+    home = tmp_path / "home"
+    template = home / ".ming" / "opening.sqlite"
+    template.parent.mkdir(parents=True)
+    shutil.copyfile(opening_template_db, template)
+    monkeypatch.setenv("HOME", str(home))
+    content = shutil.copytree(CONTENT, tmp_path / "content")
+    path = content / "opening.json"
+    opening = json.loads(path.read_text())
+    opening["calendar"][0]["year"] = 1628
+    path.write_text(json.dumps(opening))
+    games = tmp_path / "games"
+    original = audit(template)
+    previous_id = None
+    for rebuild in (False, True, True):
+        if rebuild:
+            main(["build-opening", "--content", str(content)])
+            capsys.readouterr()
+        main(["new", "--directory", str(games)])
+        court = Court(Path(json.loads(capsys.readouterr().out)["db"]), TestModel())
+        calendar = court.calendar()
+        assert calendar.data["year"] == (1628 if rebuild else 1627)
+        assert calendar.id != previous_id
+        previous_id = calendar.id
+        before_record = audit(template)
+        court.record(calendar.id, [("observation", {"year": 1629})], {"year": 1629})
+        assert court.calendar().data["year"] == 1629
+        assert audit(template) == before_record
+        court.close()
+        if not rebuild:
+            assert audit(template) == original
+            main(["new", "--directory", str(games)])
+            other = audit(Path(json.loads(capsys.readouterr().out)["db"]))
+            assert next(
+                e["data"]["year"] for e in other["entities"] if e["kind"] == "calendar"
+            ) == 1627
+
+
+@pytest.mark.parametrize("broken", ["json", "identity", "missing"])
+def test_bad_opening_data_leaves_no_partial_world(
+    tmp_path: Path, broken: str, monkeypatch, opening_template_db: Path, audit,
+) -> None:
+    if broken == "missing":
+        monkeypatch.setenv("HOME", str(tmp_path))
+        games = tmp_path / "games"
+        with pytest.raises(FileNotFoundError):
+            main(["new", "--directory", str(games)])
+        with TestClient(create_app(games)) as client:
+            with pytest.raises(FileNotFoundError):
+                client.post("/actions", json={"action": "new"})
+            assert client.get("/state").json()["saves"] == []
+        assert not games.exists()
+        return
     content = tmp_path / "content"
     content.mkdir()
     for file in [*CONTENT.glob("*.json"), CONTENT / "opening_gazette.md"]:
@@ -136,11 +203,14 @@ def test_bad_opening_data_leaves_no_partial_world(tmp_path: Path, broken: str) -
         data = json.loads(path.read_text())
         del data["characters"][50]["name"]
         path.write_text(json.dumps(data))
-    games = tmp_path / "games"
+    template = tmp_path / "template.sqlite"
+    shutil.copyfile(opening_template_db, template)
+    original = audit(template)
     with pytest.raises(ValueError):
-        Court.new_game(games, TestModel(), content)
-    (path,) = games.glob("*.sqlite")
-    court = Court(path, TestModel())
-    assert court.entities("audit") == []
-    assert court.facts("audit") == []
+        main(["build-opening", "--content", str(content), "--output", str(template)])
+    assert audit(template) == original
+    assert list(tmp_path.glob("*.sqlite")) == [template]
+    court = Court.new_game(tmp_path / "games", TestModel(), template)
+    assert court.calendar().data["month"] == 10
+    assert court.night(court.open_night()).closed is False
     court.close()
