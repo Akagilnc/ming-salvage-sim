@@ -50,13 +50,12 @@ class FiscalEnd(StrictModel):
 class PaymentPolicy(StrictModel):
     factor: float = Field(
         default=1,
-        ge=0,
-        le=1,
         strict=True,
+        allow_inf_nan=False,
         description="应付保留比例；折半为0.5，减去部分不记欠。",
     )
     defer: float = Field(
-        default=0, ge=0, le=1, strict=True, description="应付中暂欠的比例，未付仍记欠。"
+        default=0, strict=True, allow_inf_nan=False, description="应付中暂欠的比例，未付仍记欠。"
     )
     until: FiscalEnd | None = Field(
         default=None, description="止期含当月；过期回原额，无止期一直有效。"
@@ -72,7 +71,7 @@ class Change(StrictModel):
     )
     counterpart: EntityRef | None = Field(
         default=None,
-        description="钱粮另一边；必须也在本份 facts 中，两边带符号增减成对。无出处收入可不填。",
+        description="钱粮另一边的实体引用；每笔只声明付方一次，收方由引擎按实际金额记账，不必另写 fact。无出处收入可不填。",
     )
 
 

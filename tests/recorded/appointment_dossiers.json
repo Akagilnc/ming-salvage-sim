@@ -1,0 +1,147 @@
+{
+  "source": "Claude native stream-json; HTTP /actions open/say; session b728115c-9003-44c7-b358-f229da5cc845; transport conversion only",
+  "words": "王承恩，把徐光启、韩爌、王体乾、郭允厚的档案逐一查来，给朕说说他们现任什么官，各自能知道哪些库的实数。先查档案，再回话。",
+  "messages": [
+    {
+      "parts": [
+        {
+          "content": "",
+          "id": null,
+          "signature": "CAQSygUKEAgTGAI4AUIIdGhpbmtpbmcSDDblA2M7IEC2bp35oRoMS8twyfcQzkA4sCk0IjCKp+FDhbEMBptaVdSRBor+Sd/7iJJwAgmjDdjBWKwekqWBkBa5533YYEtNvwSTWG0q5wSLM7F8oMskdbZqVWNHYDkSnjC5zPLLlnyFImtV3tRTblkRlH6RRRrkg+Voub9CZVmUHolhPsNGG6llpNuyOlrtohdnTGEr+1bmsVLWs+ZChvAUjSx64AbocRJm7bql2yqyOTayMcRz+WiEGMj6j5JTRan1F/z7EEIZCPHrinjw6doesdqG85DQVggQ1TeV+JNMJZ8SMADgapAC3eZKZIhYrDMlDq1Zby03bX12VmfSMtqTzBTFZJ5jUk5QnMVpPsHR1nDLbAFuS+XAqpJ4qEd189NYLWtca0sDlx0YOM5vo/90LfHvPk/R/ywc+vw63D92Ghaw5V2mRZxYsU/yxVtrp/gbojlEsQb0ScAEfZ8HrVX8aa2ie5zkZGw9jkZNENY5lTZtxgiGVOUqgG9DOjHRPnTQC9jvltgkJtPxYBNsTdJRQvXathVpVYjhjQTlkK1z8lsgqX3s6RP/SNnLhXe0K342li5Y2vYZi2hNe3Tmo2zlvR7L9kUMdZDGWB6c8HdlvffiumVJ1aOmPq5C7D4/L6Ps0qLamouUHzNNbV+6ev1seUFAE5ZnmGz66gRml3/UKy0EINaS5Bn6qrrplCnfDI7o+0IkH+fRfVVQQbs902zNke0/Xi9djoBW7+Dww2MRAQdMR08fEpvmo8lOpjPdOJVWNK4Ib9s/P2OoTGkbyi1CHnh+Tp4Vy1zbw6zH9rfENcyPPQJGh/C0IbN2dNaFdw8RzGIlHB184YkbX7+7SxSMO1ejNQca749PYU1IAr1Q78QL8xQFruJGN5Ax4O17iM/HByjf0/mLyLVr8l3I8gnNHywQ9fMYAQ==",
+          "provider_name": "anthropic",
+          "provider_details": null,
+          "part_kind": "thinking"
+        },
+        {
+          "tool_name": "read_person",
+          "args": {
+            "name": "徐光启"
+          },
+          "tool_call_id": "toolu_01G5wuEjuvGU2Qy5KccJMWHx",
+          "tool_kind": null,
+          "id": null,
+          "provider_name": null,
+          "provider_details": null,
+          "part_kind": "tool-call"
+        },
+        {
+          "tool_name": "read_person",
+          "args": {
+            "name": "韩爌"
+          },
+          "tool_call_id": "toolu_01EM1PgCuGRRktwLu9TzYRgB",
+          "tool_kind": null,
+          "id": null,
+          "provider_name": null,
+          "provider_details": null,
+          "part_kind": "tool-call"
+        },
+        {
+          "tool_name": "read_person",
+          "args": {
+            "name": "王体乾"
+          },
+          "tool_call_id": "toolu_01Saa1RpbZKQ3HTFBsaFWMou",
+          "tool_kind": null,
+          "id": null,
+          "provider_name": null,
+          "provider_details": null,
+          "part_kind": "tool-call"
+        },
+        {
+          "tool_name": "read_person",
+          "args": {
+            "name": "郭允厚"
+          },
+          "tool_call_id": "toolu_01UuhBZy3wLWnXtunzE3y9bD",
+          "tool_kind": null,
+          "id": null,
+          "provider_name": null,
+          "provider_details": null,
+          "part_kind": "tool-call"
+        },
+        {
+          "tool_name": "get_hall",
+          "args": {},
+          "tool_call_id": "toolu_01Pw6uhHNyZ5fDiCT6LZyuhS",
+          "tool_kind": null,
+          "id": null,
+          "provider_name": null,
+          "provider_details": null,
+          "part_kind": "tool-call"
+        }
+      ],
+      "usage": {
+        "input_tokens": 0,
+        "cache_write_tokens": 0,
+        "cache_read_tokens": 0,
+        "output_tokens": 0,
+        "input_audio_tokens": 0,
+        "cache_audio_read_tokens": 0,
+        "output_audio_tokens": 0,
+        "audio_seconds": 0.0,
+        "details": {},
+        "cost": null
+      },
+      "model_name": null,
+      "timestamp": "2026-10-23T09:40:47.865446Z",
+      "kind": "response",
+      "provider_name": null,
+      "provider_url": null,
+      "provider_details": null,
+      "provider_response_id": null,
+      "finish_reason": null,
+      "run_id": null,
+      "conversation_id": null,
+      "metadata": null,
+      "workspace_ref": null,
+      "failed_attempts": null,
+      "state": "complete"
+    },
+    {
+      "parts": [
+        {
+          "content": "",
+          "id": null,
+          "signature": "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",
+          "provider_name": "anthropic",
+          "provider_details": null,
+          "part_kind": "thinking"
+        },
+        {
+          "content": "【旁白】乾清宫西暖阁里烛火压得很低，殿上只有王承恩一人侍立。他躬身应了一声，退到外间。约莫一盏茶的工夫，他捧着四张誊好的档签回来，在御座前跪下，把签子按次序排在膝前，没有直接呈到案上。\n\n【王承恩】回皇爷，四个人的档都查过了，奴婢挨个回话。头一个是徐光启。前几日皇爷已有成命，起复他做户部尚书，又让他兼内承运库掌印。只是**他人眼下还在南直隶，没有到京**。他原先是礼部右少卿，罢官后一直住在上海，任命的文书就算现在发出去，他走运河北上也要些日子。所以太仓也好，内承运库也好，现在名义上都归他管，可两边的实数他一个字都还没见过。他这个人讲究拿证据说话，到任以后，账一定会一笔一笔对。只是今夜问不到他。\n\n【王承恩】第二个是韩爌。皇爷已经点了他跟毕自严一起入阁做大学士，**他人已经回到京师**。不过阁臣管的是票拟，各部的题本到了他手上，他看得到报上来的数目，可库里的银子他碰不着。何况他从蒲州回来才几天，户部这几年的旧账他不熟。他这人老成持重，最看重规矩体面。皇爷要是问他钱粮该怎么筹，他能讲出道理。要问库里还剩多少银子，他恐怕答不上来。\n\n【旁白】王承恩收起第三张签子，往前膝行半步，嗓音压得更低。\n\n【王承恩·低语】第三个是王体乾，司礼监掌印，在京，就在宫里。皇爷，奴婢说句本分话：**内帑的实数，眼下宫里真正心里有底的，就是他跟魏公公**。内承运库按规矩归司礼监节制，每年进多少、出多少、给各宫多少赏赐、给东厂拨了多少，册子他都过过目。如今掌印的名义虽然给了徐大人，可徐大人人还没到，库里管钥匙、管册子的都是原来那班人。王体乾这人圆滑，向来先看风往哪边吹才动手盖印。皇爷要是召他来问，他十有八九报个不多不少的数敷衍，回头就去跟魏公公通气。\n\n【王承恩】第四个是郭允厚，在京。他原来管户部，皇爷起用徐光启以后，他这个尚书就被顶下来了，档里还没写他改任什么，人现在闲着。可是**太仓这几年的出入，最清楚的还是他**。辽饷拨了多少、拖欠多少，各省历年欠解多少，京营的俸银欠了几个月，这些账都是从他手上过的。邸报里说太仓只剩三百二十万两，就是户部报上来的数，奴婢只听过个大概，不敢说准不准。他跟内廷那边一向有来往，也会看人情办事。不过他现在刚丢了官，正是心里不安的时候，皇爷要是给他留条路，他未必不肯把底交出来。\n\n【旁白】王承恩把四张签子叠齐，双手托过头顶。\n\n【王承恩】合起来说，太仓的实数问郭允厚，内帑的实数问王体乾，阁里怎么商议去问韩爌，徐光启要等他到京以后再说。**今夜能召来问话的是后面三位**。召谁进殿，听皇爷吩咐。",
+          "id": null,
+          "provider_name": null,
+          "provider_details": null,
+          "part_kind": "text"
+        }
+      ],
+      "usage": {
+        "input_tokens": 0,
+        "cache_write_tokens": 0,
+        "cache_read_tokens": 0,
+        "output_tokens": 0,
+        "input_audio_tokens": 0,
+        "cache_audio_read_tokens": 0,
+        "output_audio_tokens": 0,
+        "audio_seconds": 0.0,
+        "details": {},
+        "cost": null
+      },
+      "model_name": null,
+      "timestamp": "2026-10-23T09:40:47.865452Z",
+      "kind": "response",
+      "provider_name": null,
+      "provider_url": null,
+      "provider_details": null,
+      "provider_response_id": null,
+      "finish_reason": null,
+      "run_id": null,
+      "conversation_id": null,
+      "metadata": null,
+      "workspace_ref": null,
+      "failed_attempts": null,
+      "state": "complete"
+    }
+  ]
+}

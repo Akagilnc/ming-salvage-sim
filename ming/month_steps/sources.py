@@ -58,14 +58,14 @@ class Sources:
                 "drafters": [
                     {
                         "name": e.key,
-                        "office": e.data["office"],
+                        "appointments": self.court.read_person(e.key).appointments,
                         "faction": e.data.get("faction"),
                         "style": e.data.get("style"),
                     }
                     for e in people
                 ],
                 "returned": [f.detail for f in self.court.returned_petitions()],
-                "instruction": "以在职首辅、司礼监掌印的立场择本月急务、排先后，附事实与拟旨成奏折。署名由你定，不以首辅优先。可以交空；发回原案由在职者改票并填写 revision_of，不复述原案充作新案。选项由你拟，不附发回改票按钮。",
+                "instruction": "以在职阁臣、司礼监掌印的立场择本月急务、排先后，附事实与拟旨成奏折。署名由你定，不以首辅优先。可以交空；发回原案由在职者改票并填写 revision_of，不复述原案充作新案。选项由你拟，不附发回改票按钮。",
             },
         )
 

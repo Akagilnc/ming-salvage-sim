@@ -93,7 +93,7 @@ def obligation(pair: tuple[str, str], existing: dict[tuple[str, str], Item]) -> 
 
 def due_levies(ledger: Ledger) -> list[Item]:
     date = calendar_row(ledger)["data"]
-    events = {row["data"]["id"]: row for row in ledger.entities(kind="event")}
+    events = {row["data"]["id"]: row for row in ledger.entities(kind="historical_event")}
     return [
         {"entity": row["key"], "data": row["data"]}
         for row in events.values()
@@ -123,7 +123,7 @@ class Accounts:
                     "region",
                     "building",
                     "world",
-                    "event",
+                    "historical_event",
                 )
             )
         ]
@@ -153,7 +153,7 @@ class Accounts:
 
     def taxes(self) -> None:
         events = {
-            e.key: e.data.get("terminal_reason") for e in self.rows if e.kind == "event"
+            e.key: e.data.get("terminal_reason") for e in self.rows if e.kind == "historical_event"
         }
         regions = [
             e

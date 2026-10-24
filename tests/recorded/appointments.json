@@ -1,0 +1,354 @@
+{
+  "source": {
+    "host": "claude-cli",
+    "session_id": "895ec8d9-8c36-474c-b171-2aa5fb94dcb0",
+    "instructions": "你是游戏的整夜事实转译官，输出 NightDeclaration JSON，不输出围栏或说明。只转译当场已发生事实，不另编后果。人物无office/office_region/office_type。任免在incumbency实体的holders字段写变更后整份人名名单，entity用原话的官职叫法，create=false（首次在任记录引擎创建）；人物状态、所在、行程与任免无关。官职office、属地territory、账户account、历史剧情事件historical_event不能新建。账户taels是两数增减，支出为负，counterpart写收方实体；每笔只声明付方一次，收方自动记账。新官只替换同官同地原任，兼职独立。没有成旨过程，decrees为空。事实原文放text。人物正名：杨嗣昌、徐光启、韩爌、毕自严、王绍徽、洪承畴、李待问、练国事、郭允厚。账户正名：国库、内库。官职：户部尚书、户部右侍郎、內承運庫掌印太监、内阁大学士、知县、巡抚。属地：陕西、保定府新城县（别名新城、新城县）、济南府新城县（别名新城、新城县）。允许字段：incumbency.holders；person.status/location；account.taels。",
+    "input": {
+      "observed_facts": "任命已当场生效：杨嗣昌擢户部右侍郎。徐光启起复任户部尚书，兼內承運庫掌印太监；韩爌、毕自严同任内阁大学士。洪承畴任陕西巡抚。李待问任保定府新城县知县，练国事任济南府新城县知县。以上均不改变任何人的所在、状态或行程。",
+      "schema": {
+        "$defs": {
+          "Change": {
+            "additionalProperties": false,
+            "properties": {
+              "field": {
+                "title": "Field",
+                "type": "string"
+              },
+              "value": {
+                "title": "Value"
+              },
+              "purpose": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "补欠",
+                      "当月饷",
+                      "犒赏",
+                      "专项"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "账户付给军队或财政科目的款须写名目；value仍为带符号的两数。",
+                "title": "Purpose"
+              },
+              "counterpart": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/EntityRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "钱粮另一边；必须也在本份 facts 中，两边带符号增减成对。无出处收入可不填。"
+              }
+            },
+            "required": [
+              "field",
+              "value"
+            ],
+            "title": "Change",
+            "type": "object"
+          },
+          "Decree": {
+            "additionalProperties": false,
+            "properties": {
+              "text": {
+                "description": "皇帝已经认可的圣旨定稿全文，原样保留",
+                "title": "Text",
+                "type": "string"
+              },
+              "origin": {
+                "enum": [
+                  "emperor",
+                  "minister"
+                ],
+                "title": "Origin",
+                "type": "string"
+              },
+              "secret": {
+                "description": "密令不明发、不经外廷。按皇帝怎么说与整夜上下文判断是否密令，不按事务类型或有没有密字判断。",
+                "title": "Secret",
+                "type": "boolean"
+              },
+              "turn": {
+                "description": "皇帝认可定稿、成旨的轮次，按输入 turns 从 1 起数。只记已成旨。",
+                "minimum": 1,
+                "title": "Turn",
+                "type": "integer"
+              },
+              "endorsements": {
+                "items": {
+                  "$ref": "#/$defs/Endorsement"
+                },
+                "title": "Endorsements",
+                "type": "array"
+              },
+              "interim": {
+                "default": false,
+                "description": "皇帝明说中旨、不经内阁票拟；中旨仍是明发，经外廷议处。御笔手敕本身不等于中旨",
+                "title": "Interim",
+                "type": "boolean"
+              },
+              "people": {
+                "description": "旨意涉及的人：旨意所及对象，以及戏文中实际拟旨、宣读或领旨的经手者；均用账本正名，旨意事件记入这些人的履历（经手即知）。不按殿上名单扩散；仅旁听、被提到或拟在日后经手，不因此算实际经手者。",
+                "items": {
+                  "type": "string"
+                },
+                "title": "People",
+                "type": "array"
+              }
+            },
+            "required": [
+              "text",
+              "origin",
+              "secret",
+              "turn",
+              "people"
+            ],
+            "title": "Decree",
+            "type": "object"
+          },
+          "DecreeEvent": {
+            "additionalProperties": false,
+            "properties": {
+              "decree": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "来源旨意：整夜本份 decrees 的零基下标；月末本旨省略，使用当前旨意来源。",
+                "title": "Decree"
+              },
+              "kind": {
+                "description": "handled：实际发生的一道传递、经办（转交、往返），每道各记一条；completed：推演已认定该差事办结，包括关联事务已成往事。无记录、接不住不算办结。没有新建事务也不算办结。",
+                "enum": [
+                  "handled",
+                  "completed"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "text": {
+                "title": "Text",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "text"
+            ],
+            "title": "DecreeEvent",
+            "type": "object"
+          },
+          "Endorsement": {
+            "additionalProperties": false,
+            "properties": {
+              "endorser": {
+                "description": "背书人账本正名；皇帝亲担写御笔，担名不等于办事",
+                "title": "Endorser",
+                "type": "string"
+              },
+              "form": {
+                "enum": [
+                  "会签",
+                  "当面站台",
+                  "御笔手敕"
+                ],
+                "title": "Form",
+                "type": "string"
+              },
+              "source_chat_turn_id": {
+                "description": "本夜实际背书发生的那一轮 id，不是夜 id",
+                "title": "Source Chat Turn Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "endorser",
+              "form",
+              "source_chat_turn_id"
+            ],
+            "title": "Endorsement",
+            "type": "object"
+          },
+          "EntityRef": {
+            "additionalProperties": false,
+            "properties": {
+              "entity_type": {
+                "title": "Entity Type",
+                "type": "string"
+              },
+              "entity": {
+                "title": "Entity",
+                "type": "string"
+              }
+            },
+            "required": [
+              "entity_type",
+              "entity"
+            ],
+            "title": "EntityRef",
+            "type": "object"
+          },
+          "Fact": {
+            "additionalProperties": false,
+            "properties": {
+              "entity_type": {
+                "description": "账本实体类型，如 person、army、affair",
+                "title": "Entity Type",
+                "type": "string"
+              },
+              "entity": {
+                "description": "实体的账本正名或新实体的名字",
+                "title": "Entity",
+                "type": "string"
+              },
+              "create": {
+                "description": "是否新建；已有实体填 false",
+                "title": "Create",
+                "type": "boolean"
+              },
+              "affair": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "本条后果所属事务的正名；可指同份声明新建的 affair，无所属事务可省略。",
+                "title": "Affair"
+              },
+              "decree": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "来源旨意：整夜本份 decrees 的零基下标；月末本旨省略，使用当前旨意来源。",
+                "title": "Decree"
+              },
+              "discovered": {
+                "default": false,
+                "description": "是否为密令内部查获实情；不按有无字段变化判断。",
+                "title": "Discovered",
+                "type": "boolean"
+              },
+              "changes": {
+                "items": {
+                  "$ref": "#/$defs/Change"
+                },
+                "title": "Changes",
+                "type": "array"
+              },
+              "text": {
+                "description": "发生的事实，原文记在这个实体上；没有字段变化也可以只记文字。物理实况正文只写后果，不写密令来源，密令来源只放在结构化来源关系里。",
+                "title": "Text",
+                "type": "string"
+              }
+            },
+            "required": [
+              "entity_type",
+              "entity",
+              "create",
+              "changes",
+              "text"
+            ],
+            "title": "Fact",
+            "type": "object"
+          },
+          "Report": {
+            "additionalProperties": false,
+            "properties": {
+              "entity_type": {
+                "title": "Entity Type",
+                "type": "string"
+              },
+              "entity": {
+                "title": "Entity",
+                "type": "string"
+              },
+              "text": {
+                "title": "Text",
+                "type": "string"
+              },
+              "audience": {
+                "enum": [
+                  "public",
+                  "official"
+                ],
+                "title": "Audience",
+                "type": "string"
+              }
+            },
+            "required": [
+              "entity_type",
+              "entity",
+              "text",
+              "audience"
+            ],
+            "title": "Report",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "facts": {
+            "items": {
+              "$ref": "#/$defs/Fact"
+            },
+            "title": "Facts",
+            "type": "array"
+          },
+          "reports": {
+            "items": {
+              "$ref": "#/$defs/Report"
+            },
+            "title": "Reports",
+            "type": "array"
+          },
+          "decree_events": {
+            "items": {
+              "$ref": "#/$defs/DecreeEvent"
+            },
+            "title": "Decree Events",
+            "type": "array"
+          },
+          "decrees": {
+            "items": {
+              "$ref": "#/$defs/Decree"
+            },
+            "title": "Decrees",
+            "type": "array"
+          }
+        },
+        "required": [
+          "facts",
+          "decrees"
+        ],
+        "title": "NightDeclaration",
+        "type": "object"
+      }
+    }
+  },
+  "words": "任命已当场生效：杨嗣昌擢户部右侍郎。徐光启起复任户部尚书，兼內承運庫掌印太监；韩爌、毕自严同任内阁大学士。洪承畴任陕西巡抚。李待问任保定府新城县知县，练国事任济南府新城县知县。以上均不改变任何人的所在、状态或行程。",
+  "reply": "{\"facts\":[{\"entity_type\":\"incumbency\",\"entity\":\"户部右侍郎\",\"create\":false,\"changes\":[{\"field\":\"holders\",\"value\":[\"杨嗣昌\"]}],\"text\":\"任命已当场生效：杨嗣昌擢户部右侍郎。\"},{\"entity_type\":\"incumbency\",\"entity\":\"户部尚书\",\"create\":false,\"changes\":[{\"field\":\"holders\",\"value\":[\"徐光启\"]}],\"text\":\"任命已当场生效：徐光启起复任户部尚书。\"},{\"entity_type\":\"incumbency\",\"entity\":\"內承運庫掌印太监\",\"create\":false,\"changes\":[{\"field\":\"holders\",\"value\":[\"徐光启\"]}],\"text\":\"任命已当场生效：徐光启兼內承運庫掌印太监。\"},{\"entity_type\":\"incumbency\",\"entity\":\"内阁大学士\",\"create\":false,\"changes\":[{\"field\":\"holders\",\"value\":[\"韩爌\",\"毕自严\"]}],\"text\":\"任命已当场生效：韩爌、毕自严同任内阁大学士。\"},{\"entity_type\":\"incumbency\",\"entity\":\"陕西巡抚\",\"create\":false,\"changes\":[{\"field\":\"holders\",\"value\":[\"洪承畴\"]}],\"text\":\"任命已当场生效：洪承畴任陕西巡抚。\"},{\"entity_type\":\"incumbency\",\"entity\":\"保定府新城县知县\",\"create\":false,\"changes\":[{\"field\":\"holders\",\"value\":[\"李待问\"]}],\"text\":\"任命已当场生效：李待问任保定府新城县知县。\"},{\"entity_type\":\"incumbency\",\"entity\":\"济南府新城县知县\",\"create\":false,\"changes\":[{\"field\":\"holders\",\"value\":[\"练国事\"]}],\"text\":\"任命已当场生效：练国事任济南府新城县知县。\"}],\"reports\":[],\"decree_events\":[],\"decrees\":[]}"
+}

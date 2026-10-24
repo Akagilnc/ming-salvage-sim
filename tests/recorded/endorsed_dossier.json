@@ -1,0 +1,123 @@
+{
+  "source": "Claude native stream-json; HTTP /actions load/say; 2026-10-23; session 7068d6fa-ee71-40e9-94c0-36b88ebdcc69; only transport conversion, no content editing",
+  "words": "王承恩，查阅毕自严、王绍徽的履历，把他们各自担名的旨意及担名形式呈给朕。",
+  "messages": [
+    {
+      "parts": [
+        {
+          "content": "",
+          "id": null,
+          "signature": "CAQSpgUKEAgTGAI4AUIIdGhpbmtpbmcSDAN/T42uPvYj5SkFLBoMpT0TLRY298mc/zw5IjBcop6uYklh6rW9AVvOpTN6c6z5mU7H5VOAW/kXn3ISTtQ6ByJNiBNSl94FBPBzqscqwwSn3tjiFoVI6+O7L/KtuWCHEq6A0lNJtcPSRydTbbC4fcB1Hbpz6FKOmzw08XXv2VMn8E6oWoYPVcQ0HJVbhLt9tHZRyYaagYt4GURb3QOPinxFMtN239OCD8AfyM92D3YOZmBl5bmgmPNY0oAz9zggrFumQm7+Wvha+3yJImdyPqnFke302np7TeZ9u5Ih+Wg4/fTMKLnuq0ujfw/ie4DRCT+70Gkzeg1AujvmaRlGYSPehekLxxaSKYzqQHfRDZ0y8iyk1ZHaVSpqJLZqklbVJkmlVHFPF8fTn2990PnNuCMTRPAyoXUI4IeUm7toSxgYCvv360GXRuaJ41urN7zOsiILrXYegUkyJj1XpaEzYxEMeRd+BLo2USUCtejO61QBVZQ/qXoWX3rsUGugUcd0gDyAwnVU42sOeiFHEkK3EO2nXAYtTIaOXN44JRTotGTUnpjG1CsoWaCqmIQaiVxTKoWtpHkM7PIB3A+W8VsdCdYWB7Hkay6/zP7VnblrbDZfZrCm9hmcKQsYrJmeO05jtS2jGqRIc0k6MGt8JnOPOlDxd8ob5cmpHdYwByQOBXdpyz4Cp4Vu8U4HkJCl4JWK0/b+8FVRcO7H1HqThqAgTJt7mXPfCRnPDughZrnnGUPywECn33m4UODtVpk6wR+Roina6TFlmlP3dqieWm2d8kGBXbFFobmYt0TY7DvownwoKmW6PblrwFyolVMIlQnXNXAQbAAr5QIhlLwxYHriINJZba9ON1oVnrduaFYyC19Ps8oYAQ==",
+          "provider_name": "anthropic",
+          "provider_details": null,
+          "part_kind": "thinking"
+        },
+        {
+          "tool_name": "get_hall",
+          "args": {},
+          "tool_call_id": "toolu_015uzTd37LCGr5YTTcKjsFvZ",
+          "tool_kind": null,
+          "id": null,
+          "provider_name": null,
+          "provider_details": null,
+          "part_kind": "tool-call"
+        },
+        {
+          "tool_name": "read_person",
+          "args": {
+            "name": "毕自严"
+          },
+          "tool_call_id": "toolu_011jXYkNxoFRV1vHdREAHdYG",
+          "tool_kind": null,
+          "id": null,
+          "provider_name": null,
+          "provider_details": null,
+          "part_kind": "tool-call"
+        },
+        {
+          "tool_name": "read_person",
+          "args": {
+            "name": "王绍徽"
+          },
+          "tool_call_id": "toolu_01JwuFCguMKhySsnJSKtL83w",
+          "tool_kind": null,
+          "id": null,
+          "provider_name": null,
+          "provider_details": null,
+          "part_kind": "tool-call"
+        }
+      ],
+      "usage": {
+        "input_tokens": 0,
+        "cache_write_tokens": 0,
+        "cache_read_tokens": 0,
+        "output_tokens": 0,
+        "input_audio_tokens": 0,
+        "cache_audio_read_tokens": 0,
+        "output_audio_tokens": 0,
+        "audio_seconds": 0.0,
+        "details": {},
+        "cost": null
+      },
+      "model_name": "claude-opus-5-5",
+      "timestamp": "2026-10-23T09:17:07.272838Z",
+      "kind": "response",
+      "provider_name": null,
+      "provider_url": null,
+      "provider_details": null,
+      "provider_response_id": null,
+      "finish_reason": null,
+      "run_id": null,
+      "conversation_id": null,
+      "metadata": null,
+      "workspace_ref": null,
+      "failed_attempts": null,
+      "state": "complete"
+    },
+    {
+      "parts": [
+        {
+          "content": "",
+          "id": null,
+          "signature": "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",
+          "provider_name": "anthropic",
+          "provider_details": null,
+          "part_kind": "thinking"
+        },
+        {
+          "content": "【旁白】十一月夜，殿上只剩王承恩一人侍立。他领了口谕，退到暖阁外取档。过了半炷香，捧着两只黄绫册匣回来，跪下打开，就着灯一页页念。\n\n【王承恩】回皇爷，两人的档都调来了。**两人名下都只担过一道旨，是同一道：十月里定下的陕西巡抚、赈银那道敕。**奴婢先把旨文念一遍。\n\n【旨】奉天承运皇帝，敕曰：陕西连岁亢旱，延、庆、平凉诸府饥民聚散，地方需人。据吏部会同户部题请，陕西督粮参政洪承畴，熟谙秦中情形，勤敏有为，着加都察院右副都御史，巡抚陕西地方，赞理军务，便宜行事。赈济银三十万两，着户部于太仓拨发，另遣官押解，按月稽核，务令实惠及于饥民，毋得侵渔。该部知道。钦此。\n\n【王承恩】这道旨上一共担了三个名：\n**毕自严是当面站台，王绍徽是会签，另有皇爷御笔手敕。**\n\n先说毕自严。官衔是**南京户部尚书**，档上记他人在南直隶南京。他靠算账、查亏空、调军饷起家，性子细，也压得住，凡事先算缺口，再讲体面。外头说他敢一笔一笔核亏空，为这个得罪过同僚。他心里想的，是让户部的钱粮真能撑住边务、养活百姓。他的难处是南京户部那个位子孤，常要挡着各处许下的空头银子。\n\n再说王绍徽。现任吏部尚书，人在京师。**外头都把他算在魏党里头。**他管铨选，最拿手的是把选官弄成排党籍、挤对异己，那本《东林点将录》就记在他账上。他性子冷硬、做事精细，掌吏部这些年处处拿任官跟党争挂钩，清流都当他是头号恶人。**这些旧账，随时能被人翻出来。**\n\n【旁白】王承恩合上册匣，膝行半步，靠到御座边上。\n\n【王承恩·低语】皇爷，奴婢多嘴说三句。\n头一句：旨上写的是“吏部会同户部题请”，可户部正堂是郭允厚，**郭允厚没担名。**替户部站台的毕自严是南京的尚书，算不上户部的正印官。往后郭允厚要是拿“本部并未题请”来推，太仓那三十万两拨不拨、怎么拨，就难说了。\n第二句：毕自严是当面站台，**他口头说过愿意一起会签题本，可档上只记了站台，没记会签。**言官要参，他担的是“附和”的名，用笔签下的担子，在王绍徽和皇爷的手敕上。\n第三句：王绍徽签这个字，不是因为看重洪承畴，是被毕自严当面顶住了，下不来台。**这个名在他手里，是一张可以反过来用的牌。**皇爷哪天要动魏党，他会拿这一签说自己“也替皇爷办过实事”；要是赈银在路上出了亏空，他也会第一个说吏部只管荐人，不管银子。\n\n【旁白】王承恩退回原位，垂手站着，等皇爷示下。",
+          "id": null,
+          "provider_name": null,
+          "provider_details": null,
+          "part_kind": "text"
+        }
+      ],
+      "usage": {
+        "input_tokens": 0,
+        "cache_write_tokens": 0,
+        "cache_read_tokens": 0,
+        "output_tokens": 0,
+        "input_audio_tokens": 0,
+        "cache_audio_read_tokens": 0,
+        "output_audio_tokens": 0,
+        "audio_seconds": 0.0,
+        "details": {},
+        "cost": null
+      },
+      "model_name": "claude-opus-5-5",
+      "timestamp": "2026-10-23T09:17:07.272867Z",
+      "kind": "response",
+      "provider_name": null,
+      "provider_url": null,
+      "provider_details": null,
+      "provider_response_id": null,
+      "finish_reason": null,
+      "run_id": null,
+      "conversation_id": null,
+      "metadata": null,
+      "workspace_ref": null,
+      "failed_attempts": null,
+      "state": "complete"
+    }
+  ]
+}

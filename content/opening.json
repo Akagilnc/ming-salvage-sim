@@ -1,7 +1,7 @@
 {
   "accounts": [
-    {"name": "国库", "taels": 3200000, "department": "户部", "payment_order": ["军饷", "官俸_base", "宗室禄米_base", "赈灾_base", "工程_base", "建筑维护_base"], "army_order": ["京营", "关宁军 / 宁锦防线", "山海关守军", "宣大边军", "蓟镇兵", "登莱兵与水师", "东江镇", "陕西边军", "南京守备军", "福建水师", "广东水师", "西南土司兵"]},
-    {"name": "内库", "taels": 4400000, "department": "内廷", "payment_order": ["内廷俸_base", "妃嫔_base", "宫廷_base"]}
+    {"name": "国库", "taels": 3200000, "department": "户部", "known_to": ["阉党"], "source": "《明史》卷72户部·太仓银库；天启末阉党知情采用#1965开局设定。", "payment_order": ["军饷", "官俸_base", "宗室禄米_base", "赈灾_base", "工程_base", "建筑维护_base"], "army_order": ["京营", "关宁军 / 宁锦防线", "山海关守军", "宣大边军", "蓟镇兵", "登莱兵与水师", "东江镇", "陕西边军", "南京守备军", "福建水师", "广东水师", "西南土司兵"]},
+    {"name": "内库", "taels": 4400000, "department": "內承運庫", "known_to": ["阉党"], "source": "《明史》卷74內承運庫，掌印太监一员；天启末由魏忠贤一党把持为开局设定。", "payment_order": ["内廷俸_base", "妃嫔_base", "宫廷_base"]}
   ],
   "world": [{"name": "天下", "imperial_prestige": 20, "public_support": 50}],
   "calendar": [{"id": "world", "year": 1627, "month": 10}]

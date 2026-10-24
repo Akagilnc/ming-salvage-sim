@@ -10,7 +10,8 @@ from sqlalchemy.sql.elements import ColumnElement
 from ming.ledger import Item, Ledger
 from ming.ledger import ENTITY_COLUMNS as E, FACT_COLUMNS as F, ENTITY_ROWS, FACT_ROWS
 from ming.middle.calendar import calendar_if_any
-from ming.middle.queries import IN_OFFICE, available_on, public_decree
+from ming.middle.queries import available_on, public_decree
+from ming.middle.appointments import held_by
 from ming.middle.night import known_people, read_night
 
 HIDDEN_JOURNEY = {"remaining_distance", "travel_speed"}
@@ -102,29 +103,15 @@ class FactView(BaseModel):
 def owned_accounts(ledger: Ledger, identity: Identity) -> set[UUID]:
     if not isinstance(identity, Officials):
         return set()
-    rows = ledger.entities(kind=("office_type", "account")) + ledger.entities(
-        kind="person", query=ENTITY_ROWS.where(E.key.in_(identity.people), IN_OFFICE)
-    )
-    # Resolve the current formal title through the imported office catalogue,
-    # never a person's stale office_type or an umbrella-office exception.
-    departments = {
-        next(
-            (
-                rule["data"]["type"]
-                for rule in rows
-                if rule["kind"] == "office_type"
-                and any(stem in r["data"]["office"] for stem in rule["data"]["stems"])
-            ),
-            None,
-        )
-        for r in rows
-        if r["kind"] == "person"
-    } - {None, "内阁", "司礼监"}
-    return {
-        r["id"]
-        for r in rows
-        if r["kind"] == "account" and r["data"].get("department") in departments
-    }
+    offices = [r["data"]["office"] for r in held_by(ledger, identity.people)]
+    departments = {r["data"]["department"] for r in ledger.entities(
+        kind="office", query=ENTITY_ROWS.where(E.key.in_(offices))
+    )}
+    known = set(identity.people) | {r["data"].get("faction") for r in ledger.entities(
+        kind="person", query=ENTITY_ROWS.where(E.key.in_(identity.people))
+    )}
+    return {r["id"] for r in ledger.entities(kind="account")
+            if r["data"]["department"] in departments or known.intersection(r["data"]["known_to"])}
 
 
 def rushed(speed: Any) -> bool:
@@ -196,6 +183,7 @@ def entities(
     if sourced:
         query = query.where(E.source != "")
     rows = ledger.entities(**selection, query=query)
+    appointments = held_by(ledger, [row["key"] for row in rows if row["kind"] == "person"]) if identity != "audit" else []
     result: list[EntityView] = []
     for row in rows:
         if identity not in ("audit", "world"):
@@ -203,8 +191,12 @@ def entities(
                 row["data"] = {
                     k: v
                     for k, v in row["data"].items()
-                    if k in {"name", "office", "location", "status"}
+                    if k in {"name", "location", "status"}
                 }
+            elif row["exposure"] == "treasury":
+                row["data"] = {"name": row["key"], "condition": (
+                    "无银可支", "极度紧绌", "大概缺钱", "尚有余裕"
+                )[sum(row["data"]["taels"] >= cutoff for cutoff in (1, 1000000, 5000000))]}
             elif row["exposure"] == "night":
                 row["data"] = read_night(ledger, row["id"]).model_dump(mode="json")
             elif row["exposure"] == "decree":
@@ -213,6 +205,8 @@ def entities(
                     for k, v in row["data"].items()
                     if k in {"text", "origin", "people", "night_id", "secret", "turn", "endorsements", "interim"}
                 }
+        if identity != "audit" and row["kind"] == "person":
+            row["data"]["appointments"] = [r["data"] for r in appointments if row["key"] in r["data"]["holders"]]
         if identity == "world" and row["kind"] == "person":
             travel = (
                 journey(row["data"], ledger.facts(entity_id=row["id"]))
@@ -241,6 +235,8 @@ def entity_exposure(
         (E.kind.in_(("gazette", "calendar")), "full"),
         (E.id.in_(access["known"]), "decree"),
     ]
+    if isinstance(identity, Officials):
+        rules.append(((E.kind == "account") & (E.key == "国库"), "treasury"))
     if identity == "emperor":
         rules.append((E.kind == "night", "night"))
     return case(*rules)
@@ -385,7 +381,11 @@ def project(
                     **{
                         k: v
                         for k, v in fact.detail.items()
-                        if item["exposure"] == "dated" and k in {"date", "successor"}
+                        if item["exposure"] == "dated"
+                        and k in (
+                            {"date", "successor"}
+                            | ({"decree_id", "endorser", "form"} if fact.kind == "endorsed" else set())
+                        )
                     },
                 }
             elif item["exposure"] == "empty":

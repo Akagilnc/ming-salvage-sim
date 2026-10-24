@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.messages import ModelMessagesTypeAdapter
 from starlette.testclient import TestClient
 
 from ming.middle.view import Officials
@@ -19,14 +20,15 @@ def _declaration_prompt(messages):
     return json.loads(messages[0].parts[0].content.split("\n", 1)[1])
 
 
-def declaration_reply(messages, response_file, quiet_month=None):
-    prompt = _declaration_prompt(messages)
-    name = (
-        response_file
-        if prompt["source"]["data"].get("secret")
-        and prompt["date"]["month"] != quiet_month
-        else "month_empty.txt"
-    )
+def declaration_reply(messages, response_file, quiet_month=None, stage="landing"):
+    prompt = _declaration_prompt(messages) if stage == "landing" else json.loads(messages[0].parts[0].content)
+    source = prompt["source"] if stage == "landing" else next(iter(prompt["context"].get("decrees", [])), None)
+    if response_file == "night_ordering.json":
+        if source is None or source["kind"] != "decree":
+            return (RECORDED / ("month_empty.txt" if stage == "landing" else "simulation.txt")).read_text()
+        name = "secret" if source["data"].get("secret") else "public"
+        return json.loads((RECORDED / response_file).read_text())[name][stage]
+    name = response_file if source["data"].get("secret") and prompt["date"]["month"] != quiet_month else "month_empty.txt"
     return (RECORDED / name).read_text()
 
 
@@ -44,7 +46,7 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
         steps["secret_report"] = replaying([ModelHTTPError(429, "recorded")])
     else:
         steps["secret_report"] = replaying(
-            [(RECORDED / "secret_report.txt").read_text()] * 4, material
+            [(RECORDED / "secret_report.txt").read_text()] * 6, material
         )
     with TestClient(create_app(tmp_path)) as client:
         client.post(
@@ -59,7 +61,7 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
         for person, expected in (
             ("王承恩", {secret.id, public.id}),
             ("杨嗣昌", {secret.id}),
-            ("韩爌", {public.id}),
+            ("王绍徽", {public.id}),
             ("魏忠贤", set()),
         ):
             assert {
@@ -94,26 +96,27 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
             client.portal.call(client.app.state.web.game.drain)
             assert audit(game_db) == before
             steps["secret_report"] = replaying(
-                [(RECORDED / "secret_report.txt").read_text()] * 4, material
+                [(RECORDED / "secret_report.txt").read_text()] * 6, material
             )
             client.post("/actions", json={"action": "retry"}).raise_for_status()
             client.portal.call(client.app.state.web.game.drain)
-        for month in range(4):
+        # The new native night has two knowers and no handled event.
+        for month in range(6):
             court = client.app.state.web.game.court
             assert client.get("/state").json()["game"]["failure"] is None
             assert {d.id for d in court.entities("public", kind="decree")} == {
                 public.id
             }
             exposure = court.products(secret.id, kind="exposure", current=False)
-            assert [f.detail["score"] for f in exposure] == [3, 6, 9, 12][: month + 1]
-            assert exposure[-1].detail["stage"] == ("半公开" if month == 3 else "密")
+            assert [f.detail["score"] for f in exposure] == [2, 4, 6, 8, 10, 12][: month + 1]
+            assert exposure[-1].detail["stage"] == ("半公开" if month == 5 else "密")
             assert {f.entity_id for f in court.facts("audit", kind="unhandled")} == (
                 {secret.id} if failure == "declaration" else set()
             )
             for person, count in (
                 ("王承恩", month + 1),
                 ("杨嗣昌", 0),
-                ("韩爌", 0),
+                ("王绍徽", 0),
                 ("魏忠贤", 0),
             ):
                 assert (
@@ -124,7 +127,7 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
                 f.detail["date"] for f in court.facts("emperor", kind="secret_report")
             ] == [f.detail["date"] for f in exposure]
             assert not court.facts("public", kind="secret_report")
-            if month < 3:
+            if month < 5:
                 client.post(
                     "/actions", json={"action": "load", "save": game_db.name}
                 ).raise_for_status()
@@ -152,9 +155,9 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
     "scenario",
     [
         # Done in its decree month: the first accumulation already crosses.
-        (None, [14, 28, 42, 56], ("半公开", "半公开", "满朝风闻", "满朝风闻")),
+        (None, [13, 26, 39, 52], ("半公开", "半公开", "满朝风闻", "满朝风闻")),
         # Quiet through its decree month, done the next from its own share.
-        (10, [3, 17, 31, 45], ("密", "半公开", "半公开", "满朝风闻")),
+        (10, [2, 15, 28, 41], ("密", "半公开", "半公开", "满朝风闻")),
     ],
     ids=["done-in-decree-month", "done-next-month"],
 )
@@ -240,56 +243,6 @@ def test_discoveries_stay_private_and_completion_stops_only_reports(
         )
 
 
-def _night_reply(secret: bool) -> str:
-    return json.dumps(
-        {
-            "facts": [],
-            "reports": [],
-            "decree_events": [],
-            "decrees": [
-                {
-                    "text": "密查内库" if secret else "任命巡抚",
-                    "origin": "emperor",
-                    "secret": secret,
-                    "turn": 1,
-                    "people": ["王承恩"],
-                }
-            ],
-        },
-        ensure_ascii=False,
-    )
-
-
-def _appointment(person: str) -> str:
-    return json.dumps(
-        {
-            "facts": [
-                {
-                    "entity_type": "person",
-                    "entity": person,
-                    "create": False,
-                    "changes": [
-                        {"field": "office", "value": "巡抚"},
-                        {"field": "office_region", "value": "陕西"},
-                    ],
-                    "text": "任职。",
-                }
-            ],
-            "reports": [],
-            "decree_events": [],
-        },
-        ensure_ascii=False,
-    )
-
-
-def _landing_reply(messages):
-    source = _declaration_prompt(messages)["source"]
-    if source["kind"] != "decree":
-        return (RECORDED / "month_empty.txt").read_text()
-    person = "杨嗣昌" if source["data"].get("secret") else "洪承畴"
-    return _appointment(person)
-
-
 @pytest.mark.parametrize("game_db", ["first_night"], indirect=True)
 def test_month_lands_an_earlier_public_decree_before_a_later_secret(
     tmp_path: Path, game_db: Path, steps, audit
@@ -298,18 +251,19 @@ def test_month_lands_an_earlier_public_decree_before_a_later_secret(
 
     night_secret.json creates the secret first, so it cannot show the inversion.
     """
-    steps["Declaration"] = replaying(_landing_reply)
+    cases = json.loads((RECORDED / "night_ordering.json").read_text())
+    steps["Declaration"] = replaying(partial(declaration_reply, response_file="night_ordering.json"))
+    steps["simulation"] = replaying(partial(declaration_reply, response_file="night_ordering.json", stage="simulation"))
     with TestClient(create_app(tmp_path)) as client:
         save = client.post(
             "/actions", json={"action": "load", "save": game_db.name}
         ).json()["save"]
-        for secret in (False, True):
-            steps["scene"] = replaying(["殿上无事。"] * 2)
-            steps["NightDeclaration"] = replaying([_night_reply(secret)])
+        for case in cases.values():
+            steps["scene"] = replaying(ModelMessagesTypeAdapter.validate_python(case["scene_responses"]))
+            steps["NightDeclaration"] = replaying([case["declaration"]])
             client.post("/actions", json={"action": "open"}).raise_for_status()
-            client.post(
-                "/actions", json={"action": "say", "words": "先拟旨。"}
-            ).raise_for_status()
+            for words in case["words"]:
+                client.post("/actions", json={"action": "say", "words": words}).raise_for_status()
             client.post("/actions", json={"action": "dismiss"}).raise_for_status()
             client.portal.call(client.app.state.web.game.drain)
             assert client.get("/state").json()["game"]["failure"] is None
@@ -318,12 +272,8 @@ def test_month_lands_an_earlier_public_decree_before_a_later_secret(
         assert client.get("/state").json()["game"]["failure"] is None
         ledger = audit(tmp_path / save)
         decrees = [e for e in ledger["entities"] if e["kind"] == "decree"]
-        people = {
-            e["key"]: e["data"] for e in ledger["entities"] if e["kind"] == "person"
-        }
+        appointment = next(e for e in ledger["entities"] if e["kind"] == "incumbency" and e["data"]["office"] == "巡抚" and e["data"]["territory"] == "陕西")
         assert [e["data"]["secret"] for e in decrees] == [False, True]
-        assert (people["杨嗣昌"]["office"], people["杨嗣昌"]["office_region"]) == (
-            "巡抚",
-            "陕西",
-        )
-        assert people["洪承畴"]["office"] == ""
+        assert not [f for f in ledger["facts"] if f["kind"] == "unhandled"]
+        assert appointment["data"]["holders"] == ["杨嗣昌"]
+        assert [f["detail"]["actual"]["holders"] for f in ledger["facts"] if f["entity_id"] == appointment["id"] and f["kind"] == "changed"] == [["洪承畴"], ["杨嗣昌"]]

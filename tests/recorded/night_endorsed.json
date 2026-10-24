@@ -18,6 +18,13 @@
     }
   ],
   "replies": [
-    "{\"facts\":[{\"entity_type\":\"person\",\"entity\":\"洪承畴\",\"create\":false,\"affair\":null,\"decree\":0,\"discovered\":false,\"changes\":[{\"field\":\"office\",\"value\":\"巡抚\"},{\"field\":\"office_region\",\"value\":\"陕西\"}],\"text\":\"特旨钦命，陕西督粮参政洪承畴加都察院右副都御史衔，巡抚陕西，便宜行事。\"}],\"reports\":[],\"decree_events\":[{\"decree\":0,\"kind\":\"handled\",\"text\":\"吏部尚书王绍徽伏地领旨，拟明诏，待用印明发。\"}],\"decrees\":[{\"text\":\"特旨钦命陕西督粮参政洪承畴加都察院右副都御史衔，巡抚陕西，便宜行事\",\"origin\":\"emperor\",\"secret\":false,\"turn\":3,\"endorsements\":[{\"endorser\":\"毕自严\",\"form\":\"当面站台\",\"source_chat_turn_id\":\"north-star-backing\"}],\"interim\":false,\"people\":[\"洪承畴\",\"王绍徽\"]}]}"
-  ]
+    "{\"facts\": [], \"reports\": [], \"decree_events\": [], \"decrees\": [{\"text\": \"特旨钦命陕西督粮参政洪承畴加都察院右副都御史衔，巡抚陕西，便宜行事\", \"origin\": \"emperor\", \"secret\": false, \"turn\": 3, \"people\": [\"洪承畴\", \"王绍徽\"], \"endorsements\": [{\"endorser\": \"毕自严\", \"form\": \"当面站台\", \"source_chat_turn_id\": \"north-star-backing\"}], \"interim\": false}]}"
+  ],
+  "translation_source": {
+    "host": "claude-cli",
+    "session_id": "b9e25889-2e04-482c-a08d-776960a9e343",
+    "contract": "#1965; NightDeclaration; content/prompts/month_translate.md",
+    "raw": "/Users/akagilnc/WorkSpace/vault/ak-cc-wiki/raw/ming-llm-runner/2026-10-24/1965/ming-1965-night-recordings/endorsed.native.json",
+    "response": "```json\n{\n  \"facts\": [],\n  \"reports\": [],\n  \"decree_events\": [],\n  \"decrees\": [\n    {\n      \"text\": \"特旨钦命陕西督粮参政洪承畴加都察院右副都御史衔，巡抚陕西，便宜行事\",\n      \"origin\": \"emperor\",\n      \"secret\": false,\n      \"turn\": 3,\n      \"people\": [\"洪承畴\", \"王绍徽\"],\n      \"endorsements\": [\n        {\n          \"endorser\": \"毕自严\",\n          \"form\": \"当面站台\",\n          \"source_chat_turn_id\": \"north-star-backing\"\n        }\n      ],\n      \"interim\": false\n    }\n  ]\n}\n```"
+  }
 }

@@ -6,6 +6,9 @@ from pathlib import Path
 
 import pytest
 from pydantic_ai.models.test import TestModel
+from starlette.testclient import TestClient
+
+from ming.web import create_app
 
 from ming.__main__ import main
 from ming.middle.court import Court
@@ -14,10 +17,13 @@ CONTENT = Path(__file__).parents[1] / "content"
 
 
 def test_new_game_imports_complete_world_records_and_separates_identities(
-    tmp_path: Path,
+    tmp_path: Path, steps, audit,
 ) -> None:
-    court = Court.new_game(tmp_path, TestModel())
-    entities = court.entities("audit")
+    with TestClient(create_app(tmp_path)) as client:
+        save = client.post("/actions", json={"action": "new"}).json()["save"]
+        visible = client.get("/records").json()["entities"]
+    ledger = audit(tmp_path / save)
+    entities = ledger["entities"]
     # Pinyin keys between content records become the Chinese name they key.
     names = {
         r["id"]: r["name"]
@@ -32,7 +38,7 @@ def test_new_game_imports_complete_world_records_and_separates_identities(
             else names.get(v, v)
             if isinstance(v, str)
             else v
-            for k, v in record.items()
+            for k, v in record.items() if k != "appointments"
         }
 
     for filename, collection in [
@@ -48,46 +54,50 @@ def test_new_game_imports_complete_world_records_and_separates_identities(
         ("opening", "accounts"),
         ("opening", "calendar"),
         ("opening", "world"),
-        ("multiple_offices", "offices"),
-        ("offices", "priority"),
+        ("official_titles", "offices"),
+        ("territories", "territories"),
         ("fiscal_config", "items"),
     ]:
         source = f"{filename}.json/{collection}"
         expected = json.loads((CONTENT / f"{filename}.json").read_text())[collection]
-        assert [e.data for e in entities if e.source == source] == [
+        assert [e["data"] for e in entities if e["source"] == source] == [
             canonical(r) for r in expected
         ]
-    assert [e.data for e in entities if e.kind == "event"] == json.loads(
+    assert [e["data"] for e in entities if e["kind"] == "historical_event"] == json.loads(
         (CONTENT / "events.json").read_text()
     )
     dossiers = json.loads((CONTENT / "minister_dossiers.json").read_text())
-    assert {e.key: e.data for e in entities if e.kind == "dossier"} == dossiers
-    assert [e.key for e in entities if e.kind == "gazette"] == ["opening"]
-    offices = {e.key: e.data for e in entities if e.kind == "office"}
+    assert {e["key"]: e["data"] for e in entities if e["kind"] == "dossier"} == dossiers
+    assert [e["key"] for e in entities if e["kind"] == "gazette"] == ["opening"]
+    offices = {e["key"]: e["data"] for e in entities if e["kind"] == "office"}
     assert offices["巡抚"]["multiple"] is False
     assert offices["内阁大学士"]["multiple"] is True
-    visible = court.entities("emperor")
-    assert {e.kind for e in visible} == {"person", "calendar", "gazette"}
-    shown = {e.key: e.data for e in visible if e.kind == "person"}
-    assert shown.keys() == {e.key for e in entities if e.kind == "person"}
-    visible_fields = {"name", "office", "location", "status"}
+    assert {e["kind"] for e in visible} == {"person", "calendar", "gazette"}
+    shown = {e["key"]: e["data"] for e in visible if e["kind"] == "person"}
+    assert shown.keys() == {e["key"] for e in entities if e["kind"] == "person"}
+    visible_fields = {"name", "appointments", "location", "status"}
     assert all(set(data) <= visible_fields for data in shown.values())
     characters = {
         p["name"]: p
         for p in json.loads((CONTENT / "characters.json").read_text())["characters"]
     }
-    assert all(
-        p[field] in offices
-        for p in characters.values()
-        for field in ("office", "historical_office")
-        if p.get(field)
-    )
     for name in ["史可法", "徐光启", "黄道周", "练国事", "郭允厚"]:
-        assert shown[name] == {
+        assert {k: v for k, v in shown[name].items() if k != "appointments"} == {
             k: v for k, v in canonical(characters[name]).items() if k in visible_fields
         }
-    assert court.facts("audit") == []
-    court.close()
+        assert [{k: a[k] for k in ("office", "territory")} for a in shown[name]["appointments"]] == characters[name]["appointments"]
+    assert shown["孙传庭"]["appointments"] == []
+    assert shown["毕自严"]["appointments"] == []
+    assert all(shown[name]["appointments"] == [] for name in ("黄道周", "练国事", "何腾蛟", "瞿式耜", "钱龙锡", "刘鸿训", "李标"))
+    assert shown["韩爌"]["location"] == "山西"
+    assert shown["来宗道"]["appointments"] == [{"office": "礼部尚书", "territory": "", "holders": ["来宗道"]}]
+    assert [e["data"]["holders"] for e in entities if e["kind"] == "incumbency" and e["data"]["office"] == "礼部尚书"] == [["来宗道"]]
+    assert all({a["office"] for a in shown[name]["appointments"]} <= {"内阁大学士", "中极殿大学士"} for name in ("黄立极", "施凤来", "张瑞图", "李国普"))
+    assert shown["曾樱"]["appointments"] == [{"office": "知府", "territory": "南直隶常州府", "holders": ["曾樱"]}]
+    assert shown["卢象升"]["location"] == "北直隶 / 京师"
+    assert shown["卢象升"]["appointments"] == [{"office": "知府", "territory": "北直隶大名府", "holders": ["卢象升"]}]
+    assert not any({"office", "office_type", "office_region", "appointments"} & e["data"].keys() for e in entities if e["kind"] == "person")
+    assert ledger["facts"] == []
 
 
 def test_cli_new_games_never_overwrite_and_missing_game_is_not_created(

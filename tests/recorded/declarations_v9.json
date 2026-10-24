@@ -1,0 +1,640 @@
+{
+  "source": {
+    "host": "claude-cli",
+    "session_id": "8b5c2c98-f3ac-4589-863c-8ae59cac6aa9",
+    "instructions": "你是模拟游戏的事实转译官。每个案例分别转为一份Declaration，按给定JSON schema输出。只转译各案已发生的事实，不做法律或逻辑修正，不补未提及的事实，不相互串案。任免写entity_type=incumbency、entity为所说官职全名、create=false、holders为变更后的完整人名名单；无需更改人物office/status/location。钱粮只声明付方一次，account.taels负数加counterpart收方，不另写收方。建立新官职、新属地、新历史剧情事件分别用office、territory、historical_event；字段从原文取得。未给出的信息省略，不虚构、不替不认识的名字纠错。是否能落账由引擎根据其目录和员额验证，这里只转写给定事实。",
+    "input": {
+      "ambiguous": "杨嗣昌任新城知县，任命已生效。没有进一步地名信息，不自行猜测是哪个府。",
+      "unknown_office": "杨嗣昌任月球府知府，任命已生效。官名就照所说记录。",
+      "multiple": "徐光启与毕自严两人共同担任户部尚书，任命已生效。",
+      "unknown_person": "户部尚书今由田不存在担任，任命已生效。人名就叫田不存在。",
+      "knowledge": "国库账上的 known_to 知情名单已改为徐光启一人。",
+      "new_account": "新设账户陕西专项银库，初始存银零两。",
+      "new_office": "增设一个官职，叫太空尚书，隶属太空部，一员。",
+      "new_territory": "新设属地月球府，所属账本地区陕西，别名月球。",
+      "new_historical": "新设历史剧情事件：月球开垦，尚未终结。",
+      "missing_recipient": "国库支出10000两，收款方完全未提及。不得虚构收款方。",
+      "unknown_recipient": "国库拨10000两给现有账户月球库。只是拨款，不能新建这个账户。",
+      "purpose_region": "国库拨10000两给陕西，专项用款。只声明付款，不重复声明收方事实。",
+      "range": "京营鸟铳装备改为120，随军红夷炮改为负2门；洪承畴行速改为3；宗室禄米_base应付保留比例factor改为1.5、暂欠比例defer改为负0.5。按照原始数字交付，由引擎夹范围。"
+    },
+    "schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ambiguous": {
+          "$ref": "#/$defs/Declaration"
+        },
+        "unknown_office": {
+          "$ref": "#/$defs/Declaration"
+        },
+        "multiple": {
+          "$ref": "#/$defs/Declaration"
+        },
+        "unknown_person": {
+          "$ref": "#/$defs/Declaration"
+        },
+        "knowledge": {
+          "$ref": "#/$defs/Declaration"
+        },
+        "new_account": {
+          "$ref": "#/$defs/Declaration"
+        },
+        "new_office": {
+          "$ref": "#/$defs/Declaration"
+        },
+        "new_territory": {
+          "$ref": "#/$defs/Declaration"
+        },
+        "new_historical": {
+          "$ref": "#/$defs/Declaration"
+        },
+        "missing_recipient": {
+          "$ref": "#/$defs/Declaration"
+        },
+        "unknown_recipient": {
+          "$ref": "#/$defs/Declaration"
+        },
+        "purpose_region": {
+          "$ref": "#/$defs/Declaration"
+        },
+        "range": {
+          "$ref": "#/$defs/Declaration"
+        }
+      },
+      "required": [
+        "ambiguous",
+        "unknown_office",
+        "multiple",
+        "unknown_person",
+        "knowledge",
+        "new_account",
+        "new_office",
+        "new_territory",
+        "new_historical",
+        "missing_recipient",
+        "unknown_recipient",
+        "purpose_region",
+        "range"
+      ],
+      "$defs": {
+        "Change": {
+          "additionalProperties": false,
+          "properties": {
+            "field": {
+              "title": "Field",
+              "type": "string"
+            },
+            "value": {
+              "title": "Value"
+            },
+            "purpose": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "补欠",
+                    "当月饷",
+                    "犒赏",
+                    "专项"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "账户付给军队或财政科目的款须写名目；value仍为带符号的两数。",
+              "title": "Purpose"
+            },
+            "counterpart": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/EntityRef"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "钱粮另一边的实体引用；每笔只声明付方一次，收方由引擎按实际金额记账，不必另写 fact。无出处收入可不填。"
+            }
+          },
+          "required": [
+            "field",
+            "value"
+          ],
+          "title": "Change",
+          "type": "object"
+        },
+        "DecreeEvent": {
+          "additionalProperties": false,
+          "properties": {
+            "decree": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "来源旨意：整夜本份 decrees 的零基下标；月末本旨省略，使用当前旨意来源。",
+              "title": "Decree"
+            },
+            "kind": {
+              "description": "handled：实际发生的一道传递、经办（转交、往返），每道各记一条；completed：推演已认定该差事办结，包括关联事务已成往事。无记录、接不住不算办结。没有新建事务也不算办结。",
+              "enum": [
+                "handled",
+                "completed"
+              ],
+              "title": "Kind",
+              "type": "string"
+            },
+            "text": {
+              "title": "Text",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ],
+          "title": "DecreeEvent",
+          "type": "object"
+        },
+        "EntityRef": {
+          "additionalProperties": false,
+          "properties": {
+            "entity_type": {
+              "title": "Entity Type",
+              "type": "string"
+            },
+            "entity": {
+              "title": "Entity",
+              "type": "string"
+            }
+          },
+          "required": [
+            "entity_type",
+            "entity"
+          ],
+          "title": "EntityRef",
+          "type": "object"
+        },
+        "Fact": {
+          "additionalProperties": false,
+          "properties": {
+            "entity_type": {
+              "description": "账本实体类型，如 person、army、affair",
+              "title": "Entity Type",
+              "type": "string"
+            },
+            "entity": {
+              "description": "实体的账本正名或新实体的名字",
+              "title": "Entity",
+              "type": "string"
+            },
+            "create": {
+              "description": "是否新建；已有实体填 false",
+              "title": "Create",
+              "type": "boolean"
+            },
+            "affair": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "本条后果所属事务的正名；可指同份声明新建的 affair，无所属事务可省略。",
+              "title": "Affair"
+            },
+            "decree": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "来源旨意：整夜本份 decrees 的零基下标；月末本旨省略，使用当前旨意来源。",
+              "title": "Decree"
+            },
+            "discovered": {
+              "default": false,
+              "description": "是否为密令内部查获实情；不按有无字段变化判断。",
+              "title": "Discovered",
+              "type": "boolean"
+            },
+            "changes": {
+              "items": {
+                "$ref": "#/$defs/Change"
+              },
+              "title": "Changes",
+              "type": "array"
+            },
+            "text": {
+              "description": "发生的事实，原文记在这个实体上；没有字段变化也可以只记文字。物理实况正文只写后果，不写密令来源，密令来源只放在结构化来源关系里。",
+              "title": "Text",
+              "type": "string"
+            }
+          },
+          "required": [
+            "entity_type",
+            "entity",
+            "create",
+            "changes",
+            "text"
+          ],
+          "title": "Fact",
+          "type": "object"
+        },
+        "Report": {
+          "additionalProperties": false,
+          "properties": {
+            "entity_type": {
+              "title": "Entity Type",
+              "type": "string"
+            },
+            "entity": {
+              "title": "Entity",
+              "type": "string"
+            },
+            "text": {
+              "title": "Text",
+              "type": "string"
+            },
+            "audience": {
+              "enum": [
+                "public",
+                "official"
+              ],
+              "title": "Audience",
+              "type": "string"
+            }
+          },
+          "required": [
+            "entity_type",
+            "entity",
+            "text",
+            "audience"
+          ],
+          "title": "Report",
+          "type": "object"
+        },
+        "Declaration": {
+          "additionalProperties": false,
+          "properties": {
+            "facts": {
+              "items": {
+                "$ref": "#/$defs/Fact"
+              },
+              "title": "Facts",
+              "type": "array"
+            },
+            "reports": {
+              "items": {
+                "$ref": "#/$defs/Report"
+              },
+              "title": "Reports",
+              "type": "array"
+            },
+            "decree_events": {
+              "items": {
+                "$ref": "#/$defs/DecreeEvent"
+              },
+              "title": "Decree Events",
+              "type": "array"
+            }
+          },
+          "required": [
+            "facts"
+          ],
+          "title": "Declaration",
+          "type": "object"
+        }
+      }
+    }
+  },
+  "cases": {
+    "ambiguous": {
+      "facts": [
+        {
+          "entity_type": "incumbency",
+          "entity": "新城知县",
+          "create": false,
+          "changes": [
+            {
+              "field": "holders",
+              "value": [
+                "杨嗣昌"
+              ]
+            }
+          ],
+          "text": "杨嗣昌任新城知县，任命已生效。"
+        }
+      ]
+    },
+    "unknown_office": {
+      "facts": [
+        {
+          "entity_type": "incumbency",
+          "entity": "月球府知府",
+          "create": false,
+          "changes": [
+            {
+              "field": "holders",
+              "value": [
+                "杨嗣昌"
+              ]
+            }
+          ],
+          "text": "杨嗣昌任月球府知府，任命已生效。"
+        }
+      ]
+    },
+    "multiple": {
+      "facts": [
+        {
+          "entity_type": "incumbency",
+          "entity": "户部尚书",
+          "create": false,
+          "changes": [
+            {
+              "field": "holders",
+              "value": [
+                "徐光启",
+                "毕自严"
+              ]
+            }
+          ],
+          "text": "徐光启与毕自严共同担任户部尚书，任命已生效。"
+        }
+      ]
+    },
+    "unknown_person": {
+      "facts": [
+        {
+          "entity_type": "incumbency",
+          "entity": "户部尚书",
+          "create": false,
+          "changes": [
+            {
+              "field": "holders",
+              "value": [
+                "田不存在"
+              ]
+            }
+          ],
+          "text": "户部尚书今由田不存在担任，任命已生效。"
+        }
+      ]
+    },
+    "knowledge": {
+      "facts": [
+        {
+          "entity_type": "account",
+          "entity": "国库",
+          "create": false,
+          "changes": [
+            {
+              "field": "known_to",
+              "value": [
+                "徐光启"
+              ]
+            }
+          ],
+          "text": "国库账上的known_to知情名单已改为徐光启一人。"
+        }
+      ]
+    },
+    "new_account": {
+      "facts": [
+        {
+          "entity_type": "account",
+          "entity": "陕西专项银库",
+          "create": true,
+          "changes": [
+            {
+              "field": "taels",
+              "value": 0
+            }
+          ],
+          "text": "新设账户陕西专项银库，初始存银零两。"
+        }
+      ]
+    },
+    "new_office": {
+      "facts": [
+        {
+          "entity_type": "office",
+          "entity": "太空尚书",
+          "create": true,
+          "changes": [
+            {
+              "field": "department",
+              "value": "太空部"
+            },
+            {
+              "field": "headcount",
+              "value": 1
+            }
+          ],
+          "text": "增设官职太空尚书，隶属太空部，一员。"
+        }
+      ]
+    },
+    "new_territory": {
+      "facts": [
+        {
+          "entity_type": "territory",
+          "entity": "月球府",
+          "create": true,
+          "changes": [
+            {
+              "field": "region",
+              "value": "陕西"
+            },
+            {
+              "field": "alias",
+              "value": "月球"
+            }
+          ],
+          "text": "新设属地月球府，所属账本地区陕西，别名月球。"
+        }
+      ]
+    },
+    "new_historical": {
+      "facts": [
+        {
+          "entity_type": "historical_event",
+          "entity": "月球开垦",
+          "create": true,
+          "changes": [
+            {
+              "field": "concluded",
+              "value": false
+            }
+          ],
+          "text": "新设历史剧情事件：月球开垦，尚未终结。"
+        }
+      ]
+    },
+    "missing_recipient": {
+      "facts": [
+        {
+          "entity_type": "account",
+          "entity": "国库",
+          "create": false,
+          "changes": [
+            {
+              "field": "taels",
+              "value": -10000
+            }
+          ],
+          "text": "国库支出10000两，收款方未提及。"
+        }
+      ]
+    },
+    "unknown_recipient": {
+      "facts": [
+        {
+          "entity_type": "account",
+          "entity": "国库",
+          "create": false,
+          "changes": [
+            {
+              "field": "taels",
+              "value": -10000,
+              "counterpart": {
+                "entity_type": "account",
+                "entity": "月球库"
+              }
+            }
+          ],
+          "text": "国库拨10000两给现有账户月球库。"
+        }
+      ]
+    },
+    "purpose_region": {
+      "facts": [
+        {
+          "entity_type": "account",
+          "entity": "国库",
+          "create": false,
+          "changes": [
+            {
+              "field": "taels",
+              "value": -10000,
+              "counterpart": {
+                "entity_type": "region",
+                "entity": "陕西"
+              },
+              "purpose": "专项"
+            }
+          ],
+          "text": "国库拨10000两给陕西，专项用款。"
+        }
+      ]
+    },
+    "range": {
+      "facts": [
+        {
+          "entity_type": "army",
+          "entity": "京营",
+          "create": false,
+          "changes": [
+            {
+              "field": "鸟铳装备",
+              "value": 120
+            },
+            {
+              "field": "随军红夷炮",
+              "value": -2
+            }
+          ],
+          "text": "京营鸟铳装备改为120，随军红夷炮改为负2门。"
+        },
+        {
+          "entity_type": "person",
+          "entity": "洪承畴",
+          "create": false,
+          "changes": [
+            {
+              "field": "行速",
+              "value": 3
+            }
+          ],
+          "text": "洪承畴行速改为3。"
+        },
+        {
+          "entity_type": "obligation",
+          "entity": "宗室禄米_base",
+          "create": false,
+          "changes": [
+            {
+              "field": "factor",
+              "value": 1.5
+            },
+            {
+              "field": "defer",
+              "value": -0.5
+            }
+          ],
+          "text": "宗室禄米_base应付保留比例factor改为1.5，暂欠比例defer改为负0.5。"
+        }
+      ]
+    },
+    "unknown_incumbency_report": {
+      "facts": [],
+      "reports": [
+        {
+          "entity_type": "incumbency",
+          "entity": "未设的火星巡察使",
+          "text": "本月在任者奏报无事。",
+          "audience": "official"
+        }
+      ]
+    },
+    "positive_counterpart": {
+      "facts": [
+        {
+          "entity_type": "account",
+          "entity": "国库",
+          "create": false,
+          "changes": [
+            {
+              "field": "taels",
+              "value": 10000,
+              "counterpart": {
+                "entity_type": "account",
+                "entity": "内库"
+              }
+            }
+          ],
+          "text": "国库入账一万两，款项来自内库。"
+        }
+      ]
+    }
+  },
+  "source_by_case": {
+    "unknown_incumbency_report": {
+      "host": "claude-cli",
+      "session_id": "41a30488-7a54-4298-a746-2ccaef0270aa",
+      "recording": "/Users/akagilnc/WorkSpace/vault/ak-cc-wiki/raw/ming-llm-runner/2026-10-24/1965/ming-1965-ordering-translations/unknown_incumbency_report.json"
+    },
+    "positive_counterpart": {
+      "host": "claude-cli",
+      "session_id": "28044b3a-eeb0-49bb-a2c5-42037dd86b02",
+      "instructions": "钱粮taels是增减不是余额；按给定主体、符号、往来方交Declaration，不另交另一方。",
+      "input": "本笔申报以国库为记账主体，入账一万两，往来方为账户内库。要求在这条国库申报里写正数入账及counterpart内库，不换用其他主体。"
+    }
+  }
+}

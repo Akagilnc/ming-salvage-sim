@@ -36,13 +36,13 @@ CATALOGUE = ENTITY_ROWS.where(
     )
 )
 
-IN_OFFICE = and_(
-    or_(
-        E.data["status"].as_string().is_(None),
-        E.data["status"].as_string() == "active",
-    ),
-    E.data["office"].as_string() != "",
-)
+APPOINTMENT = E.id.table.alias("appointment").c
+HOLDERS = func.json_each(APPOINTMENT.data["holders"]).table_valued("value")
+CURRENT_APPOINTMENT = select(APPOINTMENT.id).where(
+    APPOINTMENT.kind == "incumbency",
+    select(HOLDERS.c.value).where(HOLDERS.c.value == E.key).correlate(E.id.table, APPOINTMENT.id.table).exists(),
+).correlate(E.id.table)
+IN_OFFICE = CURRENT_APPOINTMENT.exists()
 
 
 def available_on(date: Item) -> ColumnElement[bool]:

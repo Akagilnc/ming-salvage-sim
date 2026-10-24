@@ -7,6 +7,7 @@ from typing import Any, TypeVar, cast
 from uuid import UUID, uuid4
 
 from pydantic_ai import Agent
+from sqlalchemy import or_, select
 from ming.ledger import (
     ENTITY_COLUMNS as E,
     FACT_COLUMNS as F,
@@ -309,9 +310,14 @@ class Court:
                     queries.IN_OFFICE,
                     E.data["faction"].as_string() == faction
                     if faction is not None
-                    else E.data["office"]
-                    .as_string()
-                    .in_(("内阁首辅", "司礼监掌印太监")),
+                    else queries.CURRENT_APPOINTMENT.where(
+                        or_(
+                            queries.APPOINTMENT.data["office"].as_string().in_(
+                                select(E.key).where(E.kind == "office", E.data["department"].as_string() == "内阁").correlate(None)
+                            ),
+                            queries.APPOINTMENT.data["office"].as_string() == "司礼监掌印太监",
+                        )
+                    ).exists(),
                 ),
             )
         ]

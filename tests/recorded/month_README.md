@@ -1,4 +1,38 @@
-# 月推进边界录音（#1951）
+# 月推进边界录音
+
+## #1965 官职、知情与单笔钱粮迁移（2026-10-24）
+
+归档根：`~/WorkSpace/vault/ak-cc-wiki/raw/ming-llm-runner/2026-10-24/1965/`。
+`artifact-relocation.json` 将旧临时路径映射到永久归档；原输入、原生响应、SQLite 与失败卷均保留。
+夹具的 `source` / `translation_source` 是各份录制的具体指针，不用本表替代原卷。
+
+| 夹具 | 归档内真源 | 边界 |
+| --- | --- | --- |
+| `appointments.json`、`appointments_replace_aliases.json` | `ming-1965-record.py`、`ming-1965-alias-v3/`；各夹具 session 指针 | 多职、替任、免职、起复与正名别名 |
+| `appointment_dossiers.json` | `ming-1965-knowledge/` | 真 CLI 工具往返；档案当前任职及知情账 |
+| `declarations_v9.json` | `source_by_case`；`ming-1965-ordering-translations/unknown_incumbency_report.json` | 新建限制、引用、缺必需项；故意错误输入不修成成功样本 |
+| `month_money_once_*.json` | `ming-1965-money-record.py`；夹具内 session / input | 每笔只声明付方，收入与奏报保留原数 |
+| `range_v9.json` | `ming-1965-range-record.py`；夹具内 session / input | 越界值夹范围，不拒收 |
+| `night_new_office.json` | `ming-1965-F2-live/` | 原皇帝话重录，杨嗣昌任户部右侍郎且保留兼职 |
+| `endorsed_dossier.json` | `ming-1965-host.1X28rM/` | 担过名者再查档，真实 read_person 工具回复 |
+| `night_tools.json` | `ming-1965-tools-live/` | 所在地准入、整次失败与批准时知情 |
+| `night_secret.json` | `ming-1965-secret-live/` | 王绍徽在京旁听，不把山西韩爌搬到京师；7轮原生响应 |
+| `night_ordering.json` | `ming-1965-ordering-now-live/`、`ming-1965-ordering-now-translations/` | 公旨先于密旨，本月生效的两次任命 |
+| `sources_vacancy.json`、`sources_appointment.json` | `officials-current-live/`、`import-current-officials.py` | 按含李国普的现开局重新真跑全阁免职、曹化淳补任；没有手补免职项 |
+| `month_fiscal_1631.json`、`month_fiscal_1640.json`、`month_fiscal_reject.txt` | `ming-1965-fiscal-v9/` | 冻结推演重新转译，不把 source 元数据登记成模型步骤 |
+| `month_force.txt`、`month_travel.txt` | `remaining-consumers/*.input.json`、`*.native.json` | 旧实况原文按新契约重译，非新一次完整推演；导入结构与原生 structured_output 一致 |
+| `night_interim.json` 的 `replies` | `interim-v2/`、`interim-v3/` | 原四轮整夜重新转译；首次把御笔写为皇帝，HTTP 原生校验反馈后重交，两份回话都保留 |
+
+原生 MCP 工具仅去 `mcp__court__` 前缀，参数、ID、文字原样入 Pydantic 消息信封。
+新的秘密录音没有旧版两条 handled 事件，不为维持旧累计分数补造事件。
+旅行测试按山东毕自严（1月）与上海徐光启（1.6月）的开局距离分别验抵京，不能沿用旧版两人皆南京的前置。
+部分沿用戏文仍误称毕自严在南京、徐光启原任礼部右少卿；这不是开局事实。新旅行转译明确读取当前所在地及真实原官，未为旧戏文放宽校验。
+`interim-current` 是未采用的首卷（turn=3、仅毕自严背书），未将其洗成正确成旨记录。`interim-v2` 显式携带原轮次序号后录出 turn=4，但把御笔写成皇帝；`interim-v3` 将同一原夜、原始错误回复与 HTTP 返回的四键校验反馈照传，录得 turn=4、毕自严及御笔两条背书。没有手补或改写任何模型字段。
+退役的镜像拨款 `.txt` 与三个未使用任免/支付录件移至 `retired-recordings/`，不再参与测试；旧声明未就地手改。
+F1 单人/双人背书档案、F2 任职后过月沿用 HTTP 行为测试，只有模型边界替换。
+全量及完整北极星真跑仍由家族最终待合并状态的调用者 / CI 执行。
+
+## #1951 月推进边界录音
 
 确定性测试走 HTTP `/actions`、CLI `read`；仅通过原生 `Agent.override`
 替换外部模型。Agent、工具、结构重交、分派及 SQLite 落账仍走生产链路。

@@ -531,12 +531,12 @@ def test_two_nights_feed_world_and_arrivals_wait_for_audience(
                 if e["kind"] == "person" and e["key"] in {"毕自严", "徐光启"}
             ]:
                 assert person["data"]["remaining_distance"] == pytest.approx(
-                    0.6 if month == 11 else 0
+                    0.6 if person["key"] == "徐光启" and month == 11 else 0
                 )
                 assert person["data"]["location"] == (
-                    "南直隶 / 南京" if month == 11 else "北直隶 / 京师"
+                    "南直隶 / 南京" if person["key"] == "徐光启" and month == 11 else "北直隶 / 京师"
                 )
-                assert person["data"]["waiting_audience"] == (month == 12)
+                assert person["data"]["waiting_audience"] == (person["key"] == "毕自严" or month == 12)
                 assert person["key"] not in state["night"]["hall"]
             client.post("/actions", json={"action": "load", "save": save})
             assert audit(tmp_path / save) == ledger

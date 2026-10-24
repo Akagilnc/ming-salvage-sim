@@ -1,10 +1,11 @@
 """Land a whole declaration, query rows and events in the same transaction."""
 
+import json
 from collections.abc import Callable, Sequence
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import and_, or_
+from sqlalchemy import or_
 
 from ming.ledger import Entity, Item, Ledger
 from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS, FACT_COLUMNS as F, FACT_ROWS
@@ -17,30 +18,7 @@ from ming.middle.declaration import (
 )
 from ming.middle.rules import field_values, money_amounts
 from ming.middle.fiscal import WAN, current_paid, has_obligation
-from ming.middle.opening import resolved_office
-from ming.middle.translate import catalogue
-
-
-def apply_office_alias(
-    ledger: Ledger, changes: dict[str, object], detail: dict[str, Any]
-) -> None:
-    value = changes.get("office")
-    if not isinstance(value, str) or not value:
-        return
-    names = catalogue(ledger)
-    resolved = resolved_office(
-        value, names.get("office", {}), set(names.get("region", {}))
-    )
-    if not resolved:
-        return
-    title, region = resolved
-    changes["office"] = title
-    changes["office_region"] = region
-    actual = detail.get("actual")
-    if isinstance(actual, dict):
-        actual["office"] = title
-        actual["office_region"] = region
-
+from ming.middle.appointments import reference_key
 
 def landing_entities(
     ledger: Ledger, result: Declaration | Unhandled, owner: Entity
@@ -48,7 +26,16 @@ def landing_entities(
     pairs = {("calendar", "world"), (owner.kind, owner.key)}
     if not isinstance(result, Unhandled):
         pairs.update(
-            (f.entity_type, f.entity) for f in [*result.facts, *result.reports]
+            (f.entity_type, reference_key(ledger, f.entity_type, f.entity))
+            for f in [*result.facts, *result.reports]
+        )
+        pairs.update(
+            (c.counterpart.entity_type, c.counterpart.entity)
+            for f in result.facts for c in f.changes if c.counterpart
+        )
+        pairs.update(
+            ("person", name) for f in result.facts if f.entity_type == "incumbency"
+            for c in f.changes if c.field == "holders" for name in c.value
         )
         pairs.update(("affair", f.affair) for f in result.facts if f.affair is not None)
     if isinstance(result, NightDeclaration):
@@ -72,36 +59,17 @@ def landing_entities(
             ((e["kind"], e["key"]), e)
             for e in ledger.entities(kind=("fiscal", "building"))
         )
-    # Only a location change can start a journey (from the current or a first
-    # location), and only an office/region change can displace its incumbents.
-    origins: set[str] = set()
-    offices: set[str] = set()
-    names = catalogue(ledger)
-    for fact in result.facts:
-        if fact.entity_type != "person":
-            continue
-        held = found.get(("person", fact.entity), {"data": {}})["data"]
-        changes = {c.field: c.value for c in fact.changes}
-        if "location" in changes:
-            origins.add(held.get("location") or str(changes["location"]))
-        if {"office", "office_region"}.intersection(changes):
-            office = str(changes.get("office", held.get("office", "")))
-            resolved = resolved_office(
-                office, names.get("office", {}), set(names.get("region", {}))
-            )
-            offices.add(resolved[0] if resolved else office)
-    offices.discard("")
-    if origins or offices:
-        for e in ledger.read(
-            ENTITY_ROWS.where(
-                or_(
-                    and_(E.kind == "distance", E.key.in_(origins)),
-                    and_(E.kind == "office", E.key.in_(offices)),
-                    and_(E.kind == "person", E.data["office"].as_string().in_(offices)),
-                )
-            )
-        ):
-            found.setdefault((e["kind"], e["key"]), e)
+    origins = {
+        found.get(("person", f.entity), {"data": {}})["data"].get("location") or str(c.value)
+        for f in result.facts if f.entity_type == "person"
+        for c in f.changes if c.field == "location"
+    }
+    incumbents = {name for (kind, _), row in found.items() if kind == "incumbency" for name in row["data"]["holders"]}
+    for e in ledger.read(ENTITY_ROWS.where(or_(
+        (E.kind == "distance") & E.key.in_(origins),
+        (E.kind == "person") & E.key.in_(incumbents),
+    ))):
+        found.setdefault((e["kind"], e["key"]), e)
     return found
 
 
@@ -126,9 +94,14 @@ def dispatch(
     )
 
     def known(kind: str, key: str) -> Entity:
-        pair = kind, key
+        pair = kind, reference_key(ledger, kind, key)
         if pair not in changed:
-            changed[pair] = ledger.get(existing[pair]["id"])
+            if pair in existing:
+                changed[pair] = ledger.get(existing[pair]["id"])
+            else:
+                data: Item = (dict(zip(("office", "territory"), json.loads(pair[1]))) | {"holders": []}
+                        if kind == "incumbency" else {})
+                changed[pair] = Entity(*pair, "", data)
         return changed[pair]
 
     def record(
@@ -157,11 +130,9 @@ def dispatch(
             if key[:2] in existing
         }
         for fact in result.facts:
-            pair = fact.entity_type, fact.entity
-            if fact.create and pair not in existing:
-                entity = Entity(*pair, "", {})
-                changed[pair] = entity
-                existing[pair] = entity.snapshot()
+            pair = fact.entity_type, reference_key(ledger, fact.entity_type, fact.entity)
+            if (fact.create or fact.entity_type == "incumbency") and pair not in existing:
+                existing[pair] = known(fact.entity_type, fact.entity).snapshot()
         amounts, reasons = money_amounts(result.facts, existing)
         for i, fact in enumerate(result.facts):
             entity = known(fact.entity_type, fact.entity)
@@ -179,15 +150,10 @@ def dispatch(
                 fact_origin["origin_ref"] = str(decrees[fact.decree].id)
             changes = detail["changes"]
             if entity.kind == "person":
-                apply_office_alias(ledger, changes, detail)
                 move_person(entity, changes, existing, record)
+            if entity.kind == "incumbency" and "holders" in changes:
+                displace(entity, changes["holders"], known, record, {**association, "text": fact.text})
             record(entity, "changed", detail, changes)
-            if (
-                entity.kind == "person"
-                and {"office", "office_region"}.intersection(changes)
-                and entity.data.get("office")
-            ):
-                displace(entity, existing, known, record, association)
             if i in amounts:
                 record_receipts(fact, amounts[i], reasons[i], known, record)
         fact_origin = {}
@@ -256,10 +222,12 @@ def record_receipts(
     record: Callable[..., None],
 ) -> None:
     for change in fact.changes:
-        if change.counterpart and change.counterpart.entity_type != "account":
+        if change.counterpart:
             recipient = known(change.counterpart.entity_type, change.counterpart.entity)
             changes: Item = {}
-            if change.purpose == "补欠" and has_obligation(
+            if recipient.kind == "account":
+                changes["taels"] = recipient.data["taels"] - amount
+            elif change.purpose == "补欠" and has_obligation(
                 "补欠", recipient.kind, recipient.data
             ):
                 changes["arrears"] = max(
@@ -369,28 +337,19 @@ def move_person(
 
 # This rule is shared by immediate and monthly landing, not a second dispatch path.
 def displace(
-    appointee: Entity,
-    existing: dict[tuple[str, str], Item],
+    appointment: Entity,
+    holders: list[str],
     known: Callable[[str, str], Entity],
     record: Callable[[Entity, str, Item, Item], None],
     association: Item,
 ) -> None:
-    office = appointee.data["office"]
-    office_row = existing.get(("office", office))
-    if office_row and office_row["data"]["multiple"]:
-        return
-    for (kind, key), row in existing.items():
-        if kind == "person" and key != appointee.key:
-            if row["data"].get("office") == office and row["data"].get(
-                "office_region", ""
-            ) == appointee.data.get("office_region", ""):
-                record(
-                    known(kind, key),
-                    "displaced",
-                    {"successor": appointee.key, **association},
-                    {
-                        "office": "",
-                        "status": "offstage",
-                        **CLEARED_JOURNEY,
-                    },
-                )
+    previous = appointment.data["holders"]
+    for person in dict.fromkeys([*previous, *holders]):
+        if (person in previous) != (person in holders):
+            record(known("person", person), "appointed" if person in holders else "displaced", {
+                "incumbency_id": str(appointment.id),
+                "office": appointment.data["office"],
+                "territory": appointment.data["territory"],
+                "holders": holders,
+                **association,
+            }, {})

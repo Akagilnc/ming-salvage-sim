@@ -1,0 +1,255 @@
+{
+  "source": {
+    "host": "claude-cli",
+    "session_id": "1e74923c-11ae-4402-9910-19cdb40492c8",
+    "instructions": "你是月末事实转译官。只交Declaration JSON，字段形状照schema。账户taels为带符号的增减，支出写负值与counterpart收方。每笔只在付方声明一次，收方由引擎按库存封顶后的实数自动入账，不能再交镜像。报告原文另外在reports，不篡改其数额；事实原文放text。不作判断，不编造其他后果。账户已有国库、内库，不得新建。",
+    "input": {
+      "facts": "国库拨银300000两至内库。国库向外廷奏报已拨300000两，实有不足由引擎按库存封顶。",
+      "schema": {
+        "$defs": {
+          "Change": {
+            "additionalProperties": false,
+            "properties": {
+              "field": {
+                "title": "Field",
+                "type": "string"
+              },
+              "value": {
+                "title": "Value"
+              },
+              "purpose": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "补欠",
+                      "当月饷",
+                      "犒赏",
+                      "专项"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "账户付给军队或财政科目的款须写名目；value仍为带符号的两数。",
+                "title": "Purpose"
+              },
+              "counterpart": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/EntityRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "钱粮另一边的实体引用；每笔只声明付方一次，收方由引擎按实际金额记账，不必另写 fact。无出处收入可不填。"
+              }
+            },
+            "required": [
+              "field",
+              "value"
+            ],
+            "title": "Change",
+            "type": "object"
+          },
+          "DecreeEvent": {
+            "additionalProperties": false,
+            "properties": {
+              "decree": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "来源旨意：整夜本份 decrees 的零基下标；月末本旨省略，使用当前旨意来源。",
+                "title": "Decree"
+              },
+              "kind": {
+                "description": "handled：实际发生的一道传递、经办（转交、往返），每道各记一条；completed：推演已认定该差事办结，包括关联事务已成往事。无记录、接不住不算办结。没有新建事务也不算办结。",
+                "enum": [
+                  "handled",
+                  "completed"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "text": {
+                "title": "Text",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "text"
+            ],
+            "title": "DecreeEvent",
+            "type": "object"
+          },
+          "EntityRef": {
+            "additionalProperties": false,
+            "properties": {
+              "entity_type": {
+                "title": "Entity Type",
+                "type": "string"
+              },
+              "entity": {
+                "title": "Entity",
+                "type": "string"
+              }
+            },
+            "required": [
+              "entity_type",
+              "entity"
+            ],
+            "title": "EntityRef",
+            "type": "object"
+          },
+          "Fact": {
+            "additionalProperties": false,
+            "properties": {
+              "entity_type": {
+                "description": "账本实体类型，如 person、army、affair",
+                "title": "Entity Type",
+                "type": "string"
+              },
+              "entity": {
+                "description": "实体的账本正名或新实体的名字",
+                "title": "Entity",
+                "type": "string"
+              },
+              "create": {
+                "description": "是否新建；已有实体填 false",
+                "title": "Create",
+                "type": "boolean"
+              },
+              "affair": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "本条后果所属事务的正名；可指同份声明新建的 affair，无所属事务可省略。",
+                "title": "Affair"
+              },
+              "decree": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "来源旨意：整夜本份 decrees 的零基下标；月末本旨省略，使用当前旨意来源。",
+                "title": "Decree"
+              },
+              "discovered": {
+                "default": false,
+                "description": "是否为密令内部查获实情；不按有无字段变化判断。",
+                "title": "Discovered",
+                "type": "boolean"
+              },
+              "changes": {
+                "items": {
+                  "$ref": "#/$defs/Change"
+                },
+                "title": "Changes",
+                "type": "array"
+              },
+              "text": {
+                "description": "发生的事实，原文记在这个实体上；没有字段变化也可以只记文字。物理实况正文只写后果，不写密令来源，密令来源只放在结构化来源关系里。",
+                "title": "Text",
+                "type": "string"
+              }
+            },
+            "required": [
+              "entity_type",
+              "entity",
+              "create",
+              "changes",
+              "text"
+            ],
+            "title": "Fact",
+            "type": "object"
+          },
+          "Report": {
+            "additionalProperties": false,
+            "properties": {
+              "entity_type": {
+                "title": "Entity Type",
+                "type": "string"
+              },
+              "entity": {
+                "title": "Entity",
+                "type": "string"
+              },
+              "text": {
+                "title": "Text",
+                "type": "string"
+              },
+              "audience": {
+                "enum": [
+                  "public",
+                  "official"
+                ],
+                "title": "Audience",
+                "type": "string"
+              }
+            },
+            "required": [
+              "entity_type",
+              "entity",
+              "text",
+              "audience"
+            ],
+            "title": "Report",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "facts": {
+            "items": {
+              "$ref": "#/$defs/Fact"
+            },
+            "title": "Facts",
+            "type": "array"
+          },
+          "reports": {
+            "items": {
+              "$ref": "#/$defs/Report"
+            },
+            "title": "Reports",
+            "type": "array"
+          },
+          "decree_events": {
+            "items": {
+              "$ref": "#/$defs/DecreeEvent"
+            },
+            "title": "Decree Events",
+            "type": "array"
+          }
+        },
+        "required": [
+          "facts"
+        ],
+        "title": "Declaration",
+        "type": "object"
+      }
+    }
+  },
+  "reply": "```json\n{\n  \"facts\": [\n    {\n      \"entity_type\": \"account\",\n      \"entity\": \"国库\",\n      \"create\": false,\n      \"changes\": [\n        {\n          \"field\": \"taels\",\n          \"value\": -300000,\n          \"counterpart\": {\n            \"entity_type\": \"account\",\n            \"entity\": \"内库\"\n          }\n        }\n      ],\n      \"text\": \"国库拨银300000两至内库。\"\n    }\n  ],\n  \"reports\": [\n    {\n      \"entity_type\": \"account\",\n      \"entity\": \"国库\",\n      \"text\": \"国库向外廷奏报已拨300000两。\",\n      \"audience\": \"official\"\n    }\n  ],\n  \"decree_events\": []\n}\n```"
+}
