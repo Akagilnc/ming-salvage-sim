@@ -84,7 +84,7 @@ class Sources:
                     e.model_dump(mode="json")
                     for e in self.court.entities("audit", kind="faction")
                 ],
-                "instruction": "以本派在朝人物的身份读本月已落事实和本派、对手势力，自行决定劾不劾、劾谁、如何归因，可以交空。灾难真而归因可夹私货。署名人及被劾人用账本正名。每折三项：顺水推舟办人、压下、查实再办，措辞自拟。",
+                "instruction": "以本派在朝人物的身份看本月见闻和本派、对手势力，自行决定劾不劾、劾谁、如何归因，可以交空。灾难真而归因可夹私货。署名人及被劾人用账本正名。每折三项：顺水推舟办人、压下、查实再办，措辞自拟。",
             },
         )
 
@@ -102,7 +102,7 @@ class Sources:
             deps_type=Materials,
             tools=[read_records],
             retries=1,
-            instructions="月末后果已落账。你是奏疏来源，不是世界推演。按输入 catalogue 用 read_records 按需查身份可读账本；按输入人物立场写下月开局的奏折。只交结构，正文与选项用奏报口吻，不露人物裸数值。",
+            instructions="你演上奏的官员。按输入 catalogue 用 read_records 按需查本人所知见闻；按输入人物立场写下月开局的奏折。正文与选项用奏报口吻，人物才具、操守以言行呈现。",
         )
 
         @agent.output_validator
