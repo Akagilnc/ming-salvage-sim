@@ -128,66 +128,6 @@
         }
       ]
     },
-    "wei": {
-      "facts": [
-        {
-          "entity_type": "incumbency",
-          "entity": "兴和守御千户所正千户",
-          "create": false,
-          "changes": [
-            {
-              "field": "holders",
-              "value": [
-                "杨嗣昌"
-              ]
-            }
-          ],
-          "text": "杨嗣昌任兴和守御千户所正千户，任命已生效。"
-        },
-        {
-          "entity_type": "incumbency",
-          "entity": "大鹏千户所正千户",
-          "create": false,
-          "changes": [
-            {
-              "field": "holders",
-              "value": [
-                "李待问"
-              ]
-            }
-          ],
-          "text": "李待问任大鹏千户所正千户，任命已生效。"
-        },
-        {
-          "entity_type": "incumbency",
-          "entity": "福建镇海卫指挥使",
-          "create": false,
-          "changes": [
-            {
-              "field": "holders",
-              "value": [
-                "练国事"
-              ]
-            }
-          ],
-          "text": "练国事任福建镇海卫指挥使，任命已生效。"
-        },
-        {
-          "entity_type": "incumbency",
-          "entity": "南京留守左卫指挥使",
-          "create": false,
-          "changes": [
-            {
-              "field": "holders",
-              "value": [
-                "郭允厚"
-              ]
-            }
-          ],
-          "text": "郭允厚任南京留守左卫指挥使，任命已生效。"
-        }
-      ]
-    },
     "fiscal_target": {
       "facts": [
         {

@@ -114,9 +114,10 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
         assert client.get("/state").json()["game"]["date"]["month"] == 11
         assert urgent
         assert {p["name"] for p in json.loads(urgent[0].parts[0].content)["context"]["drafters"]} == {"黄立极", "王体乾"}
-        case = json.loads((RECORDED / "cabinet_wei.json").read_text())["cases"]
-        # The retired nationwide military case is replaced, not edited in its native recording.
-        case.update(json.loads((RECORDED / "border_appointments.json").read_text())["cases"])
+        case = (
+            json.loads((RECORDED / "cabinet_wei.json").read_text())["cases"]
+            | json.loads((RECORDED / "border_appointments.json").read_text())["cases"]
+        )
         for name, expected in (("chief_swap", ["施凤来"]), ("chief_exit", []), ("chief_join", ["崔呈秀"]), ("chief_invalid", ["崔呈秀"]), ("chief_vacancy", []), ("wei", []), ("wei_replace", [])):
             received = []
             steps["Declaration"] = replaying([json.dumps(case[name], ensure_ascii=False)] * 2, received)

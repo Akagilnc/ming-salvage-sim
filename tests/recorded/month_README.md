@@ -5,13 +5,13 @@
 陛下 `deb03fe0-2afa-457f-9e9c-33a12b130cf4` 改定卫所仅收边镇有设官者，撤销上一轮全国历史卫所目录口径。
 `border_appointments.json` 来自本机 Claude CLI 逐次 `haiku --json-schema`，原输入、schema、原生回话见其 `source`；合成任命场景、真实模型转译，不冒充史实或完整 runner。
 在原任免 HTTP 测试内替代旧 `wei` 正向分支，并顺序验证旧称替任、军卫与驻镇辖区分立、高山卫/所及天成/镇虏各自独立；不增加平行测试。
-`cabinet_wei.json` 仍为首辅与财政错误案真源，其原始 `wei` 全国卫所案退出正向测试，不篡改混合录件。
+`cabinet_wei.json` 只供首辅与财政错误案；已删除其中退役的全国卫所 `wei` 案，其余各案原样保留。删前完整录件归档于本票证据根 `fixer-b1/cabinet_wei-before.json`，原生回话仍见 `fixer-j1-j6/declarations-native.json`。两份在用录件直接合并读取，没有同名案覆盖。
 首录宁远未限定地域，真实入口报多候选；原卷与诊断保留于 `fixer-j3-border/record-native.json`、`initial-recording/`。施工自审撤销了仅凭同城合并军卫与辖区的尝试（`withdrawn-same-city-merge-preview.json`）；最终在 `explicit-recording/` 以司属全名“辽东都司宁远卫”真录，不给匹配加优先级。
 证据根仍为本票归档的 `fixer-j3-border/`；删除项按新裁以后实际用到再补，不靠放宽匹配或新增官地组合限制变绿。
 
 ## #1965 J1–J6 送修（2026-10-24）
 
-归档为本票证据根的 `fixer-j1-j6/`。`cabinet_wei.json` 是本机 Claude CLI 逐次 `haiku --json-schema` 的原生 `structured_output`；输入、schema 与 session 在 `source` 指向的三份原卷中。各案独立转写已发生的任免与故意错误，不手改输出；`chief_join` 正文中的异文也原样保留。它补入原任免 HTTP 测试的连续分支和现有财政拒收参数，不新建平行测试。
+归档为本票证据根的 `fixer-j1-j6/`。`cabinet_wei.json` 保留本机 Claude CLI 逐次 `haiku --json-schema` 原生 `structured_output` 中仍在用的首辅与财政错误案；输入、schema 与 session 在 `source` 指向的三份原卷中。各案独立转写已发生的任免与故意错误；退役的 `wei` 案已移出仓内夹具，其原记录留在上述原卷及 `fixer-b1/cabinet_wei-before.json`。在用各案回话不改，`chief_join` 正文中的异文也原样保留。首辅案供原任免 HTTP 测试的连续分支，财政案供既有拒收参数，不新建平行测试。
 
 `account_dossiers.json` 来自生产 `Audience` 的本机 Claude CLI 逐次 `sonnet`；原生 JSONL 为 `dossiers-v2-native.jsonl`。仅去 MCP 工具名前缀，参数、工具调用 ID、最终文字原样保留；Pydantic 消息信封时间是导入时间，不冒充原生元数据。重放在真实 `read_person` 上取当前档案，不重放工具返回值。首份 `dossiers-native.json` 只有宿主最终文本，缺原生工具调用，不用作夹具；原失败取证保留。
 
