@@ -29,7 +29,7 @@ from ming.middle.declaration import (
 from ming.middle.queries import CATALOGUE
 from ming.middle.night import read_night
 from ming.middle.opening import REFERENCES
-from ming.middle.appointments import CATALOGUE_KINDS, incumbency_record, office_pairs, reference_key
+from ming.middle.appointments import CATALOGUE_KINDS, cabinet_members, cabinet_records, incumbency_record, office_pairs, reference_key
 from ming.middle.rules import Names, check_rules, fail
 from ming.middle.invoke import ModelSource, build_agent, invoke
 
@@ -100,11 +100,7 @@ def allowed_fields(ledger: Ledger) -> dict[str, set[str]]:
 
 def check(ledger: Ledger, out: Declaration, source: UUID) -> None:
     names, fields = catalogue(ledger), allowed_fields(ledger)
-    cabinet = {r["key"]: r["data"]["holders"] for r in ledger.entities(
-        kind="incumbency", query=ENTITY_ROWS.where(E.data["office"].as_string().in_(
-            select(E.key).where(E.kind == "office", E.data["department"].as_string() == "内阁").correlate(None)
-        ))
-    )}
+    cabinet = cabinet_records(ledger)
     for i, fact in enumerate(out.facts):
         path = f"facts[{i}]"
         if fact.entity_type != "incumbency":
@@ -330,7 +326,7 @@ def check_fiscal(ledger: Ledger, out: Declaration, names: Names) -> None:
                     )
 
 
-def check_appointment(ledger: Ledger, fact: Fact, path: str, names: Names, cabinet: dict[str, list[str]]) -> None:
+def check_appointment(ledger: Ledger, fact: Fact, path: str, names: Names, cabinet: dict[tuple[str, str], Item]) -> None:
     pairs = office_pairs(ledger, fact.entity)
     if len(pairs) != 1:
         fail(path + ".entity", fact.entity,
@@ -354,12 +350,13 @@ def check_appointment(ledger: Ledger, fact: Fact, path: str, names: Names, cabin
             if person not in names.get("person", {}):
                 fail(f"{field}[{k}]", person, names.get("person", {}), names, "在任者用人物正名，重交整份。")
         if office["key"] == "内阁首辅":
-            eligible = sorted({p for key, people in cabinet.items() if json.loads(key)[0] != "内阁首辅" for p in people})
+            eligible = sorted(cabinet_members(cabinet))
             for k, person in enumerate(holders):
                 if person not in eligible:
                     fail(f"{field}[{k}]", person, eligible, names, "首辅须为在任阁臣；可在同份声明中先任大学士，再任首辅。重交整份。")
-        if office["data"]["department"] == "内阁":
-            cabinet[fact.entity] = holders
+        cabinet[("incumbency", fact.entity)] = {
+            "kind": "incumbency", "data": incumbency_record(pairs[0], holders)[1],
+        }
 
 
 def check_references(ledger: Ledger, out: Declaration, names: Names) -> None:

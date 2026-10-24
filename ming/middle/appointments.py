@@ -51,6 +51,26 @@ def reference_key(ledger: Ledger, kind: str, value: str) -> str:
     return matches[0] if len(matches) == 1 else value
 
 
+def cabinet_records(ledger: Ledger) -> dict[tuple[str, str], Item]:
+    """Load cabinet offices and appointments for validation and in-flight landing."""
+    offices = ledger.entities(kind="office", query=ENTITY_ROWS.where(
+        E.data["department"].as_string() == "内阁"
+    ))
+    appointments = ledger.entities(kind="incumbency", query=ENTITY_ROWS.where(
+        E.data["office"].as_string().in_([row["key"] for row in offices])
+    ))
+    return {(row["kind"], row["key"]): row for row in [*offices, *appointments]}
+
+
+def cabinet_members(records: dict[tuple[str, str], Item]) -> set[str]:
+    """Derive eligible members from the caller's current appointment snapshot."""
+    offices = {key for (kind, key), row in records.items()
+               if kind == "office" and row["data"].get("department") == "内阁"
+               and key != "内阁首辅"}
+    return {person for (kind, _), row in records.items() if kind == "incumbency"
+            and row["data"]["office"] in offices for person in row["data"]["holders"]}
+
+
 def held_by(ledger: Ledger, people: list[str]) -> list[Item]:
     holders = func.json_each(E.data["holders"]).table_valued("value")
     return ledger.entities(kind="incumbency", query=ENTITY_ROWS.where(
