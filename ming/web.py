@@ -115,11 +115,13 @@ class Web:
                 raise HTTPException(404, "存档不存在")
         await self.close(shutdown=False)
         model = self.settings()
-        court = (
-            Court.new_game(self.directory, model)
-            if action == "new"
-            else Court(self.directory / save, model)
-        )
+        if action == "new":
+            try:
+                court = Court.new_game(self.directory, model)
+            except FileNotFoundError as error:
+                raise HTTPException(503, str(error)) from error
+        else:
+            court = Court(self.directory / save, model)
         self.game = Game(court, model, self.emit, month_model=model.month_model)
         court.observe(lambda: self.emit({"event": "state", "data": self.snapshot()}))
         self.game.resume()

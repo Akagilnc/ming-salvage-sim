@@ -86,6 +86,7 @@ def opening_template_db(tmp_path_factory):
     home = tmp_path_factory.mktemp("home")
     with pytest.MonkeyPatch.context() as patch:
         patch.setenv("HOME", str(home))
+        patch.setenv("USERPROFILE", str(home))
         patch.setenv("CODEX_HOME", str(home / ".codex"))
         patch.setenv("GROK_HOME", str(home / ".grok"))
         yield build_opening()

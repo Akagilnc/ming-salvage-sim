@@ -336,6 +336,7 @@ def test_process_subscription_scene_lands_and_streams(
     before = {path: stamp(path) for path in USER_FILES}
     monkeypatch.setenv("GROK_HOME", str(tmp_path / "grok-home"))
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     calls, _snapshots = install_process(monkeypatch)
     app = create_app(game_db.parent)
     events = watch(app)
@@ -439,6 +440,7 @@ def test_cli_channel_reaches_its_host(
     tmp_path = game_db.parent
     monkeypatch.setenv("GROK_HOME", str(tmp_path / "grok-home"))
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     home = tmp_path / "codex"
     auth_file(home / "auth.json", expired=False)
     monkeypatch.setenv("CODEX_HOME", str(home))
@@ -497,6 +499,7 @@ def test_subscription_month_completes(tmp_path: Path, monkeypatch, backend: str,
     template = opening_template()
     monkeypatch.setenv("GROK_HOME", str(tmp_path / "grok-home"))
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     opening_template().parent.mkdir(parents=True, exist_ok=True)
     copyfile(template, opening_template())
     monkeypatch.setattr("ming.middle.cli_model.GROK_SLOT_COUNT", 2)
@@ -602,6 +605,7 @@ def test_optional_channel_falls_back_and_configure_reopens(game_db, monkeypatch,
 def test_grok_second_month_does_not_trust_again(tmp_path: Path, monkeypatch, game_db: Path) -> None:
     monkeypatch.setenv("GROK_HOME", str(tmp_path / "grok-home"))
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     calls, _snapshots = install_process(monkeypatch)
     with TestClient(create_app(game_db.parent)) as client:
         open_game(client, {"backend": "grok", "model": ""}, game_db)
@@ -659,6 +663,7 @@ def test_pi_empty_assistant_is_not_a_transport_failure(
 def test_process_failure_stops_month(tmp_path: Path, monkeypatch, backend: str, mode: str, game_db: Path) -> None:
     monkeypatch.setenv("GROK_HOME", str(tmp_path / "grok-home"))
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     install_process(monkeypatch)
     app = create_app(game_db.parent)
     with TestClient(app) as client:

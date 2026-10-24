@@ -145,6 +145,7 @@ def test_build_is_explicit_and_new_games_copy_the_last_successful_template(
     template.parent.mkdir(parents=True)
     shutil.copyfile(opening_template_db, template)
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     content = shutil.copytree(CONTENT, tmp_path / "content")
     path = content / "opening.json"
     opening = json.loads(path.read_text())
@@ -183,12 +184,13 @@ def test_bad_opening_data_leaves_no_partial_world(
 ) -> None:
     if broken == "missing":
         monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
         games = tmp_path / "games"
         with pytest.raises(FileNotFoundError):
             main(["new", "--directory", str(games)])
-        with TestClient(create_app(games)) as client:
-            with pytest.raises(FileNotFoundError):
-                client.post("/actions", json={"action": "new"})
+        with TestClient(create_app(games), raise_server_exceptions=False) as client:
+            response = client.post("/actions", json={"action": "new"})
+            assert response.status_code == 503
             assert client.get("/state").json()["saves"] == []
         assert not games.exists()
         return
