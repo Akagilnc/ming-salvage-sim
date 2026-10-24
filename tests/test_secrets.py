@@ -110,6 +110,10 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
         for month in range(6):
             court = client.app.state.web.game.court
             assert client.get("/state").json()["game"]["failure"] is None
+            assert client.get("/state").json()["game"]["unhandled_monthly"] == (
+                [{"entity_id": str(secret.id), "kind": "decree", "text": secret.data["text"]}]
+                if failure == "declaration" else []
+            )
             if failure is None and month < 2:
                 asyncio.run(assert_record_queries(court))
             assert {d.id for d in court.entities("public", kind="decree")} == {

@@ -9,9 +9,10 @@ from ming.middle.calendar import petition_date
 from ming.middle.court import Court
 from ming.middle.declaration import Petition, PendingPetition, StrictModel
 from ming.middle.invoke import ModelSource, build_agent, invoke
-from ming.middle.month_work import Materials, prompt, read_records
+from ming.middle.month_work import prompt
+from ming.middle.records import Materials, read_records
 from ming.middle.view import EntityView, Officials
-from ming.middle.rules import fail
+from ming.middle.rules import fail, name_expected
 
 
 class UrgentPetition(Petition):
@@ -122,9 +123,9 @@ class Sources:
                         fail(
                             f"petitions[{index}].{field}",
                             name,
-                            expected,
+                            identity.people if kind == "urgent" else name_expected("person", name, catalogue),
                             catalogue,
-                            "改成 expected 里的人名正名，重交整份。确无此人不得换成另一人。",
+                            "改成输入目录里的人名正名，重交整份。确无此人不得换成另一人。",
                         )
                 if isinstance(item, UrgentPetition) and item.revision_of is not None:
                     if str(item.revision_of) not in originals:

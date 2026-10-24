@@ -24,7 +24,7 @@ class Officials(BaseModel):
     exclude_secrets: bool = False
 
 
-Identity = PublicIdentity | Officials
+Identity = PublicIdentity | Literal["translation"] | Officials
 
 # ADR 0143: retain the canonical score bands in the independent rewrite.
 CHARACTER_BANDS = {
@@ -138,7 +138,7 @@ def month_open(ledger: Ledger) -> Item | None:
 
 def decree_access(ledger: Ledger, identity: Identity) -> dict[str, set[UUID]]:
     access: dict[str, set[UUID]] = {"known": set(), "handled": set(), "secret": set()}
-    if identity in ("audit", "world"):
+    if identity in ("audit", "world", "translation"):
         return access
     for row in ledger.entities(
         kind="decree", query=ENTITY_ROWS.add_columns(public_decree().label("public"))
@@ -229,6 +229,8 @@ def entity_exposure(
 ) -> ColumnElement[str]:
     if identity in ("audit", "world"):
         return literal("full")
+    if identity == "translation":
+        return case((E.kind.in_(CATALOGUE_KINDS), "full"))
     rules = [
         (E.id.in_(accounts), "full"),
         (E.kind == "person", "person"),
@@ -307,6 +309,8 @@ def fact_exposure(
 def project(
     ledger: Ledger, identity: Identity, selection: Item | None = None
 ) -> list[FactView]:
+    if identity == "translation":
+        return []
     selection = selection or {}
     opening = month_open(ledger) if identity == "emperor" else None
     row = calendar_if_any(ledger)

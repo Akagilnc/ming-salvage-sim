@@ -103,6 +103,8 @@ def opening_db(request, tmp_path_factory, opening_template_db):
                 if item["key"] in {"官俸_base", "宫廷_base"}:
                     item["value"] = {"官俸_base": 2000, "宫廷_base": 1000}[item["key"]]
             (content / "fiscal_config.json").write_text(json.dumps(config))
+        elif request.param == "two-payments-shortage":
+            next(a for a in opening["accounts"] if a["name"] == "国库")["taels"] = 250000
         elif request.param == "prestige":
             opening["world"][0]["imperial_prestige"] = 100
         else:

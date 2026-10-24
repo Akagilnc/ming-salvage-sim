@@ -13,7 +13,8 @@ from ming.middle.calendar import petition_date
 from ming.middle.court import Court
 from ming.middle.declaration import PendingPetition
 from ming.middle.invoke import ModelSource, build_agent, enlist, invoke
-from ming.middle.month_work import Materials, Simulation, prompt, read_records
+from ming.middle.month_work import Simulation, prompt
+from ming.middle.records import Materials, read_records
 from ming.middle.view import EntityView
 
 

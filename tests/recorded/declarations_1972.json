@@ -1,0 +1,352 @@
+{
+  "source": "/Users/akagilnc/WorkSpace/vault/ak-cc-wiki/raw/ming-llm-runner/2026-10-25/1972-implementation/native",
+  "cases": {
+    "duplicate_state": [
+      {
+        "kind": "response",
+        "parts": [
+          {
+            "part_kind": "text",
+            "content": "{\"facts\":[{\"entity_type\":\"army\",\"entity\":\"关宁军 / 宁锦防线\",\"create\":false,\"changes\":[{\"field\":\"salary_rate\",\"value\":1},{\"field\":\"salary_rate\",\"value\":2}],\"text\":\"\"}],\"reports\":[],\"decree_events\":[]}"
+          }
+        ]
+      },
+      {
+        "kind": "response",
+        "parts": [
+          {
+            "part_kind": "text",
+            "content": "{\"facts\":[{\"entity_type\":\"army\",\"entity\":\"关宁军 / 宁锦防线\",\"create\":false,\"changes\":[{\"field\":\"salary_rate\",\"value\":1},{\"field\":\"salary_rate\",\"value\":2}],\"text\":\"\"}],\"reports\":[],\"decree_events\":[]}"
+          }
+        ]
+      }
+    ],
+    "missing_counterpart_v2": [
+      {
+        "kind": "response",
+        "parts": [
+          {
+            "part_kind": "text",
+            "content": "{\"facts\":[{\"entity_type\":\"account\",\"entity\":\"国库\",\"create\":false,\"changes\":[{\"field\":\"taels\",\"value\":-100000,\"counterpart\":{\"entity_type\":\"account\",\"entity\":\"内库\"}},{\"field\":\"taels\",\"value\":-200000}],\"text\":\"两笔钱已付。\"}],\"reports\":[],\"decree_events\":[]}"
+          }
+        ]
+      },
+      {
+        "kind": "response",
+        "parts": [
+          {
+            "part_kind": "text",
+            "content": "{\"facts\":[{\"entity_type\":\"account\",\"entity\":\"国库\",\"create\":false,\"changes\":[{\"field\":\"taels\",\"value\":-100000,\"counterpart\":{\"entity_type\":\"account\",\"entity\":\"内库\"}},{\"field\":\"taels\",\"value\":-200000}],\"text\":\"两笔钱已付。\"}],\"reports\":[],\"decree_events\":[]}"
+          }
+        ]
+      }
+    ],
+    "shared_obligation": [
+      {
+        "kind": "response",
+        "parts": [
+          {
+            "part_kind": "text",
+            "content": "{\"facts\":[{\"entity_type\":\"account\",\"entity\":\"国库\",\"create\":false,\"changes\":[{\"field\":\"taels\",\"value\":-500000,\"purpose\":\"补欠\",\"counterpart\":{\"entity_type\":\"army\",\"entity\":\"关宁军 / 宁锦防线\"}},{\"field\":\"taels\",\"value\":-500000,\"purpose\":\"补欠\",\"counterpart\":{\"entity_type\":\"army\",\"entity\":\"关宁军 / 宁锦防线\"}}],\"text\":\"国库付给关宁军 / 宁锦防线两笔各500000两，均用于补欠。\"}],\"reports\":[],\"decree_events\":[]}"
+          }
+        ]
+      }
+    ],
+    "bad_territory_retry": [
+      {
+        "kind": "response",
+        "parts": [
+          {
+            "part_kind": "text",
+            "content": "{\"facts\":[{\"entity_type\":\"territory\",\"entity\":\"新城县\",\"create\":false,\"changes\":[],\"text\":\"已巡视。\"}],\"reports\":[],\"decree_events\":[]}"
+          }
+        ]
+      },
+      {
+        "kind": "response",
+        "parts": [
+          {
+            "part_kind": "tool-call",
+            "tool_name": "read_records",
+            "args": {
+              "kind": "territory",
+              "key": "新城县"
+            },
+            "tool_call_id": "call_aa4d9d57f6994f26a337952b86a5c5bc|fc_0e2340f9511bf5e0016adce0be9eb48191abf1be233680385d"
+          }
+        ]
+      },
+      {
+        "kind": "response",
+        "parts": [
+          {
+            "part_kind": "text",
+            "content": "{\"facts\":[{\"entity_type\":\"territory\",\"entity\":\"保定府新城县\",\"create\":false,\"changes\":[],\"text\":\"已巡视。\"}],\"reports\":[],\"decree_events\":[]}"
+          }
+        ]
+      }
+    ],
+    "catalogue_queries": [
+      {
+        "kind": "response",
+        "parts": [
+          {
+            "part_kind": "tool-call",
+            "tool_name": "read_records",
+            "args": {
+              "kind": "territory",
+              "key": "新城县"
+            },
+            "tool_call_id": "call_51230c98a55643c0a28ce67ad76a8890|fc_0e6ebf04e72e1abb016adce05d7a548191ad8392a474787243"
+          },
+          {
+            "part_kind": "tool-call",
+            "tool_name": "read_records",
+            "args": {
+              "kind": "territory",
+              "key": "保定府新城县"
+            },
+            "tool_call_id": "call_43d7b029a2e143d7a29bcc52ca78a95a|fc_0e6ebf04e72e1abb016adce05f5314819188bb925f1e4dd3f0"
+          },
+          {
+            "part_kind": "tool-call",
+            "tool_name": "read_records",
+            "args": {
+              "kind": "territory"
+            },
+            "tool_call_id": "call_b19eb23fa8be486aa35c168c13a3bd29|fc_0e6ebf04e72e1abb016adce05f53148191b9976424299c8a6e"
+          },
+          {
+            "part_kind": "tool-call",
+            "tool_name": "read_records",
+            "args": {
+              "kind": "territory",
+              "key": "县"
+            },
+            "tool_call_id": "call_76bf1cabd0c44c4b84c13358814091f4|fc_0e6ebf04e72e1abb016adce05f531481919de78457ef6944f6"
+          },
+          {
+            "part_kind": "tool-call",
+            "tool_name": "read_records",
+            "args": {
+              "kind": "person",
+              "key": "郭允厚"
+            },
+            "tool_call_id": "call_477d50dad2a74ec6b298461a8d48cebe|fc_0e6ebf04e72e1abb016adce05f531481919a3f000629872124"
+          },
+          {
+            "part_kind": "tool-call",
+            "tool_name": "read_records",
+            "args": {
+              "date": {
+                "year": 1627,
+                "month": 10
+              }
+            },
+            "tool_call_id": "call_6434006a1bff4011a07f7f001b4c22a1|fc_0e6ebf04e72e1abb016adce05f53148191b5963d404694db2d"
+          },
+          {
+            "part_kind": "tool-call",
+            "tool_name": "read_records",
+            "args": {
+              "kind": "territory",
+              "key": "无此县名"
+            },
+            "tool_call_id": "call_3af800586cae4722920e1a435d6477a8|fc_0e6ebf04e72e1abb016adce05f531481918e35c46c68f282cc"
+          },
+          {
+            "part_kind": "tool-call",
+            "tool_name": "read_records",
+            "args": {
+              "kind": "office",
+              "key": "户部尚书"
+            },
+            "tool_call_id": "call_0fe58905c57445a3a108efd3b86b4a8a|fc_0e6ebf04e72e1abb016adce05f5314819184ff95949bb85281"
+          },
+          {
+            "part_kind": "tool-call",
+            "tool_name": "read_records",
+            "args": {
+              "kind": "territory",
+              "key": "北直隶保定府新城县"
+            },
+            "tool_call_id": "call_5409bf34d1d9479d89007de15db187a4|fc_0e6ebf04e72e1abb016adce05f531481918e14df75f281407c"
+          }
+        ]
+      },
+      {
+        "kind": "response",
+        "parts": [
+          {
+            "part_kind": "text",
+            "content": "{\"facts\":[],\"reports\":[],\"decree_events\":[]}"
+          }
+        ]
+      }
+    ],
+    "night_catalogue_queries": [
+      {
+        "kind": "response",
+        "parts": [
+          {
+            "part_kind": "tool-call",
+            "tool_name": "read_records",
+            "args": {
+              "kind": "territory",
+              "key": "新城县"
+            },
+            "tool_call_id": "call_4f1c1e3174944a9cb04fe23a3dddb7e6|fc_0fc9b6aac1e062a3016adce06eb4dc8191868abc6b1b26cb82"
+          }
+        ]
+      },
+      {
+        "kind": "response",
+        "parts": [
+          {
+            "part_kind": "tool-call",
+            "tool_name": "read_records",
+            "args": {
+              "kind": "territory",
+              "key": "保定府新城县"
+            },
+            "tool_call_id": "call_7495c1f74b8e40cd8ae45806a07ddf8b|fc_0fc9b6aac1e062a3016adce07332148191be6868d5ae8f0fff"
+          }
+        ]
+      },
+      {
+        "kind": "response",
+        "parts": [
+          {
+            "part_kind": "tool-call",
+            "tool_name": "read_records",
+            "args": {
+              "kind": "territory"
+            },
+            "tool_call_id": "call_be2de1e12f534deabcdc55473d65f335|fc_0fc9b6aac1e062a3016adce07a141c8191b0d22c50582ffd20"
+          }
+        ]
+      },
+      {
+        "kind": "response",
+        "parts": [
+          {
+            "part_kind": "tool-call",
+            "tool_name": "read_records",
+            "args": {
+              "kind": "territory",
+              "key": "县"
+            },
+            "tool_call_id": "call_e67314adae3c4fe9856e88a3bd58c776|fc_0fc9b6aac1e062a3016adce07e932081919cfe4a4c3430038e"
+          }
+        ]
+      },
+      {
+        "kind": "response",
+        "parts": [
+          {
+            "part_kind": "tool-call",
+            "tool_name": "read_records",
+            "args": {
+              "kind": "person",
+              "key": "郭允厚"
+            },
+            "tool_call_id": "call_0450edb8a15c480fb4c545a2c81712a3|fc_0fc9b6aac1e062a3016adce082a01c81918114617ec7e2a98d"
+          }
+        ]
+      },
+      {
+        "kind": "response",
+        "parts": [
+          {
+            "part_kind": "tool-call",
+            "tool_name": "read_records",
+            "args": {
+              "date": {
+                "year": 1627,
+                "month": 10
+              }
+            },
+            "tool_call_id": "call_c7636344d7ae4fab86f019c41f7fc808|fc_0fc9b6aac1e062a3016adce08594548191af93280825676c14"
+          }
+        ]
+      },
+      {
+        "kind": "response",
+        "parts": [
+          {
+            "part_kind": "tool-call",
+            "tool_name": "read_records",
+            "args": {
+              "kind": "territory",
+              "key": "无此县名"
+            },
+            "tool_call_id": "call_7c6090af0ea84561b26836da667fbcdb|fc_0fc9b6aac1e062a3016adce088228881918513d69d11b6bc1a"
+          }
+        ]
+      },
+      {
+        "kind": "response",
+        "parts": [
+          {
+            "part_kind": "tool-call",
+            "tool_name": "read_records",
+            "args": {
+              "kind": "office",
+              "key": "户部尚书"
+            },
+            "tool_call_id": "call_ab03afb7ce404da78d339aceb5ac793d|fc_0fc9b6aac1e062a3016adce08b221081918ffc46c02f6cadf0"
+          }
+        ]
+      },
+      {
+        "kind": "response",
+        "parts": [
+          {
+            "part_kind": "tool-call",
+            "tool_name": "read_records",
+            "args": {
+              "kind": "territory",
+              "key": "北直隶保定府新城县"
+            },
+            "tool_call_id": "call_88a61a773b034b5e9904471d75d1d4c9|fc_0fc9b6aac1e062a3016adce08f277c81918383c2a4a08f91f7"
+          }
+        ]
+      },
+      {
+        "kind": "response",
+        "parts": [
+          {
+            "part_kind": "text",
+            "content": "{\"facts\":[],\"reports\":[],\"decree_events\":[],\"decrees\":[]}"
+          }
+        ]
+      }
+    ],
+    "empty_query": [
+      {
+        "kind": "response",
+        "parts": [
+          {
+            "part_kind": "tool-call",
+            "tool_name": "read_records",
+            "args": {},
+            "tool_call_id": "call_d71e476ae36f4c74a7ea53311bf3eff3|fc_030a5be5f2713b89016adce0c721a4819196413583fa85d32a"
+          }
+        ]
+      },
+      {
+        "kind": "response",
+        "parts": [
+          {
+            "part_kind": "text",
+            "content": "{\"facts\":[],\"reports\":[],\"decree_events\":[]}"
+          }
+        ]
+      }
+    ]
+  },
+  "source_by_case": {
+    "bad_territory_retry": "/Users/akagilnc/WorkSpace/vault/ak-cc-wiki/raw/ming-llm-runner/2026-10-25/1972-implementation/native-extra/bad_territory_retry",
+    "empty_query": "/Users/akagilnc/WorkSpace/vault/ak-cc-wiki/raw/ming-llm-runner/2026-10-25/1972-implementation/native-extra/empty_query"
+  }
+}

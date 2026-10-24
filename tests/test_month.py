@@ -331,20 +331,27 @@ def test_returned_urgent_waits_through_vacancy(
 
 
 @pytest.mark.parametrize(
-    "case",
-    [
+    ("opening_db", "case"),
+    [(None, case) for case in [
+        ("combined", 300000, False),
+        ("split", 300000, False),
         (300000, 300000, False),
         (3200000, 3200000, False),
         (5000000, 3200000, False),
         (5000000, 3200000, "write"),
         (5000000, 3200000, "commit"),
-    ],
+    ]] + [("two-payments-shortage", ("combined", 250000, False))],
+    indirect=["opening_db"],
 )
 def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
-    tmp_path: Path, game_db: Path, case, steps, audit
+    game_db: Path, case, steps, audit, opening_db
 ) -> None:
     nominal, actual, interrupt = case
-    recorded = json.loads((RECORDED / f"month_money_once_{nominal}.json").read_text())["reply"]
+    recorded = (
+        (RECORDED / f"month_two_payments_{nominal}.txt").read_text()
+        if isinstance(nominal, str)
+        else json.loads((RECORDED / f"month_money_once_{nominal}.json").read_text())["reply"]
+    )
     steps["Declaration"] = replaying(lambda _: recorded)
     observed = []
 
@@ -355,11 +362,11 @@ def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
             observed.append(current)
             raise RuntimeError("injected pre-commit failure")
 
-    with TestClient(create_app(tmp_path)) as client:
-        save = client.post(
+    with TestClient(create_app(game_db.parent)) as client:
+        client.post(
             "/actions", json={"action": "load", "save": game_db.name}
-        ).json()["save"]
-        db = tmp_path / save
+        ).raise_for_status()
+        db = game_db
         if interrupt == "write":
             with sqlite3.connect(db) as connection:
                 connection.execute(
@@ -389,28 +396,36 @@ def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
             ]
             with sqlite3.connect(db) as connection:
                 connection.execute("DROP TRIGGER IF EXISTS interrupt")
-            client.post("/actions", json={"action": "load", "save": save})
+            client.post("/actions", json={"action": "load", "save": db.name})
             assert client.get("/state").json()["game"]["failure"] is not None
             client.post("/actions", json={"action": "retry"})
         ledger = audit(db)
-        assert {
-            e["key"]: e["data"]["taels"]
-            for e in ledger["entities"]
-            if e["kind"] == "account"
-        } == pytest.approx(
-            {"国库": 11940269.2869425 - actual, "内库": 7657600 + actual, "节慎库": 630000, "常盈库": 1250000}
-        )
+        if actual != 250000:
+            assert {
+                e["key"]: e["data"]["taels"]
+                for e in ledger["entities"]
+                if e["kind"] == "account"
+            } == pytest.approx(
+                {"国库": 11940269.2869425 - actual, "内库": 7657600 + (0 if isinstance(nominal, str) else actual), "节慎库": 630000, "常盈库": 1250000}
+            )
         transfers = [
             f["detail"]
             for f in ledger["facts"]
             if f["kind"] == "changed" and "taels" in f["detail"]["nominal"]
         ]
+        expected = [(100000, 100000), (200000, actual - 100000)] if isinstance(nominal, str) else [(nominal, actual)]
         assert [(t["nominal"]["taels"], t["actual"]["taels"]) for t in transfers] == [
-            (-nominal, -actual),
+            (-n, -a) for n, a in expected
         ]
-        destination = next(e["id"] for e in ledger["entities"] if e["kind"] == "account" and e["key"] == "内库")
         assert [(f["detail"]["nominal"], f["detail"]["actual"], f["detail"]["source"])
-                for f in ledger["facts"] if f["entity_id"] == destination and f["kind"] == "received"] == [(nominal, actual, "国库")]
+                for f in ledger["facts"] if f["kind"] == "received"] == [(n, a, "国库") for n, a in expected]
+        entities = {e["id"]: e for e in ledger["entities"]}
+        assert [entities[f["entity_id"]]["key"] for f in ledger["facts"] if f["kind"] == "received"] == (
+            ["陕西十万两赈银起解", "关宁二十万两补欠饷银起解"] if isinstance(nominal, str) else ["内库"]
+        )
+        if isinstance(nominal, str):
+            assert [t["limit_reason"] for t in transfers] == [None, "balance" if actual == 250000 else None]
+            assert [f["detail"]["limit_reason"] for f in ledger["facts"] if f["kind"] == "received"] == [None, "balance" if actual == 250000 else None]
         public = audit(db, identity="public")
         assert not [e for e in public["entities"] if e["kind"] == "account"]
         assert all(
@@ -487,6 +502,10 @@ DEBT = {
                 "court_arrears": 667.24,
             },
         ),
+        pytest.param(None, {
+            "recording": "shared_obligation", "army_arrears": 0,
+            "receipts": [("补欠", 500000, 500000, None), ("补欠", 500000, 100000, "obligation")],
+        }, id="shared_obligation"),
         pytest.param(
             None,
             {
@@ -519,7 +538,10 @@ def test_month_keeps_debt_separate_from_reduction_and_temporary_deferral(
     opening_db, game_db: Path, steps, audit, case
 ) -> None:
     case = {**DEBT, **case}
-    steps["Declaration"] = replaying([(RECORDED / case["recording"]).read_text()])
+    steps["Declaration"] = replaying(
+        ModelMessagesTypeAdapter.validate_python(json.loads((RECORDED / "declarations_1972.json").read_text())["cases"]["shared_obligation"])
+        if case["recording"] == "shared_obligation" else [(RECORDED / case["recording"]).read_text()]
+    )
     with TestClient(create_app(game_db.parent)) as client:
         client.post("/actions", json={"action": "load", "save": game_db.name})
         for index, due in enumerate(case["dues"]):
@@ -731,6 +753,8 @@ def test_fiscal_petition_lands_only_declared_outcome_without_readding_levies(
     "declared",
     [
         *[pytest.param((case, field), id=case) for case, field in [
+            ("duplicate_state", "facts[0].changes"),
+            ("missing_counterpart_v2", "facts[0].changes[1].counterpart"),
             ("ambiguous", "facts[0].entity"),
             ("unknown_office", "facts[0].entity"),
             ("unknown_incumbency_report", "reports[0].entity"),
@@ -886,10 +910,14 @@ def test_exhausted_month_declaration_is_unhandled_not_a_stopped_month(
         if isinstance(declared, str)
         else json.dumps({"facts": declared}, ensure_ascii=False)
     )
-    if isinstance(declared, tuple):
+    if isinstance(declared, tuple) and declared[0] not in {"duplicate_state", "missing_counterpart_v2"}:
         reply = json.dumps(json.loads((RECORDED / {"fiscal_target": "cabinet_wei.json"}.get(declared[0], "declarations_v9.json")).read_text())["cases"][declared[0]], ensure_ascii=False)
     received = []
-    steps["Declaration"] = replaying([reply, reply], received)
+    steps["Declaration"] = replaying(
+        ModelMessagesTypeAdapter.validate_python(json.loads((RECORDED / "declarations_1972.json").read_text())["cases"][declared[0]])
+        if isinstance(declared, tuple) and declared[0] in {"duplicate_state", "missing_counterpart_v2"}
+        else [reply, reply], received,
+    )
     with TestClient(create_app(tmp_path)) as client:
         save = client.post(
             "/actions", json={"action": "load", "save": game_db.name}
@@ -901,6 +929,7 @@ def test_exhausted_month_declaration_is_unhandled_not_a_stopped_month(
             False,
             None,
         )
+        assert [(item["kind"], item["text"]) for item in state["unhandled_monthly"]] == [("world", None)]
         facts = client.get("/records").json()["facts"]
         assert {f["kind"] for f in facts if f["kind"] != "interaction"} == {
             "unhandled",
@@ -931,6 +960,10 @@ def test_exhausted_month_declaration_is_unhandled_not_a_stopped_month(
             if declared[0] == "ambiguous":
                 assert {("知县", "保定府新城县"), ("知县", "济南府新城县")} <= {(p["office"], p["territory"]) for p in failure["expected"]}
             elif declared[0] == "unknown_recipient":
-                assert set(failure["expected"]) == {"国库", "内库", "节慎库", "常盈库"}
+                assert failure["expected"] == {"catalogue": "account"}
             elif declared[0] == "multiple":
                 assert failure["expected"] == {"maxItems": 1}
+            if declared[0] == "duplicate_state":
+                steps["Declaration"] = replaying([(RECORDED / "month_empty.txt").read_text()])
+                client.post("/actions", json={"action": "month"}).raise_for_status()
+                assert client.get("/state").json()["game"]["unhandled_monthly"] == []

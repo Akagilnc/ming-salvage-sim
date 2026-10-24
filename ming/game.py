@@ -113,6 +113,7 @@ class Game:
             "running": pending is not None and failure is None,
             "failure": failure,
             "pending": pending,
+            "unhandled_monthly": self.court.unhandled_monthly(),
             "petitions": [p.model_dump(mode="json") for p in self.month.petitions()],
             "returned_petitions": [
                 {

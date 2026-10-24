@@ -30,6 +30,7 @@ from ming.middle.declaration import (
     Unhandled,
 )
 from ming.middle.invoke import ModelSource
+from ming.middle.records import TranslationMaterials
 from ming.middle.opening import opening_template
 from ming.middle.night import NightView, dismiss, known_people, open_night, read_night
 from ming.middle.scene import HallResult, PersonView, read_person, set_hall
@@ -136,6 +137,25 @@ class Court:
             ],
         }
 
+    def unhandled_monthly(self) -> list[Item]:
+        """Last completed month's terminal failures, including the emperor's secrets."""
+        current = self.calendar().data
+        date = {
+            "year": current["year"] - (current["month"] == 1),
+            "month": (current["month"] - 2) % 12 + 1,
+        }
+        result: list[Item] = []
+        for fact in self._ledger.facts(kind="unhandled", date=date, query=FACT_ROWS.where(
+            F.detail["monthly"].as_string().is_not(None),
+        )):
+            source = self._ledger.get(fact["entity_id"])
+            result.append({
+                "entity_id": str(source.id),
+                "kind": "decree" if source.kind == "decree" else "world",
+                "text": source.data["text"] if source.kind == "decree" else None,
+            })
+        return result
+
     def fiscal_events(self) -> list[Item]:
         return due_levies(self._ledger)
 
@@ -226,15 +246,15 @@ class Court:
     def translation_agent(
         self, output_type: type[T], instructions: str = INSTRUCTIONS,
         *, model: ModelSource | None = None,
-    ) -> Agent[UUID, T]:
+    ) -> Agent[TranslationMaterials, T]:
         return declaration_agent(
             self.model if model is None else model, self._ledger, output_type, instructions
         )
 
     async def translate(
-        self, agent: Agent[UUID, T], prompt: str, source: UUID
+        self, agent: Agent[TranslationMaterials, T], prompt: str, source: UUID
     ) -> T | Unhandled:
-        result = await translate(agent, prompt, source)
+        result = await translate(agent, prompt, TranslationMaterials(self, "translation", source))
         self.log.info("translation output: %s", result.model_dump_json())
         return result
 

@@ -20,7 +20,8 @@ from starlette.testclient import TestClient
 
 from ming.middle.court import Court
 from ming.middle.invoke import Configuration
-from ming.middle.month_work import Materials, prompt, read_records
+from ming.middle.month_work import prompt
+from ming.middle.records import Materials, read_records
 from ming.middle.view import Officials
 from ming.web import create_app
 from tests.test_court import replaying
@@ -106,9 +107,7 @@ async def assert_record_queries(court: Court) -> None:
         assert results["empty"]["status"] == "query_required"
         for label in ("unknown-key", "unknown-kind"):
             assert results[label]["status"] == "not_found"
-            assert {
-                (kind, key) for kind, names in results[label]["names_and_aliases"].items() for key in names
-            } == {(e["kind"], e["key"]) for e in catalogue}
+            assert "names_and_aliases" not in results[label]
         assert set(results["empty"]).isdisjoint({"entities", "facts", "catalogue"})
         for label in ("class", "date", "class-date"):
             assert set(results[label]) == {"catalogue"}
@@ -156,7 +155,7 @@ async def assert_record_queries(court: Court) -> None:
                 assert [e["key"] for e in results["secret"]["entities"]] == [queries["secret"]["key"]]
             else:
                 assert results["secret"]["status"] == "not_found"
-                assert queries["secret"]["key"] not in results["secret"]["names_and_aliases"].get("decree", {})
+                assert queries["secret"]["key"] not in results["secret"].get("names_and_aliases", {}).get("decree", {})
 
 
 def test_menu_creates_distinct_games_and_opens_only_existing_saves(
@@ -450,7 +449,7 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
                  for m in messages for part in m.parts if isinstance(part, ToolReturnPart)}
                 for messages in received.values()
             ]
-            assert all(data["unknown-key"]["names_and_aliases"]["person"]["温体仁"] == ["温体仁", "温尚书", "温阁老", "温长卿"] for data in case)
+            assert all("names_and_aliases" not in data["unknown-key"] for data in case)
             assert all(data["date"] == data["date-original"] == data["date-reordered"] for data in case)
             assert {f["entity_id"] for f in materials["gazette"][0]["facts"] if f["kind"] == "reported"} == {
                 e["id"] for e in ledger["entities"] if e["kind"] == "account" and e["key"] == "国库"
