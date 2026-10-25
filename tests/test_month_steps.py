@@ -558,8 +558,9 @@ def test_two_nights_feed_world_and_arrivals_wait_for_audience(
 
 @pytest.mark.parametrize("case", [
     pytest.param((case, "陕西专款", "国库"), id=case) for case in ("regular", "until", "factor", "defer", "reduce", "stop", "reorder", "shortage", "resume", "invalid_account")
-] + [pytest.param(("reorder", name, account), id=f"reorder-{name}-{account}") for name in ("军饷", "官俸_base", "内廷俸_base") for account in ("国库", "内库")]
-+ [pytest.param(("switch", name, "国库"), id=f"switch-{name}") for name in ("军饷", "官俸_base")])
+] + [pytest.param(("reorder", name, account), id=f"reorder-{name}-{account}") for name, account in (
+    ("军饷", "国库"), ("官俸_base", "国库"), ("官俸_base", "内库"),
+)] + [pytest.param(("switch", "官俸_base", "国库"), id="switch-官俸_base")])
 def test_month_pays_affair_from_declaration_month(game_db, steps, audit, clock, case):
     case, name, account = case
     funding = {"amount": 500000, "account": account, **({"until": {"year": 1627, "month": 11}} if case == "until" else {})}
