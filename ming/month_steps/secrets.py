@@ -46,7 +46,7 @@ class Secrets:
     async def report(self, decree: EntityView) -> None:
         if self.court.products(decree.id, kind="secret_report"):
             return
-        identity = Officials(people=decree.data["people"])
+        identity = Officials(people=decree.data["people"] or sorted(self.court.known_people(decree)))
         result = await invoke(
             self.agent,
             prompt(
