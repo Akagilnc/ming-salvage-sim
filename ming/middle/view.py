@@ -12,7 +12,7 @@ from ming.ledger import ENTITY_COLUMNS as E, FACT_COLUMNS as F, ENTITY_ROWS, FAC
 from ming.middle.calendar import calendar_if_any
 from ming.middle.queries import available_on, public_decree
 from ming.middle.appointments import CATALOGUE_KINDS, held_by
-from ming.middle.night import known_people, read_night
+from ming.middle.night import known_people, read_night, witnessed_nights
 
 HIDDEN_JOURNEY = {"remaining_distance", "travel_speed"}
 
@@ -169,11 +169,12 @@ def visible_appointments(ledger: Ledger, identity: Identity, rows: list[Item]) -
     if identity in ("audit", "world"):
         return rows
     access = decree_access(ledger, identity)
-    latest = {(f["entity_id"], field): f["detail"].get("origin_ref") for f in ledger.facts(
-        entity_id=[r["id"] for r in rows], kind="changed"
+    exposure = fact_exposure(identity, set(), access)
+    latest = {(f["entity_id"], field): f["visible"] for f in ledger.facts(
+        entity_id=[r["id"] for r in rows], kind="changed",
+        query=FACT_ROWS.add_columns(exposure.is_not(None).label("visible")),
     ) for field in {"holders", "acting"}.intersection(f["detail"].get("changes", {}))}
-    hidden = {str(i) for i in access["secret"] - access["known"]}
-    return [r for r in rows if all(latest.get((r["id"], field)) not in hidden for field in ("holders", "acting"))]
+    return [r for r in rows if all(latest.get((r["id"], field), True) for field in ("holders", "acting"))]
 
 
 def person_projection(ledger: Ledger, row: Item, identity: Identity, appointments: list[Item]) -> Item:
@@ -195,21 +196,10 @@ def person_projection(ledger: Ledger, row: Item, identity: Identity, appointment
     data = {k: v for k, v in data.items() if k not in HIDDEN_JOURNEY | {"historical_office"}}
     data["appointments"] = [{**r["data"], "role": role}
                             for r in appointments for role in ("holders", "acting")
-                            if row["key"] in r["data"].get(role, [])]
+                            if row["key"] in r["data"][role]]
     if data["appointments"]:
         data.pop("identity_description", None)
     return data
-
-
-def witnessed_nights(ledger: Ledger, people: list[str]) -> list[UUID]:
-    result: list[UUID] = []
-    for night in ledger.entities(kind="night"):
-        seen = {"王承恩", *night["data"]["hall"]}
-        for fact in ledger.facts(entity_id=night["id"], kind="hall"):
-            seen.update(fact["detail"]["add"])
-        if seen.intersection(people):
-            result.append(night["id"])
-    return result
 
 
 def entities(
@@ -347,7 +337,12 @@ def fact_exposure(
         rules.append((F.kind == "unhandled", "empty"))
     if isinstance(identity, Officials):
         rules.append((E.id.in_(accounts) & F.kind.in_(("changed", "received")), "text"))
-    return case(*rules)
+    return case(
+        (or_(E.kind == "incumbency", F.kind.in_(("appointed", "displaced")))
+         & F.detail["origin_ref"].as_string().in_([str(i) for i in access["secret"] - access["known"]]), None),
+        (E.kind == "incumbency", "dated"),
+        else_=case(*rules),
+    )
 
 
 def project(
@@ -364,11 +359,6 @@ def project(
         exposure.is_not(None)
     )
     if identity not in ("audit", "world"):
-        origin = F.detail["origin_ref"].as_string()
-        query = query.where(or_(
-            ~or_(E.kind == "incumbency", F.kind.in_(("appointed", "displaced"))), origin.is_(None),
-            origin.not_in([str(i) for i in access["secret"] - access["known"]]),
-        ))
         query = query.where(
             ~(
                 F.detail["origin_ref"]

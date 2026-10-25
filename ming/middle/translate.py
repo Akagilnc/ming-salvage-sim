@@ -28,7 +28,7 @@ from ming.middle.declaration import (
 from ming.middle.queries import CATALOGUE
 from ming.middle.night import read_night
 from ming.middle.opening import REFERENCES
-from ming.middle.appointments import CATALOGUE_KINDS, cabinet_members, cabinet_records, incumbency_record, office_pairs, reference_key
+from ming.middle.appointments import cabinet_members, cabinet_records, incumbency_record, office_pairs, reference_key
 from ming.middle.rules import Names, check_rules, fail, name_expected
 from ming.middle.records import TranslationMaterials, read_records
 from ming.middle.invoke import ModelSource, build_agent, invoke
@@ -334,12 +334,10 @@ def check_fiscal(ledger: Ledger, out: Declaration, names: Names) -> None:
 
 
 def check_appointment(ledger: Ledger, fact: Fact, path: str, names: Names, cabinet: dict[tuple[str, str], Item]) -> None:
-    pairs = office_pairs(ledger, fact.entity)
-    if len(pairs) != 1:
-        fail(path + ".entity", fact.entity,
-             [{"office": office, "territory": territory} for office, territory in pairs]
-             if pairs else {kind: name_expected(kind, fact.entity, names) for kind in CATALOGUE_KINDS},
-             names, "按 expected 的两表候选核对官名；查无时用 read_records 查询官职、属地，歧义时用候选属地全名，重交整份。")
+    pairs, resolution = office_pairs(ledger, fact.entity, ledger.entities(kind="incumbency"))
+    if resolution["status"] != "resolved":
+        fail(path + ".entity", fact.entity, resolution,
+             names, "按 expected 核对官名与属地；用 read_records 查询，须带属地时写候选属地全名，重交整份。")
     office = ledger.entities(kind="office", key=pairs[0][0])[0]
     fact.entity = incumbency_record(pairs[0], [])[0]
     for j, change in enumerate(fact.changes):

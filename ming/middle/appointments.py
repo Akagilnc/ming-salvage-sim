@@ -24,34 +24,44 @@ def named(ledger: Ledger, kind: str, value: str) -> list[Item]:
     )))
 
 
-def office_pairs(ledger: Ledger, value: str) -> list[tuple[str, str]]:
+def office_pairs(ledger: Ledger, value: str, incumbencies: list[Item]) -> tuple[list[tuple[str, str]], Item]:
+    """Resolve once for both queries and landing; candidates are caller-visible rows."""
     exact = named(ledger, "office", value)
-    if exact:
-        return [(row["key"], "") for row in exact if not row["data"].get("external", False)]
+    if exact and any(row["data"]["external"] for row in exact):
+        offices = {row["key"] for row in exact}
+        return [], {"status": "territory_required", "territories": sorted({
+            row["data"]["territory"] for row in incumbencies if row["data"]["office"] in offices
+        }), "pairs": []}
     records = ledger.entities(kind="incumbency", key=value)
-    if records:
-        return [(r["data"]["office"], r["data"]["territory"]) for r in records
-                if r["data"]["territory"] or not named(ledger, "office", r["data"]["office"])[0]["data"].get("external", False)]
-    aliases = func.json_each(E.data["aliases"]).table_valued("value")
     pairs: set[tuple[str, str]] = set()
-    query = ENTITY_ROWS.where(or_(
-        func.substr(literal(value), -func.length(E.key)) == E.key,
-        select(aliases.c.value).where(func.substr(literal(value), -func.length(aliases.c.value)) == aliases.c.value).exists(),
-    ))
-    for office in ledger.entities(kind="office", query=query.where(E.data["external"].as_boolean().is_not(False))):
-        for title in [office["key"], *office["data"]["aliases"]]:
-            if title and value.endswith(title):
-                for territory in named(ledger, "territory", value[:-len(title)]):
-                    pairs.add((office["key"], territory["key"]))
-    return sorted(pairs)
+    if exact:
+        pairs.update((row["key"], "") for row in exact)
+    elif records:
+        pairs.update((row["data"]["office"], row["data"]["territory"]) for row in records)
+    else:
+        aliases = func.json_each(E.data["aliases"]).table_valued("value")
+        query = ENTITY_ROWS.where(E.data["external"].as_boolean().is_(True), or_(
+            func.substr(literal(value), -func.length(E.key)) == E.key,
+            select(aliases.c.value).where(func.substr(literal(value), -func.length(aliases.c.value)) == aliases.c.value).exists(),
+        ))
+        for office in ledger.entities(kind="office", query=query):
+            for title in [office["key"], *office["data"]["aliases"]]:
+                if title and value.endswith(title):
+                    for territory in named(ledger, "territory", value[:-len(title)]):
+                        pairs.add((office["key"], territory["key"]))
+    return sorted(pairs), {
+        "status": "resolved" if len(pairs) == 1 else "territory_required" if pairs else "office_not_found",
+        "territories": sorted({territory for _, territory in pairs}),
+        "pairs": [{"office": office, "territory": territory} for office, territory in sorted(pairs)],
+    }
 
 
 def reference_key(ledger: Ledger, kind: str, value: str) -> str:
-    matches = (
-        [incumbency_record(pair, [])[0] for pair in office_pairs(ledger, value)]
-        if kind == "incumbency"
-        else [row["key"] for row in named(ledger, kind, value)]
-    )
+    if kind == "incumbency":
+        pairs, resolution = office_pairs(ledger, value, ledger.entities(kind="incumbency"))
+        matches = [incumbency_record(pair, [])[0] for pair in pairs] if resolution["status"] == "resolved" else []
+    else:
+        matches = [row["key"] for row in named(ledger, kind, value)]
     return matches[0] if len(matches) == 1 else value
 
 

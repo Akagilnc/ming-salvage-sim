@@ -41,7 +41,7 @@ async def read_records(
         key: 一个或多个账本正名或别名；点名才取实体数据与可读事件全文。
         date: 月份（year、month）；点名时限定事件月份，否则列该月有事件的实体。
     官职结果 status：occupied 有正任，vacant 此缺现无人在任，acting 正任空缺但有人暂署；
-    appointments 给正任 holders、暂署 acting。territory_required 须带属地，territories 给已有可见候选；
+    appointments 给正任 holders、暂署 acting。territory_required 须带属地，territories 给候选属地，pairs 给已解析的官职/属地组合；
     office_not_found 无此官职，names_and_aliases 给相近候选；not_found 未找到，不表示空缺。
     """
     if kind is None and not key and date is None:

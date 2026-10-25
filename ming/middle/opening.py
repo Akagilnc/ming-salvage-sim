@@ -74,7 +74,7 @@ def import_opening(ledger: Ledger, content: Path) -> None:
         path = content / f"{filename}.json"
         try:
             records = json.loads(path.read_text())
-            classification: Item = records.get("external", {}) if kind == "office" else {}
+            classification: Item = records["external"] if kind == "office" else {}
             records = records[collection] if collection else records
         except (OSError, ValueError, KeyError) as exc:
             raise ValueError(f"{path}: {exc}") from exc

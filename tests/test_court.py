@@ -200,6 +200,11 @@ def test_recorded_r2_reply_lands(game_db, steps, audit, case):
             assert result["appointments"][0]["acting"] == ["毕自严"]
             ledger = audit(game_db)
         elif case in {"unqualified", "capital_territory"}:
+            failure = json.loads(next(p.content for m in received for p in m.parts if p.part_kind == "retry-prompt"))
+            assert failure["expected"] == {
+                "unqualified": {"status": "territory_required", "territories": ["北直隶保定六府"], "pairs": []},
+                "capital_territory": {"status": "office_not_found", "territories": [], "pairs": []},
+            }[case]
             assert not any(e["kind"] == "incumbency" and (e["data"]["office"], e["data"]["territory"]) in {("巡抚", ""), ("户部尚书", "陕西")} for e in ledger["entities"])
         elif case == "range":
             assert rows[("army", "京营")]["data"]["firearm_equipment"] == 100
@@ -233,7 +238,7 @@ def test_translation_queries_preserve_two_table_permissions(game_db, steps, stag
     steps["NightDeclaration"] = replaying([(RECORDED / "night_empty.txt").read_text()])
     steps["NightDeclaration" if stage == "night" else "Declaration"] = replaying(
         [ModelResponse(parts=[ToolCallPart("read_records", {"kind": "incumbency", "key": name}, tool_call_id=name)
-                              for name in ("陕西巡抚", "巡抚", "西安知府", "内阁大学士", "陕西巡府", "不存在的官职")]),
+                              for name in ("陕西巡抚", "巡抚", "新城知县", "西安知府", "内阁大学士", "陕西巡府", "不存在的官职")]),
          *ModelMessagesTypeAdapter.validate_python(recording["night_catalogue_queries" if stage == "night" else "catalogue_queries"])], received,
     )
     with TestClient(create_app(game_db.parent)) as client:
@@ -250,13 +255,16 @@ def test_translation_queries_preserve_two_table_permissions(game_db, steps, stag
         if query.get("kind") == "incumbency":
             name = query["key"]
             assert result["status"] == {
-                "陕西巡抚": "vacant", "巡抚": "territory_required", "西安知府": "vacant",
+                "陕西巡抚": "vacant", "巡抚": "territory_required", "新城知县": "territory_required", "西安知府": "vacant",
                 "内阁大学士": "occupied", "陕西巡府": "office_not_found", "不存在的官职": "office_not_found",
             }[name]
-            if name == "巡抚":
-                assert set(result["territories"]) == {"北直隶保定六府"}
+            if name in {"巡抚", "新城知县"}:
+                assert set(result["territories"]) == {
+                    "巡抚": {"北直隶保定六府"},
+                    "新城知县": {"保定府新城县", "济南府新城县", "建昌府新城县", "杭州府新城县"},
+                }[name]
             elif name in {"陕西巡府", "不存在的官职"}:
-                assert bool(result["names_and_aliases"]) == (name == "陕西巡府")
+                assert ("巡抚" in result["names_and_aliases"]["office"]) if name == "陕西巡府" else result["names_and_aliases"] == {}
         elif query.get("key") in {"保定府新城县", "北直隶保定府新城县", "户部尚书"}:
             assert len(result["entities"]) == 1
             assert result["facts"] == []

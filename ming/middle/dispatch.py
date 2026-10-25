@@ -65,7 +65,7 @@ def landing_entities(
         for f in result.facts if f.entity_type == "person"
         for c in f.changes if c.field == "location"
     }
-    incumbents = {name for (kind, _), row in found.items() if kind == "incumbency" for field in ("holders", "acting") for name in row["data"].get(field, [])}
+    incumbents = {name for (kind, _), row in found.items() if kind == "incumbency" for field in ("holders", "acting") for name in row["data"][field]}
     for e in ledger.read(ENTITY_ROWS.where(or_(
         (E.kind == "distance") & E.key.in_(origins),
         (E.kind == "person") & E.key.in_(incumbents),
@@ -364,7 +364,7 @@ def displace(
     for field in ("holders", "acting"):
         if field not in changes:
             continue
-        previous = appointment.data.get(field, [])
+        previous = appointment.data[field]
         holders = changes[field]
         for person in dict.fromkeys([*previous, *holders]):
             if (person in previous) != (person in holders):

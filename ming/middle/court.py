@@ -18,7 +18,7 @@ from ming.ledger import (
     FACT_ROWS,
 )
 from ming.middle import queries
-from ming.middle.appointments import named, office_pairs, incumbency_record
+from ming.middle.appointments import office_pairs, incumbency_record
 
 from ming.ledger import Entity, Item, Ledger
 from ming.middle.dispatch import dispatch, latest_detail
@@ -280,22 +280,19 @@ class Court:
         ]
 
     def office_record(self, identity: Identity, key: str, date: Item | None = None) -> Item:
-        pairs = office_pairs(self._ledger, key)
-        exact = named(self._ledger, "office", key)
-        if not pairs and exact:
-            offices = {e["key"] for e in exact}
-            return {"status": "territory_required", "territories": sorted({
-                e.data["territory"] for e in self.entities(identity, kind="incumbency")
-                if e.data["office"] in offices
-            })}
-        if len(pairs) != 1:
+        pairs, resolution = office_pairs(self._ledger, key, [
+            e.model_dump() for e in self.entities(identity, kind="incumbency")
+        ])
+        if resolution["status"] == "territory_required":
+            return resolution
+        if resolution["status"] == "office_not_found":
             names = self.catalogue([*self.record_catalogue(identity, kind="office"), *self.record_catalogue(identity, kind="territory")])
             prefix = max((label for name, aliases in names.get("territory", {}).items()
                           for label in [name, *aliases] if key.startswith(label)), key=len, default="")
             candidates = matching_names({"office": names.get("office", {})}, [key])
             if not candidates:
                 candidates = {"office": {name: names["office"][name] for name in get_close_matches(
-                    key[len(prefix):], list(names.get("office", {})), cutoff=0.5
+                    key[len(prefix):], list(names.get("office", {})), n=len(names.get("office", {})) + 1, cutoff=0.5
                 )}}
                 if not candidates["office"]:
                     candidates = {}
@@ -309,7 +306,7 @@ class Court:
         if visible:
             data = visible[0]["data"]
         return {
-            "status": "occupied" if data["holders"] else "acting" if data.get("acting") else "vacant",
+            "status": "occupied" if data["holders"] else "acting" if data["acting"] else "vacant",
             "appointments": [data],
             "entities": [e.model_dump(mode="json") for e in self.entities(identity, kind="office", key=office)],
             "facts": [f.model_dump(mode="json") for f in self.facts(identity, entity_id=[e["id"] for e in visible], date=date)],

@@ -1,5 +1,6 @@
 """Persistent audience records, owned by the same entity/event ledger."""
 
+from collections import defaultdict
 from typing import Literal
 from uuid import UUID, uuid4
 
@@ -32,29 +33,43 @@ def change_hall(hall: list[str], add: list[str], remove: list[str]) -> list[str]
     return list(dict.fromkeys(p for p in hall + add if p not in remove))
 
 
-def read_night(ledger: Ledger, night_id: UUID) -> NightView:
-    night = ledger.entities(entity_id=night_id, query=NIGHT_ROWS)[0]
-    date = calendar_row(ledger)["data"]
+def hall_history(events: list[Item]) -> tuple[list[TurnView], set[str]]:
     turns: list[TurnView] = []
     # A turn is recorded after its scene, whose hall changes come first; the
     # turn's hall is the one present when the emperor spoke, before that scene.
     hall: list[str] = list(INITIAL_HALL)
     spoken = hall
-    for item in ledger.facts(entity_id=night_id, kind=("turn", "hall")):
+    attendees = set(hall)
+    for item in events:
         detail = item["detail"]
         if item["kind"] == "hall":
             hall = change_hall(hall, detail["add"], detail["remove"])
+            attendees.update(hall)
         else:
             turns.append(
                 TurnView(**detail, emperor_words=item["emperor_words"], hall=spoken)
             )
             spoken = hall
+    return turns, attendees
+
+
+def read_night(ledger: Ledger, night_id: UUID) -> NightView:
+    night = ledger.entities(entity_id=night_id, query=NIGHT_ROWS)[0]
+    turns, _ = hall_history(ledger.facts(entity_id=night_id, kind=("turn", "hall")))
     return NightView(
         id=night_id,
-        **{**night["data"], "date": night["data"].get("date", {"year": date["year"], "month": date["month"]})},
+        **night["data"],
         turns=turns,
         result=night["result"],
     )
+
+
+def witnessed_nights(ledger: Ledger, people: list[str]) -> list[UUID]:
+    nights = ledger.entities(kind="night")
+    events: dict[UUID, list[Item]] = defaultdict(list)
+    for fact in ledger.facts(entity_id=[n["id"] for n in nights], kind="hall"):
+        events[fact["entity_id"]].append(fact)
+    return [night["id"] for night in nights if hall_history(events[night["id"]])[1].intersection(people)]
 
 
 def known_people(ledger: Ledger, decree: Item) -> set[str]:
