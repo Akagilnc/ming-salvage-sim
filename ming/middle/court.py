@@ -3,6 +3,7 @@
 import logging
 from collections import Counter
 from difflib import get_close_matches
+from functools import partial
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from shutil import copyfileobj
@@ -42,11 +43,9 @@ from ming.middle.view import (
     EntityView,
     FactView,
     Identity,
-    OPENING_CONTROLS,
     character_input,
     entities,
-    fact_query,
-    month_open,
+    fact_sources,
     project,
     visible_appointments,
 )
@@ -272,28 +271,23 @@ class Court:
         kind: str | None = None, keys: list[str] | None = None,
     ) -> list[Item]:
         """Names and counts from the existing entity/fact projections, never prose."""
-        query = fact_query(self._ledger, identity).with_only_columns(
+        matches = named(self._ledger, kind, keys) if keys is not None else None
+        facts: Item = {"entity_id": [r["id"] for r in matches]} if matches is not None else {}
+        query, frozen = fact_sources(self._ledger, identity, facts)
+        query = query.with_only_columns(
             F.entity_id, func.count().label("event_count"), maintain_column_froms=True,
         ).order_by(None).group_by(F.entity_id)
         if kind is not None:
             query = query.where(E.kind == kind)
-        matches = named(self._ledger, kind, keys) if keys is not None else None
-        if matches is not None:
-            query = query.where(E.id.in_([r["id"] for r in matches]))
-        opening = month_open(self._ledger) if identity == "emperor" else None
-        frozen = [f for f in opening["facts"] if f["kind"] not in OPENING_CONTROLS] if opening else []
-        query = query.where(F.kind.in_(OPENING_CONTROLS)) if opening else query
-        counts = Counter({r["entity_id"]: r["event_count"] for r in self._ledger.read(query)})
-        frozen = [f for f in frozen if matches is None or UUID(f["entity_id"]) in {r["id"] for r in matches}]
-        counts.update(UUID(f["entity_id"]) for f in frozen)
+        counts = Counter({r["entity_id"]: r["event_count"] for r in self._ledger.facts(**facts, query=query)})
+        counts.update(f.entity_id for f in frozen)
         selection = {"catalogue": True, **({"kind": kind} if kind is not None else {}),
                      **({"keys": [r["key"] for r in matches]} if matches is not None else {})}
         visible = {e.id for e in entities(self._ledger, identity, selection)} | counts.keys()
         if date is not None:
-            counts = Counter({r["entity_id"]: r["event_count"] for r in self._ledger.facts(date=date, query=query)})
-            counts.update(UUID(f["entity_id"]) for f in frozen if all(
-                f["detail"].get("date", {}).get(field) == date[field] for field in ("year", "month")
-            ))
+            _, frozen = fact_sources(self._ledger, identity, {**facts, "date": date})
+            counts = Counter({r["entity_id"]: r["event_count"] for r in self._ledger.facts(**facts, date=date, query=query)})
+            counts.update(f.entity_id for f in frozen)
         return [
             {
                 "kind": row["kind"],
@@ -304,13 +298,8 @@ class Court:
         ]
 
     def office_record(self, identity: Identity, key: str, date: Item | None = None) -> Item:
-        pairs, resolution = office_pairs(self._ledger, key, [])
+        pairs, resolution = office_pairs(self._ledger, key, partial(visible_appointments, self._ledger, identity))
         if resolution["status"] == "territory_required":
-            if not pairs:
-                candidates = self._ledger.entities(kind="incumbency", query=ENTITY_ROWS.where(
-                    E.data["office"].as_string().in_([r["key"] for r in named(self._ledger, "office", key)])
-                ))
-                _, resolution = office_pairs(self._ledger, key, visible_appointments(self._ledger, identity, candidates))
             return resolution
         if resolution["status"] == "office_not_found":
             names = self.catalogue([*self.record_catalogue(identity, kind="office"), *self.record_catalogue(identity, kind="territory")])

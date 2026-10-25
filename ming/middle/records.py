@@ -51,7 +51,7 @@ async def read_records(
         results = [ctx.deps.court.office_record(ctx.deps.identity, name, month)
                    for name in ([key] if isinstance(key, str) else key)]
         return results[0] if len(results) == 1 else {"offices": results}
-    keys = [key] if isinstance(key, str) else key
+    keys = ([key] if isinstance(key, str) else key) or None
     catalogue = ctx.deps.court.record_catalogue(ctx.deps.identity, month, kind, keys)
     selected = [e for e in catalogue if kind is None or e["kind"] == kind]
     names = ctx.deps.court.catalogue(selected)

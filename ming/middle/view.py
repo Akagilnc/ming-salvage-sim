@@ -364,8 +364,11 @@ def fact_exposure(
     )
 
 
-def fact_query(ledger: Ledger, identity: Identity) -> Select[Any]:
-    """One visibility query for full facts and grouped catalogue counts."""
+def fact_sources(
+    ledger: Ledger, identity: Identity, selection: Item | None = None,
+) -> tuple[Select[Any], list[FactView]]:
+    """One live query and frozen opening selection for full reads and counts."""
+    selection = selection or {}
     access = decree_access(ledger, identity)
     exposure = fact_exposure(identity, owned_accounts(ledger, identity), access)
     query = FACT_ROWS.add_columns(exposure.label("exposure")).where(
@@ -374,15 +377,7 @@ def fact_query(ledger: Ledger, identity: Identity) -> Select[Any]:
     if identity != "audit":
         row = calendar_if_any(ledger)
         query = query.where(available_on(row["data"] if row else {}))
-    return query
-
-
-def project(
-    ledger: Ledger, identity: Identity, selection: Item | None = None
-) -> list[FactView]:
-    selection = selection or {}
     opening = month_open(ledger) if identity == "emperor" else None
-    query = fact_query(ledger, identity)
     if opening:
         query = query.where(F.kind.in_(OPENING_CONTROLS))
     result: list[FactView] = (
@@ -422,6 +417,14 @@ def project(
         if opening
         else []
     )
+    return query, result
+
+
+def project(
+    ledger: Ledger, identity: Identity, selection: Item | None = None
+) -> list[FactView]:
+    selection = selection or {}
+    query, result = fact_sources(ledger, identity, selection)
     for item in ledger.facts(**selection, query=query):
         fact = FactView(**item)
         if identity == "world" and fact.kind in {"departed", "travelled", "arrived"}:

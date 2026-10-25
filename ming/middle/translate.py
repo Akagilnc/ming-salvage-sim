@@ -334,7 +334,7 @@ def check_fiscal(ledger: Ledger, out: Declaration, names: Names) -> None:
 
 
 def check_appointment(ledger: Ledger, fact: Fact, path: str, names: Names, cabinet: dict[tuple[str, str], Item]) -> None:
-    pairs, resolution = office_pairs(ledger, fact.entity, ledger.entities(kind="incumbency"))
+    pairs, resolution = office_pairs(ledger, fact.entity)
     if resolution["status"] != "resolved":
         fail(path + ".entity", fact.entity, resolution,
              names, "按 expected 核对官名与属地；用 read_records 查询，须带属地时写候选属地全名，重交整份。")

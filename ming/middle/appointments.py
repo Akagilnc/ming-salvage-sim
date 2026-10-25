@@ -1,7 +1,7 @@
 """Exact catalogue references and current appointments, independent of people."""
 
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 from sqlalchemy import func, literal, or_, select
 
@@ -25,13 +25,18 @@ def named(ledger: Ledger, kind: str | None, value: str | list[str]) -> list[Item
     )))
 
 
-def office_pairs(ledger: Ledger, value: str, incumbencies: list[Item]) -> tuple[list[tuple[str, str]], Item]:
+def office_pairs(
+    ledger: Ledger, value: str,
+    visible: Callable[[list[Item]], list[Item]] | None = None,
+) -> tuple[list[tuple[str, str]], Item]:
     """Resolve once for both queries and landing; candidates are caller-visible rows."""
     exact = named(ledger, "office", value)
     if exact and any(row["data"]["external"] for row in exact):
-        offices = {row["key"] for row in exact}
+        incumbencies = ledger.entities(kind="incumbency", query=ENTITY_ROWS.where(
+            E.data["office"].as_string().in_([row["key"] for row in exact])
+        ))
         return [], {"status": "territory_required", "territories": sorted({
-            row["data"]["territory"] for row in incumbencies if row["data"]["office"] in offices
+            row["data"]["territory"] for row in (visible(incumbencies) if visible else incumbencies)
         }), "pairs": []}
     records = ledger.entities(kind="incumbency", key=value)
     pairs: set[tuple[str, str]] = set()
@@ -59,7 +64,7 @@ def office_pairs(ledger: Ledger, value: str, incumbencies: list[Item]) -> tuple[
 
 def reference_key(ledger: Ledger, kind: str, value: str) -> str:
     if kind == "incumbency":
-        pairs, resolution = office_pairs(ledger, value, ledger.entities(kind="incumbency"))
+        pairs, resolution = office_pairs(ledger, value)
         matches = [incumbency_record(pair, [])[0] for pair in pairs] if resolution["status"] == "resolved" else []
     else:
         matches = [row["key"] for row in named(ledger, kind, value)]
