@@ -20,6 +20,7 @@ from ming.middle.fiscal import OUTPUT_METRICS, levers, payable_army, settling
 from ming.middle.declaration import (
     Declaration,
     DecreeEvent,
+    EntityRef,
     Fact,
     NightDeclaration,
     MonthlyFunding,
@@ -334,21 +335,22 @@ def check_fiscal(ledger: Ledger, out: Declaration, names: Names) -> None:
                         if account == fact.entity
                     ]
                     + (["军饷"] if fact.entity == "国库" else [])
-                    + [key for key, grant in funding.items() if grant["account"] == fact.entity]
+                    + [EntityRef(entity_type="affair", entity=key).model_dump()
+                       for key, grant in funding.items() if grant["account"] == fact.entity]
                 )
                 # A complete order: every choice exactly once.
                 value = change.value
                 if not (
                     isinstance(value, list)
-                    and all(isinstance(v, str) for v in cast(list[Any], value))
-                    and sorted(cast(list[str], value)) == sorted(choices)
+                    and len(cast(list[Any], value)) == len(choices)
+                    and all(cast(list[Any], value).count(choice) == 1 for choice in choices)
                 ):
                     fail(
                         path + ".value",
                         change.value,
                         choices,
                         names,
-                        "按 expected 的正名交完整顺序，每个一次，重交整份。",
+                        "按 expected 的项目引用交完整顺序，每个一次，重交整份。",
                     )
 
 

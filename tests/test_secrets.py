@@ -7,10 +7,10 @@ from pathlib import Path
 
 import pytest
 from pydantic_ai.exceptions import ModelHTTPError
-from pydantic_ai.messages import ModelMessagesTypeAdapter
+from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelResponse, ToolCallPart, ToolReturnPart
 from starlette.testclient import TestClient
 
-from ming.middle.view import Officials
+from ming.middle.view import Officials, character_input
 from ming.web import create_app
 from tests.test_court import replaying
 from tests.test_web import assert_record_queries
@@ -44,7 +44,7 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
     steps["Declaration"] = replaying(
         partial(
             declaration_reply,
-            response_file="month_invalid.txt" if failure == "declaration" else "month_empty.txt",
+            response_file="month_invalid.txt" if failure == "declaration" else "month_travel.txt",
         ),
         declarations,
     )
@@ -52,7 +52,10 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
         steps["secret_report"] = replaying([ModelHTTPError(429, "recorded")])
     else:
         steps["secret_report"] = replaying(
-            [(RECORDED / "secret_report.txt").read_text()] * 6, material
+            [
+                ModelResponse(parts=[ToolCallPart("read_records", {"kind": "person", "key": ["毕自严", "徐光启"]})]),
+                (RECORDED / "secret_report.txt").read_text(),
+            ] * 6, material
         )
     with TestClient(create_app(tmp_path)) as client:
         client.post(
@@ -106,6 +109,13 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
             )
             client.post("/actions", json={"action": "retry"}).raise_for_status()
             client.portal.call(client.app.state.web.game.drain)
+        if failure is None:
+            returned = next(p.model_response_object() for m in material for p in m.parts if isinstance(p, ToolReturnPart))
+            assert {e["key"]: e["data"]["location"] for e in returned["entities"]} == {
+                "毕自严": "北直隶 / 京师", "徐光启": "南直隶 / 南京",
+            }
+            assert any(f["kind"] == "arrived" for f in returned["facts"])
+            assert returned == character_input(client.portal.call(court.read_records, Officials(people=secret.data["people"]), "person", ["毕自严", "徐光启"]))
         # The new native night has two knowers and no handled event.
         for month in range(6):
             court = client.app.state.web.game.court
@@ -157,14 +167,14 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
         for message in material:
             for part in message.parts:
                 if part.part_kind == "user-prompt":
-                    prompt = json.loads(part.content)
+                    prompt = json.loads(part.content)["context"]
                     assert prompt["decree"]["id"] == str(secret.id)
                     assert all(
                         "emperor_words" not in f
                         for f in prompt["facts"] + prompt["products"]
                     )
         assert (
-            json.loads(material[-1].parts[0].content)["decree"]["data"]["exposure"][
+            prompt["decree"]["data"]["exposure"][
                 "stage"
             ]
             == "半公开"

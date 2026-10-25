@@ -11,6 +11,7 @@ from ming.ledger import Entity, Item, Ledger
 from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS, FACT_COLUMNS as F, FACT_ROWS
 from ming.middle.declaration import (
     Declaration,
+    EntityRef,
     Fact,
     LandingMode,
     NightDeclaration,
@@ -203,16 +204,17 @@ def register_funding(
         if fact.entity_type != "affair" or not any(c.field == "monthly_funding" for c in fact.changes):
             continue
         entity = known("affair", fact.entity)
+        recipient = EntityRef(entity_type=entity.kind, entity=entity.key).model_dump()
         for kind, key in list(existing):
             if kind != "account":
                 continue
             account = known(kind, key)
             order = list(account.data.get("payment_order", []))
             if key == entity.data["monthly_funding"]["account"]:
-                if entity.key not in order:
-                    order.append(entity.key)
-            elif entity.key in order:
-                order.remove(entity.key)
+                if recipient not in order:
+                    order.append(recipient)
+            elif recipient in order:
+                order.remove(recipient)
             if order != account.data.get("payment_order", []):
                 record(account, "payment_order", {"recipient": entity.key}, {"payment_order": order})
 

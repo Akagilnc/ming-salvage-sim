@@ -70,7 +70,7 @@ class PaymentPolicy(StrictModel):
 
 class Change(StrictModel):
     field: str
-    value: Any
+    value: Any = Field(description="字段的新值。payment_order 交完整项目顺序：军饷与财政科目沿用账本字符串，事务用 EntityRef 形状 {entity_type: 'affair', entity: 正名}，同名不同类互不替代；army_order 仍为军队正名列表。")
     purpose: Literal["补欠", "当月饷", "犒赏", "专项"] | None = Field(
         default=None,
         description="账户付给军队或财政科目的款须写名目；value仍为带符号的两数。",

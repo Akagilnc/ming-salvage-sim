@@ -4,7 +4,7 @@ from copy import deepcopy
 
 from ming.ledger import Entity, Item, Ledger
 from ming.middle.calendar import calendar_row
-from ming.middle.declaration import FiscalEnd, MonthlyFunding, PaymentPolicy
+from ming.middle.declaration import EntityRef, FiscalEnd, MonthlyFunding, PaymentPolicy
 from ming.middle.queries import FUNDED_AFFAIRS
 
 WAN = 10_000
@@ -280,15 +280,19 @@ class Accounts:
         armies = {
             e.key: e for e in self.rows if e.kind == "army" and payable_army(e.data)
         }
-        affairs = {e.key: e for e in self.rows if e.kind == "affair"}
+        recipients = {(e.kind, e.key): e for e in self.rows}
         for account in self.accounts.values():
-            for category in account.data.get("payment_order", []):
-                if category == "军饷":
+            for item in account.data.get("payment_order", []):
+                if isinstance(item, dict):
+                    ref = EntityRef.model_validate(item)
+                    category = ref.entity
+                    targets = [recipients[ref.entity_type, ref.entity]]
+                elif item == "军饷":
+                    category = item
                     order = dict.fromkeys([*account.data["army_order"], *armies])
                     targets = [armies[name] for name in order if name in armies]
-                elif category in affairs:
-                    targets = [affairs[category]]
                 else:
+                    category = item
                     targets = [self.config[category]]
                 for target in targets:
                     self.pay(target, account, category)

@@ -1,10 +1,10 @@
 """Monthly exposure from recorded counts, and each unfinished errand's own report."""
 
-import json
-
 from ming.middle.court import Court
 from ming.middle.invoke import ModelSource, build_agent, invoke
-from ming.middle.view import EntityView, character_input
+from ming.middle.month_work import prompt
+from ming.middle.records import Materials, read_records
+from ming.middle.view import EntityView, Officials
 
 
 class Secrets:
@@ -14,7 +14,9 @@ class Secrets:
             model,
             name="secret_report",
             output_type=str,
-            instructions="按本月实况与风声，用本旨承办人复命的口吻给皇帝写这一道密令的密报。查得什么、听得什么、尚有何难处，由承办人据其所知复命。人物的打算与文字由你发挥。",
+            deps_type=Materials,
+            tools=[read_records],
+            instructions="按输入 catalogue 用 read_records 按需查本人所知见闻。按本月实况与风声，用本旨承办人复命的口吻给皇帝写这一道密令的密报。查得什么、听得什么、尚有何难处，由承办人据其所知复命。人物的打算与文字由你发挥。",
         )
 
     def accumulate(self) -> None:
@@ -42,30 +44,29 @@ class Secrets:
             )
 
     async def report(self, decree: EntityView) -> None:
-        date = self.court.calendar().data
         if self.court.products(decree.id, kind="secret_report"):
             return
+        identity = Officials(people=decree.data["people"] or sorted(self.court.known_people(decree)))
         result = await invoke(
             self.agent,
-            json.dumps(
-                character_input(
-                    {
-                        "date": date,
-                        "decree": decree.model_dump(mode="json"),
-                        "facts": [
-                            f.model_dump(mode="json", exclude={"emperor_words"})
-                            for f in self.court.consequences(decree.id)
-                        ],
-                        "products": [
-                            f.model_dump(mode="json", exclude={"emperor_words"})
-                            for f in self.court.products(
-                                decree.id, kind=("exposure", "completed", "handled")
-                            )
-                        ],
-                    }
-                ),
-                ensure_ascii=False,
+            prompt(
+                self.court,
+                identity,
+                {
+                    "decree": decree.model_dump(mode="json"),
+                    "facts": [
+                        f.model_dump(mode="json", exclude={"emperor_words"})
+                        for f in self.court.consequences(decree.id)
+                    ],
+                    "products": [
+                        f.model_dump(mode="json", exclude={"emperor_words"})
+                        for f in self.court.products(
+                            decree.id, kind=("exposure", "completed", "handled")
+                        )
+                    ],
+                },
             ),
+            deps=Materials(self.court, identity),
         )
         self.court.log.info("model output: %s", result.output)
         self.court.record_product(decree.id, "secret_report", {"text": result.output})

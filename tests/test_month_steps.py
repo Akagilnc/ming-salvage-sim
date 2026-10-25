@@ -556,13 +556,17 @@ def test_two_nights_feed_world_and_arrivals_wait_for_audience(
         )
 
 
-@pytest.mark.parametrize("case", ["regular", "until", "factor", "defer", "reduce", "stop", "reorder", "shortage", "resume", "invalid_account"])
+@pytest.mark.parametrize("case", [
+    pytest.param((case, "陕西专款", "国库"), id=case) for case in ("regular", "until", "factor", "defer", "reduce", "stop", "reorder", "shortage", "resume", "invalid_account")
+] + [pytest.param(("reorder", name, account), id=f"reorder-{name}-{account}") for name in ("军饷", "官俸_base", "内廷俸_base") for account in ("国库", "内库")]
++ [pytest.param(("switch", name, "国库"), id=f"switch-{name}") for name in ("军饷", "官俸_base")])
 def test_month_pays_affair_from_declaration_month(game_db, steps, audit, clock, case):
-    funding = {"amount": 500000, "account": "国库", **({"until": {"year": 1627, "month": 11}} if case == "until" else {})}
+    case, name, account = case
+    funding = {"amount": 500000, "account": account, **({"until": {"year": 1627, "month": 11}} if case == "until" else {})}
     changes = [{"field": "monthly_funding", "value": funding}]
     if case in {"factor", "defer"}:
         changes.append({"field": "payment_policy", "value": {case: 0.5, "until": {"year": 1627, "month": 11}}})
-    declaration = {"facts": [{"entity_type": "affair", "entity": "陕西专款", "create": True, "changes": changes, "text": "每月拨五十万两"}]}
+    declaration = {"facts": [{"entity_type": "affair", "entity": name, "create": True, "changes": changes, "text": "每月拨五十万两"}]}
     if case == "shortage":
         declaration["facts"].append({"entity_type": "account", "entity": "国库", "create": False, "changes": [{"field": "taels", "value": -3100000, "counterpart": {"entity_type": "account", "entity": "内库"}}], "text": "移库"})
         funding["amount"] = 100000000
@@ -575,7 +579,7 @@ def test_month_pays_affair_from_declaration_month(game_db, steps, audit, clock, 
         steps["gazette"] = replaying([TimeoutError()] * 3 + [(RECORDED / "gazette.txt").read_text()])
     with TestClient(create_app(game_db.parent)) as client:
         client.post("/actions", json={"action": "load", "save": game_db.name})
-        for index in range(1 if case == "invalid_account" else 3):
+        for index in range(1 if case == "invalid_account" else 2 if name != "陕西专款" else 3):
             client.post("/actions", json={"action": "month"})
             if case == "resume" and index == 0:
                 state = client.get("/state").json()["game"]
@@ -586,8 +590,10 @@ def test_month_pays_affair_from_declaration_month(game_db, steps, audit, clock, 
             assert client.get("/state").json()["game"]["failure"] is None
             ledger = audit(game_db)
             rows = {(e["kind"], e["key"]): e["data"] for e in ledger["entities"]}
-            assert rows[("account", "国库")]["payment_order"] == (["陕西专款", *GUOKU_ORDER] if case == "reorder" and index else [*GUOKU_ORDER, "陕西专款"])
-            payments = [f["detail"] for f in ledger["facts"] if f["kind"] == "monthly_payment" and f["detail"]["recipient"] == "陕西专款" and f["entity_id"] == next(e["id"] for e in ledger["entities"] if e["kind"] == "affair")]
+            assert {f["entity_id"] for f in ledger["facts"] if f["kind"] == "monthly_payment"} >= {
+                e["id"] for e in ledger["entities"] if e["kind"] == "fiscal" and e["data"].get("direction") == "expense"
+            }
+            payments = [f["detail"] for f in ledger["facts"] if f["kind"] == "monthly_payment" and f["detail"]["recipient"] == name and f["entity_id"] == next(e["id"] for e in ledger["entities"] if e["kind"] == "affair")]
             expected = {"factor": [25, 25, 50], "defer": [25, 25, 50], "until": [50, 50, 0], "stop": [50, 0, 0], "reduce": [50, 20, 20]}.get(case, [50, 50, 50])
             assert len(payments) == index + 1
             if case == "shortage":
@@ -595,25 +601,31 @@ def test_month_pays_affair_from_declaration_month(game_db, steps, audit, clock, 
                 assert rows[("account", "国库")]["taels"] == 0
             else:
                 assert [p["paid"] for p in payments] == expected[:index + 1]
-                assert rows[("affair", "陕西专款")]["arrears"] == (25 * min(index + 1, 2) if case == "defer" else 0)
-                if index == 0:
+                assert rows[("affair", name)]["arrears"] == (25 * min(index + 1, 2) if case == "defer" else 0)
+                if index == 0 and account == "国库":
                     assert rows[("account", "国库")]["taels"] == pytest.approx(11690269.2869425 if case in {"factor", "defer"} else 11440269.2869425)
-            assert rows[("affair", "陕西专款")]["month_paid"]["amount"] == payments[-1]["paid"]
-            assert rows[("affair", "陕西专款")]["arrears"] == pytest.approx(sum(p["unpaid"] for p in payments))
+            assert rows[("affair", name)]["month_paid"]["amount"] == payments[-1]["paid"]
+            assert rows[("affair", name)]["arrears"] == pytest.approx(sum(p["unpaid"] for p in payments))
             assert not [f for f in ledger["facts"] if f["kind"] == "received" and case != "shortage"]
             if case == "invalid_account" and index == 0:
                 assert [json.loads(p.content)["field"] for m in received for p in m.parts if p.part_kind == "retry-prompt"] == ["facts[0].changes[0].value.account"]
+            recipient = {"entity_type": "affair", "entity": name}
+            original = GUOKU_ORDER if account == "国库" else ["内廷俸_base", "妃嫔_base", "宫廷_base"]
+            assert rows[("account", account)]["payment_order"] == ([recipient, *original] if case == "reorder" and index else [*original, recipient])
+            if account == "内库":
+                assert rows[("account", "国库")]["payment_order"] == GUOKU_ORDER
             declaration = {"facts": []}
-            if index == 0 and case in {"stop", "reduce"}:
+            if index == 0 and case in {"stop", "reduce", "switch"}:
+                account = "内库" if case == "switch" else account
                 declaration["facts"].append({
-                    "entity_type": "affair", "entity": "陕西专款", "create": False,
-                    "changes": [{"field": "monthly_funding", "value": {**funding, "amount": 0 if case == "stop" else 200000}}],
+                    "entity_type": "affair", "entity": name, "create": False,
+                    "changes": [{"field": "monthly_funding", "value": {**funding, "account": account, "amount": 0 if case == "stop" else 200000 if case == "reduce" else funding["amount"]}}],
                     "text": "改拨",
                 })
             if index == 0 and case == "reorder":
                 declaration["facts"].append({
-                    "entity_type": "account", "entity": "国库", "create": False,
-                    "changes": [{"field": "payment_order", "value": ["陕西专款", *GUOKU_ORDER]}],
+                    "entity_type": "account", "entity": account, "create": False,
+                    "changes": [{"field": "payment_order", "value": [recipient, *original]}],
                     "text": "改序",
                 })
             steps["Declaration"] = replaying([json.dumps(declaration, ensure_ascii=False)])
