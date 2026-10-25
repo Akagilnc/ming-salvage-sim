@@ -207,7 +207,7 @@ class Month:
         return enlist(self.originals, route, produce, replace=True)
 
     async def world(self, nights: list[EntityView], decrees: list[EntityView]) -> bool:
-        """Verdicts on held decrees, then this month's world simulation."""
+        """Verdicts on unanswered decrees, then this month's world simulation."""
         calendar = self.court.calendar()
         old = [d for d in self.court.due_decrees() if d not in decrees]
         verdicts = await self.verdicts(old, calendar.id)
@@ -274,6 +274,7 @@ class Month:
                 return pending
             await self.landing.run()
             self.court.settle_accounts()
+            self.court.settle_journeys()
             self.secrets.accumulate()
             await gather_or_raise(
                 self.gazette.run(),

@@ -47,6 +47,12 @@ class FiscalEnd(StrictModel):
     month: int = Field(ge=1, le=12)
 
 
+class MonthlyFunding(StrictModel):
+    amount: float = Field(strict=True, allow_inf_nan=False, description="每月专款，两数；零为停拨。")
+    account: str = Field(description="出款账户的账本正名。")
+    until: FiscalEnd | None = Field(default=None, description="止于此月（含）；过期不再应付，无止期一直付。")
+
+
 class PaymentPolicy(StrictModel):
     factor: float = Field(
         default=1,

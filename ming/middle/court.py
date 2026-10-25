@@ -22,7 +22,7 @@ from ming.middle.appointments import held_by
 from ming.ledger import Entity, Item, Ledger
 from ming.middle.dispatch import dispatch, latest_detail
 from ming.middle.fiscal import Accounts, due_levies
-from ming.middle.calendar import advance_month, calendar_row
+from ming.middle.calendar import advance_month, calendar_row, settle_journeys
 from ming.middle.declaration import (
     Declaration,
     LandingMode,
@@ -161,6 +161,9 @@ class Court:
 
     def settle_accounts(self) -> None:
         Accounts(self._ledger).run()
+
+    def settle_journeys(self) -> None:
+        settle_journeys(self._ledger)
 
     def advance_month(self) -> None:
         advance_month(self._ledger)
@@ -440,7 +443,7 @@ class Court:
     def due_decrees(self) -> list[EntityView]:
         return [
             EntityView.model_validate(e)
-            for e in self._ledger.read(queries.due_decrees(self.calendar().data))
+            for e in self._ledger.read(queries.due_decrees())
         ]
 
     def secret_decrees(self) -> list[EntityView]:

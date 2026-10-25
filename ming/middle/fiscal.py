@@ -4,7 +4,8 @@ from copy import deepcopy
 
 from ming.ledger import Entity, Item, Ledger
 from ming.middle.calendar import calendar_row
-from ming.middle.declaration import PaymentPolicy
+from ming.middle.declaration import MonthlyFunding, PaymentPolicy
+from ming.middle.queries import FUNDED_AFFAIRS
 
 WAN = 10_000
 # Building output goes to an account or a 0-100 world scale; "" yields nothing.
@@ -77,6 +78,12 @@ def obligation(pair: tuple[str, str], existing: dict[tuple[str, str], Item]) -> 
         if not payable_army(data):
             return 0
         base = data.get("manpower", 0) * data.get("salary_rate", 0) / WAN
+    elif pair[0] == "affair":
+        funding = MonthlyFunding.model_validate(data["monthly_funding"])
+        date = existing[("calendar", "world")]["data"]
+        if funding.until and (date["year"], date["month"]) > (funding.until.year, funding.until.month):
+            return 0
+        base = max(0, funding.amount) / WAN
     elif pair[1] == "建筑维护_base":
         base = sum(
             row["data"].get("maintenance", 0)
@@ -114,7 +121,7 @@ class Accounts:
         self.ledger = ledger
         self.rows = [
             ledger.get(row["id"])
-            for row in ledger.entities(
+            for row in [*ledger.read(FUNDED_AFFAIRS), *ledger.entities(
                 kind=(
                     "calendar",
                     "account",
@@ -125,7 +132,7 @@ class Accounts:
                     "world",
                     "historical_event",
                 )
-            )
+            )]
         ]
         self.calendar = next(e for e in self.rows if e.kind == "calendar")
         self.date = self.calendar.data
@@ -272,11 +279,14 @@ class Accounts:
         armies = {
             e.key: e for e in self.rows if e.kind == "army" and payable_army(e.data)
         }
+        affairs = {e.key: e for e in self.rows if e.kind == "affair" and "monthly_funding" in e.data}
         for account in self.accounts.values():
             for category in account.data.get("payment_order", []):
                 if category == "军饷":
                     order = dict.fromkeys([*account.data["army_order"], *armies])
                     targets = [armies[name] for name in order if name in armies]
+                elif category in affairs:
+                    targets = [affairs[category]]
                 else:
                     targets = [self.config[category]]
                 for target in targets:

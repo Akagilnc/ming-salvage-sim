@@ -48,6 +48,8 @@ def landing_entities(
     }
     if isinstance(result, Unhandled):
         return found
+    if any(f.entity_type == "affair" and any(c.field == "monthly_funding" for c in f.changes) for f in result.facts):
+        found.update(((e["kind"], e["key"]), e) for e in ledger.entities(kind="account"))
     if any(f.entity_type == "incumbency" for f in result.facts):
         found.update(cabinet_records(ledger))
     if any(
@@ -159,6 +161,7 @@ def dispatch(
             if (i, j) in amounts:
                 record_receipts(fact, amounts[i, j], reasons[i, j], known, record)
         fact_origin = {}
+        register_funding(result.facts, existing, known, record)
         for report in result.reports:
             record(
                 known(report.entity_type, report.entity),
@@ -187,6 +190,31 @@ def dispatch(
         {"result": result.model_dump(), "monthly": monthly},
     )
     ledger.commit(list(changed.values()))
+
+
+def register_funding(
+    facts: list[Fact],
+    existing: dict[tuple[str, str], Item],
+    known: Callable[[str, str], Entity],
+    record: Callable[..., None],
+) -> None:
+    """Keep a funded affair in its source account's order, retaining explicit order."""
+    for fact in facts:
+        if fact.entity_type != "affair" or not any(c.field == "monthly_funding" for c in fact.changes):
+            continue
+        entity = known("affair", fact.entity)
+        for kind, key in list(existing):
+            if kind != "account":
+                continue
+            account = known(kind, key)
+            order = list(account.data.get("payment_order", []))
+            if key == entity.data["monthly_funding"]["account"]:
+                if entity.key not in order:
+                    order.append(entity.key)
+            elif entity.key in order:
+                order.remove(entity.key)
+            if order != account.data.get("payment_order", []):
+                record(account, "payment_order", {"recipient": entity.key}, {"payment_order": order})
 
 
 def landing_facts(facts: list[Fact]) -> Iterator[tuple[int, int, Fact]]:

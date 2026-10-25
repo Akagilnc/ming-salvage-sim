@@ -2,7 +2,7 @@
 
 import json
 import math
-from typing import Any
+from typing import Any, Never
 
 from pydantic_ai import ModelRetry
 
@@ -32,7 +32,7 @@ def name_expected(
     return matching_names({kind: names.get(kind, {})}, [value]) or {"status": "not_found", "tool": "read_records"}
 
 
-def fail(field: str, value: object, expected: object, names: Names, how: str) -> None:
+def fail(field: str, value: object, expected: object, names: Names, how: str) -> Never:
     raise ModelRetry(json.dumps({
         "field": field, "current": value, "expected": expected, "action": how,
     }, ensure_ascii=False))

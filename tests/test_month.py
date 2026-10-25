@@ -888,6 +888,13 @@ def test_fiscal_petition_lands_only_declared_outcome_without_readding_levies(
             ],
             id="purpose_unknown",
         ),
+        *[pytest.param([{
+            "entity_type": "affair", "entity": "陕西专款", "create": True,
+            "changes": [{"field": field, "value": value}], "text": "声明专款",
+        }], id=f"affair-{field}") for field, value in [
+            ("arrears", 0), ("month_paid", {}),
+            ("monthly_funding", {"amount": 500000, "account": "太仓假名"}),
+        ]],
         pytest.param(
             [
                 {

@@ -144,6 +144,11 @@ def decrees_with(kind: str, date: Item) -> Select[Any]:
     )
 
 
+FUNDED_AFFAIRS = ENTITY_ROWS.where(
+    E.kind == "affair", E.data["monthly_funding"]["account"].as_string().is_not(None)
+)
+
+
 SECRET_DECREES = ENTITY_ROWS.where(
     E.kind == "decree", E.data["secret"].as_boolean().is_(True)
 )
@@ -169,7 +174,7 @@ def public_decree() -> ColumnElement[bool]:
     )
 
 
-def due_decrees(date: Item) -> Select[Any]:
+def due_decrees() -> Select[Any]:
     decision = type_coerce(
         select(F.detail)
         .where(F.entity_id == E.id, F.kind == "choice")
@@ -189,13 +194,6 @@ def due_decrees(date: Item) -> Select[Any]:
         .exists(),
         or_(
             decision.is_(None),
-            and_(
-                decision["text"].as_string() != "收回",
-                ~and_(
-                    decision["text"].as_string() == "留中",
-                    decision["date"]["year"].as_integer() == date["year"],
-                    decision["date"]["month"].as_integer() == date["month"],
-                ),
-            ),
+            decision["text"].as_string().not_in(("收回", "留中")),
         ),
     )
