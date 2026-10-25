@@ -2,8 +2,10 @@
 
 Closed nights or settled empty months precede the same current work and questions.
 The measured requests need the current night and unresolved question, not those
-older nights. Month opening (which legitimately reads all emperor material) is
-outside the measurement; the measured month request resumes an already open month.
+older nights. Scene generation is excluded: #1978 explicitly makes the earlier
+witnessed nights part of its readable catalogue, so those nights are relevant.
+Month opening (which legitimately reads all emperor material) is outside the
+measurement; the measured month request resumes an already open month.
 """
 
 import json
@@ -27,7 +29,7 @@ RECORDED = Path(__file__).parent / "recorded"
     ],
     indirect=True,
 )
-@pytest.mark.parametrize("action", ["state", "say", "month", "choose"])
+@pytest.mark.parametrize("action", ["state", "month", "choose"])
 def test_http_read_work_ignores_unrelated_history(
     tmp_path, steps, action, pending_histories
 ):
@@ -43,9 +45,7 @@ def test_http_read_work_ignores_unrelated_history(
             client.post("/actions", json={"action": "load", "save": save})
             client.portal.call(app.state.web.game.drain)
             payload = {"action": action, "words": "召见。"}
-            if action == "say":
-                client.post("/actions", json={"action": "open"})
-            elif action == "choose":
+            if action == "choose":
                 petition = client.get("/state").json()["game"]["petitions"][0]
                 payload.update(petition=petition["id"], option=0)
 

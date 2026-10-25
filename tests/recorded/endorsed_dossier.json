@@ -23,9 +23,9 @@
           "part_kind": "tool-call"
         },
         {
-          "tool_name": "read_person",
+          "tool_name": "read_records",
           "args": {
-            "name": "毕自严"
+            "kind": "person", "key": "毕自严"
           },
           "tool_call_id": "toolu_011jXYkNxoFRV1vHdREAHdYG",
           "tool_kind": null,
@@ -35,9 +35,9 @@
           "part_kind": "tool-call"
         },
         {
-          "tool_name": "read_person",
+          "tool_name": "read_records",
           "args": {
-            "name": "王绍徽"
+            "kind": "person", "key": "王绍徽"
           },
           "tool_call_id": "toolu_01JwuFCguMKhySsnJSKtL83w",
           "tool_kind": null,

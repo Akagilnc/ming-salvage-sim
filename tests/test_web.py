@@ -31,7 +31,7 @@ from tests.test_court import replaying
 RECORDED = Path(__file__).parent / "recorded"
 
 
-def record_queries(catalogue, date, secret=None):
+def record_queries(catalogue, date, secret=None, night=None):
     queries = {
         "empty": {},
         "class": {"kind": "person"},
@@ -48,9 +48,16 @@ def record_queries(catalogue, date, secret=None):
         "prior": {"key": [e["key"] for e in catalogue], "date": {"year": date["year"], "month": date["month"] - 1}},
         "unknown-key": {"key": "不存在的人"},
         "unknown-kind": {"kind": "不存在的类"},
+        "office": {"kind": "incumbency", "key": "陕西巡抚"},
+        "office-person": {"kind": "person", "key": "洪承畴"},
+        "self": {"kind": "person", "key": "王体乾"},
+        "faction": {"kind": "faction", "key": "阉党"},
+        "other": {"kind": "faction", "key": "东林"},
     }
     if secret is not None:
         queries["secret"] = {"kind": "decree", "key": secret}
+    if night is not None:
+        queries["night"] = {"kind": "night", "key": night}
     return queries
 
 
@@ -71,10 +78,11 @@ def record_months(baseline, audit):
     return months
 
 
-async def assert_record_queries(court: Court) -> None:
+async def assert_record_queries(court: Court, secret_appointment: bool = False) -> None:
     audit = await court.read_records("audit")
     rows = {e["id"]: e for e in audit["entities"]}
-    for identity in ("world", "emperor", "public", Officials(people=["郭允厚"], exclude_secrets=True)):
+    for identity in ("world", "emperor", "public", Officials(people=["郭允厚"], exclude_secrets=True),
+                     Officials(people=["王承恩"]), Officials(people=["王体乾"])):
         baseline = await court.read_records(identity)
         months = record_months(baseline, audit)
         counts = Counter(f["entity_id"] for f in baseline["facts"])
@@ -90,6 +98,7 @@ async def assert_record_queries(court: Court) -> None:
             catalogue,
             court.calendar().data | {"month": court.calendar().data["month"] - bool(baseline["facts"])},
             next((e["key"] for e in rows.values() if e["kind"] == "decree" and e["data"]["secret"]), None),
+            next((e["key"] for e in rows.values() if e["kind"] == "night"), None),
         )
         # Native graph entry keeps the real tool schema and dispatch; only the model is recorded.
         async with Agent(
@@ -148,12 +157,26 @@ async def assert_record_queries(court: Court) -> None:
             assert Counter((e["id"], frozenset(e["data"])) for e in results[label]["entities"]) == Counter(
                 (e["id"], frozenset(e["data"])) for e in expected["entities"]
             )
+        known = identity in ("world", "emperor") or identity == Officials(people=["王承恩"])
+        assert results["office"]["status"] == ("vacant" if not secret_appointment else "occupied" if known else "not_found")
+        assert any(a["office"] == "巡抚" and a["territory"] == "陕西"
+                   for a in results["office-person"]["entities"][0]["data"]["appointments"]) == (secret_appointment and known)
+        assert any(f["detail"].get("office") == "巡抚" for f in results["office-person"]["facts"]) == (secret_appointment and known)
         if isinstance(identity, Officials):
             accounts = {e["key"]: e["data"] for e in results["named"]["entities"] if e["kind"] == "account"}
-            assert {k for k, data in accounts.items() if data == {"name": k}} == {"节慎库"}
+            assert {k for k, data in accounts.items() if data == {"name": k}} == (
+                {"国库", "内库", "节慎库", "常盈库"} if identity.people == ["王承恩"] else {"节慎库"}
+            )
             assert accounts.keys() == {"国库", "内库", "节慎库", "常盈库"}
+            data = results["self"]["entities"][0]["data"]
+            assert {"loyalty", "integrity", "courage", "intrigue", "identity", "seed_guilt", "dossier"}.issubset(data) == ("王体乾" in identity.people)
+            assert data.get("loyalty") == ("心志浮动" if "王体乾" in identity.people else None)
+            assert ("satisfaction" in results["faction"]["entities"][0]["data"]) == ("王体乾" in identity.people or "郭允厚" in identity.people)
+            assert results["other"]["entities"][0]["data"] == {"name": "东林"}
+        if "night" in results:
+            assert bool(results["night"].get("entities")) == known
         if "secret" in results:
-            if identity in ("world", "emperor"):
+            if known:
                 assert [e["key"] for e in results["secret"]["entities"]] == [queries["secret"]["key"]]
             else:
                 assert results["secret"]["status"] == "not_found"
@@ -193,9 +216,10 @@ def test_menu_creates_distinct_games_and_opens_only_existing_saves(
             "person",
             "calendar",
             "gazette",
+            "incumbency",
         }
         assert all(
-            set(e["data"]) <= {"name", "appointments", "location", "status"}
+            set(e["data"]) <= {"name", "appointments", "location", "status", "identity_description", "transit_to", "waiting_audience", "journey"}
             for e in records["entities"]
             if e["kind"] == "person"
         )
@@ -472,9 +496,7 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
             ]
             assert all("names_and_aliases" not in data["unknown-key"] for data in case)
             assert all(data["date"] == data["date-original"] == data["date-reordered"] for data in case)
-            assert {f["entity_id"] for f in materials["gazette"][0]["facts"] if f["kind"] == "reported"} == {
-                e["id"] for e in ledger["entities"] if e["kind"] == "account" and e["key"] == "国库"
-            }
+            assert not [f for f in materials["gazette"][0]["facts"] if f["kind"] == "reported"]
             assert all(
                 {e["key"]: e["data"] for e in data["entities"] if e["kind"] == "account"}
                 == {name: {"name": name} for name in ("国库", "内库", "节慎库", "常盈库")}
@@ -679,7 +701,7 @@ def test_month_transport_retry_is_bounded_and_persistent(
     def reply(messages):
         if (
             name == "impeachment"
-            and json.loads(messages[0].parts[0].content)["context"]["faction"]["key"]
+            and json.loads(messages[0].parts[0].content)["context"]["faction"]
             != "阉党"
         ):
             return (RECORDED / "sources_empty.txt").read_text()

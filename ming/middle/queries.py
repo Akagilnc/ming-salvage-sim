@@ -5,7 +5,8 @@ Ledger executes selections; it has no night, inbox, identity or workflow modes.
 
 from typing import Any
 from sqlalchemy import JSON, Select, and_, func, or_, select, true, tuple_, type_coerce
-from sqlalchemy.sql.elements import ColumnElement
+from sqlalchemy.sql.base import ReadOnlyColumnCollection
+from sqlalchemy.sql.elements import ColumnElement, KeyedColumnElement
 from sqlalchemy.sql.functions import Function
 from ming.ledger import (
     Item,
@@ -158,13 +159,13 @@ def errands(date: Item) -> Select[Any]:
     )
 
 
-def public_decree() -> ColumnElement[bool]:
+def public_decree(entity: ReadOnlyColumnCollection[str, KeyedColumnElement[Any]] = E) -> ColumnElement[bool]:
     return and_(
-        E.kind == "decree",
-        E.data["secret"].as_boolean().is_(False),
+        entity.kind == "decree",
+        entity.data["secret"].as_boolean().is_(False),
         select(F.position)
-        .where(F.entity_id == E.id, F.kind == "landed")
-        .correlate(E.id.table)
+        .where(F.entity_id == entity.id, F.kind == "landed")
+        .correlate(entity.id.table)
         .exists(),
     )
 

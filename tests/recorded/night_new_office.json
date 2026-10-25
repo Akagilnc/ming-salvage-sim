@@ -76,10 +76,8 @@
     {
       "parts": [
         {
-          "tool_name": "read_person",
-          "args": {
-            "name": "杨嗣昌"
-          },
+          "tool_name": "read_records",
+          "args": {"kind": "person", "key": "杨嗣昌"},
           "tool_call_id": "toolu_01UqTWjgaWEjDRbwhZmVk5Qi",
           "tool_kind": null,
           "id": null,
@@ -118,10 +116,8 @@
     {
       "parts": [
         {
-          "tool_name": "read_person",
-          "args": {
-            "name": "孙元化"
-          },
+          "tool_name": "read_records",
+          "args": {"kind": "person", "key": "孙元化"},
           "tool_call_id": "toolu_01W4eVUpBt2a7JL6eE9P3Fzb",
           "tool_kind": null,
           "id": null,
@@ -283,10 +279,8 @@
     {
       "parts": [
         {
-          "tool_name": "read_person",
-          "args": {
-            "name": "杨嗣昌"
-          },
+          "tool_name": "read_records",
+          "args": {"kind": "person", "key": "杨嗣昌"},
           "tool_call_id": "toolu_01EqoQxwKZhcDvcJWh1oUXH3",
           "tool_kind": null,
           "id": null,
@@ -325,10 +319,8 @@
     {
       "parts": [
         {
-          "tool_name": "read_person",
-          "args": {
-            "name": "孙元化"
-          },
+          "tool_name": "read_records",
+          "args": {"kind": "person", "key": "孙元化"},
           "tool_call_id": "toolu_013i7gyJuzzU5w1pJ1HzRXud",
           "tool_kind": null,
           "id": null,

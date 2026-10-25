@@ -8,7 +8,6 @@ from ming.middle.invoke import ModelSource, gather_or_raise
 from ming.middle.declaration import Declaration, Unhandled
 from ming.middle.opening import CONTENT
 from ming.middle.month_work import COST_RULES
-from ming.middle.rules import SCALE_FIELDS
 from ming.middle.view import EntityView
 
 
@@ -25,14 +24,12 @@ class Landing:
     ) -> None:
         if self.court.products(source.id, kind=("declaration", "landed", "attempted", "unhandled")):
             return
-        entities = self.court.entities("world", sourced=True)
         result = await self.court.translate(
             self.agent,
             json.dumps(
                 {
                     "date": self.court.calendar().data,
                     "source": source.model_dump(mode="json"),
-                    "entities": [e.model_dump(mode="json") for e in entities],
                     "scope": "decree" if source.kind == "decree" else "world",
                     "prior_interim": self.court.prior_interim(source.id),
                     "deliberation": [
@@ -68,19 +65,6 @@ class Landing:
             {
                 "result": result.model_dump(),
                 "unhandled": isinstance(result, Unhandled),
-                # The shared-scale readings this declaration saw; landing composes
-                # each share's delta so parallel shares never overwrite one another.
-                "baselines": [
-                    {
-                        "entity_type": e.kind,
-                        "entity": e.key,
-                        "field": field,
-                        "value": e.data[field],
-                    }
-                    for e in entities
-                    for field in SCALE_FIELDS
-                    if field in e.data
-                ],
             },
         )
 
@@ -110,8 +94,4 @@ class Landing:
                 ),
                 source.id,
                 monthly=mode,
-                baselines={
-                    (b["entity_type"], b["entity"], b["field"]): b["value"]
-                    for b in declaration["baselines"]
-                },
             )

@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from starlette.testclient import TestClient
 
 from ming.middle.declaration import PendingPetition
+from ming.middle.view import Officials
 from ming.web import create_app
 from tests.test_court import replaying
 from tests.test_secrets import _declaration_prompt
@@ -78,6 +79,7 @@ LANDING = (
         ("month_zero.txt", 1, None),
         ("sources", 0, None),
         ("allocation", 0, "allocation"),
+        ("deltas", 0, None),
     ],
     indirect=["steps"],
 )
@@ -104,10 +106,10 @@ def test_month_advances_after_reopening(
                     "month_allocation_night.txt", "month_allocation_world.txt"
                 )]
                 if first == "allocation" else [
-                    (RECORDED / ("simulation.txt" if first == "sources" else first)).read_text()
+                    (RECORDED / ("simulation.txt" if first in {"sources", "deltas"} else first)).read_text()
                 ]
             ),
-            *[(RECORDED / "simulation.txt").read_text()] * (2 + extra),
+            *[(RECORDED / "simulation.txt").read_text()] * (20 if first == "deltas" else 2 + extra),
         ],
         received,
     )
@@ -120,7 +122,18 @@ def test_month_advances_after_reopening(
             for words in json.loads((RECORDED / "night_allocation.json").read_text())["words"]:
                 client.post("/actions", json={"action": "say", "words": words}).raise_for_status()
             client.portal.call(client.app.state.web.game.drain)
-        for year, month in [(1627, 11), (1627, 12), (1628, 1)]:
+        if first == "deltas":
+            steps["Declaration"] = replaying(lambda messages: json.dumps({"facts": [{"entity_type": "faction", "entity": "阉党", "create": False,
+                "changes": [{"field": "satisfaction", "value": delta}], "text": ""} for delta in {10: (8, -3), 11: (80, -3), 12: (-200, 0)}[_declaration_prompt(messages)["date"]["month"]]]}), declarations)
+            steps["scene"] = replaying(["done"])
+            steps["NightDeclaration"] = replaying([json.dumps({"facts": [{"entity_type": "faction", "entity": "阉党", "create": False, "changes": [{"field": "satisfaction", "value": 5}], "text": ""}],
+                "decrees": [{"text": "", "origin": "emperor", "secret": True, "turn": 1, "people": ["王承恩"]}] * 2})])
+            client.post("/actions", json={"action": "open"}).raise_for_status()
+            client.post("/actions", json={"action": "say", "words": "拟旨。"}).raise_for_status()
+            client.post("/actions", json={"action": "dismiss"}).raise_for_status()
+            client.portal.call(client.app.state.web.game.drain)
+            assert next(e["data"]["satisfaction"] for e in audit(game_db)["entities"] if e["kind"] == "faction" and e["key"] == "阉党") == 67
+        for index, (year, month) in enumerate([(1627, 11), (1627, 12), (1628, 1)]):
             declarations.clear()
             assert client.post("/actions", json={"action": "month"}).status_code == 204
             state = client.get("/state").json()["game"]
@@ -130,6 +143,10 @@ def test_month_advances_after_reopening(
                 None,
                 None,
             )
+            if first == "deltas":
+                assert next(e["data"]["satisfaction"] for e in audit(game_db)["entities"] if e["kind"] == "faction" and e["key"] == "阉党") == [82, 97, 0][index]
+                material = _declaration_prompt(declarations)
+                assert "entities" not in material
             if first == "sources":
                 urgent = [p for p in state["petitions"] if p["source"] == "urgent"]
                 assert [p["signer"] for p in urgent] == ["王体乾", "黄立极"]
@@ -209,7 +226,7 @@ def test_month_advances_after_reopening(
                 ] == [-100000, -200000]
             assert (
                 len([f for f in ledger["facts"] if f["kind"] == "simulation"])
-                == (year - 1627) * 12 + month - 10 + extra + (first == "allocation")
+                == (year - 1627) * 12 + month - 10 + extra + (first in {"allocation", "deltas"})
             )
             material = json.loads(
                 received[0 if month == 11 and extra else -1].parts[0].content
@@ -325,9 +342,9 @@ def test_returned_urgent_waits_through_vacancy(
             )
             client.post("/actions", json={"action": "load", "save": game_db.name})
             assert client.get("/state").json()["game"] == state
-        material = json.loads(drafting[0].parts[0].content)["context"]
-        assert [p["name"] for p in material["drafters"]] == ["曹化淳"]
-        assert [p["id"] for p in material["returned"]] == [original["id"]]
+        material = json.loads(drafting[0].parts[0].content)
+        assert [p["key"] for p in material["speakers"]] == ["曹化淳"]
+        assert [p["id"] for p in material["context"]["returned"]] == [original["id"]]
 
 
 @pytest.mark.parametrize(
@@ -335,6 +352,7 @@ def test_returned_urgent_waits_through_vacancy(
     [(None, case) for case in [
         ("combined", 300000, False),
         ("split", 300000, False),
+        ("combined", 300000, "commit"),
         (300000, 300000, False),
         (3200000, 3200000, False),
         (5000000, 3200000, False),
@@ -424,6 +442,7 @@ def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
             ["陕西十万两赈银起解", "关宁二十万两补欠饷银起解"] if isinstance(nominal, str) else ["内库"]
         )
         if isinstance(nominal, str):
+            assert next(e["data"]["imperial_prestige"] for e in ledger["entities"] if e["kind"] == "world") == 25
             assert [t["limit_reason"] for t in transfers] == [None, "balance" if actual == 250000 else None]
             assert [f["detail"]["limit_reason"] for f in ledger["facts"] if f["kind"] == "received"] == [None, "balance" if actual == 250000 else None]
         public = audit(db, identity="public")
@@ -433,11 +452,12 @@ def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
             for f in public["facts"]
         )
         if nominal == 5000000:
-            reports = [f for f in public["facts"] if f["kind"] == "reported"]
+            assert not [f for f in public["facts"] if f["kind"] == "reported"]
+            reports = client.app.state.web.game.court.facts(Officials(people=["郭允厚"]), kind="reported")
             assert reports
-            assert all(set(f["detail"]) == {"text"} for f in reports)
+            assert all(set(f.detail) == {"text"} for f in reports)
             treasury = next(e["id"] for e in ledger["entities"] if e["key"] == "国库")
-            assert all(f["entity_id"] == treasury for f in reports)
+            assert all(str(f.entity_id) == treasury for f in reports)
         state = client.get("/state").json()["game"]
         assert state["failure"] is None
         assert state["date"]["month"] == 11
@@ -958,9 +978,10 @@ def test_exhausted_month_declaration_is_unhandled_not_a_stopped_month(
             assert failure["field"] == declared[1]
             assert set(failure) == {"field", "current", "expected", "action"}
             if declared[0] == "ambiguous":
-                assert {("知县", "保定府新城县"), ("知县", "济南府新城县")} <= {(p["office"], p["territory"]) for p in failure["expected"]}
+                assert failure["expected"]["status"] == "territory_required"
+                assert {("知县", "保定府新城县"), ("知县", "济南府新城县")} <= {(p["office"], p["territory"]) for p in failure["expected"]["pairs"]}
             elif declared[0] == "unknown_recipient":
-                assert failure["expected"] == {"names_and_aliases": "account"}
+                assert failure["expected"] == {"catalogue": "account"}
             elif declared[0] == "multiple":
                 assert failure["expected"] == {"maxItems": 1}
             if declared[0] == "duplicate_state":
