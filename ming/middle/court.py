@@ -440,12 +440,6 @@ class Court:
             )
         ]
 
-    def due_decrees(self) -> list[EntityView]:
-        return [
-            EntityView.model_validate(e)
-            for e in self._ledger.read(queries.due_decrees())
-        ]
-
     def secret_decrees(self) -> list[EntityView]:
         return [
             EntityView.model_validate(e)

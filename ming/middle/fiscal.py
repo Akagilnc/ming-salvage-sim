@@ -4,7 +4,7 @@ from copy import deepcopy
 
 from ming.ledger import Entity, Item, Ledger
 from ming.middle.calendar import calendar_row
-from ming.middle.declaration import MonthlyFunding, PaymentPolicy
+from ming.middle.declaration import FiscalEnd, MonthlyFunding, PaymentPolicy
 from ming.middle.queries import FUNDED_AFFAIRS
 
 WAN = 10_000
@@ -56,12 +56,13 @@ def levers(config: list[Item]) -> list[str]:
     ]
 
 
+def past_end(date: Item, until: FiscalEnd | None) -> bool:
+    return until is not None and (date["year"], date["month"]) > (until.year, until.month)
+
+
 def active_policy(data: Item, date: Item) -> PaymentPolicy:
     policy = PaymentPolicy.model_validate(data.get("payment_policy", {}))
-    if policy.until and (date["year"], date["month"]) > (
-        policy.until.year,
-        policy.until.month,
-    ):
+    if past_end(date, policy.until):
         return PaymentPolicy()
     return policy
 
@@ -81,9 +82,9 @@ def obligation(pair: tuple[str, str], existing: dict[tuple[str, str], Item]) -> 
     elif pair[0] == "affair":
         funding = MonthlyFunding.model_validate(data["monthly_funding"])
         date = existing[("calendar", "world")]["data"]
-        if funding.until and (date["year"], date["month"]) > (funding.until.year, funding.until.month):
+        if past_end(date, funding.until):
             return 0
-        base = max(0, funding.amount) / WAN
+        base = funding.amount / WAN
     elif pair[1] == "建筑维护_base":
         base = sum(
             row["data"].get("maintenance", 0)
@@ -279,7 +280,7 @@ class Accounts:
         armies = {
             e.key: e for e in self.rows if e.kind == "army" and payable_army(e.data)
         }
-        affairs = {e.key: e for e in self.rows if e.kind == "affair" and "monthly_funding" in e.data}
+        affairs = {e.key: e for e in self.rows if e.kind == "affair"}
         for account in self.accounts.values():
             for category in account.data.get("payment_order", []):
                 if category == "军饷":

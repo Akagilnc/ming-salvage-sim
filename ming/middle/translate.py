@@ -246,18 +246,24 @@ def check_funding(ledger: Ledger, out: Declaration, names: Names) -> dict[str, I
         for j, change in enumerate(fact.changes):
             if change.field != "monthly_funding":
                 continue
-            path = f"facts[{i}].changes[{j}].value"
-            try:
-                grant = MonthlyFunding.model_validate(change.value)
-            except ValidationError:
-                fail(path, change.value, MonthlyFunding.model_json_schema(), names, "按 expected 的 schema 修正 monthly_funding，重交整份。")
-            if grant.account not in names["account"]:
-                fail(path + ".account", grant.account, name_expected("account", grant.account, names), names, "出款库用账本正名，重交整份。")
-            funding[fact.entity] = grant.model_dump()
+            account = change.value["account"]
+            if account not in names["account"]:
+                fail(f"facts[{i}].changes[{j}].value.account", account, name_expected("account", account, names), names, "出款库用账本正名，重交整份。")
+            funding[fact.entity] = change.value
     return funding
 
 
 def check_fiscal(ledger: Ledger, out: Declaration, names: Names) -> None:
+    schemas = {"payment_policy": PaymentPolicy, "monthly_funding": MonthlyFunding}
+    for i, j, change in (
+        (i, j, change) for i, fact in enumerate(out.facts)
+        for j, change in enumerate(fact.changes) if change.field in schemas
+    ):
+        try:
+            schemas[change.field].model_validate(change.value)
+        except ValidationError:
+            fail(f"facts[{i}].changes[{j}].value", change.value, schemas[change.field].model_json_schema(), names,
+                 f"按 expected 的 schema 修正 {change.field}，重交整份。")
     config = ledger.entities(kind="fiscal")
     expenses = {
         r["key"]: r["data"]["account"]
@@ -288,17 +294,6 @@ def check_fiscal(ledger: Ledger, out: Declaration, names: Names) -> None:
                     names,
                     "对象改成 expected 里的正名，重交整份。",
                 )
-            if change.field == "payment_policy":
-                try:
-                    PaymentPolicy.model_validate(change.value)
-                except ValidationError:
-                    fail(
-                        path + ".value",
-                        change.value,
-                        PaymentPolicy.model_json_schema(),
-                        names,
-                        "按 expected 的 schema 修正 payment_policy，重交整份。",
-                    )
             if (fact.entity_type, change.field) == ("building", "output_metric"):
                 if change.value not in OUTPUT_METRICS:
                     fail(

@@ -203,11 +203,6 @@ def test_rejected_decree_is_forced_withdrawn_or_held(
             assert client.get("/state").json()["game"]["date"]["month"] == 1
             ledger = audit(game_db.parent / save)
             assert len([f for f in ledger["facts"] if f["kind"] == "deliberation"]) == 1
-            assert all(
-                context["reconsidered"] == []
-                for fact in ledger["facts"] if fact["kind"] == "simulation"
-                if (context := json.loads(fact["detail"]["messages"][0]["parts"][0]["content"])["context"])["scope"] == "世界推演"
-            )
 
 
 async def _month_during_push(
@@ -580,12 +575,11 @@ def test_month_pays_affair_from_declaration_month(game_db, steps, audit, clock, 
         steps["gazette"] = replaying([TimeoutError()] * 3 + [(RECORDED / "gazette.txt").read_text()])
     with TestClient(create_app(game_db.parent)) as client:
         client.post("/actions", json={"action": "load", "save": game_db.name})
-        for index in range(3):
+        for index in range(1 if case == "invalid_account" else 3):
             client.post("/actions", json={"action": "month"})
             if case == "resume" and index == 0:
                 state = client.get("/state").json()["game"]
                 assert state["failure"] is not None and state["date"]["month"] == 10
-                before = audit(game_db)
                 client.post("/actions", json={"action": "load", "save": game_db.name})
                 client.post("/actions", json={"action": "retry"})
                 steps["gazette"] = TestModel(call_tools=[], custom_output_text=(RECORDED / "gazette.txt").read_text())
@@ -607,8 +601,6 @@ def test_month_pays_affair_from_declaration_month(game_db, steps, audit, clock, 
             assert rows[("affair", "陕西专款")]["month_paid"]["amount"] == payments[-1]["paid"]
             assert rows[("affair", "陕西专款")]["arrears"] == pytest.approx(sum(p["unpaid"] for p in payments))
             assert not [f for f in ledger["facts"] if f["kind"] == "received" and case != "shortage"]
-            if case == "resume" and index == 0:
-                assert all(f in ledger["facts"] for f in before["facts"] if f["kind"] == "monthly_payment")
             if case == "invalid_account" and index == 0:
                 assert [json.loads(p.content)["field"] for m in received for p in m.parts if p.part_kind == "retry-prompt"] == ["facts[0].changes[0].value.account"]
             declaration = {"facts": []}

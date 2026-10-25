@@ -4,7 +4,7 @@ Ledger executes selections; it has no night, inbox, identity or workflow modes.
 """
 
 from typing import Any
-from sqlalchemy import JSON, Select, and_, func, or_, select, true, tuple_, type_coerce
+from sqlalchemy import Select, and_, func, or_, select, true, tuple_
 from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.sql.functions import Function
 from ming.ledger import (
@@ -171,29 +171,4 @@ def public_decree() -> ColumnElement[bool]:
         .where(F.entity_id == E.id, F.kind == "landed")
         .correlate(E.id.table)
         .exists(),
-    )
-
-
-def due_decrees() -> Select[Any]:
-    decision = type_coerce(
-        select(F.detail)
-        .where(F.entity_id == E.id, F.kind == "choice")
-        .order_by(F.position.desc())
-        .limit(1)
-        .correlate(E.id.table)
-        .scalar_subquery(),
-        JSON,
-    )
-    return ENTITY_ROWS.where(
-        E.kind == "decree",
-        ~select(F.position)
-        .where(F.entity_id == E.id, or_(
-            F.kind == "landed",
-            and_(F.kind == "unhandled", F.detail["monthly"].as_string().is_distinct_from("attempted")),
-        ))
-        .exists(),
-        or_(
-            decision.is_(None),
-            decision["text"].as_string().not_in(("收回", "留中")),
-        ),
     )
