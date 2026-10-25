@@ -16,6 +16,7 @@ from ming.middle.night import known_people, read_night, witnessed_nights
 
 HIDDEN_JOURNEY = {"remaining_distance", "travel_speed"}
 OPENING_CONTROLS = {"interaction", "petition", "choice", "gazette", "secret_report"}
+EMPTY_ACCOUNTS = select(E.id).where(literal(False)).correlate(None)
 
 PublicIdentity = Literal["emperor", "audit", "world", "public"]
 
@@ -103,7 +104,7 @@ class FactView(BaseModel):
 
 def owned_accounts(ledger: Ledger, identity: Identity) -> Select[Any]:
     if not isinstance(identity, Officials):
-        return select(E.id).where(literal(False)).correlate(None)
+        return EMPTY_ACCOUNTS
     offices = [r["data"]["office"] for r in visible_appointments(ledger, identity, held_by(ledger, identity.people))]
     departments = {r["data"]["department"] for r in ledger.entities(
         kind="office", query=ENTITY_ROWS.where(E.key.in_(offices))
@@ -159,7 +160,7 @@ def visible_appointments(ledger: Ledger, identity: Identity, rows: list[Item]) -
     """Both office queries and person projections use the same appointment access."""
     if identity in ("audit", "world"):
         return rows
-    exposure = fact_exposure(identity, select(E.id).where(literal(False)).correlate(None))
+    exposure = fact_exposure(identity, EMPTY_ACCOUNTS)
     newer = F.position.table.alias().c
     latest = {(f["entity_id"], field): f["visible"] for field in ("holders", "acting")
               for f in ledger.facts(
