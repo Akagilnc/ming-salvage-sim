@@ -16,11 +16,12 @@ def incumbency_record(pair: Sequence[str], holders: list[str]) -> tuple[str, Ite
     }
 
 
-def named(ledger: Ledger, kind: str, value: str) -> list[Item]:
+def named(ledger: Ledger, kind: str | None, value: str | list[str]) -> list[Item]:
+    values = [value] if isinstance(value, str) else value
     aliases = func.json_each(E.data["aliases"]).table_valued("value")
     return ledger.entities(kind=kind, query=ENTITY_ROWS.where(or_(
-        E.key == value,
-        select(aliases.c.value).where(aliases.c.value == value).exists(),
+        E.key.in_(values),
+        select(aliases.c.value).where(aliases.c.value.in_(values)).exists(),
     )))
 
 

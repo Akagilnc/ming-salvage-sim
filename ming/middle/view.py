@@ -4,7 +4,7 @@ from typing import Any, Literal, cast
 from uuid import UUID
 
 from pydantic import BaseModel
-from sqlalchemy import case, literal, or_
+from sqlalchemy import Select, case, literal, or_, select
 from sqlalchemy.sql.elements import ColumnElement
 
 from ming.ledger import Item, Ledger
@@ -15,6 +15,7 @@ from ming.middle.appointments import CATALOGUE_KINDS, held_by
 from ming.middle.night import known_people, read_night, witnessed_nights
 
 HIDDEN_JOURNEY = {"remaining_distance", "travel_speed"}
+OPENING_CONTROLS = {"interaction", "petition", "choice", "gazette", "secret_report"}
 
 PublicIdentity = Literal["emperor", "audit", "world", "public"]
 
@@ -170,10 +171,19 @@ def visible_appointments(ledger: Ledger, identity: Identity, rows: list[Item]) -
         return rows
     access = decree_access(ledger, identity)
     exposure = fact_exposure(identity, set(), access)
-    latest = {(f["entity_id"], field): f["visible"] for f in ledger.facts(
-        entity_id=[r["id"] for r in rows], kind="changed",
-        query=FACT_ROWS.add_columns(exposure.is_not(None).label("visible")),
-    ) for field in {"holders", "acting"}.intersection(f["detail"].get("changes", {}))}
+    newer = F.position.table.alias().c
+    latest = {(f["entity_id"], field): f["visible"] for field in ("holders", "acting")
+              for f in ledger.facts(
+                  entity_id=[r["id"] for r in rows], kind="changed",
+                  query=FACT_ROWS.add_columns(exposure.is_not(None).label("visible")).where(
+                      F.detail["changes"][field].as_string().is_not(None),
+                      ~select(newer.position).where(
+                          newer.entity_id == F.entity_id, newer.kind == "changed",
+                          newer.detail["changes"][field].as_string().is_not(None),
+                          newer.position > F.position,
+                      ).exists(),
+                  ),
+              )}
     return [r for r in rows if all(latest.get((r["id"], field), True) for field in ("holders", "acting"))]
 
 
@@ -208,6 +218,7 @@ def entities(
     selection = dict(selection or {})
     sourced = selection.pop("sourced", False)
     keys = selection.pop("keys", None)
+    catalogue = selection.pop("catalogue", False)
     if identity == "emperor" and (opening := month_open(ledger)):
         return [
             EntityView.model_validate(e)
@@ -215,20 +226,26 @@ def entities(
             if all(e[k] == v for k, v in (selection or {}).items()) and (keys is None or e["key"] in keys)
         ]
     access = decree_access(ledger, identity)
-    appointments = visible_appointments(ledger, identity, ledger.entities(kind="incumbency"))
+    appointments = visible_appointments(ledger, identity, ledger.entities(
+        kind="incumbency", key=selection.get("key"),
+        query=ENTITY_ROWS.where(E.key.in_(keys)) if keys is not None else ENTITY_ROWS,
+    )) if selection.get("kind") in (None, "incumbency") else []
     exposure = entity_exposure(identity, owned_accounts(ledger, identity), access, selection.get("kind"))
-    if identity not in ("audit", "world"):
-        exposure = case((E.id.in_([r["id"] for r in appointments]), "full"), else_=exposure)
+    exposure = (case((E.id.in_([r["id"] for r in appointments]), "full"), else_=exposure)
+                if identity not in ("audit", "world") else exposure)
     if isinstance(identity, Officials) and selection.get("kind") in (None, "night"):
         exposure = case((E.id.in_(witnessed_nights(ledger, identity.people)), "night"), else_=exposure)
     query = ENTITY_ROWS.add_columns(exposure.label("exposure")).where(
         exposure.is_not(None)
     )
-    if sourced:
-        query = query.where(E.source != "")
+    query = query.where(E.source != "") if sourced else query
     query = query.where(E.key.in_(keys)) if keys is not None else query
     query = query.where(E.kind.not_in(CATALOGUE_KINDS)) if identity == "world" and selection.get("kind") is None else query
     rows = ledger.entities(**selection, query=query)
+    if catalogue:
+        return [EntityView.model_validate({**row, "data": {}}) for row in rows]
+    if people := [row["key"] for row in rows if row["kind"] == "person"]:
+        appointments = visible_appointments(ledger, identity, held_by(ledger, people))
     own: set[str] = set(identity.people) if isinstance(identity, Officials) else set()
     factions = {r["data"].get("faction") for r in ledger.entities(kind="person", query=ENTITY_ROWS.where(E.key.in_(own)))}
     result: list[EntityView] = []
@@ -338,6 +355,8 @@ def fact_exposure(
     if isinstance(identity, Officials):
         rules.append((E.id.in_(accounts) & F.kind.in_(("changed", "received")), "text"))
     return case(
+        (F.detail["origin_ref"].as_string().in_([str(i) for i in access["secret"] - access["handled"]])
+         & F.detail["discovered"].as_boolean().is_(True), None),
         (or_(E.kind == "incumbency", F.kind.in_(("appointed", "displaced")))
          & F.detail["origin_ref"].as_string().in_([str(i) for i in access["secret"] - access["known"]]), None),
         ((E.kind == "incumbency") & F.kind.in_(("changed", "appointed", "displaced")), "dated"),
@@ -345,37 +364,32 @@ def fact_exposure(
     )
 
 
-def project(
-    ledger: Ledger, identity: Identity, selection: Item | None = None
-) -> list[FactView]:
-    selection = selection or {}
-    opening = month_open(ledger) if identity == "emperor" else None
-    row = calendar_if_any(ledger)
-    date = row["data"] if row else dict[str, Any]()
-    controls = {"interaction", "petition", "choice", "gazette", "secret_report"}
+def fact_query(ledger: Ledger, identity: Identity) -> Select[Any]:
+    """One visibility query for full facts and grouped catalogue counts."""
     access = decree_access(ledger, identity)
     exposure = fact_exposure(identity, owned_accounts(ledger, identity), access)
     query = FACT_ROWS.add_columns(exposure.label("exposure")).where(
         exposure.is_not(None)
     )
-    if identity not in ("audit", "world"):
-        query = query.where(
-            ~(
-                F.detail["origin_ref"]
-                .as_string()
-                .in_([str(i) for i in access["secret"] - access["handled"]])
-                & F.detail["discovered"].as_boolean().is_(True)
-            )
-        )
     if identity != "audit":
-        query = query.where(available_on(date))
+        row = calendar_if_any(ledger)
+        query = query.where(available_on(row["data"] if row else {}))
+    return query
+
+
+def project(
+    ledger: Ledger, identity: Identity, selection: Item | None = None
+) -> list[FactView]:
+    selection = selection or {}
+    opening = month_open(ledger) if identity == "emperor" else None
+    query = fact_query(ledger, identity)
     if opening:
-        query = query.where(F.kind.in_(controls))
+        query = query.where(F.kind.in_(OPENING_CONTROLS))
     result: list[FactView] = (
         [
             FactView.model_validate(f)
             for f in opening["facts"]
-            if f["kind"] not in controls
+            if f["kind"] not in OPENING_CONTROLS
             and (
                 selection.get("entity_id") is None
                 or f["entity_id"]

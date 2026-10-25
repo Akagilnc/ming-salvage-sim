@@ -51,9 +51,9 @@ async def read_records(
         results = [ctx.deps.court.office_record(ctx.deps.identity, name, month)
                    for name in ([key] if isinstance(key, str) else key)]
         return results[0] if len(results) == 1 else {"offices": results}
-    catalogue = ctx.deps.court.record_catalogue(ctx.deps.identity, month, kind)
-    selected = [e for e in catalogue if kind is None or e["kind"] == kind]
     keys = [key] if isinstance(key, str) else key
+    catalogue = ctx.deps.court.record_catalogue(ctx.deps.identity, month, kind, keys)
+    selected = [e for e in catalogue if kind is None or e["kind"] == kind]
     names = ctx.deps.court.catalogue(selected)
     resolved = {
         value: ([value] if any(value in entries for entries in names.values()) else
@@ -62,13 +62,14 @@ async def read_records(
         for value in keys or []
     }
     if (kind is not None and not selected) or any(len(v) != 1 for v in resolved.values()):
-        candidates = matching_names(names, keys or [])
+        candidates = matching_names(
+            ctx.deps.court.catalogue(ctx.deps.court.record_catalogue(ctx.deps.identity, month, kind)), keys or []
+        )
         return {
             "status": "not_found", "message": "未找到",
             **({"names_and_aliases": candidates} if candidates else {}),
         }
     if not keys:
         return {"catalogue": [e for e in selected if date is None or e["event_count"]]}
-    return character_input(
-        await ctx.deps.court.read_records(ctx.deps.identity, kind, [v[0] for v in resolved.values()], month)
-    )
+    result = await ctx.deps.court.read_records(ctx.deps.identity, kind, [v[0] for v in resolved.values()], month)
+    return result if isinstance(ctx.deps, TranslationMaterials) else character_input(result)
