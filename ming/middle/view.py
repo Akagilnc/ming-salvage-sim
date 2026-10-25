@@ -391,7 +391,6 @@ def fact_sources(
 ) -> tuple[Select[Any], list[FactView]]:
     """One live query and frozen opening selection for full reads and counts."""
     selection = selection or {}
-    scope = query
     access = decree_access(ledger, identity, query, selection)
     exposure = fact_exposure(identity, owned_accounts(ledger, identity), access)
     query = query.add_columns(exposure.label("exposure")).where(
@@ -403,15 +402,11 @@ def fact_sources(
     opening = month_open(ledger) if identity == "emperor" else None
     if opening:
         query = query.where(F.kind.in_(OPENING_CONTROLS))
-    scoped_ids: set[UUID] = {r["entity_id"] for r in ledger.read(scope.with_only_columns(F.entity_id).where(
-        F.entity_id.in_([UUID(f["entity_id"]) for f in opening["facts"]]),
-    ).order_by(None).distinct())} if opening else set()
     result: list[FactView] = (
         [
             FactView.model_validate(f)
             for f in opening["facts"]
             if f["kind"] not in OPENING_CONTROLS
-            and UUID(f["entity_id"]) in scoped_ids
             and (
                 selection.get("entity_id") is None
                 or f["entity_id"]
