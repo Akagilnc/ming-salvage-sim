@@ -32,7 +32,7 @@ export function App() {
     const contents = value.save ? await records() : { entities: [], facts: [] };
     if (request !== refreshing.current) return;
     const before = previous.current;
-    if (before?.save === value.save && before?.game && value.game?.face === 'desk'
+    if (before?.save === value.save && before?.game && value.game
       && (before.game.date.year !== value.game.date.year || before.game.date.month !== value.game.date.month)) {
       setReading('latest'); setPanel(null);
     }
@@ -176,7 +176,7 @@ export function App() {
           </article>)}
         </div>
         {audience ? <form className="composer" onSubmit={event => {
-          event.preventDefault(); if (busy || game.running || !input.trim()) return;
+          event.preventDefault(); if (!input.trim()) return;
           const words = input; setInput(''); void action({ action: 'say', words });
         }}>
           <label htmlFor="emperor-words">朕谕</label><textarea id="emperor-words" value={input} onChange={event => setInput(event.target.value)} disabled={busy || game.running} onKeyDown={event => {
