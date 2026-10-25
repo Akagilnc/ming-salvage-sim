@@ -16,6 +16,8 @@ from pydantic_ai.messages import (
     ToolReturnPart,
 )
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.models.function import FunctionModel
+from httpx import ASGITransport, AsyncClient
 from starlette.testclient import TestClient
 
 from ming.middle.court import Court
@@ -326,10 +328,24 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
                     client.get("/state").json()["game"]["failure"]["action"]
                     == "translation"
                 )
+                received["retry"] = []
+
+                async def retry_translation(messages, info):
+                    async with AsyncClient(transport=ASGITransport(app), base_url="http://game") as http:
+                        state = (await http.get("/state")).json()["game"]
+                        opened = await http.post("/actions", json={"action": "open"})
+                        received["retry"].append((state["running"], state["pending"], opened.status_code))
+                    return ModelResponse(parts=[TextPart(case["replies"][0])])
+
+                steps["NightDeclaration"] = FunctionModel(retry_translation)
                 assert (
-                    client.post("/actions", json={"action": "retry"}).status_code == 204
+                    client.post("/actions", json={"action": "retry"}).status_code == 200
                 )
                 assert client.portal is not None
+                client.portal.call(app.state.web.game.drain)
+                assert received.pop("retry") == [(False, None, 200)]
+                steps["NightDeclaration"] = replaying([(RECORDED / "night_empty.txt").read_text()])
+                client.post("/actions", json={"action": "dismiss"}).raise_for_status()
                 client.portal.call(app.state.web.game.drain)
             assert client.get("/state").json()["game"]["failure"] is None
             ledger = audit(db)
@@ -421,6 +437,11 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
         ) == (11, "desk", False, None, [])
         ledger = audit(db)
         assert len([f for f in ledger["facts"] if f["kind"] == "gazette"]) == 1
+        assert [
+            f["detail"]["date"]
+            for f in client.get("/records").json()["facts"]
+            if f["kind"] == "gazette"
+        ] == [{"id": "world", "year": 1627, "month": 10}]
         if path == "decree":
             decree = next(e for e in ledger["entities"] if e["kind"] == "decree")
             assert {

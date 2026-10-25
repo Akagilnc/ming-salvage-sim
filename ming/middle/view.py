@@ -270,6 +270,8 @@ def fact_exposure(
         if isinstance(identity, Officials)
         else []
     )
+    if identity == "emperor":
+        rules.append((F.kind == "gazette", "dated"))
     rules.append(
         (
             or_(F.kind == "gazette", F.detail["audience"].as_string().in_(audiences)),
