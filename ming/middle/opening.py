@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from ming.ledger import Entity, Ledger
+from ming.ledger import Entity, Item, Ledger
 from ming.middle.appointments import incumbency_record
 
 CONTENT = Path(__file__).resolve().parents[2] / "content"
@@ -74,8 +74,8 @@ def import_opening(ledger: Ledger, content: Path) -> None:
         path = content / f"{filename}.json"
         try:
             records = json.loads(path.read_text())
-            if collection:
-                records = records[collection]
+            classification: Item = records["external"] if kind == "office" else {}
+            records = records[collection] if collection else records
         except (OSError, ValueError, KeyError) as exc:
             raise ValueError(f"{path}: {exc}") from exc
         for index, record in enumerate(records):
@@ -83,12 +83,15 @@ def import_opening(ledger: Ledger, content: Path) -> None:
                 for (source, field), target in REFERENCES.items():
                     if source == kind and field in record:
                         record[field] = names.get(target, {}).get(record[field], record[field])
-                if "id" in record and "name" in record:
+                if {"id", "name"} <= record.keys():
                     record["id"] = record["name"]
                 parts = [record[field] for field in fields]
                 key = "·".join(p for p in parts if p) if kind == "class" else (
                     parts[0] if len(parts) == 1 else json.dumps(parts, ensure_ascii=False)
                 )
+                if kind == "office":
+                    record["external"] = (record["name"] in classification["offices"]
+                                          or record["department"] in classification["departments"])
                 if kind == "person":
                     for appointment in record.pop("appointments"):
                         pair = appointment["office"], appointment["territory"]

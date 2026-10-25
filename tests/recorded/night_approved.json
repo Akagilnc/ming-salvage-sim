@@ -19,8 +19,8 @@
           "part_kind": "thinking"
         },
         {
-          "tool_name": "read_person",
-          "args": "{\"name\": \"毕自严\"}",
+          "tool_name": "read_records",
+          "args": "{\"kind\": \"person\", \"key\": \"毕自严\"}",
           "tool_call_id": "chatcmpl-tool-900f301e3144823b",
           "tool_kind": null,
           "id": null,
@@ -95,8 +95,8 @@
           "part_kind": "thinking"
         },
         {
-          "tool_name": "read_person",
-          "args": "{\"name\": \"徐光启\"}",
+          "tool_name": "read_records",
+          "args": "{\"kind\": \"person\", \"key\": \"徐光启\"}",
           "tool_call_id": "call_63240aeaf2144524a87de0af",
           "tool_kind": null,
           "id": null,

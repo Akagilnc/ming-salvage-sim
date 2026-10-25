@@ -49,7 +49,7 @@ h1, h2, h3 { font-weight: 500; letter-spacing: .1em; }
 .composer { display: flex; align-items: center; gap: .7rem; padding: .8rem; border-top: 1px solid #d0c2a0; }
 .composer textarea { resize: vertical; min-height: 70px; max-height: 180px; flex: 1; min-width: 0; background: #fffaf0; border: 1px solid #c6b38b; padding: .5rem; }
 .desk-actions { padding: 1rem; text-align: right; border-top: 1px solid #d0c2a0; }
-.gazette, .petition p { white-space: pre-wrap; }
+.gazette p, .petition p { white-space: pre-wrap; }
 .petition { border: 1px solid #c7a66a; padding: 1rem; margin: 1rem 0; background: #fff8e5; }
 .petition button { display: block; margin: .7rem 0; text-align: left; }
 .system-failure, .request-error { color: #8b3024; background: #fff0de; padding: .7rem; border: 1px solid #e1bba1; overflow-wrap: anywhere; }

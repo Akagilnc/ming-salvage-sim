@@ -46,9 +46,9 @@
       "parts": [
         {
           "part_kind": "tool-call",
-          "tool_name": "read_person",
+          "tool_name": "read_records",
           "args": {
-            "name": "徐光启"
+            "kind": "person", "key": "徐光启"
           },
           "tool_call_id": "toolu_01NwMVdXoZH8LJMKK3Zr6aKL"
         }
@@ -118,9 +118,9 @@
       "parts": [
         {
           "part_kind": "tool-call",
-          "tool_name": "read_person",
+          "tool_name": "read_records",
           "args": {
-            "name": "郭允厚"
+            "kind": "person", "key": "郭允厚"
           },
           "tool_call_id": "toolu_01LMHNdkgjkH6ceRvvuhXMg6"
         }

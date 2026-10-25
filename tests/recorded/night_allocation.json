@@ -21,9 +21,9 @@
           "part_kind": "tool-call"
         },
         {
-          "tool_name": "read_person",
+          "tool_name": "read_records",
           "args": {
-            "name": "郭允厚"
+            "kind": "person", "key": "郭允厚"
           },
           "tool_call_id": "call_9b1c121a65784d62a7634e08bac211f1|fc_0c228c69e4cc8819016adb81ef5efc8191a04f3ccf505e0824",
           "tool_kind": null,

@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 from ming.middle.court import Court
 from ming.middle.declaration import Petition, StrictModel
-from ming.middle.view import Identity, character_input
+from ming.middle.view import Identity, Officials, character_input
 
 
 COST_RULES = """背书（含御笔手敕、御笔强推）本身不走代价轨，不等于中旨。
@@ -33,6 +33,9 @@ def prompt(court: Court, identity: Identity, context: Any) -> str:
                 "date": court.calendar().data,
                 "context": context,
                 "catalogue": court.record_catalogue(identity),
+                **({"speakers": [e.model_dump(mode="json") for name in identity.people
+                                   for e in court.entities(identity, kind="person", key=name)]}
+                   if isinstance(identity, Officials) else {}),
             }
         ),
         ensure_ascii=False,

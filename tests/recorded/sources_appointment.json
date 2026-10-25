@@ -29,10 +29,8 @@
       "parts": [
         {
           "part_kind": "tool-call",
-          "tool_name": "read_person",
-          "args": {
-            "name": "曹化淳"
-          },
+          "tool_name": "read_records",
+          "args": {"kind": "person", "key": "曹化淳"},
           "tool_call_id": "toolu_019G2fQehrMLj8XyThTCpx6K"
         }
       ]
@@ -78,10 +76,8 @@
       "parts": [
         {
           "part_kind": "tool-call",
-          "tool_name": "read_person",
-          "args": {
-            "name": "曹化淳"
-          },
+          "tool_name": "read_records",
+          "args": {"kind": "person", "key": "曹化淳"},
           "tool_call_id": "toolu_01TVvhEHkhqwGmnRf5J4raVS"
         }
       ]

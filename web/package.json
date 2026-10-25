@@ -12,6 +12,7 @@
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "react-markdown": "^10.1.0",
+    "remark-cjk-friendly": "~2.3.3",
     "typescript": "^5.9.3",
     "vite": "^7.2.7"
   },

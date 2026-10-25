@@ -86,9 +86,15 @@ class Game:
             )
         ]
 
+    def running(self) -> list[dict[str, Any]]:
+        return [
+            i
+            for i in self.court.interactions().values()
+            if i["status"] == "running" and i["action"] != "translation"
+        ]
+
     def presentation(self) -> dict[str, Any]:
-        interactions = list(self.court.interactions().values())
-        pending = next((i for i in interactions if i["status"] == "running"), None)
+        pending = next(iter(self.running()), None)
         month = self.court.interactions().get("month")
         if month and month["status"] == "running":
             pending = month
@@ -143,9 +149,8 @@ class Game:
         self.settle_month()
         pending = [
             i
-            for i in self.court.interactions().values()
-            if i["status"] == "running"
-            and (not self.failures() or i["action"] == "choose")
+            for i in self.running()
+            if not self.failures() or i["action"] == "choose"
         ]
         if pending:
             self.active = asyncio.create_task(self._resume(pending))
@@ -168,7 +173,7 @@ class Game:
         if (
             not self.month.opened()
             or self.failures()
-            or any(i["status"] == "running" for i in self.court.interactions().values())
+            or self.running()
         ):
             return
         payload = {"date": self.court.calendar().data}
@@ -280,12 +285,13 @@ class Game:
                 return None
             payload = self.accept(action, payload)
         task = asyncio.create_task(self.execute(action, payload))
-        if action == "choose" and self.busy():
-            self.track(task)
-            return task
-        self.active = task
         if action == "translation":
+            self.translation = task
             self.start_background()
+        if action == "translation" or (action == "choose" and self.busy()):
+            self.track(task)
+            return None if action == "translation" else task
+        self.active = task
         return task
 
     def accept(self, action: str, payload: dict[str, Any]) -> dict[str, Any]:

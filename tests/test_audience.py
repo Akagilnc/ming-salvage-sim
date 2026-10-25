@@ -129,10 +129,11 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
     absent = next(value for name, value in returned.values() if name == "set_hall" and not value["ok"])
     assert {(f["name"], f["found"]) for f in absent["failures"]} == {("徐光启", True), ("张三", False)}
     assert set(absent["hall"]) == {"王承恩", "杨嗣昌", "王绍徽"}
-    dossier = next(value for name, value in returned.values() if name == "read_person" and value["person"]["name"] == "徐光启")
-    assert dossier["person"]["location"] == "南直隶 / 南京"
-    assert dossier["person"]["status"] == "offstage"
-    assert not {"loyalty", "ability", "integrity", "courage", "intrigue"}.intersection(dossier["person"])
+    dossier = next(value["entities"][0]["data"] for name, value in returned.values()
+                   if name == "read_records" and value["entities"][0]["key"] == "徐光启")
+    assert dossier["location"] == "南直隶 / 南京"
+    assert dossier["status"] == "offstage"
+    assert not {"loyalty", "ability", "integrity", "courage", "intrigue"}.intersection(dossier)
 
 
 @pytest.mark.usefixtures("backed_night")
@@ -189,7 +190,7 @@ def test_backing_follows_its_decree_and_signers(game_db, steps, audit, case, rec
                 failure = json.loads(retries[0].content)
                 assert failure["field"] == ("decrees[0].endorsements[0].endorser" if case == "name" else "decrees[0].people[0]")
                 assert failure["current"] == ("不存在的担名人" if case == "name" else "不存在的领旨者")
-                assert failure["expected"] == {"names_and_aliases": "person"}
+                assert failure["expected"] == {"catalogue": "person"}
                 assert set(failure) == {"field", "current", "expected", "action"}
             assert len([f for f in audit(game_db)["facts"] if f["kind"] == "unhandled"]) == 1
             assert [f["detail"] for f in client.get("/records").json()["facts"] if f["kind"] == "unhandled"] == [{}]
@@ -232,16 +233,16 @@ def test_backing_follows_its_decree_and_signers(game_db, steps, audit, case, rec
         client.post("/actions", json={"action": "say", "words": dossier_recording["words"]}).raise_for_status()
         assert client.get("/state").json()["game"]["failure"] is None
         returned = {
-            p.model_response_object()["person"]["name"]: p.model_response_object()
+            p.model_response_object()["entities"][0]["key"]: p.model_response_object()
             for m in dossiers for p in m.parts
-            if isinstance(p, ToolReturnPart) and p.tool_name == "read_person"
+            if isinstance(p, ToolReturnPart) and p.tool_name == "read_records"
         }
         for signer in signers:
-            events = returned[signer["endorser"]]["events"]
+            events = [{"kind": f["kind"], **f["detail"]} for f in returned[signer["endorser"]]["facts"]]
             assert [
-                (e["decree_id"], e["endorser"], e["form"], e["decree"]["endorsements"])
+                (e["decree_id"], e["endorser"], e["form"])
                 for e in events if e["kind"] == "endorsed"
-            ] == [(decree["id"], signer["endorser"], signer["form"], declared)]
+            ] == [(decree["id"], signer["endorser"], signer["form"])]
 
 
 def test_failed_night_translation_is_terminal_and_reaches_following_nights(

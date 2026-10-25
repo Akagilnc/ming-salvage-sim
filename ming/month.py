@@ -49,9 +49,6 @@ class Month:
                         e.model_dump(mode="json")
                         for e in self.court.entities("emperor")
                     ],
-                    "facts": [
-                        f.model_dump(mode="json") for f in self.court.facts("emperor")
-                    ],
                 },
             )
 

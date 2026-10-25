@@ -3,6 +3,7 @@
 import asyncio
 import json
 from contextlib import contextmanager
+from collections import defaultdict
 from pathlib import Path
 from shutil import copyfile, copytree
 
@@ -46,7 +47,7 @@ RECORDED_REPLIES = {
 
 
 @contextmanager
-def recorded_steps(case=None, start=0):
+def recorded_steps(case=None, start=0, invocations=None):
     replies = {
         name: TestModel(call_tools=[], custom_output_text=text)
         for name, text in RECORDED_REPLIES.items()
@@ -62,6 +63,8 @@ def recorded_steps(case=None, start=0):
 
     async def recorded(agent, *args, **kwargs):
         # Only the external model is substituted; Agent, tools and validators run normally.
+        if invocations is not None:
+            invocations[agent.name].append(kwargs["deps"].identity)
         with agent.override(model=replies[agent.name]):
             return await AGENT_RUN(agent, *args, **kwargs)
 
@@ -73,8 +76,13 @@ def recorded_steps(case=None, start=0):
 
 
 @pytest.fixture
-def steps(request):
-    with recorded_steps(getattr(request, "param", None)) as replies:
+def model_invocations():
+    return defaultdict(list)
+
+
+@pytest.fixture
+def steps(request, model_invocations):
+    with recorded_steps(getattr(request, "param", None), invocations=model_invocations) as replies:
         yield replies
 
 

@@ -30,14 +30,14 @@ from ming.middle.declaration import (
 from ming.middle.queries import CATALOGUE, FUNDED_AFFAIRS
 from ming.middle.night import read_night
 from ming.middle.opening import REFERENCES
-from ming.middle.appointments import CATALOGUE_KINDS, cabinet_members, cabinet_records, incumbency_record, office_pairs, reference_key
+from ming.middle.appointments import ALIASES, cabinet_members, cabinet_records, incumbency_record, office_pairs, reference_key
 from ming.middle.rules import Names, check_rules, fail, name_expected
 from ming.middle.records import TranslationMaterials, read_records
 from ming.middle.invoke import ModelSource, build_agent, invoke
 
 T = TypeVar("T", bound=Declaration)
-APPOINTMENT_RULES = """任免只声明 incumbency：entity 用史书官名（京官如户部右侍郎、南京户部尚书；外官如陕西巡抚、保定府新城县知县），create=false。官职、属地由目录正名或别名精确解析，同名属地须带上级全名。holders 写变更后的完整人名名单，一员最多一人，免去全体写空名单。首次任职由引擎创建在任记录；人物不存 office、office_region、office_type 等任职字段。
-升转新实职即离原任；旨里写明兼领、仍管的才保留旧职。没有兼领、仍管时，在同份声明里从原任 holders 去掉此人；旧职本来无在任记录不必声明。新官替换同官同地原任，不动同官别地。任免不改变人物状态、所在、在场或行程。
+APPOINTMENT_RULES = """任免只声明 incumbency：entity 用史书官名（京官如户部右侍郎、南京户部尚书；外官如陕西巡抚、保定府新城县知县），create=false。官职、属地由目录正名或别名精确解析，同名属地须带上级全名。holders 写正任变更后的完整人名名单，acting 写点名暂署的完整人名名单；一员最多一人，免去全体或撤署写相应空名单。外官须带属地，暂署不算正任。首次任职由引擎创建在任记录；人物不存 office、office_region、office_type 等任职字段。
+升转新实职即离原任；旨里写明兼领、仍管的才保留旧职。没有兼领、仍管时，在同份声明里从原任 holders 去掉此人；旧职本来无在任记录不必声明。新官替换同官同地原任，不动同官别地。任免不改变人物状态、所在、在场或行程。罢去全部官职时，在同份声明中把罢官原因写进此人的 identity_description 作为处境。
 尚书现任只算掌部的一员；阁臣的尚书兼衔只记身份与履历文字，不写入在任记录。内阁首辅为单员职务，须为在任阁臣；同份声明可先任大学士再任首辅。离开全部阁职时同时卸首辅，新首辅只替原首辅这一职、不免其大学士。次辅只记身份。"""
 
 INSTRUCTIONS = """你是御前召对的转译官。退朝后通读整夜已落账的全部轮次，一夜只交一次声明。
@@ -54,22 +54,19 @@ text 保留皇帝认可的圣旨定稿全文，不改写、不摘要。origin �
 无字段变化可以只记文字；对象模型之外的伤情等记入所涉实体履历，不长新字段。
 奏报与公开说法单列 reports，只交实体、文字和 audience；facts 只记物理实况。
 在场进出归场景名单工具，退朝归场景退朝工具；不声明进出、退朝、说话人分段、可闻性或御前主角。
+皇威、民心、满意度与钱粮一样交带正负号的增减，引擎加到现值后夹范围，不交最终值。
 没有的项目交空列表，不凭空增添。
 """
 
 
 def catalogue(
-    ledger: Ledger, query: Select[Any] = CATALOGUE, exclude: tuple[str, ...] = (),
+    ledger: Ledger, query: Select[Any] = CATALOGUE,
 ) -> dict[str, dict[str, list[str]]]:
     result: dict[str, dict[str, list[str]]] = {}
     for row in ledger.read(query.with_only_columns(
-        E.kind, E.key, E.data["aliases"].label("aliases"), E.data["name"].as_string().label("name"),
-    ).where(E.kind.not_in(exclude))):
-        aliases: list[str] = row["aliases"] or []
-        name = row["name"]
-        if name and name != row["key"]:
-            aliases = [*aliases, name]
-        result.setdefault(row["kind"], {})[row["key"]] = aliases
+        E.kind, E.key, ALIASES.label("aliases"),
+    )):
+        result.setdefault(row["kind"], {})[row["key"]] = row["aliases"]
     return result
 
 
@@ -89,7 +86,7 @@ def allowed_fields(ledger: Ledger) -> dict[str, set[str]]:
     ).where(E.source != "", E.kind != "calendar").distinct()):
         fields.setdefault(row["kind"], set()).add(row["field"])
     fields["affair"].difference_update({"arrears", "month_paid"})
-    fields["incumbency"] = {"holders"}
+    fields["incumbency"] = {"holders", "acting"}
     # Fiscal settlement, arrears and the content catalogues are engine-owned;
     # translation writes only the levers the month accounts read.
     fields["region"] = (fields.get("region", set()) - {"fiscal"}) | {"fiscal_surcharge"}
@@ -355,16 +352,14 @@ def check_fiscal(ledger: Ledger, out: Declaration, names: Names) -> None:
 
 
 def check_appointment(ledger: Ledger, fact: Fact, path: str, names: Names, cabinet: dict[tuple[str, str], Item]) -> None:
-    pairs = office_pairs(ledger, fact.entity)
-    if len(pairs) != 1:
-        fail(path + ".entity", fact.entity,
-             [{"office": office, "territory": territory} for office, territory in pairs]
-             if pairs else {kind: name_expected(kind, fact.entity, names) for kind in CATALOGUE_KINDS},
-             names, "按 expected 的两表候选核对官名；查无时用 read_records 查询官职、属地，歧义时用候选属地全名，重交整份。")
+    pairs, resolution = office_pairs(ledger, fact.entity)
+    if resolution["status"] != "resolved":
+        fail(path + ".entity", fact.entity, resolution,
+             names, "按 expected 核对官名与属地；用 read_records 查询，须带属地时写候选属地全名，重交整份。")
     office = ledger.entities(kind="office", key=pairs[0][0])[0]
     fact.entity = incumbency_record(pairs[0], [])[0]
     for j, change in enumerate(fact.changes):
-        if change.field != "holders":
+        if change.field not in {"holders", "acting"}:
             continue
         field = f"{path}.changes[{j}].value"
         value: Any = change.value
@@ -377,14 +372,15 @@ def check_appointment(ledger: Ledger, fact: Fact, path: str, names: Names, cabin
         for k, person in enumerate(holders):
             if person not in names.get("person", {}):
                 fail(f"{field}[{k}]", person, name_expected("person", person, names), names, "在任者用 expected 指向的输入人物目录中的正名，重交整份。")
-        if office["key"] == "内阁首辅":
+        if office["key"] == "内阁首辅" and change.field == "holders":
             eligible = sorted(cabinet_members(cabinet))
             for k, person in enumerate(holders):
                 if person not in eligible:
                     fail(f"{field}[{k}]", person, eligible, names, "首辅须为在任阁臣；可在同份声明中先任大学士，再任首辅。重交整份。")
-        cabinet[("incumbency", fact.entity)] = {
-            "kind": "incumbency", "data": incumbency_record(pairs[0], holders)[1],
-        }
+        if change.field == "holders":
+            cabinet[("incumbency", fact.entity)] = {
+                "kind": "incumbency", "data": incumbency_record(pairs[0], holders)[1],
+            }
 
 
 def check_references(ledger: Ledger, out: Declaration, names: Names) -> None:
@@ -453,12 +449,12 @@ def declaration_agent(
     )
 
     @agent.instructions
-    async def names() -> str:
+    async def names(ctx: RunContext[TranslationMaterials]) -> str:
         # Queries and JSON encoding stay on the caller's loop, like tools;
         # only model I/O yields.
         return json.dumps(
             {
-                "names_and_aliases": catalogue(ledger, exclude=CATALOGUE_KINDS),
+                "catalogue": ctx.deps.court.record_catalogue(ctx.deps.identity),
                 "field_schemas": {"payment_policy": PaymentPolicy.model_json_schema(), "monthly_funding": MonthlyFunding.model_json_schema()},
                 "allowed_fields": {
                     k: sorted(v) for k, v in allowed_fields(ledger).items()

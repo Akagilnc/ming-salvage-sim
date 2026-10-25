@@ -30,10 +30,8 @@
         "parts": [
           {
             "part_kind": "tool-call",
-            "tool_name": "read_person",
-            "args": {
-              "name": "洪承畴"
-            },
+            "tool_name": "read_records",
+            "args": {"kind": "person", "key": "洪承畴"},
             "tool_call_id": "toolu_01RVUAJxHJWspC5sP6SJVXHP"
           }
         ]
@@ -43,9 +41,9 @@
         "parts": [
           {
             "part_kind": "tool-call",
-            "tool_name": "read_person",
+            "tool_name": "read_records",
             "args": {
-              "name": "王承恩"
+              "kind": "person", "key": "王承恩"
             },
             "tool_call_id": "toolu_01G2zyGpzgWa24o4QY3SU6Du"
           }
@@ -121,9 +119,9 @@
         "parts": [
           {
             "part_kind": "tool-call",
-            "tool_name": "read_person",
+            "tool_name": "read_records",
             "args": {
-              "name": "杨嗣昌"
+              "kind": "person", "key": "杨嗣昌"
             },
             "tool_call_id": "toolu_019cfTeWstrQsKXvHT5DqkAK"
           }
@@ -134,10 +132,8 @@
         "parts": [
           {
             "part_kind": "tool-call",
-            "tool_name": "read_person",
-            "args": {
-              "name": "洪承畴"
-            },
+            "tool_name": "read_records",
+            "args": {"kind": "person", "key": "洪承畴"},
             "tool_call_id": "toolu_018d8K498WkrqtFG7x6pmUEN"
           }
         ]

@@ -25,10 +25,10 @@ def matching_names(names: Names, queries: list[str]) -> Names:
 
 
 def name_expected(
-    kind: str, value: str, names: Names, directory: str = "names_and_aliases",
+    kind: str, value: str, names: Names,
 ) -> dict[str, Any]:
     if kind not in CATALOGUE_KINDS:
-        return {directory: kind}
+        return {"catalogue": kind}
     return matching_names({kind: names.get(kind, {})}, [value]) or {"status": "not_found", "tool": "read_records"}
 
 
@@ -101,7 +101,7 @@ def money_amounts(
     for fact in facts:
         if (fact.entity_type, fact.entity) in projected:
             projected[(fact.entity_type, fact.entity)]["data"].update(
-                field_values(fact, projected[(fact.entity_type, fact.entity)]["data"], None, {})["changes"]
+                field_values(fact, projected[(fact.entity_type, fact.entity)]["data"], None)["changes"]
             )
     limits: dict[tuple[str, str, str], float] = {}
     for i, fact in enumerate(facts):
@@ -138,7 +138,6 @@ def field_values(
     fact: Fact,
     data: dict[str, Any],
     amount: float | None,
-    offsets: dict[tuple[str, str, str], Any],
 ) -> dict[str, Any]:
     nominal = {c.field: c.value for c in fact.changes}
     actual = dict(nominal)
@@ -151,8 +150,7 @@ def field_values(
         actual["travel_speed"] = min(2, max(1, actual["travel_speed"]))
     for field in SCALE_FIELDS:
         if field in actual and fact.entity_type in {"world", "faction", "class"}:
-            key = fact.entity_type, fact.entity, field
-            actual[field] = clamp_scale(actual[field] + offsets.get(key, 0))
+            actual[field] = clamp_scale(data.get(field, 0) + actual[field])
     if "payment_policy" in actual:
         actual["payment_policy"] = {key: min(1, max(0, value)) if key in {"factor", "defer"} else value
                                     for key, value in actual["payment_policy"].items()}
