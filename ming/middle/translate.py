@@ -28,7 +28,7 @@ from ming.middle.declaration import (
 from ming.middle.queries import CATALOGUE
 from ming.middle.night import read_night
 from ming.middle.opening import REFERENCES
-from ming.middle.appointments import cabinet_members, cabinet_records, incumbency_record, office_pairs, reference_key
+from ming.middle.appointments import ALIASES, cabinet_members, cabinet_records, incumbency_record, office_pairs, reference_key
 from ming.middle.rules import Names, check_rules, fail, name_expected
 from ming.middle.records import TranslationMaterials, read_records
 from ming.middle.invoke import ModelSource, build_agent, invoke
@@ -60,13 +60,9 @@ def catalogue(
 ) -> dict[str, dict[str, list[str]]]:
     result: dict[str, dict[str, list[str]]] = {}
     for row in ledger.read(query.with_only_columns(
-        E.kind, E.key, E.data["aliases"].label("aliases"), E.data["name"].as_string().label("name"),
+        E.kind, E.key, ALIASES.label("aliases"),
     )):
-        aliases: list[str] = row["aliases"] or []
-        name = row["name"]
-        if name and name != row["key"]:
-            aliases = [*aliases, name]
-        result.setdefault(row["kind"], {})[row["key"]] = aliases
+        result.setdefault(row["kind"], {})[row["key"]] = row["aliases"]
     return result
 
 

@@ -137,12 +137,22 @@ def month_open(ledger: Ledger) -> Item | None:
     )
 
 
-def decree_access(ledger: Ledger, identity: Identity) -> dict[str, set[UUID]]:
+def decree_access(
+    ledger: Ledger, identity: Identity, query: Select[Any], selection: Item | None = None,
+) -> dict[str, set[UUID]]:
     access: dict[str, set[UUID]] = {"known": set(), "handled": set(), "secret": set()}
     if identity in ("audit", "world"):
         return access
+    references = ledger.facts(**(selection or {}), query=query.with_only_columns(
+        F.entity_id, F.detail["origin_ref"].as_string().label("origin_ref"),
+        F.detail["decree_id"].as_string().label("decree_id"), maintain_column_froms=True,
+    ).order_by(None).distinct())
+    ids = {r["entity_id"] for r in references} | {
+        UUID(value) for r in references for value in (r["origin_ref"], r["decree_id"]) if value
+    }
     for row in ledger.entities(
-        kind="decree", query=ENTITY_ROWS.add_columns(public_decree().label("public"))
+        kind="decree", entity_id=list(ids),
+        query=ENTITY_ROWS.add_columns(public_decree().label("public")),
     ):
         if row["data"]["secret"]:
             access["secret"].add(row["id"])
@@ -169,7 +179,7 @@ def visible_appointments(ledger: Ledger, identity: Identity, rows: list[Item]) -
     """Both office queries and person projections use the same appointment access."""
     if identity in ("audit", "world"):
         return rows
-    access = decree_access(ledger, identity)
+    access = decree_access(ledger, identity, FACT_ROWS, {"entity_id": [r["id"] for r in rows], "kind": "changed"})
     exposure = fact_exposure(identity, set(), access)
     newer = F.position.table.alias().c
     latest = {(f["entity_id"], field): f["visible"] for field in ("holders", "acting")
@@ -225,7 +235,14 @@ def entities(
             for e in opening["entities"]
             if all(e[k] == v for k, v in (selection or {}).items()) and (keys is None or e["key"] in keys)
         ]
-    access = decree_access(ledger, identity)
+    query = ENTITY_ROWS
+    query = query.where(E.kind == selection["kind"]) if selection.get("kind") is not None else query
+    query = query.where(E.key == selection["key"]) if selection.get("key") is not None else query
+    query = query.where(E.key.in_(keys)) if keys is not None else query
+    query = query.where(E.source != "") if sourced else query
+    access = decree_access(ledger, identity, FACT_ROWS.where(
+        F.entity_id.in_(query.with_only_columns(E.id).order_by(None).correlate(None))
+    ))
     appointments = visible_appointments(ledger, identity, ledger.entities(
         kind="incumbency", key=selection.get("key"),
         query=ENTITY_ROWS.where(E.key.in_(keys)) if keys is not None else ENTITY_ROWS,
@@ -235,13 +252,9 @@ def entities(
                 if identity not in ("audit", "world") else exposure)
     if isinstance(identity, Officials) and selection.get("kind") in (None, "night"):
         exposure = case((E.id.in_(witnessed_nights(ledger, identity.people)), "night"), else_=exposure)
-    query = ENTITY_ROWS.add_columns(exposure.label("exposure")).where(
-        exposure.is_not(None)
-    )
-    query = query.where(E.source != "") if sourced else query
-    query = query.where(E.key.in_(keys)) if keys is not None else query
+    query = query.add_columns(exposure.label("exposure")).where(exposure.is_not(None))
     query = query.where(E.kind.not_in(CATALOGUE_KINDS)) if identity == "world" and selection.get("kind") is None else query
-    rows = ledger.entities(**selection, query=query)
+    rows = ledger.read(query)
     if catalogue:
         return [EntityView.model_validate({**row, "data": {}}) for row in rows]
     if people := [row["key"] for row in rows if row["kind"] == "person"]:
@@ -369,7 +382,7 @@ def fact_sources(
 ) -> tuple[Select[Any], list[FactView]]:
     """One live query and frozen opening selection for full reads and counts."""
     selection = selection or {}
-    access = decree_access(ledger, identity)
+    access = decree_access(ledger, identity, FACT_ROWS, selection)
     exposure = fact_exposure(identity, owned_accounts(ledger, identity), access)
     query = FACT_ROWS.add_columns(exposure.label("exposure")).where(
         exposure.is_not(None)

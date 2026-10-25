@@ -3,11 +3,19 @@
 import json
 from collections.abc import Callable, Sequence
 
-from sqlalchemy import func, literal, or_, select
+from sqlalchemy import JSON, case, func, literal, or_, select, type_coerce
 
 from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS, Item, Ledger
 
 CATALOGUE_KINDS = ("office", "territory")
+
+DISPLAY_NAME = E.data["name"].as_string()
+DECLARED_ALIASES = func.coalesce(E.data["aliases"].as_string(), "[]")
+ALIASES = type_coerce(case(
+    ((DISPLAY_NAME != "") & (DISPLAY_NAME != E.key),
+     func.json_insert(DECLARED_ALIASES, "$[#]", DISPLAY_NAME)),
+    else_=DECLARED_ALIASES,
+), JSON)
 
 
 def incumbency_record(pair: Sequence[str], holders: list[str]) -> tuple[str, Item]:
@@ -18,7 +26,7 @@ def incumbency_record(pair: Sequence[str], holders: list[str]) -> tuple[str, Ite
 
 def named(ledger: Ledger, kind: str | None, value: str | list[str]) -> list[Item]:
     values = [value] if isinstance(value, str) else value
-    aliases = func.json_each(E.data["aliases"]).table_valued("value")
+    aliases = func.json_each(ALIASES).table_valued("value")
     return ledger.entities(kind=kind, query=ENTITY_ROWS.where(or_(
         E.key.in_(values),
         select(aliases.c.value).where(aliases.c.value.in_(values)).exists(),
@@ -45,13 +53,13 @@ def office_pairs(
     elif records:
         pairs.update((row["data"]["office"], row["data"]["territory"]) for row in records)
     else:
-        aliases = func.json_each(E.data["aliases"]).table_valued("value")
-        query = ENTITY_ROWS.where(E.data["external"].as_boolean().is_(True), or_(
+        aliases = func.json_each(ALIASES).table_valued("value")
+        query = ENTITY_ROWS.add_columns(ALIASES.label("aliases")).where(E.data["external"].as_boolean().is_(True), or_(
             func.substr(literal(value), -func.length(E.key)) == E.key,
             select(aliases.c.value).where(func.substr(literal(value), -func.length(aliases.c.value)) == aliases.c.value).exists(),
         ))
         for office in ledger.entities(kind="office", query=query):
-            for title in [office["key"], *office["data"]["aliases"]]:
+            for title in [office["key"], *office["aliases"]]:
                 if title and value.endswith(title):
                     for territory in named(ledger, "territory", value[:-len(title)]):
                         pairs.add((office["key"], territory["key"]))
