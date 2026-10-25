@@ -339,7 +339,7 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
 
                 steps["NightDeclaration"] = FunctionModel(retry_translation)
                 assert (
-                    client.post("/actions", json={"action": "retry"}).status_code == 204
+                    client.post("/actions", json={"action": "retry"}).status_code == 200
                 )
                 assert client.portal is not None
                 client.portal.call(app.state.web.game.drain)
@@ -437,6 +437,11 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
         ) == (11, "desk", False, None, [])
         ledger = audit(db)
         assert len([f for f in ledger["facts"] if f["kind"] == "gazette"]) == 1
+        assert [
+            f["detail"]["date"]
+            for f in client.get("/records").json()["facts"]
+            if f["kind"] == "gazette"
+        ] == [{"id": "world", "year": 1627, "month": 10}]
         if path == "decree":
             decree = next(e for e in ledger["entities"] if e["kind"] == "decree")
             assert {

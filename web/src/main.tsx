@@ -104,10 +104,15 @@ export function App() {
   const turns = night?.turns ?? [];
   const speaker = currentSpeaker(turns, live, night?.hall ?? []);
   const people = book.entities.filter(entity => entity.kind === 'person');
-  const gazettes = [
-    ...book.entities.filter(entity => entity.kind === 'gazette').map(entity => String(entity.data.text ?? '')),
-    ...book.facts.filter(fact => fact.kind === 'gazette').map(fact => String(fact.detail.text ?? '')),
+  const gazetteRecords = [
+    ...book.entities.filter(entity => entity.kind === 'gazette').map(entity => entity.data),
+    ...book.facts.filter(fact => fact.kind === 'gazette').map(fact => fact.detail),
   ];
+  const gazettes = gazetteRecords.map(record => String(record.text ?? ''));
+  const monthGazette = String(gazetteRecords.find(record => {
+    const date = record.date as typeof game.date | undefined;
+    return date?.year === game.date.year && date.month === game.date.month;
+  })?.text ?? liveGazette);
   const gazette = reading === 'latest' ? (liveGazette || gazettes.at(-1))
     : reading === null ? null : gazettes[reading];
   const pending = game.pending?.payload.words || pendingWords || game.failure?.payload.words;
@@ -159,8 +164,8 @@ export function App() {
             <h2>{game.face === 'month' ? '核账期' : '案头'}</h2>
             {failure}
           </>}
-          {game.face === 'month' && liveGazette && <article className="gazette">
-            <h2>邸报</h2><MarkdownText>{liveGazette}</MarkdownText>
+          {game.face === 'month' && monthGazette && <article className="gazette">
+            <h2>邸报</h2><MarkdownText>{monthGazette}</MarkdownText>
           </article>}
           {!audience && night?.result === 'unhandled' && <p className="unhandled">接不住</p>}
           {game.petitions.map(petition => <article className="petition" key={petition.id}>

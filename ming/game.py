@@ -290,7 +290,7 @@ class Game:
             self.start_background()
         if action == "translation" or (action == "choose" and self.busy()):
             self.track(task)
-            return task
+            return None if action == "translation" else task
         self.active = task
         return task
 
