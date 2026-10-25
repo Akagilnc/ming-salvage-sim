@@ -38,6 +38,7 @@ export function MenuPage({ snapshot, onAction, busy, error }: {
     <img className="menu-poster" src="/steam_assets/主宣传图.jpg" alt="" />
     <div className="menu-panel">
       <h1><img src="/steam_assets/game-logo.png" alt="残明朱批：崇祯" /></h1>
+      <p className="menu-subtitle">朕已知悉</p>
       {error && <p role="alert">{error}</p>}
       <nav aria-label="开局菜单">
         <button disabled={busy} onClick={() => void onAction({ action: 'new' })}>新开一局</button>

@@ -2,6 +2,7 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { act, records, state } from './api';
 import { MenuPage, SettingsForm } from './components/menuPage';
+import { MarkdownText } from './components/markdownText';
 import { currentSpeaker, Scene, ScrollMessages } from './components/scrollMessages';
 import type { Action, Records, Snapshot, TextUpdate } from './types';
 import './styles.css';
@@ -13,8 +14,10 @@ export function App() {
   const [busy, setBusy] = React.useState(false);
   const [live, setLive] = React.useState('');
   const [liveGazette, setLiveGazette] = React.useState('');
-  const [reading, setReading] = React.useState<number | 'latest' | null>('latest');
+  const [reading, setReading] = React.useState<number | 'latest' | null>(null);
   const gazetteStreaming = React.useRef(false);
+  const previous = React.useRef<Snapshot | null>(null);
+  const refreshing = React.useRef(0);
   const choosingNow = React.useRef(new Set<string>());
   const [choosing, setChoosing] = React.useState<Set<string>>(new Set());
   const [pendingWords, setPendingWords] = React.useState('');
@@ -24,9 +27,18 @@ export function App() {
   const follow = React.useRef(true);
 
   const refresh = React.useCallback(async (next?: Snapshot) => {
+    const request = ++refreshing.current;
     const value = next ?? await state();
+    const contents = value.save ? await records() : { entities: [], facts: [] };
+    if (request !== refreshing.current) return;
+    const before = previous.current;
+    if (before?.save === value.save && before?.game && value.game?.face === 'desk'
+      && (before.game.date.year !== value.game.date.year || before.game.date.month !== value.game.date.month)) {
+      setReading('latest'); setPanel(null);
+    }
+    previous.current = value;
+    setBook(contents);
     setSnapshot(value);
-    if (value.save) setBook(await records());
     if (!value.game?.running) { setLive(''); setPendingWords(''); setLiveGazette(''); }
   }, []);
 
@@ -41,14 +53,15 @@ export function App() {
       } : value);
     });
     events.addEventListener('gazette', event => {
-      if (!gazetteStreaming.current) { setReading('latest'); setLiveGazette(''); }
+      if (!gazetteStreaming.current) setLiveGazette('');
       gazetteStreaming.current = true;
       const chunk = JSON.parse((event as MessageEvent).data) as TextUpdate;
       setLiveGazette(text => typeof chunk === 'string' ? text + chunk : chunk.replace);
     });
     const receive = (event: Event) => {
-      if (event.type === 'done') gazetteStreaming.current = false;
-      void refresh(JSON.parse((event as MessageEvent).data)).catch(reason => setError(String(reason)));
+      const next = JSON.parse((event as MessageEvent).data) as Snapshot;
+      if (next.game?.face !== 'month' || next.game.failure) gazetteStreaming.current = false;
+      void refresh(next).catch(reason => setError(String(reason)));
     };
     events.addEventListener('state', receive);
     events.addEventListener('done', receive);
@@ -71,7 +84,7 @@ export function App() {
     try {
       if (await act(value) === 200 || value.action === 'choose') await refresh();
       if (value.action === 'open') follow.current = true;
-      if (value.action === 'new' || value.action === 'continue' || value.action === 'load') { setPanel(null); setReading('latest'); }
+      if (value.action === 'new' || value.action === 'continue' || value.action === 'load') { setPanel(null); setReading(value.action === 'new' ? 'latest' : null); }
     } catch (reason) { setError(String(reason)); }
     finally {
       if (value.action === 'choose') {
@@ -103,6 +116,15 @@ export function App() {
     <button disabled={busy || game.running} onClick={() => void action({ action: 'retry' })}>重试</button>
   </div>;
 
+  if (game.face !== 'month' && reading !== null && gazette != null) return <main className="game desk">
+    <header className="topbar"><h1>残明朱批</h1><span>{game.date.year} 年 {game.date.month} 月</span></header>
+    <div className="court-layout"><section className="paper"><div className="scroll">
+      <article className="gazette"><h2>邸报</h2><MarkdownText>{gazette}</MarkdownText>
+        <button onClick={() => setReading(null)}>朕已知悉</button>
+      </article>
+    </div></section></div>
+  </main>;
+
   return <main className={`game ${audience ? 'audience' : 'desk'}`}>
     <header className="topbar">
       <h1>残明朱批</h1><span>{game.date.year} 年 {game.date.month} 月</span>
@@ -121,44 +143,47 @@ export function App() {
         <img className="attendant-avatar" src="/portraits/minister_王承恩.png" alt="王承恩" />
       </aside>}
       <section className="paper">
-        {game.face === 'desk' && game.unhandled_monthly.map(item => <p key={item.entity_id} className="unhandled" role="status">
-          {item.kind === 'decree' ? <>本月这道旨意接不住：{item.text}</> : '本月世界段接不住'}
-        </p>)}
+        {game.face === 'desk' && game.unhandled_monthly.map(item => <div key={item.entity_id} className="unhandled" role="status">
+          {item.kind === 'decree' ? <>本月这道旨意接不住：<MarkdownText>{item.text ?? ''}</MarkdownText></> : '本月世界段接不住'}
+        </div>)}
         <div className="scroll" ref={scroll} onScroll={() => {
           const element = scroll.current;
           if (element) follow.current = element.scrollHeight - element.scrollTop - element.clientHeight < 70;
         }}>
           {audience ? <>
             <ScrollMessages turns={turns} />
-            {pending && <p className="emperor"><small>朕</small>{pending}</p>}
+            {pending && <div className="emperor"><small>朕</small><MarkdownText>{pending}</MarkdownText></div>}
             {live && <Scene text={live} />}
             {failure}
           </> : <>
             <h2>{game.face === 'month' ? '核账期' : '案头'}</h2>
             {failure}
           </>}
-          {reading !== null && (!audience || typeof reading === 'number') && <article className="gazette">
-            <h2>邸报</h2><div>{gazette}</div>
-            <button onClick={() => setReading(null)}>朕知道了</button>
+          {game.face === 'month' && liveGazette && <article className="gazette">
+            <h2>邸报</h2><MarkdownText>{liveGazette}</MarkdownText>
           </article>}
           {!audience && night?.result === 'unhandled' && <p className="unhandled">接不住</p>}
           {game.petitions.map(petition => <article className="petition" key={petition.id}>
-            <h3>奏疏{petition.signer && ` · ${petition.signer}`}</h3>
-            {petition.target && <p>被劾人：{petition.target}</p>}
+            <header>奏疏{petition.signer && <MarkdownText>{petition.signer}</MarkdownText>}</header>
+            {petition.target && <MarkdownText>{`被劾人：${petition.target}`}</MarkdownText>}
             {petition.revision_of && <small>改票</small>}
-            <p>{petition.text}</p>
-            {petition.options.map((option, index) => <button disabled={choosing.has(petition.id)} key={index} onClick={() => void action({ action: 'choose', petition: petition.id, option: index })}>{option}</button>)}
+            <MarkdownText>{petition.text}</MarkdownText>
+            {petition.options.map((option, index) => <button disabled={choosing.has(petition.id)} key={index} onClick={() => void action({ action: 'choose', petition: petition.id, option: index })}><MarkdownText>{option}</MarkdownText></button>)}
           </article>)}
           {game.returned_petitions.map(({ petition, awaiting_drafter }) => <article className="petition" key={petition.id}>
-            <h3>待改票 · {petition.signer}</h3><p>{petition.text}</p>
+            <header>待改票<MarkdownText>{petition.signer ?? ''}</MarkdownText></header><MarkdownText>{petition.text}</MarkdownText>
             <small>{awaiting_drafter ? '无人改票，待补任后再呈' : '已发回，待改票再呈'}</small>
           </article>)}
         </div>
         {audience ? <form className="composer" onSubmit={event => {
-          event.preventDefault(); if (!input.trim()) return;
+          event.preventDefault(); if (busy || game.running || !input.trim()) return;
           const words = input; setInput(''); void action({ action: 'say', words });
         }}>
-          <label htmlFor="emperor-words">朕谕</label><textarea id="emperor-words" value={input} onChange={event => setInput(event.target.value)} disabled={busy || game.running} />
+          <label htmlFor="emperor-words">朕谕</label><textarea id="emperor-words" value={input} onChange={event => setInput(event.target.value)} disabled={busy || game.running} onKeyDown={event => {
+            if (event.key === 'Enter' && event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) {
+              event.preventDefault(); event.currentTarget.form?.requestSubmit();
+            }
+          }} />
           <button disabled={busy || game.running || !input.trim()}>发送</button>
         </form> : <footer className="desk-actions"><button disabled={busy || game.running} onClick={() => void action({ action: 'month' })}>过月</button></footer>}
       </section>
@@ -166,16 +191,16 @@ export function App() {
         <button className="close" onClick={() => setPanel(null)}>合上</button>
         {panel === 'settings' ? <SettingsForm initial={snapshot.settings} requiredSettings={snapshot.required_settings} onSave={settings => { void action({ action: 'settings', settings }).then(() => setPanel(null)); }} /> :
           panel === 'roster' ? <><h2>名册</h2>{people.map(person => <article key={person.id}>
-            <h3>{person.key}</h3><p>{((person.data.appointments ?? []) as { office: string; territory: string }[]).map(a => `${a.territory}${a.office}`).join('、')} · {String(person.data.location ?? '')} · {String(person.data.status ?? '')}</p>
+            <header><MarkdownText>{person.key}</MarkdownText></header><MarkdownText>{`${((person.data.appointments ?? []) as { office: string; territory: string }[]).map(a => `${a.territory}${a.office}`).join('、')} · ${String(person.data.location ?? '')} · ${String(person.data.status ?? '')}`}</MarkdownText>
             {audience && <button disabled={busy || game.running} onClick={() => void action({ action: 'say', words: `宣${person.key}。` })}>宣召</button>}
           </article>)}</> : panel === 'orders' ? <><h2>旨意去向</h2>{book.entities.filter(entity => entity.kind === 'decree').map(entity => <article key={entity.id}>
-            <p>{String(entity.data.text)}</p><small>{String(entity.data.origin)} · {String(entity.data.people)}</small>
+            <MarkdownText>{String(entity.data.text)}</MarkdownText><MarkdownText>{`${String(entity.data.origin)} · ${String(entity.data.people)}`}</MarkdownText>
             {book.facts.filter(fact => fact.entity_id === entity.id && fact.kind === 'secret_report').map((fact, index) => <details className="gazette" key={index}>
               <summary>密报 · {String((fact.detail.date as { year: number; month: number }).year)} 年 {String((fact.detail.date as { year: number; month: number }).month)} 月</summary>
-              <div>{String(fact.detail.text)}</div>
+              <MarkdownText>{String(fact.detail.text)}</MarkdownText>
             </details>)}
           </article>)}</> : <><h2>起居录</h2>{book.entities.filter(entity => entity.kind === 'night').map(entity => <details key={entity.id}>
-            <summary>{entity.key}</summary><ScrollMessages turns={(entity.data as unknown as NonNullable<typeof night>).turns} />
+            <summary><MarkdownText>{entity.key}</MarkdownText></summary><ScrollMessages turns={(entity.data as unknown as NonNullable<typeof night>).turns} />
             {entity.data.result === 'unhandled' && <p className="unhandled">接不住</p>}
           </details>)}<h2>历期邸报</h2>{gazettes.map((_text, index) => <button key={index} onClick={() => { setReading(index); setPanel(null); }}>第 {index + 1} 期</button>)}</>}
       </aside>}

@@ -1,4 +1,4 @@
-import Markdown from 'react-markdown';
+import { MarkdownText } from './markdownText';
 import type { Turn } from '../types';
 
 interface Block { speaker: string; text: string }
@@ -31,14 +31,14 @@ export function Scene({ text }: { text: string }) {
     const kind = aside ? 'aside' : block.speaker === '旁白' ? 'narration' : block.speaker === '旨' ? 'decree' : 'speech';
     return <section key={index} className={`scene-block ${kind}`}>
       {block.speaker.startsWith('王承恩') && <img className="attendant-avatar" src="/portraits/minister_王承恩.png" alt="王承恩" />}
-      <header>{block.speaker}</header><Markdown>{block.text}</Markdown>
+      <header><MarkdownText>{block.speaker}</MarkdownText></header><MarkdownText>{block.text}</MarkdownText>
     </section>;
   })}</>;
 }
 
 export function ScrollMessages({ turns }: { turns: Turn[] }) {
   return <>{turns.map(turn => <article className="audience-turn" key={turn.id}>
-    <p className="emperor"><small>朕</small>{turn.emperor_words}</p>
+    <div className="emperor"><small>朕</small><MarkdownText>{turn.emperor_words}</MarkdownText></div>
     <Scene text={turn.scene} />
   </article>)}</>;
 }
