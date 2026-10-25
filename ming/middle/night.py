@@ -1,12 +1,12 @@
 """Persistent audience records, owned by the same entity/event ledger."""
 
-from collections import defaultdict
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
+from sqlalchemy import Select, func, literal, or_, select
 
-from ming.ledger import Entity, Item, Ledger
+from ming.ledger import ENTITY_COLUMNS as E, FACT_COLUMNS as F, FACT_ROWS, Entity, Item, Ledger
 from ming.middle.calendar import calendar_row
 from ming.middle.queries import LATEST_NIGHT, NIGHT_ROWS
 
@@ -33,29 +33,27 @@ def change_hall(hall: list[str], add: list[str], remove: list[str]) -> list[str]
     return list(dict.fromkeys(p for p in hall + add if p not in remove))
 
 
-def hall_history(events: list[Item]) -> tuple[list[TurnView], set[str]]:
+def hall_history(events: list[Item]) -> list[TurnView]:
     turns: list[TurnView] = []
     # A turn is recorded after its scene, whose hall changes come first; the
     # turn's hall is the one present when the emperor spoke, before that scene.
     hall: list[str] = list(INITIAL_HALL)
     spoken = hall
-    attendees = set(hall)
     for item in events:
         detail = item["detail"]
         if item["kind"] == "hall":
             hall = change_hall(hall, detail["add"], detail["remove"])
-            attendees.update(hall)
         else:
             turns.append(
                 TurnView(**detail, emperor_words=item["emperor_words"], hall=spoken)
             )
             spoken = hall
-    return turns, attendees
+    return turns
 
 
 def read_night(ledger: Ledger, night_id: UUID) -> NightView:
     night = ledger.entities(entity_id=night_id, query=NIGHT_ROWS)[0]
-    turns, _ = hall_history(ledger.facts(entity_id=night_id, kind=("turn", "hall")))
+    turns = hall_history(ledger.facts(entity_id=night_id, kind=("turn", "hall")))
     return NightView(
         id=night_id,
         **night["data"],
@@ -64,18 +62,29 @@ def read_night(ledger: Ledger, night_id: UUID) -> NightView:
     )
 
 
-def witnessed_nights(ledger: Ledger, people: list[str]) -> list[UUID]:
-    nights = ledger.entities(kind="night")
-    events: dict[UUID, list[Item]] = defaultdict(list)
-    for fact in ledger.facts(entity_id=[n["id"] for n in nights], kind="hall"):
-        events[fact["entity_id"]].append(fact)
-    return [night["id"] for night in nights if hall_history(events[night["id"]])[1].intersection(people)]
+def witnessed_nights(people: list[str], query: Select[Any]) -> Select[Any]:
+    added = func.json_each(F.detail["add"]).table_valued("value")
+    removed = func.json_each(F.detail["remove"]).table_valued("value")
+    return query.where(E.kind == "night", or_(
+        literal(bool(set(INITIAL_HALL).intersection(people))),
+        select(F.position).where(
+            F.entity_id == E.id, F.kind == "hall",
+            select(added.c.value).where(
+                added.c.value.in_(people),
+                ~select(removed.c.value).where(removed.c.value == added.c.value).exists(),
+            ).exists(),
+        ).correlate(E.id.table).exists(),
+    ))
 
 
 def known_people(ledger: Ledger, decree: Item) -> set[str]:
     data = decree["data"]
-    night = read_night(ledger, UUID(data["night_id"]))
-    return set(data["people"]) | set(night.turns[int(data["turn"]) - 1].hall)
+    night_id = UUID(data["night_id"])
+    turn = ledger.facts(entity_id=night_id, kind="turn", query=FACT_ROWS.with_only_columns(F.position)
+                        .order_by(None).order_by(F.position).offset(int(data["turn"]) - 1).limit(1))[0]
+    turns = hall_history(ledger.facts(entity_id=night_id, kind=("turn", "hall"),
+                                      query=FACT_ROWS.where(F.position <= turn["position"])))
+    return set(data["people"]) | set(turns[-1].hall)
 
 
 def open_night(ledger: Ledger) -> UUID:

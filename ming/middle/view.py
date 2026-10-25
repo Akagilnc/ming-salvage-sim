@@ -16,6 +16,9 @@ from ming.middle.night import known_people, read_night, witnessed_nights
 
 HIDDEN_JOURNEY = {"remaining_distance", "travel_speed"}
 OPENING_CONTROLS = {"interaction", "petition", "choice", "gazette", "secret_report"}
+APPOINTMENT_FACT = or_(E.kind == "incumbency", F.kind.in_(("appointed", "displaced")))
+DISCOVERED_FACT = F.detail["discovered"].as_boolean().is_(True)
+ENDORSED_FACT = F.kind == "endorsed"
 
 PublicIdentity = Literal["emperor", "audit", "world", "public"]
 
@@ -143,9 +146,11 @@ def decree_access(
     access: dict[str, set[UUID]] = {"known": set(), "handled": set(), "secret": set()}
     if identity in ("audit", "world"):
         return access
+    origin = case((APPOINTMENT_FACT | DISCOVERED_FACT, F.detail["origin_ref"].as_string()))
+    decree = case((ENDORSED_FACT, F.detail["decree_id"].as_string()))
+    query = query.where(or_(E.kind == "decree", origin.is_not(None), decree.is_not(None)))
     references = ledger.facts(**(selection or {}), query=query.with_only_columns(
-        F.entity_id, F.detail["origin_ref"].as_string().label("origin_ref"),
-        F.detail["decree_id"].as_string().label("decree_id"), maintain_column_froms=True,
+        F.entity_id, origin.label("origin_ref"), decree.label("decree_id"), maintain_column_froms=True,
     ).order_by(None).distinct())
     ids = {r["entity_id"] for r in references} | {
         UUID(value) for r in references for value in (r["origin_ref"], r["decree_id"]) if value
@@ -223,7 +228,8 @@ def person_projection(ledger: Ledger, row: Item, identity: Identity, appointment
 
 
 def entities(
-    ledger: Ledger, identity: Identity, selection: Item | None = None
+    ledger: Ledger, identity: Identity, selection: Item | None = None,
+    *, exists_only: bool = False,
 ) -> list[EntityView]:
     selection = dict(selection or {})
     sourced = selection.pop("sourced", False)
@@ -234,14 +240,15 @@ def entities(
             EntityView.model_validate(e)
             for e in opening["entities"]
             if all(e[k] == v for k, v in (selection or {}).items()) and (keys is None or e["key"] in keys)
-        ]
+        ][:1 if exists_only else None]
     query = ENTITY_ROWS
     query = query.where(E.kind == selection["kind"]) if selection.get("kind") is not None else query
     query = query.where(E.key == selection["key"]) if selection.get("key") is not None else query
     query = query.where(E.key.in_(keys)) if keys is not None else query
     query = query.where(E.source != "") if sourced else query
     access = decree_access(ledger, identity, FACT_ROWS.where(
-        F.entity_id.in_(query.with_only_columns(E.id).order_by(None).correlate(None))
+        E.kind == "decree",
+        F.entity_id.in_(query.with_only_columns(E.id).order_by(None).correlate(None)),
     ))
     appointments = visible_appointments(ledger, identity, ledger.entities(
         kind="incumbency", key=selection.get("key"),
@@ -251,10 +258,11 @@ def entities(
     exposure = (case((E.id.in_([r["id"] for r in appointments]), "full"), else_=exposure)
                 if identity not in ("audit", "world") else exposure)
     if isinstance(identity, Officials) and selection.get("kind") in (None, "night"):
-        exposure = case((E.id.in_(witnessed_nights(ledger, identity.people)), "night"), else_=exposure)
+        exposure = case((E.id.in_(witnessed_nights(identity.people, query)
+                                 .with_only_columns(E.id).order_by(None).correlate(None)), "night"), else_=exposure)
     query = query.add_columns(exposure.label("exposure")).where(exposure.is_not(None))
     query = query.where(E.kind.not_in(CATALOGUE_KINDS)) if identity == "world" and selection.get("kind") is None else query
-    rows = ledger.read(query)
+    rows = ledger.read(query.limit(1 if exists_only else None))
     if catalogue:
         return [EntityView.model_validate({**row, "data": {}}) for row in rows]
     if people := [row["key"] for row in rows if row["kind"] == "person"]:
@@ -342,7 +350,7 @@ def fact_exposure(
         [
             (E.id.in_(access["known"]) & (F.kind == "decreed"), "dated"),
             (E.id.in_(access["handled"]) & (F.kind == "secret_report"), "dated"),
-            (F.detail["decree_id"].as_string().in_([str(i) for i in access["known"]]) & (F.kind == "endorsed"), "dated"),
+            (F.detail["decree_id"].as_string().in_([str(i) for i in access["known"]]) & ENDORSED_FACT, "dated"),
             (
                 (E.kind == "person")
                 & F.kind.in_(
@@ -369,8 +377,8 @@ def fact_exposure(
         rules.append((E.id.in_(accounts) & F.kind.in_(("changed", "received")), "text"))
     return case(
         (F.detail["origin_ref"].as_string().in_([str(i) for i in access["secret"] - access["handled"]])
-         & F.detail["discovered"].as_boolean().is_(True), None),
-        (or_(E.kind == "incumbency", F.kind.in_(("appointed", "displaced")))
+         & DISCOVERED_FACT, None),
+        (APPOINTMENT_FACT
          & F.detail["origin_ref"].as_string().in_([str(i) for i in access["secret"] - access["known"]]), None),
         ((E.kind == "incumbency") & F.kind.in_(("changed", "appointed", "displaced")), "dated"),
         else_=case(*rules),
@@ -379,12 +387,14 @@ def fact_exposure(
 
 def fact_sources(
     ledger: Ledger, identity: Identity, selection: Item | None = None,
+    query: Select[Any] = FACT_ROWS,
 ) -> tuple[Select[Any], list[FactView]]:
     """One live query and frozen opening selection for full reads and counts."""
     selection = selection or {}
-    access = decree_access(ledger, identity, FACT_ROWS, selection)
+    scope = query
+    access = decree_access(ledger, identity, query, selection)
     exposure = fact_exposure(identity, owned_accounts(ledger, identity), access)
-    query = FACT_ROWS.add_columns(exposure.label("exposure")).where(
+    query = query.add_columns(exposure.label("exposure")).where(
         exposure.is_not(None)
     )
     if identity != "audit":
@@ -393,11 +403,15 @@ def fact_sources(
     opening = month_open(ledger) if identity == "emperor" else None
     if opening:
         query = query.where(F.kind.in_(OPENING_CONTROLS))
+    scoped_ids: set[UUID] = {r["entity_id"] for r in ledger.read(scope.with_only_columns(F.entity_id).where(
+        F.entity_id.in_([UUID(f["entity_id"]) for f in opening["facts"]]),
+    ).order_by(None).distinct())} if opening else set()
     result: list[FactView] = (
         [
             FactView.model_validate(f)
             for f in opening["facts"]
             if f["kind"] not in OPENING_CONTROLS
+            and UUID(f["entity_id"]) in scoped_ids
             and (
                 selection.get("entity_id") is None
                 or f["entity_id"]

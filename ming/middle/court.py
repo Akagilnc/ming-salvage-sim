@@ -272,20 +272,26 @@ class Court:
     ) -> list[Item]:
         """Names and counts from the existing entity/fact projections, never prose."""
         matches = named(self._ledger, kind, keys) if keys is not None else None
+        selection: Item = {"catalogue": True, **({"kind": kind} if kind is not None else {}),
+                     **({"keys": [r["key"] for r in matches]} if keys is not None and matches is not None else {})}
+        # Dated directories need kind existence, not its complete undated names.
+        visible: set[UUID] = ({e.id for e in entities(
+            self._ledger, identity, selection, exists_only=date is not None and keys is None,
+        )}
+                   if date is None or kind is not None or keys is not None else set())
         facts: Item = {"entity_id": [r["id"] for r in matches]} if matches is not None else {}
-        query, frozen = fact_sources(self._ledger, identity, facts)
+        if date is not None and keys is None and (kind is None or visible):
+            facts["date"] = date
+        source = FACT_ROWS.where(E.kind == kind) if kind is not None else FACT_ROWS
+        query, frozen = fact_sources(self._ledger, identity, facts, source)
         query = query.with_only_columns(
             F.entity_id, func.count().label("event_count"), maintain_column_froms=True,
         ).order_by(None).group_by(F.entity_id)
-        if kind is not None:
-            query = query.where(E.kind == kind)
         counts = Counter({r["entity_id"]: r["event_count"] for r in self._ledger.facts(**facts, query=query)})
         counts.update(f.entity_id for f in frozen)
-        selection = {"catalogue": True, **({"kind": kind} if kind is not None else {}),
-                     **({"keys": [r["key"] for r in matches]} if matches is not None else {})}
-        visible = {e.id for e in entities(self._ledger, identity, selection)} | counts.keys()
-        if date is not None:
-            _, frozen = fact_sources(self._ledger, identity, {**facts, "date": date})
+        visible |= counts.keys()
+        if date is not None and "date" not in facts:
+            _, frozen = fact_sources(self._ledger, identity, {**facts, "date": date}, source)
             counts = Counter({r["entity_id"]: r["event_count"] for r in self._ledger.facts(**facts, date=date, query=query)})
             counts.update(f.entity_id for f in frozen)
         return [
