@@ -121,6 +121,9 @@ export function App() {
         <img className="attendant-avatar" src="/portraits/minister_王承恩.png" alt="王承恩" />
       </aside>}
       <section className="paper">
+        {game.face === 'desk' && game.unhandled_monthly.map(item => <p key={item.entity_id} className="unhandled" role="status">
+          {item.kind === 'decree' ? <>本月这道旨意接不住：{item.text}</> : '本月世界段接不住'}
+        </p>)}
         <div className="scroll" ref={scroll} onScroll={() => {
           const element = scroll.current;
           if (element) follow.current = element.scrollHeight - element.scrollTop - element.clientHeight < 70;
@@ -139,7 +142,6 @@ export function App() {
             <button onClick={() => setReading(null)}>朕知道了</button>
           </article>}
           {!audience && night?.result === 'unhandled' && <p className="unhandled">接不住</p>}
-          {!audience && book.facts.filter(fact => fact.kind === 'unhandled' && !book.entities.some(entity => entity.id === fact.entity_id && entity.kind === 'night')).map((fact, index) => <p key={`${fact.entity_id}-${index}`} className="unhandled">接不住</p>)}
           {game.petitions.map(petition => <article className="petition" key={petition.id}>
             <h3>奏疏{petition.signer && ` · ${petition.signer}`}</h3>
             {petition.target && <p>被劾人：{petition.target}</p>}

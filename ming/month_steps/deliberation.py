@@ -8,7 +8,8 @@ from pydantic_ai import PromptedOutput
 from ming.middle.court import Court
 from ming.middle.declaration import PendingPetition
 from ming.middle.invoke import ModelSource, build_agent, invoke
-from ming.middle.month_work import Deliberation, Materials, prompt, read_records
+from ming.middle.month_work import Deliberation, prompt
+from ming.middle.records import Materials, read_records
 from ming.middle.view import EntityView, Officials
 
 

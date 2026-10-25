@@ -45,7 +45,7 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
     case = json.loads((RECORDED / "appointments.json").read_text())
     replacement = json.loads((RECORDED / "appointments_replace_aliases.json").read_text())
     received = []
-    steps["NightDeclaration"] = replaying([*ModelMessagesTypeAdapter.validate_python(case["responses"]), replacement["reply"], replacement["reply"]], received)
+    steps["NightDeclaration"] = replaying([case["reply"], replacement["reply"], replacement["reply"]], received)
     before = {e["key"]: e for e in audit(game_db)["entities"] if e["kind"] == "person"}
     with TestClient(create_app(game_db.parent)) as client:
         client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
@@ -54,10 +54,6 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
         state = client.get("/state").json()["game"]
         assert state["failure"] is None
         assert state["night"]["result"] == "translated"
-        directory = next(p.model_response_object() for m in received for p in m.parts if isinstance(p, ToolReturnPart) and p.tool_name == "read_catalogues")
-        assert directory["office"]["户部尚书"]["multiple"] is False
-        assert directory["office"]["内阁大学士"]["multiple"] is True
-        assert "西安" in directory["territory"]["陕西西安府"]["aliases"]
         ledger = audit(game_db)
         held = {(e["data"]["office"], e["data"]["territory"]): e["data"]["holders"] for e in ledger["entities"] if e["kind"] == "incumbency"}
         assert held[("户部右侍郎", "")] == ["杨嗣昌"]
@@ -179,12 +175,17 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
             assert next(e["data"]["taels"] for e in ledger["entities"] if e["kind"] == "account" and e["key"] == name) == {"节慎库": 600000, "常盈库": 1200000}[name] + amount * 10000 * 8
 
 
-@pytest.mark.parametrize("case", ["range", "purpose_region"])
+@pytest.mark.parametrize("case", ["range", "purpose_region", "provincial_county", "bad_territory_retry"])
 def test_recorded_r2_reply_lands(game_db, steps, audit, case):
-    reply = (json.loads((RECORDED / "range_v9.json").read_text())["reply"] if case == "range" else
+    reply = (json.loads((RECORDED / "range_v9.json").read_text())["reply"] if case != "purpose_region" else
              json.dumps(json.loads((RECORDED / "declarations_v9.json").read_text())["cases"][case], ensure_ascii=False))
     received = []
-    steps["Declaration"] = replaying([reply, reply], received)
+    if case == "provincial_county":
+        reply = (RECORDED / "month_provincial_county.txt").read_text()
+    steps["Declaration"] = replaying(
+        ModelMessagesTypeAdapter.validate_python(json.loads((RECORDED / "declarations_1972.json").read_text())["cases"][case])
+        if case == "bad_territory_retry" else [reply, reply], received,
+    )
     with TestClient(create_app(game_db.parent)) as client:
         client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
         client.post("/actions", json={"action": "month"}).raise_for_status()
@@ -203,9 +204,54 @@ def test_recorded_r2_reply_lands(game_db, steps, audit, case):
             assert rows[("fiscal", "宗室禄米_base")]["data"]["payment_policy"] == {"factor": 1, "defer": 0}
             actual = {f["entity_id"]: f["detail"] for f in ledger["facts"] if f["kind"] == "changed"}
             assert actual[rows[("fiscal", "宗室禄米_base")]["id"]]["nominal"]["payment_policy"] == {"factor": 1.5, "defer": -0.5}
+        elif case == "provincial_county":
+            assert next(e["data"]["holders"] for e in ledger["entities"] if e["kind"] == "incumbency"
+                        and e["data"]["office"] == "知县" and e["data"]["territory"] == "保定府新城县") == ["徐应秋"]
+            assert not [p for m in received for p in m.parts if p.part_kind == "retry-prompt"]
+        elif case == "bad_territory_retry":
+            assert [f["entity_id"] for f in ledger["facts"] if f["kind"] == "changed"] == [rows["territory", "保定府新城县"]["id"]]
+            assert set(json.loads(next(p.content for m in received for p in m.parts if p.part_kind == "retry-prompt"))["expected"]["territory"]) == {
+                "保定府新城县", "济南府新城县", "建昌府新城县", "杭州府新城县",
+            }
         else:
             assert [(f["detail"]["actual"], f["detail"]["purpose"]) for f in ledger["facts"]
                     if f["entity_id"] == rows[("region", "陕西")]["id"] and f["kind"] == "received"] == [(10000, "专项")]
             assert "arrears" not in rows[("region", "陕西")]["data"]
         client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
         assert audit(game_db) == ledger
+
+
+@pytest.mark.parametrize("game_db", ["first_night"], indirect=True)
+@pytest.mark.parametrize("stage", ["night", "month"])
+def test_translation_queries_preserve_two_table_permissions(game_db, steps, stage):
+    recording = json.loads((RECORDED / "declarations_1972.json").read_text())["cases"]
+    received = []
+    steps["NightDeclaration"] = replaying([(RECORDED / "night_empty.txt").read_text()])
+    steps["NightDeclaration" if stage == "night" else "Declaration"] = replaying(
+        ModelMessagesTypeAdapter.validate_python(recording["night_catalogue_queries" if stage == "night" else "catalogue_queries"]), received,
+    )
+    with TestClient(create_app(game_db.parent)) as client:
+        client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
+        client.post("/actions", json={"action": "dismiss"}).raise_for_status()
+        client.portal.call(client.app.state.web.game.drain)
+        if stage == "month":
+            client.post("/actions", json={"action": "month"}).raise_for_status()
+        assert client.get("/state").json()["game"]["failure"] is None
+    queries = {p.tool_call_id: p.args_as_dict() for m in received for p in m.parts if isinstance(p, ToolCallPart)}
+    results = {p.tool_call_id: p.model_response_object() for m in received for p in m.parts if isinstance(p, ToolReturnPart)}
+    for call_id, query in queries.items():
+        result = results[call_id]
+        if query.get("key") in {"保定府新城县", "北直隶保定府新城县", "户部尚书"}:
+            assert len(result["entities"]) == 1
+            assert result["facts"] == []
+            assert result["entities"][0]["kind"] in {"office", "territory"}
+        elif query.get("key") in {"新城县", "县"}:
+            assert result["status"] == "not_found"
+            assert len(result["names_and_aliases"]["territory"]) == (4 if query["key"] == "新城县" else 1172)
+            assert set(result["names_and_aliases"]) == {"territory"}
+        elif query.get("kind") == "territory" and "key" not in query:
+            assert len(result["catalogue"]) == 1733
+            assert {item["kind"] for item in result["catalogue"]} == {"territory"}
+        else:
+            assert result["status"] == "not_found"
+            assert "names_and_aliases" not in result

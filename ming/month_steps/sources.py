@@ -9,9 +9,10 @@ from ming.middle.calendar import petition_date
 from ming.middle.court import Court
 from ming.middle.declaration import Petition, PendingPetition, StrictModel
 from ming.middle.invoke import ModelSource, build_agent, invoke
-from ming.middle.month_work import Materials, prompt, read_records
+from ming.middle.month_work import prompt
+from ming.middle.records import Materials, read_records
 from ming.middle.view import EntityView, Officials
-from ming.middle.rules import fail
+from ming.middle.rules import fail, name_expected
 
 
 class UrgentPetition(Petition):
@@ -108,7 +109,11 @@ class Sources:
         @agent.output_validator
         def names(ctx: RunContext[Materials], output: Urgencies | Impeachments):
             catalogue = ctx.deps.court.catalogue()
-            people = catalogue["person"]
+            allowed: dict[str, list[str]] | list[str] = catalogue["person"]
+            expected: object = name_expected("person", "", catalogue, directory="catalogue")
+            if kind == "urgent":
+                allowed = identity.people
+                expected = allowed
             originals = {
                 str(f.detail["id"]) for f in ctx.deps.court.returned_petitions()
             }
@@ -117,14 +122,13 @@ class Sources:
                 if isinstance(item, ImpeachmentPetition):
                     refs["target"] = item.target
                 for field, name in refs.items():
-                    expected = identity.people if kind == "urgent" else people
-                    if name not in expected:
+                    if name not in allowed:
                         fail(
                             f"petitions[{index}].{field}",
                             name,
                             expected,
                             catalogue,
-                            "改成 expected 里的人名正名，重交整份。确无此人不得换成另一人。",
+                            "参照 expected 的正名清单或输入目录指针核对人名，重交整份。确无此人不得换成另一人。",
                         )
                 if isinstance(item, UrgentPetition) and item.revision_of is not None:
                     if str(item.revision_of) not in originals:

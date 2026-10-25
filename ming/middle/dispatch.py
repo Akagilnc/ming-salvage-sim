@@ -1,7 +1,7 @@
 """Land a whole declaration, query rows and events in the same transaction."""
 
 import json
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from typing import Any
 from uuid import UUID
 
@@ -135,17 +135,17 @@ def dispatch(
             if (fact.create or fact.entity_type == "incumbency") and pair not in existing:
                 existing[pair] = known(fact.entity_type, fact.entity).snapshot()
         amounts, reasons = money_amounts(result.facts, existing)
-        for i, fact in enumerate(result.facts):
+        for i, j, fact in landing_facts(result.facts):
             entity = known(fact.entity_type, fact.entity)
             association = (
                 {"affair_id": str(known("affair", fact.affair).id)}
                 if fact.affair is not None
                 else {}
             )
-            detail = field_values(fact, entity.data, amounts.get(i), offsets)
+            detail = field_values(fact, entity.data, amounts.get((i, j)), offsets)
             detail.update(association)
-            if i in reasons:
-                detail["limit_reason"] = reasons[i]
+            if (i, j) in reasons:
+                detail["limit_reason"] = reasons[i, j]
             fact_origin = {"discovered": fact.discovered}
             if fact.decree is not None:
                 fact_origin["origin_ref"] = str(decrees[fact.decree].id)
@@ -156,8 +156,8 @@ def dispatch(
                 displace(entity, changes["holders"], known, record, {**association, "text": fact.text})
             record(entity, "changed", detail, changes)
             retire_chief(existing, known, record, {**association, "text": fact.text})
-            if i in amounts:
-                record_receipts(fact, amounts[i], reasons[i], known, record)
+            if (i, j) in amounts:
+                record_receipts(fact, amounts[i, j], reasons[i, j], known, record)
         fact_origin = {}
         for report in result.reports:
             record(
@@ -187,6 +187,16 @@ def dispatch(
         {"result": result.model_dump(), "monthly": monthly},
     )
     ledger.commit(list(changed.values()))
+
+
+def landing_facts(facts: list[Fact]) -> Iterator[tuple[int, int, Fact]]:
+    """Account deltas retain their original (fact, change) indices and order."""
+    for i, fact in enumerate(facts):
+        if fact.entity_type == "account" and any(c.field == "taels" for c in fact.changes):
+            for j, change in enumerate(fact.changes):
+                yield i, j, fact.model_copy(update={"changes": [change]})
+        else:
+            yield i, -1, fact
 
 
 def record_decrees(

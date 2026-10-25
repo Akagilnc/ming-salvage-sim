@@ -6,11 +6,30 @@ from typing import Any
 
 from pydantic_ai import ModelRetry
 
+from ming.middle.appointments import CATALOGUE_KINDS
 from ming.middle.declaration import Declaration, Fact
 from ming.middle.fiscal import WAN, clamp_scale, current_paid, has_obligation, obligation
 
 SCALE_FIELDS = ("imperial_prestige", "public_support", "satisfaction")
 Names = dict[str, dict[str, list[str]]]
+
+
+def matching_names(names: Names, queries: list[str]) -> Names:
+    """All substring candidates within the caller's already visible names."""
+    return {
+        kind: matches for kind, entries in names.items()
+        if (matches := {name: aliases for name, aliases in entries.items()
+                        if any(query and any(query in label for label in [name, *aliases])
+                               for query in queries)})
+    }
+
+
+def name_expected(
+    kind: str, value: str, names: Names, directory: str = "names_and_aliases",
+) -> dict[str, Any]:
+    if kind not in CATALOGUE_KINDS:
+        return {directory: kind}
+    return matching_names({kind: names.get(kind, {})}, [value]) or {"status": "not_found", "tool": "read_records"}
 
 
 def fail(field: str, value: object, expected: object, names: Names, how: str) -> None:
@@ -22,9 +41,10 @@ def fail(field: str, value: object, expected: object, names: Names, how: str) ->
 def check_rules(out: Declaration, affairs: set[str], names: Names) -> None:
     for i, fact in enumerate(out.facts):
         if fact.affair is not None and fact.affair not in affairs:
-            fail(f"facts[{i}].affair", fact.affair, sorted(affairs), names,
-                 "affair 改成 expected 里的事务正名，或在本份先 create 该事务，重交整份。")
-        seen = [change.field for change in fact.changes]
+            fail(f"facts[{i}].affair", fact.affair, name_expected("affair", fact.affair, names), names,
+                 "事务正名查 expected 指向的输入目录，或在本份先 create 该事务，重交整份。")
+        seen = [change.field for change in fact.changes
+                if (fact.entity_type, change.field) != ("account", "taels")]
         if len(set(seen)) != len(seen):
             fail(f"facts[{i}].changes", [field for field in seen if seen.count(field) > 1],
                  "每个字段只出现一次", names, "删掉重名的字段变更，重交整份，不能静默丢项。")
@@ -60,8 +80,8 @@ def check_money(fact: Fact, names: Names, index: int) -> None:
         if kind not in names:
             fail(path + ".counterpart.entity_type", kind, list(names), names, "收方类型改成 expected，重交整份。")
         if change.counterpart.entity not in names[kind]:
-            fail(path + ".counterpart.entity", change.counterpart.entity, names[kind], names,
-                 "收方改成 expected 中的正名，重交整份；不必另交收方 fact。")
+            fail(path + ".counterpart.entity", change.counterpart.entity, name_expected(kind, change.counterpart.entity, names), names,
+                 "参照 expected 的输入目录指针或候选填写收方正名，重交整份；不必另交收方 fact。")
         if kind in {"army", "fiscal"} and change.purpose is None:
             fail(path + ".purpose", None, ["补欠", "当月饷", "犒赏", "专项"], names,
                  "付给军队或财政科目的款补上 purpose，重交整份。")
@@ -72,9 +92,9 @@ def check_money(fact: Fact, names: Names, index: int) -> None:
 
 def money_amounts(
     facts: list[Fact], existing: dict[tuple[str, str], dict[str, Any]]
-) -> tuple[dict[int, float], dict[int, str | None]]:
-    amounts: dict[int, float] = {}
-    reasons: dict[int, str | None] = {}
+) -> tuple[dict[tuple[int, int], float], dict[tuple[int, int], str | None]]:
+    amounts: dict[tuple[int, int], float] = {}
+    reasons: dict[tuple[int, int], str | None] = {}
     balances = {key: row["data"].get("taels", 0) for key, row in existing.items()}
     # Caps use the declared post-values of policy, manpower and rates.
     projected = {key: {**row, "data": dict(row["data"])} for key, row in existing.items()}
@@ -85,16 +105,16 @@ def money_amounts(
             )
     limits: dict[tuple[str, str, str], float] = {}
     for i, fact in enumerate(facts):
-        for change in fact.changes:
+        for j, change in enumerate(fact.changes):
             if fact.entity_type != "account" or change.field != "taels":
                 continue
             pair = fact.entity_type, fact.entity
             recipient = (change.counterpart.entity_type, change.counterpart.entity) if change.counterpart else None
-            amounts[i] = (
+            amounts[i, j] = (
                 -min(-change.value, max(0, balances.get(pair, 0))) if change.value <= 0
                 else change.value
             )
-            reasons[i] = "balance" if amounts[i] != change.value else None
+            reasons[i, j] = "balance" if amounts[i, j] != change.value else None
             row = projected.get(recipient) if recipient else None
             if (recipient is not None and row is not None and change.purpose in {"补欠", "当月饷"}
                     and has_obligation(change.purpose, recipient[0], row["data"])):
@@ -104,13 +124,13 @@ def money_amounts(
                                       else obligation(recipient, projected) - current_paid(
                                           row["data"], projected[("calendar", "world")]["data"]
                                       )) * WAN
-                if -amounts[i] > limits[key]:
-                    reasons[i] = "obligation"
-                amounts[i] = -min(-amounts[i], limits[key])
-                limits[key] += amounts[i]
-            balances[pair] = balances.get(pair, 0) + amounts[i]
+                if -amounts[i, j] > limits[key]:
+                    reasons[i, j] = "obligation"
+                amounts[i, j] = -min(-amounts[i, j], limits[key])
+                limits[key] += amounts[i, j]
+            balances[pair] = balances.get(pair, 0) + amounts[i, j]
             if recipient is not None and recipient[0] == "account":
-                balances[recipient] = balances.get(recipient, 0) - amounts[i]
+                balances[recipient] = balances.get(recipient, 0) - amounts[i, j]
     return amounts, reasons
 
 

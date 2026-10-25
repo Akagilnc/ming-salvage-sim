@@ -1,5 +1,13 @@
 # 月推进边界录音
 
+## #1972 逐笔钱粮、统一查询与接不住提示（2026-10-25）
+
+- `month_two_payments_combined.txt`、`month_two_payments_split.txt`：`~/WorkSpace/vault/ak-cc-wiki/raw/ming-llm-runner/2026-10-24/1972/trial-1/001-process`、`002-process` 的最终原生回话，不改字；合写、拆写经同一 HTTP 过月链对照。
+- `month_provincial_county.txt`：同根 `2026-10-24/1965-acceptance/run-ambiguous/pi-232512/017-Declaration/stdout.jsonl` 的最终原话；带省县名不再需要退回。
+- `declarations_1972.json`：真源见 `source`／`source_by_case`（`2026-10-25/1972-implementation/native*`），生产 schema、校验与工具，pi `openai-codex/gpt-6.1-sol` 逐次调用。错误案按故意错误指示录制，保持原样。工具调用只去 `mcp__court__` transport 前缀，参数、ID、正文不动；不回放工具返回值。初录的空 capture、未按指示交错例、未发生退回的样本留在证据目录，没有拿来冒充通过。
+- `read_catalogues` 已退役；旧 `appointments.json` 的原始回复仍用于任免，未使用的旧工具回合 `responses` 已删除。新查询录件从收夜、过月两个 HTTP 入口验证同一个 `read_records`，转译仅两表、无历史；其他身份维持原权限。以下 #1965 段落描述当时录制历史，不代表现行工具。
+- 属地只补开局数据：采用「本条 region 对应的省名＋原正名」，不猜配父级；1356 个县州补带省别名，74 个正名已带省；河南府、云南府不是省级前缀，照府级正名写「河南河南府…」「云南云南府…」。辽东两州正名已含辽东都司，不另强加省名。此前误接父级形成的错误别名已撤回，原条目出处保留，无运行时补名算法。
+
 ## #1965 J3 边镇收窄（2026-10-24）
 
 陛下 `deb03fe0-2afa-457f-9e9c-33a12b130cf4` 改定卫所仅收边镇有设官者，撤销上一轮全国历史卫所目录口径。

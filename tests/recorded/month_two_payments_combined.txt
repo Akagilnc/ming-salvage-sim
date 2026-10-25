@@ -1,0 +1,123 @@
+{
+  "facts": [
+    {
+      "entity_type": "affair",
+      "entity": "陕西十万两赈银起解",
+      "create": true,
+      "changes": [],
+      "text": "天启七年十月，陕西赈银十万两已从太仓验银、封装、交领，调集解役起解。至十月底，银解仍在途中，尚未交收、散给饥民。陕西十万两不足原请三十万两，两地后续交收、散给须待实报。"
+    },
+    {
+      "entity_type": "affair",
+      "entity": "关宁二十万两补欠饷银起解",
+      "create": true,
+      "changes": [],
+      "text": "天启七年十月，关宁补欠饷银二十万两已从太仓验银、封装、交领，调集解役起解。至十月底，银解仍在途中，尚未交收、散给将士。关宁二十万两也仅为补欠的一部分；后续交收、散给须待实报，本月不据此认定兵手已领或欠饷已补。"
+    },
+    {
+      "entity_type": "account",
+      "entity": "国库",
+      "create": false,
+      "changes": [
+        {
+          "field": "taels",
+          "value": -100000,
+          "counterpart": {
+            "entity_type": "affair",
+            "entity": "陕西十万两赈银起解"
+          }
+        },
+        {
+          "field": "taels",
+          "value": -200000,
+          "counterpart": {
+            "entity_type": "affair",
+            "entity": "关宁二十万两补欠饷银起解"
+          }
+        }
+      ],
+      "text": "郭允厚将陕西赈银十万两、关宁补欠饷银二十万两分别立案，办理验银、封装、交领，调集解役分途起解。此次先从太仓现银发出，并非另得三十万两收入，也不是认定库中尚有三百二十万两闲款。户部将这两笔列为特旨先支；其余应支仍循原有次序，但可供后续支付的现银因而减少。郭允厚没有擅定永久削减官俸、宗禄或工程，也未自行增税补缺；各项实际欠额留由月底月账核算。"
+    },
+    {
+      "entity_type": "person",
+      "entity": "郭允厚",
+      "create": false,
+      "changes": [],
+      "text": "郭允厚在发解文册上注明奉强颁之旨办理，既不敢抗命，也留下此前已陈款项相逼的凭据。他保住尚书职任，却对皇帝越过覆议、令其承担支解责任心生惴惴。内阁与户科照例登记奉行，原先关于补缺的意见并未因此消失。"
+    },
+    {
+      "entity_type": "world",
+      "entity": "天下",
+      "create": false,
+      "changes": [
+        {
+          "field": "imperial_prestige",
+          "value": 15
+        }
+      ],
+      "text": "天启七年十月，赈陕、济辽之旨经封驳后，皇帝命仍照原旨强颁。户科所缴未获采纳，户部奉到成命，不再以待议挪款为由扣住三十万两。这道旨实际越过封驳颁出，付出一份皇威代价。"
+    },
+    {
+      "entity_type": "class",
+      "entity": "官僚",
+      "create": false,
+      "changes": [
+        {
+          "field": "satisfaction",
+          "value": 45
+        }
+      ],
+      "text": "外廷官僚对越过覆议与封驳强行颁旨不满，满意度下降。"
+    },
+    {
+      "entity_type": "faction",
+      "entity": "东林",
+      "create": false,
+      "changes": [
+        {
+          "field": "satisfaction",
+          "value": 29
+        }
+      ],
+      "text": "重视封驳程序的东林人士满意度下降。"
+    },
+    {
+      "entity_type": "faction",
+      "entity": "阉党",
+      "create": false,
+      "changes": [
+        {
+          "field": "satisfaction",
+          "value": 60
+        }
+      ],
+      "text": "郭允厚所属阉党对部臣意见被压下亦有不满，但未因此公开抗旨。"
+    },
+    {
+      "entity_type": "faction",
+      "entity": "军队",
+      "create": false,
+      "changes": [
+        {
+          "field": "satisfaction",
+          "value": 50
+        }
+      ],
+      "text": "军中重视先济辽饷者则赞许皇帝肯拨实银，不能据此说全军已经受惠。救荒本意也不等于陕西饥民本月已经领到赈银，民心不作强颁的固定扣减。"
+    }
+  ],
+  "reports": [
+    {
+      "entity_type": "person",
+      "entity": "郭允厚",
+      "audience": "official",
+      "text": "户部覆议：赈陕、济辽，俱属急务。惟太仓现银三百二十万两，皆有应支，非尽闲款。臣前奏三十万两可以拨出，须裁定挤占何项、如何补缺。今旨拨赈十万、辽饷二十万，数虽可办，所缓支款项尚未指明；京营亦已欠支，不敢擅移以任后咎。请敕本部即将应支款目、可缓项目及补缺办法具册奏裁，款定即解，不得借议款延误。"
+    }
+  ],
+  "decree_events": [
+    {
+      "kind": "handled",
+      "text": "户部奉强颁成命，将陕西赈银十万两、关宁补欠饷银二十万两分别立案，完成验银、封装、交领并分途起解；月底两路仍在途中，未办结交收散给。"
+    }
+  ]
+}
