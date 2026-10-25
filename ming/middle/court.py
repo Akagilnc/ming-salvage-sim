@@ -11,7 +11,7 @@ from typing import Any, TypeVar, cast
 from uuid import UUID, uuid4
 
 from pydantic_ai import Agent
-from sqlalchemy import func, tuple_
+from sqlalchemy import JSON, func, literal, select, tuple_
 from ming.ledger import (
     ENTITY_COLUMNS as E,
     FACT_COLUMNS as F,
@@ -273,35 +273,33 @@ class Court:
         """Names and counts from the existing entity/fact projections, never prose."""
         matches = named(self._ledger, kind, keys) if keys is not None else None
         selection: Item = {"catalogue": True, **({"kind": kind} if kind is not None else {}),
-                     **({"keys": [r["key"] for r in matches]} if keys is not None and matches is not None else {})}
-        # Dated directories need kind existence, not its complete undated names.
-        visible: set[UUID] = ({e.id for e in entities(
-            self._ledger, identity, selection, exists_only=date is not None and keys is None,
-        )}
-                   if date is None or kind is not None or keys is not None else set())
+                     **({"keys": [r["key"] for r in matches]} if matches is not None else {})}
         facts: Item = {"entity_id": [r["id"] for r in matches]} if matches is not None else {}
-        if date is not None and keys is None and (kind is None or visible):
-            facts["date"] = date
         source = FACT_ROWS.where(E.kind == kind) if kind is not None else FACT_ROWS
-        query, frozen = fact_sources(self._ledger, identity, facts, source)
+        query = fact_sources(self._ledger, identity, source)
+        visible: set[UUID] = {r["entity_id"] for r in self._ledger.facts(
+            **facts, query=query.with_only_columns(F.entity_id).order_by(None).distinct(),
+        )} if date is not None and keys is not None else set()
+        if date is not None:
+            facts["date"] = date
         query = query.with_only_columns(
             F.entity_id, func.count().label("event_count"), maintain_column_froms=True,
         ).order_by(None).group_by(F.entity_id)
         counts = Counter({r["entity_id"]: r["event_count"] for r in self._ledger.facts(**facts, query=query)})
-        counts.update(f.entity_id for f in frozen)
         visible |= counts.keys()
-        if date is not None and "date" not in facts:
-            _, frozen = fact_sources(self._ledger, identity, {**facts, "date": date}, source)
-            counts = Counter({r["entity_id"]: r["event_count"] for r in self._ledger.facts(**facts, date=date, query=query)})
-            counts.update(f.entity_id for f in frozen)
-        return [
-            {
-                "kind": row["kind"],
-                "key": row["key"],
-                "event_count": counts[row["id"]],
-            }
-            for row in self._ledger.entities(kind=kind, entity_id=list(visible))
-        ]
+        if date is None or keys is not None:
+            visible |= {e.id for e in entities(self._ledger, identity, selection)}
+        names = ENTITY_ROWS.with_only_columns(E.id, E.kind, E.key)
+        rows = self._ledger.entities(kind=kind, entity_id=list(visible), query=names)
+        if date is not None and keys is None and kind is not None and not rows:
+            visible = {e.id for e in entities(self._ledger, identity, selection, exists_only=True)}
+            if not visible:
+                query = fact_sources(self._ledger, identity, source)
+                visible = {r["entity_id"] for r in self._ledger.read(
+                    query.with_only_columns(F.entity_id).order_by(None).limit(1)
+                )}
+            rows = self._ledger.entities(kind=kind, entity_id=list(visible), query=names)
+        return [{"kind": row["kind"], "key": row["key"], "event_count": counts[row["id"]]} for row in rows]
 
     def office_record(self, identity: Identity, key: str, date: Item | None = None) -> Item:
         pairs, resolution = office_pairs(self._ledger, key, partial(visible_appointments, self._ledger, identity))
@@ -506,7 +504,8 @@ class Court:
         ]
 
     def known_people(self, decree: EntityView) -> set[str]:
-        return known_people(self._ledger, decree.model_dump())
+        readers = known_people(literal({k: decree.data[k] for k in ("night_id", "turn", "people")}, type_=JSON)).subquery()
+        return {row["person"] for row in self._ledger.read(select(readers.c.person))}
 
     def consequences(self, decree: UUID) -> list[FactView]:
         return [
