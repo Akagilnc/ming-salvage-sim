@@ -39,10 +39,14 @@ def test_every_model_call_reads_identity_scoped_records(game_db, steps, model_in
     names = ("scene", "NightDeclaration", "Declaration", "simulation", "deliberation", "urgent", "impeachment", "secret_report", "gazette")
     received = {name: [] for name in names}
     tools = {name: [] for name in names}
+    declaration = {"facts": [], "decree_events": [], "reports": [{
+        "entity_type": "incumbency", "entity": "户部尚书",
+        "text": "官报：户部实存银若干。", "audience": "official",
+    }]}
     outputs = {
         "scene": "done",
         "NightDeclaration": json.dumps({"facts": [], "decrees": [{"text": "", "origin": "emperor", "secret": False, "turn": 1, "people": ["王体乾"]}]}),
-        "Declaration": (RECORDED / "month_empty.txt").read_text(),
+        "Declaration": json.dumps(declaration),
         "urgent": (RECORDED / "sources_empty.txt").read_text(),
         "impeachment": (RECORDED / "sources_empty.txt").read_text(),
         **{name: (RECORDED / f"{name}.txt").read_text() for name in ("simulation", "deliberation", "secret_report", "gazette")},
@@ -63,6 +67,13 @@ def test_every_model_call_reads_identity_scoped_records(game_db, steps, model_in
         client.post("/actions", json={"action": "month"}).raise_for_status()
         assert client.get("/state").json()["game"]["failure"] is None
         court = client.app.state.web.game.court
+        reports = court.facts(Officials(people=["郭允厚"]), kind="reported")
+        assert reports
+        assert {f.entity_id for f in reports} == {
+            e.id for e in court.entities("audit", kind="incumbency") if e.data["office"] == "户部尚书"
+        }
+        assert not court.facts("public", kind="reported")
+        assert not court.facts("emperor", kind="reported")
         expected = {
             "scene": Officials(people=["王承恩"]),
             "NightDeclaration": "world", "Declaration": "world", "simulation": "world", "gazette": "public",

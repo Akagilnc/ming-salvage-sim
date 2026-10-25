@@ -340,7 +340,7 @@ def fact_exposure(
     return case(
         (or_(E.kind == "incumbency", F.kind.in_(("appointed", "displaced")))
          & F.detail["origin_ref"].as_string().in_([str(i) for i in access["secret"] - access["known"]]), None),
-        (E.kind == "incumbency", "dated"),
+        ((E.kind == "incumbency") & F.kind.in_(("changed", "appointed", "displaced")), "dated"),
         else_=case(*rules),
     )
 
