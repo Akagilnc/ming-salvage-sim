@@ -35,8 +35,13 @@ def change_hall(hall: list[str], add: list[str], remove: list[str]) -> list[str]
     return list(dict.fromkeys(p for p in hall + add if p not in remove))
 
 
-def hall_history(night_id: ColumnElement[Any], boundary: ColumnElement[Any]) -> Select[Any]:
-    """Members at a fact-log boundary, with each member's first surviving entry."""
+def hall_history(night_id: ColumnElement[Any], turn_position: ColumnElement[Any]) -> Select[Any]:
+    """Members when this turn's words were spoken, with first surviving entries."""
+    # Scene changes precede their turn record; speech uses the preceding turn's state.
+    previous = F.position.table.alias().c
+    boundary = select(func.max(previous.position)).where(
+        previous.entity_id == night_id, previous.kind == "turn", previous.position < turn_position,
+    ).correlate_except(previous.position.table).scalar_subquery()
     hall = F.position.table.alias().c
     added = func.json_each(hall.detail["add"]).table_valued("key", "value")
     candidates = union_all(
@@ -66,12 +71,7 @@ def hall_history(night_id: ColumnElement[Any], boundary: ColumnElement[Any]) -> 
 
 def read_night(ledger: Ledger, night_id: UUID) -> NightView:
     night = ledger.entities(entity_id=night_id, query=NIGHT_ROWS)[0]
-    # Scene changes precede their turn record; speech uses the preceding turn's state.
-    previous = F.position.table.alias().c
-    boundary = select(func.max(previous.position)).where(
-        previous.entity_id == F.entity_id, previous.kind == "turn", previous.position < F.position,
-    ).correlate(F.position.table).scalar_subquery()
-    members = hall_history(F.entity_id, boundary).subquery()
+    members = hall_history(F.entity_id, F.position).subquery()
     hall = select(func.json_group_array(func.json_object(
         "person", members.c.person, "position", members.c.position, "ordinal", members.c.ordinal,
     ), type_=JSON)).scalar_subquery()
@@ -109,10 +109,10 @@ def known_people(data: ColumnElement[Any], people: list[str] | None = None) -> C
     turns = select(turn.position, func.row_number().over(order_by=turn.position).label("number")).where(
         turn.entity_id == night_id, turn.kind == "turn",
     ).correlate_except(turn.position.table).subquery()
-    boundary = select(turns.c.position).where(
-        turns.c.number == data["turn"].as_integer() - 1,
+    turn_position = select(turns.c.position).where(
+        turns.c.number == data["turn"].as_integer(),
     ).correlate_except(turns).scalar_subquery()
-    attendees = hall_history(night_id, boundary)
+    attendees = hall_history(night_id, turn_position)
     attendees = attendees.with_only_columns(attendees.selected_columns.person)
     assigned = func.json_each(data["people"]).table_valued("value")
     declared = select(assigned.c.value.label("person")).correlate_except(assigned)
