@@ -619,6 +619,8 @@ def test_settings_survive_reopening_and_failed_scene_retries_in_place(
         client.post("/actions", json={"action": "continue"})
         assert client.get("/state").json()["game"]["failure"] == game["failure"]
         client.post("/actions", json={"action": "retry"})
+        if step == "translation":
+            client.portal.call(client.app.state.web.game.drain)
         game = client.get("/state").json()["game"]
         assert game["failure"] is None
         if step == "say":
