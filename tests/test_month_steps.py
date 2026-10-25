@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 import pytest
-from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelResponse, TextPart
+from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.test import TestModel
 from starlette.testclient import TestClient
@@ -202,7 +202,8 @@ def test_rejected_decree_is_forced_withdrawn_or_reconsidered(
             assert client.get("/state").json()["game"]["date"]["month"] == 12
             ledger = audit(game_db.parent / save)
             world = next(e for e in ledger["entities"] if e["kind"] == "world")
-            assert world["data"]["imperial_prestige"] == 27
+            # Two monthly building yields (+10 each), one forced-decree delta (-3).
+            assert world["data"]["imperial_prestige"] == 37
             assert len(
                 [
                     f
@@ -574,15 +575,23 @@ def test_two_nights_feed_world_and_arrivals_wait_for_audience(
                 assert person["key"] not in state["night"]["hall"]
             client.post("/actions", json={"action": "load", "save": save})
             assert audit(tmp_path / save) == ledger
+        prior = [e for e in ledger["entities"] if e["kind"] == "night"]
+        scene_queries = []
         steps["scene"] = replaying(
-            ModelMessagesTypeAdapter.validate_json(
-                (RECORDED / "travel_admission.json").read_bytes()
-            )
+            [ModelResponse(parts=[ToolCallPart("read_records", {"kind": "night", "key": e["key"]}, tool_call_id=e["id"]) for e in prior]),
+             *ModelMessagesTypeAdapter.validate_json((RECORDED / "travel_admission.json").read_bytes())],
+            scene_queries,
         )
         client.post("/actions", json={"action": "open"})
         client.post(
             "/actions", json={"action": "say", "words": "宣毕自严、徐光启入殿。"}
         )
+        results = {p.tool_call_id: p.model_response_object() for m in scene_queries for p in m.parts if isinstance(p, ToolReturnPart) and p.tool_name == "read_records"}
+        for night in prior:
+            data = results[night["id"]]["entities"][0]["data"]
+            assert data["date"] == {"year": 1627, "month": 10}
+            assert {t["id"] for t in data["turns"]} == {f["detail"]["id"] for f in ledger["facts"] if f["entity_id"] == night["id"] and f["kind"] == "turn"}
+            assert all("hall" in t for t in data["turns"])
         assert {"毕自严", "徐光启"} <= set(
             client.get("/state").json()["game"]["night"]["hall"]
         )

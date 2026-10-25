@@ -13,9 +13,9 @@
           "part_kind": "thinking"
         },
         {
-          "tool_name": "read_person",
+          "tool_name": "read_records",
           "args": {
-            "name": "徐光启"
+            "kind": "person", "key": "徐光启"
           },
           "tool_call_id": "toolu_01G5wuEjuvGU2Qy5KccJMWHx",
           "tool_kind": null,
@@ -25,9 +25,9 @@
           "part_kind": "tool-call"
         },
         {
-          "tool_name": "read_person",
+          "tool_name": "read_records",
           "args": {
-            "name": "韩爌"
+            "kind": "person", "key": "韩爌"
           },
           "tool_call_id": "toolu_01EM1PgCuGRRktwLu9TzYRgB",
           "tool_kind": null,
@@ -37,9 +37,9 @@
           "part_kind": "tool-call"
         },
         {
-          "tool_name": "read_person",
+          "tool_name": "read_records",
           "args": {
-            "name": "王体乾"
+            "kind": "person", "key": "王体乾"
           },
           "tool_call_id": "toolu_01Saa1RpbZKQ3HTFBsaFWMou",
           "tool_kind": null,
@@ -49,9 +49,9 @@
           "part_kind": "tool-call"
         },
         {
-          "tool_name": "read_person",
+          "tool_name": "read_records",
           "args": {
-            "name": "郭允厚"
+            "kind": "person", "key": "郭允厚"
           },
           "tool_call_id": "toolu_01UuhBZy3wLWnXtunzE3y9bD",
           "tool_kind": null,

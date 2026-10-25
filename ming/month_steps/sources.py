@@ -56,17 +56,8 @@ class Sources:
             "urgent",
             Officials(people=[e.key for e in people]),
             {
-                "drafters": [
-                    {
-                        "name": e.key,
-                        "appointments": self.court.appointments(e.key),
-                        "faction": e.data.get("faction"),
-                        "style": e.data.get("style"),
-                    }
-                    for e in people
-                ],
                 "returned": [f.detail for f in self.court.returned_petitions()],
-                "instruction": "以在职首辅、司礼监掌印的立场择本月急务、排先后，附事实与拟旨成奏折。署名由你定，不以首辅优先。可以交空；发回原案由在职者改票并填写 revision_of，不复述原案充作新案。选项由你拟，不附发回改票按钮。",
+                "instruction": "以在职首辅、司礼监掌印的立场择本月急务、排先后，按各人立场与利害拟旨成奏折。署名由你定，不以首辅优先。可以交空；发回原案由在职者改票并填写 revision_of，不复述原案充作新案。选项由你拟，不附发回改票按钮。",
             },
         )
 
@@ -79,12 +70,8 @@ class Sources:
             "impeachment",
             Officials(people=people),
             {
-                "faction": faction.model_dump(mode="json"),
+                "faction": faction.key,
                 "people": people,
-                "factions": [
-                    e.model_dump(mode="json")
-                    for e in self.court.entities("audit", kind="faction")
-                ],
                 "instruction": "以本派在朝人物的身份看本月见闻和本派、对手势力，自行决定劾不劾、劾谁、如何归因，可以交空。灾难真而归因可夹私货。署名人及被劾人用账本正名。每折三项：顺水推舟办人、压下、查实再办，措辞自拟。",
             },
         )
@@ -110,7 +97,7 @@ class Sources:
         def names(ctx: RunContext[Materials], output: Urgencies | Impeachments):
             catalogue = ctx.deps.court.catalogue()
             allowed: dict[str, list[str]] | list[str] = catalogue["person"]
-            expected: object = name_expected("person", "", catalogue, directory="catalogue")
+            expected: object = name_expected("person", "", catalogue)
             if kind == "urgent":
                 allowed = identity.people
                 expected = allowed

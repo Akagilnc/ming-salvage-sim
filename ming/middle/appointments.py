@@ -12,7 +12,7 @@ CATALOGUE_KINDS = ("office", "territory")
 
 def incumbency_record(pair: Sequence[str], holders: list[str]) -> tuple[str, Item]:
     return json.dumps(pair, ensure_ascii=False), {
-        "office": pair[0], "territory": pair[1], "holders": holders,
+        "office": pair[0], "territory": pair[1], "holders": holders, "acting": [],
     }
 
 
@@ -27,14 +27,18 @@ def named(ledger: Ledger, kind: str, value: str) -> list[Item]:
 def office_pairs(ledger: Ledger, value: str) -> list[tuple[str, str]]:
     exact = named(ledger, "office", value)
     if exact:
-        return [(row["key"], "") for row in exact]
+        return [(row["key"], "") for row in exact if not row["data"].get("external", False)]
+    records = ledger.entities(kind="incumbency", key=value)
+    if records:
+        return [(r["data"]["office"], r["data"]["territory"]) for r in records
+                if r["data"]["territory"] or not named(ledger, "office", r["data"]["office"])[0]["data"].get("external", False)]
     aliases = func.json_each(E.data["aliases"]).table_valued("value")
     pairs: set[tuple[str, str]] = set()
     query = ENTITY_ROWS.where(or_(
         func.substr(literal(value), -func.length(E.key)) == E.key,
         select(aliases.c.value).where(func.substr(literal(value), -func.length(aliases.c.value)) == aliases.c.value).exists(),
     ))
-    for office in ledger.entities(kind="office", query=query):
+    for office in ledger.entities(kind="office", query=query.where(E.data["external"].as_boolean().is_not(False))):
         for title in [office["key"], *office["data"]["aliases"]]:
             if title and value.endswith(title):
                 for territory in named(ledger, "territory", value[:-len(title)]):
@@ -73,6 +77,8 @@ def cabinet_members(records: dict[tuple[str, str], Item]) -> set[str]:
 
 def held_by(ledger: Ledger, people: list[str]) -> list[Item]:
     holders = func.json_each(E.data["holders"]).table_valued("value")
-    return ledger.entities(kind="incumbency", query=ENTITY_ROWS.where(
-        select(holders.c.value).where(holders.c.value.in_(people)).exists()
-    ))
+    acting = func.json_each(E.data["acting"]).table_valued("value")
+    return ledger.entities(kind="incumbency", query=ENTITY_ROWS.where(or_(
+        select(holders.c.value).where(holders.c.value.in_(people)).exists(),
+        select(acting.c.value).where(acting.c.value.in_(people)).exists(),
+    )))

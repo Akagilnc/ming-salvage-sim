@@ -2,7 +2,6 @@
 
 import json
 from collections.abc import Callable, Iterator, Sequence
-from typing import Any
 from uuid import UUID
 
 from sqlalchemy import or_
@@ -35,7 +34,7 @@ def landing_entities(
         )
         pairs.update(
             ("person", name) for f in result.facts if f.entity_type == "incumbency"
-            for c in f.changes if c.field == "holders" for name in c.value
+            for c in f.changes if c.field in {"holders", "acting"} for name in c.value
         )
         pairs.update(("affair", f.affair) for f in result.facts if f.affair is not None)
     if isinstance(result, NightDeclaration):
@@ -66,7 +65,7 @@ def landing_entities(
         for f in result.facts if f.entity_type == "person"
         for c in f.changes if c.field == "location"
     }
-    incumbents = {name for (kind, _), row in found.items() if kind == "incumbency" for name in row["data"]["holders"]}
+    incumbents = {name for (kind, _), row in found.items() if kind == "incumbency" for field in ("holders", "acting") for name in row["data"].get(field, [])}
     for e in ledger.read(ENTITY_ROWS.where(or_(
         (E.kind == "distance") & E.key.in_(origins),
         (E.kind == "person") & E.key.in_(incumbents),
@@ -80,7 +79,6 @@ def dispatch(
     result: Declaration | Unhandled,
     night_id: UUID,
     monthly: LandingMode | None = None,
-    baselines: dict[tuple[str, str, str], Any] | None = None,
 ) -> None:
     owner = ledger.get(night_id)
     existing = landing_entities(ledger, result, owner)
@@ -122,14 +120,6 @@ def dispatch(
 
     decrees = record_decrees(result, owner, known, record)
     if not isinstance(result, Unhandled):
-        # A share declares post-values from the reading it saw. Shares landed
-        # since then shift the whole share once: none overwrites another, and
-        # its own successive facts stay the progression it declared.
-        offsets = {
-            key: existing[key[:2]]["data"][key[2]] - value
-            for key, value in (baselines or {}).items()
-            if key[:2] in existing
-        }
         for fact in result.facts:
             pair = fact.entity_type, fact.entity
             if (fact.create or fact.entity_type == "incumbency") and pair not in existing:
@@ -142,7 +132,7 @@ def dispatch(
                 if fact.affair is not None
                 else {}
             )
-            detail = field_values(fact, entity.data, amounts.get((i, j)), offsets)
+            detail = field_values(fact, entity.data, amounts.get((i, j)))
             detail.update(association)
             if (i, j) in reasons:
                 detail["limit_reason"] = reasons[i, j]
@@ -152,8 +142,8 @@ def dispatch(
             changes = detail["changes"]
             if entity.kind == "person":
                 move_person(entity, changes, existing, record)
-            if entity.kind == "incumbency" and "holders" in changes:
-                displace(entity, changes["holders"], known, record, {**association, "text": fact.text})
+            if entity.kind == "incumbency":
+                displace(entity, changes, known, record, {**association, "text": fact.text})
             record(entity, "changed", detail, changes)
             retire_chief(existing, known, record, {**association, "text": fact.text})
             if (i, j) in amounts:
@@ -359,25 +349,30 @@ def retire_chief(
     if chief["data"]["holders"][0] in cabinet_members(existing):
         return
     appointment = known("incumbency", chief["key"])
-    displace(appointment, [], known, record, association)
+    displace(appointment, {"holders": []}, known, record, association)
     record(appointment, "changed", {**association, "changes": {"holders": []}}, {"holders": []})
 
 
 # This rule is shared by immediate and monthly landing, not a second dispatch path.
 def displace(
     appointment: Entity,
-    holders: list[str],
+    changes: Item,
     known: Callable[[str, str], Entity],
     record: Callable[[Entity, str, Item, Item], None],
     association: Item,
 ) -> None:
-    previous = appointment.data["holders"]
-    for person in dict.fromkeys([*previous, *holders]):
-        if (person in previous) != (person in holders):
-            record(known("person", person), "appointed" if person in holders else "displaced", {
-                "incumbency_id": str(appointment.id),
-                "office": appointment.data["office"],
-                "territory": appointment.data["territory"],
-                "holders": holders,
-                **association,
-            }, {})
+    for field in ("holders", "acting"):
+        if field not in changes:
+            continue
+        previous = appointment.data.get(field, [])
+        holders = changes[field]
+        for person in dict.fromkeys([*previous, *holders]):
+            if (person in previous) != (person in holders):
+                record(known("person", person), "appointed" if person in holders else "displaced", {
+                    "incumbency_id": str(appointment.id),
+                    "office": appointment.data["office"],
+                    "territory": appointment.data["territory"],
+                    field: holders,
+                    "role": field,
+                    **association,
+                }, {})

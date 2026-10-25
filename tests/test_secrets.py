@@ -6,11 +6,14 @@ from functools import partial
 from pathlib import Path
 
 import pytest
+from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelHTTPError
-from pydantic_ai.messages import ModelMessagesTypeAdapter
+from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelResponse, ToolCallPart, ToolReturnPart
 from starlette.testclient import TestClient
 
 from ming.middle.view import Officials
+from ming.middle.records import Materials, read_records
+from ming.middle.month_work import prompt
 from ming.web import create_app
 from tests.test_court import replaying
 from tests.test_web import assert_record_queries
@@ -32,6 +35,94 @@ def declaration_reply(messages, response_file, quiet_month=None, stage="landing"
         return json.loads((RECORDED / response_file).read_text())[name][stage]
     name = response_file if source["data"].get("secret") and prompt["date"]["month"] != quiet_month else "month_empty.txt"
     return (RECORDED / name).read_text()
+
+
+@pytest.mark.parametrize("game_db", ["secret_night"], indirect=True)
+def test_every_model_call_reads_identity_scoped_records(game_db, steps):
+    names = ("scene", "NightDeclaration", "Declaration", "simulation", "deliberation", "urgent", "impeachment", "secret_report", "gazette")
+    received = {name: [] for name in names}
+    tools = {name: [] for name in names}
+    outputs = {
+        "scene": "done",
+        "NightDeclaration": json.dumps({"facts": [], "decrees": [{"text": "", "origin": "emperor", "secret": False, "turn": 1, "people": ["王体乾"]}]}),
+        "Declaration": (RECORDED / "month_empty.txt").read_text(),
+        "urgent": (RECORDED / "sources_empty.txt").read_text(),
+        "impeachment": (RECORDED / "sources_empty.txt").read_text(),
+        **{name: (RECORDED / f"{name}.txt").read_text() for name in ("simulation", "deliberation", "secret_report", "gazette")},
+    }
+    for name in names:
+        steps[name] = replaying(
+            lambda messages, name=name: outputs[name] if any(isinstance(p, ToolReturnPart) for m in messages for p in m.parts)
+            else ModelResponse(parts=[ToolCallPart("read_records", {"kind": "person", "key": "王体乾"}, tool_call_id="person"),
+                                      ToolCallPart("read_records", {"kind": "incumbency", "key": "户部尚书"}, tool_call_id="office")]),
+            received[name], tools[name],
+        )
+    with TestClient(create_app(game_db.parent)) as client:
+        client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
+        client.post("/actions", json={"action": "open"}).raise_for_status()
+        client.post("/actions", json={"action": "say", "words": "目前陕西巡抚可有？最高长官是谁？"}).raise_for_status()
+        client.post("/actions", json={"action": "dismiss"}).raise_for_status()
+        client.portal.call(client.app.state.web.game.drain)
+        client.post("/actions", json={"action": "month"}).raise_for_status()
+        assert client.get("/state").json()["game"]["failure"] is None
+        court = client.app.state.web.game.court
+        for name in names:
+            assert tools[name]
+            assert all("read_records" in available and "read_person" not in available for available in tools[name])
+            returns = [p.model_response_object() for m in received[name] for p in m.parts
+                       if isinstance(p, ToolReturnPart) and p.tool_call_id == "office"]
+            assert returns and all(r["appointments"][0]["holders"] == ["郭允厚"] for r in returns)
+            for message in received[name]:
+                if message.kind != "request" or message.parts[0].part_kind != "user-prompt":
+                    continue
+                if name in {"urgent", "impeachment", "deliberation", "secret_report"}:
+                    data = json.loads(message.parts[0].content)
+                    people = [e["key"] for e in data["speakers"]]
+                    identity = Officials(people=people, exclude_secrets=name == "deliberation")
+                    assert data["speakers"] == [e.model_dump(mode="json") for person in people
+                                                for e in court.entities(identity, kind="person", key=person)]
+                    assert all({"seed_guilt", "dossier"}.issubset(e["data"]) for e in data["speakers"])
+                    assert "factions" not in data["context"]
+
+
+@pytest.mark.parametrize("game_db", ["secret_night"], indirect=True)
+def test_secret_appointment_queries_share_person_visibility(game_db, steps):
+    steps["Declaration"] = replaying(partial(declaration_reply, response_file="month_secret_appointment.json"))
+    with TestClient(create_app(game_db.parent)) as client:
+        client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
+        client.post("/actions", json={"action": "month"}).raise_for_status()
+        assert client.get("/state").json()["game"]["failure"] is None
+        court = client.app.state.web.game.court
+        for identity, known in (("world", True), ("emperor", True), ("public", False),
+                                (Officials(people=["王承恩"]), True), (Officials(people=["王体乾"]), False)):
+            received = []
+            queries = {
+                "office": {"kind": "incumbency", "key": "陕西巡抚"},
+                "person": {"kind": "person", "key": "洪承畴"},
+                "self": {"kind": "person", "key": "王体乾"},
+                "faction": {"kind": "faction", "key": "阉党"},
+                "other": {"kind": "faction", "key": "东林"},
+                "night": {"kind": "night", "key": court.entities("audit", kind="night")[0].key},
+            }
+            steps["records"] = replaying([ModelResponse(parts=[ToolCallPart("read_records", q, tool_call_id=k)
+                                                              for k, q in queries.items()]), "done"], received)
+            agent = Agent(steps["records"], name="records", deps_type=Materials, tools=[read_records])
+            asyncio.run(agent.run(prompt(court, identity, {}), deps=Materials(court, identity)))
+            results = {p.tool_call_id: p.model_response_object() for m in received for p in m.parts if isinstance(p, ToolReturnPart)}
+            assert results["office"]["status"] == ("occupied" if known else "not_found")
+            assert bool(results["night"].get("entities")) == (identity != "public" and known)
+            data = results["person"]["entities"][0]["data"]
+            assert any(a["territory"] == "陕西" and a["office"] == "巡抚" for a in data["appointments"]) == known
+            if not known:
+                assert not any(f["detail"].get("office") == "巡抚" for f in results["person"]["facts"])
+            if isinstance(identity, Officials):
+                own = identity.people == ["王体乾"]
+                data = results["self"]["entities"][0]["data"]
+                assert {"loyalty", "integrity", "courage", "intrigue", "identity", "seed_guilt", "dossier"}.issubset(data) == own
+                if own:
+                    assert data["loyalty"] == "心志浮动"
+                assert ("satisfaction" in results["faction"]["entities"][0]["data"]) == own
+                assert results["other"]["entities"][0]["data"] == {"name": "东林"}
 
 
 @pytest.mark.parametrize("game_db", ["secret_night"], indirect=True)
@@ -74,9 +165,8 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
                 d.id for d in court.entities(Officials(people=[person]), kind="decree")
             } == expected
             assert [
-                e["date"]
-                for e in court.read_person(person).events
-                if e["kind"] == "decreed"
+                e.detail["date"]
+                for e in court.facts(Officials(people=[person]), entity_id=list(expected), kind="decreed")
             ] == [court.calendar().data] * len(expected)
         assert not court.entities("public", kind="decree")
         assert {
@@ -157,14 +247,14 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
         for message in material:
             for part in message.parts:
                 if part.part_kind == "user-prompt":
-                    prompt = json.loads(part.content)
+                    prompt = json.loads(part.content)["context"]
                     assert prompt["decree"]["id"] == str(secret.id)
                     assert all(
                         "emperor_words" not in f
                         for f in prompt["facts"] + prompt["products"]
                     )
         assert (
-            json.loads(material[-1].parts[0].content)["decree"]["data"]["exposure"][
+            json.loads(material[-1].parts[0].content)["context"]["decree"]["data"]["exposure"][
                 "stage"
             ]
             == "半公开"
@@ -228,9 +318,8 @@ def test_discoveries_stay_private_and_completion_stops_only_reports(
             ]
             assert len(changed) == 2 * done
             assert [
-                e["date"]
-                for e in court.read_person("王承恩").events
-                if e["kind"] == "changed"
+                e.detail["date"]
+                for e in court.facts(Officials(people=["王承恩"]), entity_id=court.entities("audit", kind="person", key="王承恩")[0].id, kind="changed")
             ] == [f.detail["date"] for f in changed if not f.detail["discovered"]]
             assert (
                 court.entities("audit", kind="person", key="韩爌")[0].data["intrigue"]

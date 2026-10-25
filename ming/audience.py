@@ -19,7 +19,9 @@ from ming.middle.court import Court
 from ming.middle.declaration import NightDeclaration
 from ming.middle.invoke import ModelSource, TextUpdate, build_agent, invoke, stream_text
 from ming.middle.opening import CONTENT
-from ming.middle.scene import HallResult, PersonView
+from ming.middle.scene import HallResult
+from ming.middle.records import read_records
+from ming.middle.view import Officials
 
 
 class Audience:
@@ -29,10 +31,6 @@ class Audience:
         self._turn: asyncio.Task[str] | None = None
         self._dismiss_requested: UUID | None = None
         self.translation = court.translation_agent(NightDeclaration)
-
-        async def read_person(ctx: RunContext[Audience], name: str) -> PersonView:
-            """查某人的档案，姓名取账本正名。"""
-            return ctx.deps.court.read_person(name)
 
         async def get_hall(ctx: RunContext[Audience]) -> list[str]:
             """看今夜殿上名单。"""
@@ -54,8 +52,12 @@ class Audience:
             output_type=str,
             deps_type=Audience,
             instructions=(CONTENT / "prompts/scene_agent.md").read_text(),
-            tools=[read_person, get_hall, set_hall, dismiss],
+            tools=[read_records, get_hall, set_hall, dismiss],
         )
+
+    @property
+    def identity(self) -> Officials:
+        return Officials(people=self.court.night(self.night_id).hall)
 
     @property
     def night_id(self) -> UUID:
@@ -123,7 +125,7 @@ class Audience:
         try:
             result = await invoke(
                 self.scene,
-                [json.dumps(self.court.scene_material(), ensure_ascii=False), words],
+                [json.dumps({**self.court.scene_material(), "catalogue": self.court.record_catalogue(self.identity)}, ensure_ascii=False), words],
                 deps=self,
                 message_history=history,
                 event_stream_handler=partial(stream_text, on_delta)

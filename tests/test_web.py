@@ -193,9 +193,10 @@ def test_menu_creates_distinct_games_and_opens_only_existing_saves(
             "person",
             "calendar",
             "gazette",
+            "incumbency",
         }
         assert all(
-            set(e["data"]) <= {"name", "appointments", "location", "status"}
+            set(e["data"]) <= {"name", "appointments", "location", "status", "identity_description", "transit_to", "waiting_audience", "journey"}
             for e in records["entities"]
             if e["kind"] == "person"
         )
@@ -472,9 +473,7 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
             ]
             assert all("names_and_aliases" not in data["unknown-key"] for data in case)
             assert all(data["date"] == data["date-original"] == data["date-reordered"] for data in case)
-            assert {f["entity_id"] for f in materials["gazette"][0]["facts"] if f["kind"] == "reported"} == {
-                e["id"] for e in ledger["entities"] if e["kind"] == "account" and e["key"] == "国库"
-            }
+            assert not [f for f in materials["gazette"][0]["facts"] if f["kind"] == "reported"]
             assert all(
                 {e["key"]: e["data"] for e in data["entities"] if e["kind"] == "account"}
                 == {name: {"name": name} for name in ("国库", "内库", "节慎库", "常盈库")}

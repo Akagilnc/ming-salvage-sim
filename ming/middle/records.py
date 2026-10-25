@@ -37,14 +37,21 @@ async def read_records(
     """按输入 catalogue 取阅。须带类、正名或日期，不空参读全账。
 
     Args:
-        kind: 实体类；只给类返回正名与事件数清单，不给全文。
+        kind: 实体类；只给类返回正名与事件数清单，不给全文。office 或 incumbency 点名查官职与现任。
         key: 一个或多个账本正名或别名；点名才取实体数据与可读事件全文。
         date: 月份（year、month）；点名时限定事件月份，否则列该月有事件的实体。
+    官职结果 status：occupied 有正任，vacant 此缺现无人在任，acting 正任空缺但有人暂署；
+    appointments 给正任 holders、暂署 acting。territory_required 须带属地，territories 给已有可见候选；
+    office_not_found 无此官职，names_and_aliases 给相近候选；not_found 未找到，不表示空缺。
     """
     if kind is None and not key and date is None:
         return {"status": "query_required", "message": "须带类、正名或日期之一，目录见输入"}
     month = date.model_dump() if date is not None else None
-    catalogue = ctx.deps.court.record_catalogue(ctx.deps.identity, month)
+    if kind in {"office", "incumbency"} and key:
+        results = [ctx.deps.court.office_record(ctx.deps.identity, name, month)
+                   for name in ([key] if isinstance(key, str) else key)]
+        return results[0] if len(results) == 1 else {"offices": results}
+    catalogue = ctx.deps.court.record_catalogue(ctx.deps.identity, month, kind)
     selected = [e for e in catalogue if kind is None or e["kind"] == kind]
     keys = [key] if isinstance(key, str) else key
     names = ctx.deps.court.catalogue(selected)
@@ -54,9 +61,7 @@ async def read_records(
                                    if value in aliases)))
         for value in keys or []
     }
-    if (kind is not None and not selected) or any(len(v) != 1 for v in resolved.values()) or (
-        ctx.deps.identity == "translation" and date is not None
-    ):
+    if (kind is not None and not selected) or any(len(v) != 1 for v in resolved.values()):
         candidates = matching_names(names, keys or [])
         return {
             "status": "not_found", "message": "未找到",

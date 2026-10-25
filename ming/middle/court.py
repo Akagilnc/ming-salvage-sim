@@ -2,6 +2,7 @@
 
 import logging
 from collections import Counter
+from difflib import get_close_matches
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from shutil import copyfileobj
@@ -17,7 +18,7 @@ from ming.ledger import (
     FACT_ROWS,
 )
 from ming.middle import queries
-from ming.middle.appointments import held_by
+from ming.middle.appointments import named, office_pairs, incumbency_record
 
 from ming.ledger import Entity, Item, Ledger
 from ming.middle.dispatch import dispatch, latest_detail
@@ -31,9 +32,10 @@ from ming.middle.declaration import (
 )
 from ming.middle.invoke import ModelSource
 from ming.middle.records import TranslationMaterials
+from ming.middle.rules import matching_names
 from ming.middle.opening import opening_template
 from ming.middle.night import NightView, dismiss, known_people, open_night, read_night
-from ming.middle.scene import HallResult, PersonView, read_person, set_hall
+from ming.middle.scene import HallResult, set_hall
 from ming.middle.translate import INSTRUCTIONS, declaration_agent, translate
 from ming.middle.translate import catalogue as names_and_aliases
 from ming.middle.view import (
@@ -43,6 +45,7 @@ from ming.middle.view import (
     character_input,
     entities,
     project,
+    visible_appointments,
 )
 
 T = TypeVar("T", bound=Declaration)
@@ -88,12 +91,6 @@ class Court:
 
     def dismiss(self, night_id: UUID) -> None:
         dismiss(self._ledger, night_id)
-
-    def read_person(self, name: str) -> PersonView:
-        return read_person(self._ledger, name)
-
-    def appointments(self, name: str) -> list[Item]:
-        return [r["data"] for r in held_by(self._ledger, [name])]
 
     def set_hall(self, night_id: UUID, add: list[str], remove: list[str]) -> HallResult:
         return set_hall(self._ledger, night_id, add, remove)
@@ -254,7 +251,7 @@ class Court:
     async def translate(
         self, agent: Agent[TranslationMaterials, T], prompt: str, source: UUID
     ) -> T | Unhandled:
-        result = await translate(agent, prompt, TranslationMaterials(self, "translation", source))
+        result = await translate(agent, prompt, TranslationMaterials(self, "world", source))
         self.log.info("translation output: %s", result.model_dump_json())
         return result
 
@@ -264,14 +261,13 @@ class Court:
         source: UUID,
         *,
         monthly: LandingMode | None = None,
-        baselines: dict[tuple[str, str, str], Any] | None = None,
     ) -> None:
-        dispatch(self._ledger, result, source, monthly, baselines)
+        dispatch(self._ledger, result, source, monthly)
 
-    def record_catalogue(self, identity: Identity, date: Item | None = None) -> list[Item]:
+    def record_catalogue(self, identity: Identity, date: Item | None = None, kind: str | None = None) -> list[Item]:
         """Names and counts from the existing entity/fact projections, never prose."""
         counts = Counter(f.entity_id for f in self.facts(identity))
-        visible = {e.id for e in self.entities(identity)} | counts.keys()
+        visible = {e.id for e in self.entities(identity, kind=kind)} | counts.keys()
         if date is not None:
             counts = Counter(f.entity_id for f in self.facts(identity, date=date))
         return [
@@ -280,21 +276,56 @@ class Court:
                 "key": row["key"],
                 "event_count": counts[row["id"]],
             }
-            for row in self._ledger.entities(entity_id=list(visible))
+            for row in self._ledger.entities(kind=kind, entity_id=list(visible))
         ]
+
+    def office_record(self, identity: Identity, key: str, date: Item | None = None) -> Item:
+        pairs = office_pairs(self._ledger, key)
+        exact = named(self._ledger, "office", key)
+        if not pairs and exact:
+            offices = {e["key"] for e in exact}
+            return {"status": "territory_required", "territories": sorted({
+                e.data["territory"] for e in self.entities(identity, kind="incumbency")
+                if e.data["office"] in offices
+            })}
+        if len(pairs) != 1:
+            names = self.catalogue([*self.record_catalogue(identity, kind="office"), *self.record_catalogue(identity, kind="territory")])
+            prefix = max((label for name, aliases in names.get("territory", {}).items()
+                          for label in [name, *aliases] if key.startswith(label)), key=len, default="")
+            candidates = matching_names({"office": names.get("office", {})}, [key])
+            if not candidates:
+                candidates = {"office": {name: names["office"][name] for name in get_close_matches(
+                    key[len(prefix):], list(names.get("office", {})), cutoff=0.5
+                )}}
+                if not candidates["office"]:
+                    candidates = {}
+            return {"status": "office_not_found", "names_and_aliases": candidates}
+        office = pairs[0][0]
+        record_key, data = incumbency_record(pairs[0], [])
+        rows = self._ledger.entities(kind="incumbency", key=record_key)
+        visible = visible_appointments(self._ledger, identity, rows)
+        if rows and not visible:
+            return {"status": "not_found", "message": "未找到"}
+        if visible:
+            data = visible[0]["data"]
+        return {
+            "status": "occupied" if data["holders"] else "acting" if data.get("acting") else "vacant",
+            "appointments": [data],
+            "entities": [e.model_dump(mode="json") for e in self.entities(identity, kind="office", key=office)],
+            "facts": [f.model_dump(mode="json") for f in self.facts(identity, entity_id=[e["id"] for e in visible], date=date)],
+        }
 
     async def read_records(
         self, identity: Identity, kind: str | None = None,
         key: str | list[str] | None = None, date: Item | None = None,
     ) -> Item:
         """Read the selected identity projection; the frontend retains its full read."""
-        keys = list(dict.fromkeys(key)) if isinstance(key, list) else [key]
-        rows = [e for name in keys for e in self.entities(identity, kind=kind, key=name)]
-        ids = (
-            [e.id for name in keys for e in self.entities("audit", kind=kind, key=name)]
-            if kind is not None or key is not None
-            else []
-        )
+        keys = list(dict.fromkeys(key)) if isinstance(key, list) else [key] if key is not None else None
+        selection = {k: v for k, v in {"kind": kind, "keys": keys}.items() if v is not None}
+        rows = entities(self._ledger, identity, selection)
+        ids = [e["id"] for e in self._ledger.entities(
+            kind=kind, query=ENTITY_ROWS.where(E.key.in_(keys)) if keys is not None else ENTITY_ROWS
+        )] if kind is not None or key is not None else []
         return {
             "entities": [e.model_dump(mode="json") for e in rows],
             "facts": [

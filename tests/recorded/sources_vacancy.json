@@ -29,9 +29,9 @@
       "parts": [
         {
           "part_kind": "tool-call",
-          "tool_name": "read_person",
+          "tool_name": "read_records",
           "args": {
-            "name": "王体乾"
+            "kind": "person", "key": "王体乾"
           },
           "tool_call_id": "toolu_01AKUkRvvtXeikKx7n9BWwDp"
         }
@@ -42,9 +42,9 @@
       "parts": [
         {
           "part_kind": "tool-call",
-          "tool_name": "read_person",
+          "tool_name": "read_records",
           "args": {
-            "name": "王承恩"
+            "kind": "person", "key": "王承恩"
           },
           "tool_call_id": "toolu_01PNq1XGCSRhM7p9i35qA8Kj"
         }
@@ -55,9 +55,9 @@
       "parts": [
         {
           "part_kind": "tool-call",
-          "tool_name": "read_person",
+          "tool_name": "read_records",
           "args": {
-            "name": "黄立极"
+            "kind": "person", "key": "黄立极"
           },
           "tool_call_id": "toolu_01Pg9hJFxGyFiEHZFNABvFpb"
         }
@@ -68,9 +68,9 @@
       "parts": [
         {
           "part_kind": "tool-call",
-          "tool_name": "read_person",
+          "tool_name": "read_records",
           "args": {
-            "name": "施凤来"
+            "kind": "person", "key": "施凤来"
           },
           "tool_call_id": "toolu_019j4DFn9SoxoyEAAm2trncs"
         }
@@ -81,9 +81,9 @@
       "parts": [
         {
           "part_kind": "tool-call",
-          "tool_name": "read_person",
+          "tool_name": "read_records",
           "args": {
-            "name": "张瑞图"
+            "kind": "person", "key": "张瑞图"
           },
           "tool_call_id": "toolu_019tBwzqTQDdfQg5B5yTNdYp"
         }
@@ -94,9 +94,9 @@
       "parts": [
         {
           "part_kind": "tool-call",
-          "tool_name": "read_person",
+          "tool_name": "read_records",
           "args": {
-            "name": "李国普"
+            "kind": "person", "key": "李国普"
           },
           "tool_call_id": "toolu_01QfG15vNqX4eZ8EeTkCjBji"
         }

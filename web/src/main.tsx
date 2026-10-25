@@ -196,7 +196,7 @@ export function App() {
         <button className="close" onClick={() => setPanel(null)}>合上</button>
         {panel === 'settings' ? <SettingsForm initial={snapshot.settings} requiredSettings={snapshot.required_settings} onSave={settings => { void action({ action: 'settings', settings }).then(() => setPanel(null)); }} /> :
           panel === 'roster' ? <><h2>名册</h2>{people.map(person => <article key={person.id}>
-            <header><MarkdownText>{person.key}</MarkdownText></header><MarkdownText>{`${((person.data.appointments ?? []) as { office: string; territory: string }[]).map(a => `${a.territory}${a.office}`).join('、')} · ${String(person.data.location ?? '')} · ${String(person.data.status ?? '')}`}</MarkdownText>
+            <header><MarkdownText>{person.key}</MarkdownText></header><MarkdownText>{`${((person.data.appointments ?? []) as { office: string; territory: string; role: string }[]).map(a => `${a.role === 'acting' ? '署' : ''}${a.territory}${a.office}`).join('、') || String(person.data.identity_description ?? '')} · ${String(person.data.location ?? '')} · ${String(person.data.status ?? '')}`}</MarkdownText>
             {audience && <button disabled={busy || game.running} onClick={() => void action({ action: 'say', words: `宣${person.key}。` })}>宣召</button>}
           </article>)}</> : panel === 'orders' ? <><h2>旨意去向</h2>{book.entities.filter(entity => entity.kind === 'decree').map(entity => <article key={entity.id}>
             <MarkdownText>{String(entity.data.text)}</MarkdownText><MarkdownText>{`${String(entity.data.origin)} · ${String(entity.data.people)}`}</MarkdownText>

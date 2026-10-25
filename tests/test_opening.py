@@ -66,7 +66,8 @@ def test_new_game_imports_complete_world_records_and_separates_identities(
     ]:
         source = f"{filename}.json/{collection}"
         expected = json.loads((CONTENT / f"{filename}.json").read_text())[collection]
-        assert [e["data"] for e in entities if e["source"] == source] == [
+        assert [{k: v for k, v in e["data"].items() if not (collection == "offices" and k == "external")}
+                for e in entities if e["source"] == source] == [
             canonical(r) for r in expected
         ]
     assert [e["data"] for e in entities if e["kind"] == "historical_event"] == json.loads(
@@ -78,20 +79,24 @@ def test_new_game_imports_complete_world_records_and_separates_identities(
     offices = {e["key"]: e["data"] for e in entities if e["kind"] == "office"}
     assert offices["巡抚"]["multiple"] is False
     assert offices["内阁大学士"]["multiple"] is True
-    assert {e["kind"] for e in visible} == {"person", "calendar", "gazette"}
+    assert {offices[name]["external"] for name in ("巡抚", "知府", "卫指挥使")} == {True}
+    assert {offices[name]["external"] for name in ("户部尚书", "南京户部尚书", "内阁大学士")} == {False}
+    assert {e["kind"] for e in visible} == {"person", "calendar", "gazette", "incumbency"}
     shown = {e["key"]: e["data"] for e in visible if e["kind"] == "person"}
     assert shown.keys() == {e["key"] for e in entities if e["kind"] == "person"}
-    visible_fields = {"name", "appointments", "location", "status"}
+    visible_fields = {"name", "appointments", "location", "status", "identity_description", "transit_to", "waiting_audience", "journey"}
     assert all(set(data) <= visible_fields for data in shown.values())
     characters = {
         p["name"]: p
         for p in json.loads((CONTENT / "characters.json").read_text())["characters"]
     }
     for name in ["史可法", "徐光启", "黄道周", "练国事", "郭允厚"]:
-        assert {k: v for k, v in shown[name].items() if k != "appointments"} == {
-            k: v for k, v in canonical(characters[name]).items() if k in visible_fields
+        assert {k: v for k, v in shown[name].items() if k not in {"appointments", "identity_description"}} == {
+            k: v for k, v in canonical(characters[name]).items() if k in visible_fields - {"identity_description"}
         }
         assert [{k: a[k] for k in ("office", "territory")} for a in shown[name]["appointments"]] == characters[name]["appointments"]
+    assert "identity_description" not in shown["郭允厚"]
+    assert "identity_description" in shown["徐光启"]
     assert shown["孙传庭"]["appointments"] == []
     assert shown["毕自严"]["appointments"] == []
     people = {e["key"]: e["data"] for e in entities if e["kind"] == "person"}
@@ -104,15 +109,15 @@ def test_new_game_imports_complete_world_records_and_separates_identities(
             assert not former["territory"] or former["territory"] in territories
     assert all(shown[name]["appointments"] == [] for name in ("黄道周", "练国事", "何腾蛟", "瞿式耜", "钱龙锡", "刘鸿训", "李标"))
     assert shown["韩爌"]["location"] == "山西"
-    assert shown["来宗道"]["appointments"] == [{"office": "礼部尚书", "territory": "", "holders": ["来宗道"]}]
+    assert shown["来宗道"]["appointments"] == [{"office": "礼部尚书", "territory": "", "holders": ["来宗道"], "acting": [], "role": "holders"}]
     assert [e["data"]["holders"] for e in entities if e["kind"] == "incumbency" and e["data"]["office"] == "礼部尚书"] == [["来宗道"]]
     assert {a["office"] for a in shown["黄立极"]["appointments"]} == {"内阁大学士", "内阁首辅"}
     assert offices["内阁首辅"]["multiple"] is False
     assert offices["内阁首辅"]["department"] == "内阁"
     assert all({a["office"] for a in shown[name]["appointments"]} <= {"内阁大学士", "中极殿大学士"} for name in ("施凤来", "张瑞图", "李国普"))
-    assert shown["曾樱"]["appointments"] == [{"office": "知府", "territory": "南直隶常州府", "holders": ["曾樱"]}]
+    assert shown["曾樱"]["appointments"] == [{"office": "知府", "territory": "南直隶常州府", "holders": ["曾樱"], "acting": [], "role": "holders"}]
     assert shown["卢象升"]["location"] == "北直隶 / 京师"
-    assert shown["卢象升"]["appointments"] == [{"office": "知府", "territory": "北直隶大名府", "holders": ["卢象升"]}]
+    assert shown["卢象升"]["appointments"] == [{"office": "知府", "territory": "北直隶大名府", "holders": ["卢象升"], "acting": [], "role": "holders"}]
     assert not any({"office", "office_type", "office_region", "appointments"} & e["data"].keys() for e in entities if e["kind"] == "person")
     court = Court(path, TestModel())
     assert court.facts("audit") == []

@@ -42,24 +42,26 @@ text 保留皇帝认可的圣旨定稿全文，不改写、不摘要。origin �
 当场已经发生的事实用 facts：哪个实体、是否新建、字段变更列表、一段文字。不分类，不设动作枚举。
 只记今夜新发生的实况，不把邸报旧事、档案履历或大臣奏报中的说法当成今夜已经发生的事实。
 是待执行旨意还是当场实况，照整夜戏文判断；未认可的拟旨不能当成已经执行的事实。
-名字用账本正名或所列别名。任免写 entity_type=incumbency，entity 写史书官名（如户部右侍郎、南京户部尚书、陕西巡抚、西安知府），create=false。changes 的 holders 写变更后完整人名名单；一员最多一人，空名单为免职。首次任职由引擎创建在任记录；人物不存任职字段。一人可兼多职，任免不改变状态、所在、在场或行程。尚书现任只算掌部的一员；阁臣的尚书兼衔只记身份与履历文字，不写入在任记录。
+名字用账本正名或所列别名。任免写 entity_type=incumbency，entity 写史书官名（如户部右侍郎、南京户部尚书、陕西巡抚、西安知府），create=false。changes 的 holders 写正任变更后的完整人名名单，acting 写点名暂署的完整人名名单；一员最多一人，空名单为免职或撤署。外官须带属地，暂署不算正任。首次任职由引擎创建在任记录；人物不存任职字段。一人可兼多职，任免不改变状态、所在、在场或行程。罢去全部官职时，在同份声明中把罢官原因写进此人的 identity_description 作为处境。
+尚书现任只算掌部的一员；阁臣的尚书兼衔只记身份与履历文字，不写入在任记录。
 戏文已经宣布任命生效、受命者当场领受的，记在任记录；赴任、查账、造炮等尚待办理，不等于已经生效的任命也要等到月末。尚未获准的任命不提前记。
 内阁首辅为单员职务，须为在任阁臣；同份声明可先任大学士再任首辅。离开全部阁职时同时卸首辅，新首辅只替原首辅这一职。次辅只记身份。
 人在外地也可以当场起复或任职；除首辅须在任阁臣外，不以在任与否限制任命，location 不因此改变。新建实体明确 create=true，已有实体用 false。
 无字段变化可以只记文字；对象模型之外的伤情等记入所涉实体履历，不长新字段。
 奏报与公开说法单列 reports，只交实体、文字和 audience；facts 只记物理实况。
 在场进出归场景名单工具，退朝归场景退朝工具；不声明进出、退朝、说话人分段、可闻性或御前主角。
+皇威、民心、满意度与钱粮一样交带正负号的增减，引擎加到现值后夹范围，不交最终值。
 没有的项目交空列表，不凭空增添。
 """
 
 
 def catalogue(
-    ledger: Ledger, query: Select[Any] = CATALOGUE, exclude: tuple[str, ...] = (),
+    ledger: Ledger, query: Select[Any] = CATALOGUE,
 ) -> dict[str, dict[str, list[str]]]:
     result: dict[str, dict[str, list[str]]] = {}
     for row in ledger.read(query.with_only_columns(
         E.kind, E.key, E.data["aliases"].label("aliases"), E.data["name"].as_string().label("name"),
-    ).where(E.kind.not_in(exclude))):
+    )):
         aliases: list[str] = row["aliases"] or []
         name = row["name"]
         if name and name != row["key"]:
@@ -83,7 +85,7 @@ def allowed_fields(ledger: Ledger) -> dict[str, set[str]]:
         E.id.table.join(keys, true())
     ).where(E.source != "", E.kind != "calendar").distinct()):
         fields.setdefault(row["kind"], set()).add(row["field"])
-    fields["incumbency"] = {"holders"}
+    fields["incumbency"] = {"holders", "acting"}
     # Fiscal settlement, arrears and the content catalogues are engine-owned;
     # translation writes only the levers the month accounts read.
     fields["region"] = (fields.get("region", set()) - {"fiscal"}) | {"fiscal_surcharge"}
@@ -341,7 +343,7 @@ def check_appointment(ledger: Ledger, fact: Fact, path: str, names: Names, cabin
     office = ledger.entities(kind="office", key=pairs[0][0])[0]
     fact.entity = incumbency_record(pairs[0], [])[0]
     for j, change in enumerate(fact.changes):
-        if change.field != "holders":
+        if change.field not in {"holders", "acting"}:
             continue
         field = f"{path}.changes[{j}].value"
         value: Any = change.value
@@ -354,14 +356,15 @@ def check_appointment(ledger: Ledger, fact: Fact, path: str, names: Names, cabin
         for k, person in enumerate(holders):
             if person not in names.get("person", {}):
                 fail(f"{field}[{k}]", person, name_expected("person", person, names), names, "在任者用 expected 指向的输入人物目录中的正名，重交整份。")
-        if office["key"] == "内阁首辅":
+        if office["key"] == "内阁首辅" and change.field == "holders":
             eligible = sorted(cabinet_members(cabinet))
             for k, person in enumerate(holders):
                 if person not in eligible:
                     fail(f"{field}[{k}]", person, eligible, names, "首辅须为在任阁臣；可在同份声明中先任大学士，再任首辅。重交整份。")
-        cabinet[("incumbency", fact.entity)] = {
-            "kind": "incumbency", "data": incumbency_record(pairs[0], holders)[1],
-        }
+        if change.field == "holders":
+            cabinet[("incumbency", fact.entity)] = {
+                "kind": "incumbency", "data": incumbency_record(pairs[0], holders)[1],
+            }
 
 
 def check_references(ledger: Ledger, out: Declaration, names: Names) -> None:
@@ -430,12 +433,12 @@ def declaration_agent(
     )
 
     @agent.instructions
-    async def names() -> str:
+    async def names(ctx: RunContext[TranslationMaterials]) -> str:
         # Queries and JSON encoding stay on the caller's loop, like tools;
         # only model I/O yields.
         return json.dumps(
             {
-                "names_and_aliases": catalogue(ledger, exclude=CATALOGUE_KINDS),
+                "catalogue": ctx.deps.court.record_catalogue(ctx.deps.identity),
                 "field_schemas": {"payment_policy": PaymentPolicy.model_json_schema()},
                 "allowed_fields": {
                     k: sorted(v) for k, v in allowed_fields(ledger).items()

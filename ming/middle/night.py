@@ -51,8 +51,7 @@ def read_night(ledger: Ledger, night_id: UUID) -> NightView:
             spoken = hall
     return NightView(
         id=night_id,
-        **night["data"],
-        date={"year": date["year"], "month": date["month"]},
+        **{**night["data"], "date": night["data"].get("date", {"year": date["year"], "month": date["month"]})},
         turns=turns,
         result=night["result"],
     )
@@ -68,8 +67,9 @@ def open_night(ledger: Ledger) -> UUID:
     for row in ledger.read(LATEST_NIGHT):
         if not row["data"]["closed"]:
             return row["id"]
+    date = calendar_row(ledger)["data"]
     night = Entity(
-        "night", str(uuid4()), "", {"closed": False, "hall": list(INITIAL_HALL)}
+        "night", str(uuid4()), "", {"closed": False, "hall": list(INITIAL_HALL), "date": {k: date[k] for k in ("year", "month")}}
     )
     ledger.commit([night])
     return night.id
