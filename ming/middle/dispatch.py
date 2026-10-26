@@ -73,7 +73,9 @@ def landing_entities(
     return found
 
 
-def landing_sources(ledger: Ledger, date: Item) -> list[tuple[Item, LandingMode | None]]:
+def landing_sources(
+    ledger: Ledger, date: Item, *, include_history: bool = True,
+) -> list[tuple[Item, LandingMode | None]]:
     """The ordered decree references shared by monthly input, validation and landing."""
     sources: dict[UUID, tuple[Item, LandingMode | None]] = {
         row["id"]: (row, "landed") for row in ledger.read(queries.errands(date))
@@ -90,8 +92,9 @@ def landing_sources(ledger: Ledger, date: Item) -> list[tuple[Item, LandingMode 
         elif row["data"].get("interim"):
             mode = "attempted"
         sources[row["id"]] = (row, mode)
-    for row in ledger.read(ENTITY_ROWS.where(queries.public_decree())):
-        sources.setdefault(row["id"], (row, None))
+    if include_history:
+        for row in ledger.read(ENTITY_ROWS.where(queries.public_decree())):
+            sources.setdefault(row["id"], (row, None))
     return list(sources.values())
 
 
