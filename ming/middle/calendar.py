@@ -1,9 +1,7 @@
 """Monthly person movement settles before reports; the calendar advances last."""
 
 from ming.ledger import Entity, Item, Ledger
-from sqlalchemy import select
-
-from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS, FACT_COLUMNS as F
+from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS
 
 
 CAPITAL = "北直隶 / 京师"
@@ -37,31 +35,20 @@ def settle_journeys(ledger: Ledger) -> None:
     rows = ledger.entities(
         kind="person", query=ENTITY_ROWS.where(
             E.data["transit_to"].as_string() != "",
-            ~select(F.position).where(
-                F.entity_id == E.id, F.kind.in_(("travelled", "arrived")), F.date == date,
-            ).exists(),
+            E.data["arrival_date"]["year"].as_integer() == date["year"],
+            E.data["arrival_date"]["month"].as_integer() == date["month"],
         )
     )
     changed: list[Entity] = []
     for row in rows:
         person = ledger.get(row["id"])
-        remaining = person.data["remaining_distance"] - person.data.get(
-            "travel_speed", 1
-        )
         destination = person.data["transit_to"]
-        changes: Item = {"remaining_distance": max(0, remaining)}
-        if remaining <= 0:
-            changes.update(
-                location=destination,
-                transit_to="",
-                waiting_audience=destination == CAPITAL,
-            )
-        person.record(
-            "arrived" if remaining <= 0 else "travelled",
-            "",
-            {"date": date, **changes},
-            changes,
-        )
+        changes: Item = {
+            "location": destination,
+            "transit_to": "",
+            "waiting_audience": destination == CAPITAL,
+        }
+        person.record("arrived", "", {"date": person.data["arrival_date"], **changes}, changes)
         changed.append(person)
     ledger.commit(changed)
 

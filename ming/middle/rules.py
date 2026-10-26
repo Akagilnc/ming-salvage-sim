@@ -10,6 +10,7 @@ from ming.middle.appointments import CATALOGUE_KINDS
 from ming.middle.declaration import Declaration, Fact
 from ming.middle.fiscal import WAN, current_paid, has_obligation, obligation
 from ming.middle.fields import FIELDS
+from ming.middle.travel import SPEEDS
 Names = dict[str, dict[str, list[str]]]
 
 
@@ -52,6 +53,10 @@ def check_rules(out: Declaration, affairs: set[str], names: Names) -> None:
                    or (type(change.value) is float and not math.isfinite(change.value))):
                 fail(f"facts[{i}].changes[{j}].value", change.value, "有限数字", names,
                      "把这个字段改成有限数字，重交整份。")
+            if (fact.entity_type, change.field) == ("person", "departure_day") and type(change.value) is not int:
+                fail(f"facts[{i}].changes[{j}].value", change.value, "整数", names, "启程日交整数，重交整份。")
+            if (fact.entity_type, change.field) == ("person", "travel_speed") and change.value not in list(SPEEDS):
+                fail(f"facts[{i}].changes[{j}].value", change.value, list(SPEEDS), names, "行速用 expected 中的档名，重交整份。")
         check_money(fact, names, i)
 
 

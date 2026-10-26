@@ -73,6 +73,13 @@ def test_new_game_imports_complete_world_records_and_separates_identities(
     assert [e["data"] for e in entities if e["kind"] == "historical_event"] == json.loads(
         (CONTENT / "events.json").read_text()
     )
+    expected = {e["key"]: e["data"] for e in entities if e["kind"] == "distance"}
+    assert {key: expected["北直隶 / 京师"][key] for key in
+            ("山东", "陕西", "南直隶 / 南京", "广东", "辽东 / 宁锦")} == {
+        "山东": 900, "陕西": 2650, "南直隶 / 南京": 3445, "广东": 7835, "辽东 / 宁锦": 930,
+    }
+    assert expected["山东"]["山东"] == 0
+    assert expected["山东"]["北直隶 / 京师"] == 900
     dossiers = json.loads((CONTENT / "minister_dossiers.json").read_text())
     assert {e["key"]: e["data"] for e in entities if e["kind"] == "dossier"} == dossiers
     assert [e["key"] for e in entities if e["kind"] == "gazette"] == ["opening"]
@@ -84,7 +91,7 @@ def test_new_game_imports_complete_world_records_and_separates_identities(
     assert {e["kind"] for e in visible} == {"person", "calendar", "gazette", "incumbency"}
     shown = {e["key"]: e["data"] for e in visible if e["kind"] == "person"}
     assert shown.keys() == {e["key"] for e in entities if e["kind"] == "person"}
-    visible_fields = {"name", "appointments", "location", "status", "identity_description", "transit_to", "waiting_audience", "journey"}
+    visible_fields = {"name", "appointments", "location", "status", "identity_description", "transit_to", "waiting_audience", "departure_date", "arrival_date", "travel_speed"}
     assert all(set(data) <= visible_fields for data in shown.values())
     characters = {
         p["name"]: p

@@ -124,8 +124,8 @@ def check(ledger: Ledger, out: Declaration, source: UUID) -> None:
                     "field 改成 expected 里的字段名，重交整份。",
                 )
     check_fiscal(ledger, out, names)
-    check_rules(out, set(names.get("affair", {})), names)
     check_references(ledger, out, names)
+    check_rules(out, set(names.get("affair", {})), names)
     check_decrees(ledger, out, source, names)
 
 
@@ -364,6 +364,25 @@ def check_appointment(ledger: Ledger, fact: Fact, path: str, names: Names, cabin
             }
 
 
+def check_journey(ledger: Ledger, fact: Fact, path: str, names: Names) -> None:
+    if fact.entity_type != "person" or not any(c.field == "location" for c in fact.changes):
+        return
+    changes = {c.field: c.value for c in fact.changes}
+    rows = ledger.entities(kind="person", key=fact.entity)
+    person: dict[str, Any] = rows[0]["data"] if rows else {}
+    destination = changes.get("location", person.get("location"))
+    if (not person.get("location") or person.get("transit_to")
+            or changes.get("status") not in (None, "active") or destination == person["location"]):
+        return
+    if "departure_day" not in changes:
+        fail(path + ".departure_day", None, {"field": "departure_day", "type": "integer"}, names,
+             "本条启程缺启程日；按戏文补交 departure_day 字段，重交整份。")
+    routes = ledger.entities(kind="distance", key=person["location"])
+    if not routes or destination not in routes[0]["data"]:
+        fail(path + ".location", destination, {"origin": person["location"], "distance": "required"}, names,
+             "账本缺本程里程，无法计算到达日，重交整份。")
+
+
 def check_references(ledger: Ledger, out: Declaration, names: Names) -> None:
     people: list[tuple[str, Any]] = []
     for i, fact in enumerate(out.facts):
@@ -384,6 +403,7 @@ def check_references(ledger: Ledger, out: Declaration, names: Names) -> None:
                     )
             if (fact.entity_type, change.field) == ("decree", "people"):
                 people.append((f"facts[{i}].changes[{j}].value", change.value))
+        check_journey(ledger, fact, f"facts[{i}]", names)
     for i, report in enumerate(out.reports):
         report.entity = reference_key(ledger, report.entity_type, report.entity)
         if report.entity not in names.get(report.entity_type, {}):

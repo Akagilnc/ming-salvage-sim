@@ -46,8 +46,9 @@ FIELDS: dict[tuple[str, str], FieldRule] = {
     ("building", "output_amount"): FieldRule("建筑每月满状况产出，实际乘以 condition/100。", "随 output_metric：银两为万两/月，皇威/民心为点/月", numeric=True),
     ("building", "output_metric"): FieldRule("产出计入国库、内库、皇威、民心或空字符串（无产出）。"),
     ("region", "fiscal_surcharge"): FieldRule("省加派月额目标值，不逐月累加，不写进三饷应征。", "万两/月", numeric=True),
-    ("person", "location"): FieldRule("人物启程声明 location 目的地，引擎据距离矩阵记在途、月末倒数，抵达才改所在，在途不改道。"),
-    ("person", "travel_speed"): FieldRule("启程的行速用 travel_speed 声明：常速为1，旨意要求加急时据行速语意交1.5到2；不声明则本程常速。", "常速倍数", bounds=(1, 2), numeric=True),
+    ("person", "location"): FieldRule("人物启程声明的目的地；同时必填 departure_day。引擎按里程及 travel_speed 在启程落账时算定预计到达日，月末到期才改所在，在途不改道。"),
+    ("person", "departure_day"): FieldRule("本月启程的日，由转译按戏文声明，夜间与月末相同；交整数，引擎夹到1–30，与当前年月合成 departure_date；不受旨意送达日约束。", "日", bounds=(1, 30), numeric=True),
+    ("person", "travel_speed"): FieldRule("启程的行速档：常速、加急、押运；省略为常速。仅在启程时采用，不更改已在途行程；里程除以日行速度得天数，不满一日向上取整记到达日期。", "档"),
     ("person", "name"): FieldRule("人物姓名；账本实体键不随字段更名。"),
     ("person", "aliases"): FieldRule("人物别名列表。"),
     ("person", "ability"): FieldRule("人物能力。", "量表点，原样记新值"),
@@ -167,7 +168,7 @@ FIELDS: dict[tuple[str, str], FieldRule] = {
     ("relationship_summary", "founding_lines"): FieldRule("关系底色材料列表。"),
     ("relationship_summary", "source"): FieldRule("关系发起方。"),
     ("relationship_summary", "target"): FieldRule("关系所向方。"),
-    **{("distance", region["name"]): FieldRule("从本行出发地到此目的地的基础路程。", "常速月数")
+    **{("distance", region["name"]): FieldRule("从本行出发地到此目的地的最短路里程。", "里")
        for region in json.loads((CONTENT / "regions.json").read_text())["regions"]},
 }
 

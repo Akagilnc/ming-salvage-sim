@@ -13,8 +13,8 @@ from ming.middle.calendar import calendar_if_any
 from ming.middle.queries import available_on, public_decree
 from ming.middle.appointments import CATALOGUE_KINDS, held_by
 from ming.middle.night import known_people, read_night, witnessed_nights
+from ming.middle.travel import travel_days
 
-HIDDEN_JOURNEY = {"remaining_distance", "travel_speed"}
 OPENING_CONTROLS = {"interaction", "petition", "choice", "gazette", "secret_report"}
 EMPTY_ACCOUNTS = select(E.id).where(literal(False)).correlate(None)
 
@@ -53,13 +53,7 @@ def character_input(value: Any) -> Any:
     result = {
         key: character_input(item)
         for key, item in cast(Item, value).items()
-        if key not in HIDDEN_JOURNEY
     }
-    if result.get("field") == "travel_speed":
-        return {
-            "field": "travel_pace",
-            "value": "加急" if rushed(value["value"]) else "常速",
-        }
     fields = [(key, key) for key in CHARACTER_BANDS if key in result]
     if result.get("field") in CHARACTER_BANDS and "value" in result:
         fields.append(("value", result["field"]))
@@ -69,22 +63,6 @@ def character_input(value: Any) -> Any:
                 sum(int(result[key]) >= cutoff for cutoff in (20, 40, 60, 80))
             ]
     return result
-
-
-def journey(data: Item, events: list[Item]) -> Item:
-    """Derive elapsed/total months from the existing departure and monthly ticks."""
-    if not data.get("transit_to"):
-        return {}
-    departure = max(i for i, e in enumerate(events) if e["kind"] == "departed")
-    detail = events[departure]["detail"]
-    speed = detail.get("travel_speed", 1)
-    return {
-        "elapsed_months": sum(
-            e["kind"] == "travelled" for e in events[departure + 1 :]
-        ),
-        "total_months": detail["distance"] / speed,
-        **({"pace": "加急"} if rushed(speed) else {}),
-    }
 
 
 class EntityView(BaseModel):
@@ -117,10 +95,6 @@ def owned_accounts(ledger: Ledger, identity: Identity) -> Select[Any]:
         E.data["department"].as_string().in_(departments),
         select(readers.c.value).where(readers.c.value.in_(known)).exists(),
     )).correlate(None)
-
-
-def rushed(speed: Any) -> bool:
-    return speed > 1
 
 
 def month_open(ledger: Ledger, query: Select[Any] = FACT_ROWS) -> Item | None:
@@ -193,10 +167,9 @@ def person_projection(ledger: Ledger, row: Item, identity: Identity, appointment
     elif identity != "world":
         data = {k: v for k, v in data.items() if k in {
             "name", "location", "status", "identity_description", "transit_to", "waiting_audience",
+            "departure_date", "arrival_date", "travel_speed",
         }}
-    if row["data"].get("transit_to"):
-        data["journey"] = journey(row["data"], ledger.facts(entity_id=row["id"]))
-    data = {k: v for k, v in data.items() if k not in HIDDEN_JOURNEY | {"historical_office"}}
+    data.pop("historical_office", None)
     data["appointments"] = [{**r["data"], "role": role}
                             for r in appointments for role in ("holders", "acting")
                             if row["key"] in r["data"][role]]
@@ -248,6 +221,8 @@ def entities(
     for row in rows:
         if row["kind"] == "person":
             row["data"] = person_projection(ledger, row, identity, appointments)
+        row["data"] = ({destination: travel_days(distance) for destination, distance in row["data"].items()}
+                       if row["kind"] == "distance" and identity != "audit" else row["data"])
         if identity not in ("audit", "world"):
             if row["exposure"] == "faction":
                 if row["key"] not in factions:
@@ -338,7 +313,6 @@ def fact_exposure(
                         "displaced",
                         "departed",
                         "arrived",
-                        "travelled",
                         "audience_admitted",
                     )
                 ),
@@ -387,12 +361,6 @@ def project(
     result: list[FactView] = []
     for item in ledger.facts(**selection, query=query):
         fact = FactView(**item)
-        if identity == "world" and fact.kind in {"departed", "travelled", "arrived"}:
-            fact.detail = {
-                k: v
-                for k, v in fact.detail.items()
-                if k not in HIDDEN_JOURNEY | {"distance"}
-            }
         if identity == "world" and fact.kind == "simulation":
             fact.detail = {k: v for k, v in fact.detail.items() if k != "messages"}
         if identity not in ("audit", "world"):

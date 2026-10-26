@@ -162,7 +162,8 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
 
 @pytest.mark.parametrize("case", ["range", "purpose_region", "provincial_county", "bad_territory_retry", "acting", "unqualified", "capital_territory", "scale_recorded", "scale_bounds", "scale_invalid", "salary_invalid", "maintenance_invalid", "fiscal_recorded"])
 def test_recorded_r2_reply_lands(game_db, steps, audit, case):
-    reply = (json.loads((RECORDED / "range_v9.json").read_text())["reply"] if case != "purpose_region" else
+    reply = (json.dumps({"facts": [f for f in json.loads(json.loads((RECORDED / "range_v9.json").read_text())["reply"])["facts"]
+                                  if f["entity_type"] != "person"]}) if case != "purpose_region" else
              json.dumps(json.loads((RECORDED / "declarations_v9.json").read_text())["cases"]["purpose_region"], ensure_ascii=False))
     received = []
     numeric_cases = {
@@ -255,7 +256,6 @@ def test_recorded_r2_reply_lands(game_db, steps, audit, case):
         elif case == "range":
             assert rows[("army", "京营")]["data"]["firearm_equipment"] == 100
             assert rows[("army", "京营")]["data"]["cannon_equipment"] == 0
-            assert rows[("person", "洪承畴")]["data"]["travel_speed"] == 2
             assert rows[("fiscal", "宗室禄米_base")]["data"]["payment_policy"] == {"factor": 1, "defer": 0}
             actual = {f["entity_id"]: f["detail"] for f in ledger["facts"] if f["kind"] == "changed"}
             assert actual[rows[("fiscal", "宗室禄米_base")]["id"]]["nominal"]["payment_policy"] == {"factor": 1.5, "defer": -0.5}
