@@ -176,6 +176,8 @@ A-full 也推进至十二月，但原场景仍停在询问，整夜译出零道�
 
 ## #1982 字段含义
 
+`month_fiscal_values_1982.txt` 逐字取自 `~/.ak-roles/books/Ming_LLM/1982/artifacts/fixer-fiscal/reply-1.txt`。生产 `Court.translation_agent(Declaration, month_translate.md)`，本机 Claude CLI 逐次 `haiku`，合成已发生事实输入见同目录 `input.txt`，全部原生消息含首次结构重交见 `messages.json`；录制脚本为 `record.py`。最终完整回话未改，包含工程月额新值8、发放率先3后3.5，以及无 counterpart 的一次性捐输123456两。HTTP 过月断言科目现值、月结应付与实付、账户余额及声明流水；只验确定性落账，不充当家族真模型效果验收。首轮嵌套 capture 未捕获到消息（工具输出 `Declaration 0`），未作为录件来源；其转译结果日志仍在同目录 `d80a9822-5007-4425-9724-fd42c3f9fc79.errors.log`。随后改用原生 `AgentRunResult.all_messages()` 重录。
+
 `month_scale_1982.json` 原样序列化自冻结卷 `~/WorkSpace/vault/ak-cc-wiki/raw/ming-llm-runner/2026-10-26/northstar-rerun/agent-B/ledger-audit-after-month1.json` 中实体 `928b79db-9a1f-440f-b2f6-4ae2d2d25902` 的 `declaration.detail.result`（整份13条事实，不节选）。陕西民心交 -2，HTTP 过月后从开局32落到30；不约束生成文字。上、下界与非数字案是参数表中的合成结构化边界输入，不冒称录音。`month_fiscal_building.txt` 原录保持不动，维护费2的案仅在测试内追加结构化字段。
 
 ## #1977 承办人声明输入

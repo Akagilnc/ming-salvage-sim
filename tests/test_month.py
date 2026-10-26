@@ -671,17 +671,7 @@ def test_month_keeps_debt_separate_from_reduction_and_temporary_deferral(
 @pytest.mark.parametrize(
     ("opening_db", "case"),
     [
-        (
-            1631,
-            (
-                "month_fiscal_1631-haiku.json",
-                "辽饷升至一分二厘",
-                None,
-                51.79786519425,
-                0,
-                None,
-            ),
-        ),
+        (1631, ("month_fiscal_1631-haiku.json", "辽饷升至一分二厘", None, 51.79786519425, 0, None)),
         (
             1631,
             ("month_fiscal_1631.json", "辽饷升至一分二厘", "已准", 69.063820259, 0, None),
@@ -692,26 +682,12 @@ def test_month_keeps_debt_separate_from_reduction_and_temporary_deferral(
         ),
         pytest.param(
             1631,
-            (
-                "month_fiscal_1631.json",
-                "辽饷升至一分二厘",
-                None,
-                51.79786519425,
-                2,
-                "month_empty.txt",
-            ),
+            ("month_fiscal_1631.json", "辽饷升至一分二厘", None, 51.79786519425, 2, "month_empty.txt"),
             id="retained",
         ),
         pytest.param(
             1631,
-            (
-                "month_fiscal_1631.json",
-                "辽饷升至一分二厘",
-                "已驳",
-                51.79786519425,
-                1,
-                "month_fiscal_reject.txt",
-            ),
+            ("month_fiscal_1631.json", "辽饷升至一分二厘", "已驳", 51.79786519425, 1, "month_fiscal_reject.txt"),
             id="rejected",
         ),
     ],

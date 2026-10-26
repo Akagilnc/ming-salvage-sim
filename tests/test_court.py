@@ -160,13 +160,18 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
             assert next(e["data"]["taels"] for e in ledger["entities"] if e["kind"] == "account" and e["key"] == name) == {"节慎库": 600000, "常盈库": 1200000}[name] + amount * 10000 * 8
 
 
-@pytest.mark.parametrize("case", ["range", "purpose_region", "provincial_county", "bad_territory_retry", "acting", "unqualified", "capital_territory", "scale_recorded", "scale_bounds", "scale_invalid", "salary_invalid", "maintenance_invalid"])
+@pytest.mark.parametrize("case", ["range", "purpose_region", "provincial_county", "bad_territory_retry", "acting", "unqualified", "capital_territory", "scale_recorded", "scale_bounds", "scale_invalid", "salary_invalid", "maintenance_invalid", "fiscal_recorded"])
 def test_recorded_r2_reply_lands(game_db, steps, audit, case):
     reply = (json.loads((RECORDED / "range_v9.json").read_text())["reply"] if case != "purpose_region" else
              json.dumps(json.loads((RECORDED / "declarations_v9.json").read_text())["cases"]["purpose_region"], ensure_ascii=False))
     received = []
     numeric_cases = {
         "scale_recorded": (("region", "陕西", "public_support", -2, 30),),
+        "fiscal_recorded": (
+            ("fiscal", "工程_base", "value", 8, 8),
+            ("fiscal", "工程_rate", "value", 3.5, 3.5),
+            ("account", "国库", "taels", 123456, pytest.approx(12110925.2869425)),
+        ),
         "scale_bounds": (
             ("region", "河南", "public_support", 80, 100),
             ("region", "山东", "public_support", -80, 0),
@@ -178,14 +183,18 @@ def test_recorded_r2_reply_lands(game_db, steps, audit, case):
         "salary_invalid": (("army", "京营", "salary_rate", "bad", 1.0),),
         "maintenance_invalid": (("building", "京营火器局", "maintenance", "bad", 1),),
     }
-    if case in numeric_cases and case != "scale_recorded":
+    if case in numeric_cases.keys() - {"scale_recorded", "fiscal_recorded"}:
         reply = json.dumps({"facts": [
             {"entity_type": kind, "entity": name, "create": False, "text": "",
              "changes": [{"field": field, "value": value}]}
             for kind, name, field, value, _ in numeric_cases[case]
         ]})
-    if case in {"provincial_county", "scale_recorded"}:
-        reply = (RECORDED / {"provincial_county": "month_provincial_county.txt", "scale_recorded": "month_scale_1982.json"}[case]).read_text()
+    recording = {
+        "provincial_county": "month_provincial_county.txt",
+        "scale_recorded": "month_scale_1982.json",
+        "fiscal_recorded": "month_fiscal_values_1982.txt",
+    }.get(case)
+    reply = (RECORDED / recording).read_text() if recording else reply
     if case in {"acting", "unqualified", "capital_territory"}:
         reply = json.dumps({"facts": [{"entity_type": "incumbency", "entity": {"acting": "陕西巡抚", "unqualified": "巡抚", "capital_territory": "陕西户部尚书"}[case], "create": False,
                                       "changes": [{"field": "acting" if case == "acting" else "holders", "value": ["毕自严"]}], "text": ""}]})
@@ -207,6 +216,18 @@ def test_recorded_r2_reply_lands(game_db, steps, audit, case):
         if case in numeric_cases:
             for kind, name, field, _, expected in numeric_cases[case]:
                 assert rows[(kind, name)]["data"][field] == expected
+            if case == "fiscal_recorded":
+                assert [f["detail"]["actual"]["value"] for f in ledger["facts"]
+                        if f["entity_id"] == rows[("fiscal", "工程_rate")]["id"] and f["kind"] == "changed"] == [3, 3.5]
+                payment = next(f["detail"] for f in ledger["facts"]
+                               if f["kind"] == "monthly_payment" and f["detail"]["recipient"] == "工程_base")
+                assert payment["due"] == pytest.approx(8 * 3.5 / 100)
+                assert payment["paid"] == payment["due"]
+                donations = [f["detail"] for f in ledger["facts"]
+                             if f["kind"] == "changed" and "taels" in f["detail"]["actual"]]
+                assert [(f["nominal"]["taels"], f["actual"]["taels"], f.get("counterpart"))
+                        for f in donations] == [(123456, 123456, None)]
+                assert not [f for f in ledger["facts"] if f["kind"] == "received"]
             if case.endswith("invalid"):
                 assert json.loads(next(p.content for m in received for p in m.parts if p.part_kind == "retry-prompt"))["field"] == "facts[0].changes[0].value"
                 assert not [f for f in ledger["facts"] if f["kind"] == "changed"]
