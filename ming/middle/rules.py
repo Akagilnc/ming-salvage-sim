@@ -6,11 +6,13 @@ from typing import Any, Never
 
 from pydantic_ai import ModelRetry
 
+from ming.ledger import Entity, Ledger
 from ming.middle.appointments import CATALOGUE_KINDS
+from ming.middle.calendar import calendar_row
 from ming.middle.declaration import Declaration, Fact
 from ming.middle.fiscal import WAN, current_paid, has_obligation, obligation
 from ming.middle.fields import FIELDS
-from ming.middle.travel import SPEEDS
+from ming.middle.travel import SPEEDS, journey_route, move_person
 Names = dict[str, dict[str, list[str]]]
 
 
@@ -38,9 +40,12 @@ def fail(field: str, value: object, expected: object, names: Names, how: str) ->
     }, ensure_ascii=False))
 
 
-def check_rules(out: Declaration, affairs: set[str], names: Names) -> None:
+def check_rules(ledger: Ledger, out: Declaration, names: Names) -> None:
+    people: dict[str, Entity] = {}
+    date = calendar_row(ledger)["data"]
     for i, fact in enumerate(out.facts):
-        if fact.affair is not None and fact.affair not in affairs:
+        person = check_journey(ledger, fact, f"facts[{i}]", names, people)
+        if fact.affair is not None and fact.affair not in names.get("affair", {}):
             fail(f"facts[{i}].affair", fact.affair, name_expected("affair", fact.affair, names), names,
                  "事务正名查 expected 指向的输入目录，或在本份先 create 该事务，重交整份。")
         seen = [change.field for change in fact.changes
@@ -58,6 +63,31 @@ def check_rules(out: Declaration, affairs: set[str], names: Names) -> None:
             if (fact.entity_type, change.field) == ("person", "travel_speed") and change.value not in list(SPEEDS):
                 fail(f"facts[{i}].changes[{j}].value", change.value, list(SPEEDS), names, "行速用 expected 中的档名，重交整份。")
         check_money(fact, names, i)
+        if person is not None:
+            changes = field_values(fact, person.data, None)["changes"]
+            # Replay landing's lifecycle on detached aggregates, without committing.
+            move_person(person, changes, ledger,
+                        lambda entity, kind, detail, updates: entity.record(kind, "", detail, updates), date)
+            person.record("changed", "", {}, changes)
+
+
+def check_journey(ledger: Ledger, fact: Fact, path: str, names: Names, people: dict[str, Entity]) -> Entity | None:
+    if fact.entity_type != "person":
+        return None
+    if fact.entity not in people:
+        rows = ledger.entities(kind="person", key=fact.entity)
+        people[fact.entity] = Entity("person", fact.entity, "", dict(rows[0]["data"]) if rows else {})
+    person = people[fact.entity]
+    changes = {c.field: c.value for c in fact.changes}
+    try:
+        route = journey_route(ledger, person.data, changes)
+    except KeyError as exc:
+        fail(path + ".location", exc.args[0], {"origin": person.data["location"], "distance": "required"}, names,
+             "账本缺本程里程，无法计算到达日，重交整份。")
+    if route is not None and "departure_day" not in changes:
+        fail(path + ".departure_day", None, {"field": "departure_day", "type": "integer"}, names,
+             "本条启程缺启程日；按戏文补交 departure_day 字段，重交整份。")
+    return person
 
 
 def check_money(fact: Fact, names: Names, index: int) -> None:

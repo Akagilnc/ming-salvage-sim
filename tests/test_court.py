@@ -226,6 +226,7 @@ def test_recorded_r2_reply_lands(game_db, steps, audit, case):
         "fiscal_recorded": "month_fiscal_values_1982.txt",
     }.get(case)
     reply = (RECORDED / recording).read_text() if recording else reply
+    reply = json.dumps({"facts": json.loads(reply)["facts"]}) if case == "provincial_county" else reply
     if case.startswith("acting") or case in {"unqualified", "capital_territory"}:
         reply = {"facts": [{"entity_type": "incumbency", "entity": "陕西巡抚" if case.startswith("acting") else {"unqualified": "巡抚", "capital_territory": "陕西户部尚书"}[case], "create": False,
                             "changes": [*([{"field": "holders", "value": ["洪承畴"]}] if case == "acting_coexist" else []),

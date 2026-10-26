@@ -19,7 +19,7 @@ from ming.middle import queries
 from ming.middle.rules import field_values, money_amounts
 from ming.middle.fiscal import WAN, current_paid, has_obligation
 from ming.middle.appointments import APPOINTMENT_ROLES, cabinet_members, cabinet_records, incumbency_record
-from ming.middle.travel import CLEARED_JOURNEY, arrival_date, journey_route
+from ming.middle.travel import move_person
 
 def landing_entities(
     ledger: Ledger, result: Declaration | Unhandled, owner: Entity,
@@ -324,39 +324,6 @@ def decree_disposition(
     )
     return ([('interim', {"text": decree.data["text"]})]
             if interim and not ledger.facts(entity_id=decree.id, kind="interim") else []) + ([(mode, {"monthly": mode})] if translated else [])
-
-
-def move_person(
-    person: Entity,
-    changes: dict[str, object],
-    ledger: Ledger,
-    record: Callable[[Entity, str, Item, Item], None],
-    date: Item,
-) -> None:
-    route = journey_route(ledger, person.data, changes)
-    day = changes.pop("departure_day", None)
-    pace = changes.pop("travel_speed", "常速")
-    # A first location is a fact, not a journey from an invented origin.
-    if not person.data.get("location"):
-        return
-    changes.pop("location", None)
-    if changes.get("status") not in (None, "active"):
-        # Leaving active (卒/下狱/罢黜/归场) clears the journey like offstage does.
-        changes.update(CLEARED_JOURNEY)
-    elif route is not None:
-        destination, distance = route
-        departure = {"year": date["year"], "month": date["month"], "day": day}
-        journey = {
-            "transit_to": destination,
-            "departure_date": departure,
-            "arrival_date": arrival_date(departure, distance, str(pace)),
-            "travel_speed": pace,
-            "waiting_audience": False,
-        }
-        record(person, "departed", {"destination": destination, "distance": distance, **journey}, journey)
-        changes["status"] = "active"
-    elif person.data.get("transit_to"):
-        changes["status"] = "active"
 
 
 def retire_chief(
