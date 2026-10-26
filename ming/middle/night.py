@@ -117,7 +117,7 @@ def known_people(data: ColumnElement[Any], people: list[str] | None = None) -> C
     assigned = func.json_each(func.json_insert(
         data["people"], "$[#]", data["handler"].as_string(),
     )).table_valued("value")
-    declared = select(assigned.c.value.label("person")).where(assigned.c.value.is_not(None)).correlate_except(assigned)
+    declared = select(assigned.c.value.label("person")).correlate_except(assigned)
     if people is not None:
         declared = declared.where(assigned.c.value.in_(people))
         attendees = attendees.where(attendees.selected_columns.person.in_(people))
