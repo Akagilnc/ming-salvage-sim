@@ -1,14 +1,12 @@
 """Month user: fill the first missing durable product on one monthly timeline."""
 
 import asyncio
-from typing import Any
 from collections.abc import Callable
 from uuid import UUID
 
 from ming.middle.court import Court
 from ming.middle.declaration import PendingPetition
 from ming.middle.invoke import ModelSource, TextUpdate, gather_or_raise
-from ming.middle.view import EntityView
 from ming.month_steps.deliberation import Deliberations
 from ming.month_steps.simulation import Simulations
 from ming.month_steps.petitions import Inbox
@@ -48,9 +46,6 @@ class Month:
     def choose(self, petition_id: UUID, option: int) -> None:
         self.inbox.choose(petition_id, option)
 
-    async def verdicts(self, decrees: list[EntityView], route: UUID) -> list[dict[str, Any]]:
-        return await gather_or_raise(*(self.deliberations.run(d, route) for d in decrees))
-
     async def resume(
         self, *, speculative: bool = False, petition_id: str | None = None,
     ) -> list[PendingPetition]:
@@ -62,18 +57,18 @@ class Month:
         async with self.lock:
             if date != self.court.calendar().data:
                 return self.petitions()
+            calendar = self.court.calendar()
             public = [d for d in self.court.current_decrees() if not d.data["secret"]]
             pushes = self.court.pending_pushes()
             await gather_or_raise(
-                self.verdicts(public, self.court.calendar().id),
-                *(self.deliberations.run(d, self.court.calendar().id, decision)
-                  for d, decision in pushes),
+                *(self.deliberations.run(d, calendar.id) for d in public),
+                *(self.deliberations.run(d, calendar.id, decision) for d, decision in pushes),
             )
             if speculative or not self.opened():
                 return self.petitions()
             # Opening urgent petitions must be answered before drafting, since
             # their choices are inputs to this month's single timeline.
-            if self.petitions() and not self.court.products(self.court.calendar().id, kind="month_draft"):
+            if self.petitions() and not self.court.products(calendar.id, kind="month_draft"):
                 return self.petitions()
             await self.simulations.draft()
             self.simulations.speculate()

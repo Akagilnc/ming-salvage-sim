@@ -389,3 +389,4 @@ def test_month_lands_an_earlier_public_decree_before_a_later_secret(
         assert not [f for f in ledger["facts"] if f["kind"] == "unhandled"]
         assert appointment["data"]["holders"] == ["杨嗣昌"]
         assert [f["detail"]["actual"]["holders"] for f in ledger["facts"] if f["entity_id"] == appointment["id"] and f["kind"] == "changed"] == [["洪承畴"], ["杨嗣昌"]]
+        assert [f["detail"]["origin_ref"] for f in ledger["facts"] if f["entity_id"] == appointment["id"] and f["kind"] == "changed"] == [d["id"] for d in decrees]
