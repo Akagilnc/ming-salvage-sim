@@ -137,7 +137,7 @@ def check_decrees(
     source: UUID,
     names: dict[str, dict[str, list[str]]],
 ) -> None:
-    # Both declarations index their input's decree list, never free-text names.
+    # Both declarations index a decree list, never free-text names.
     decrees = out.decrees if isinstance(out, NightDeclaration) else landing_sources(ledger, calendar_row(ledger)["data"])
     labeled = (("facts", out.facts), ("decree_events", out.decree_events))
     for label, items in labeled:
@@ -145,7 +145,7 @@ def check_decrees(
             ref = item.decree
             path = f"{label}[{i}].decree"
             if (ref is None and (isinstance(item, DecreeEvent) or item.discovered)) or (ref is not None and not 0 <= ref < len(decrees)):
-                fail(path, ref, "输入 decrees 的零基下标", names, "使用输入旨意的下标，重交整份。")
+                fail(path, ref, "decrees 的零基下标", names, "使用所属旨意在 decrees 中的下标，重交整份。")
     if isinstance(out, NightDeclaration) and out.decrees:
         turns = read_night(ledger, source).turns
         for i, decree in enumerate(out.decrees):
