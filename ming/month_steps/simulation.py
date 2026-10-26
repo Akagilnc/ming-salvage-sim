@@ -36,13 +36,7 @@ class Simulations:
     def context(self) -> dict[str, Any]:
         returned = {str(f.detail["id"]) for f in self.court.returned_petitions()}
         return {
-            "decrees": [
-                {"decree": d.model_dump(mode="json"), "mode": mode,
-                 "deliberations": [f.detail for f in self.court.products(d.id, kind="deliberation")],
-                 "prior_interim": self.court.prior_interim(d.id),
-                 **({"known_people": sorted(self.court.known_people(d))} if d.data["secret"] else {})}
-                for d, mode in self.court.landing_sources()
-            ],
+            "decrees": self.court.landing_materials(),
             "arrivals": self.court.arrivals_this_month(),
             "fiscal_events": self.court.fiscal_events(),
             "prior_choices": [

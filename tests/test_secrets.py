@@ -237,7 +237,7 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
                 and prompt["date"] == court.facts("emperor", kind="secret_report")[-1].detail["date"]
             )
             assert {o["decree"]["id"] for o in world["decrees"]} == {
-                str(d.id) for d in orders if month == 0 or d.id == secret.id
+                str(d.id) for d in orders if month == 0 or d.id == secret.id or failure != "declaration"
             }
             for person, count in (
                 (handler, month + 1),
@@ -347,7 +347,9 @@ def test_discoveries_stay_private_and_completion_stops_only_reports(
                     if order["decree"]["data"]["secret"]:
                         assert "exposure" not in order["decree"]["data"]
                         assert set(order["known_people"]) == court.known_people(secret)
-        assert not json.loads(simulations[-1].parts[0].content)["context"]["decrees"]
+        assert {d["decree"]["id"] for d in json.loads(simulations[-1].parts[0].content)["context"]["decrees"]} == {
+            str(d.id) for d in court.entities("public", kind="decree")
+        }
 
 
 @pytest.mark.parametrize("game_db", ["first_night"], indirect=True)

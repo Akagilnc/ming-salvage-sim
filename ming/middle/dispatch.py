@@ -90,6 +90,8 @@ def landing_sources(ledger: Ledger, date: Item) -> list[tuple[Item, LandingMode 
         elif row["data"].get("interim"):
             mode = "attempted"
         sources[row["id"]] = (row, mode)
+    for row in ledger.read(ENTITY_ROWS.where(queries.public_decree())):
+        sources.setdefault(row["id"], (row, None))
     return list(sources.values())
 
 

@@ -30,12 +30,7 @@ class Landing:
                 json.dumps({
                     "date": calendar.data, "scope": "month",
                     "month_final": self.court.products(calendar.id, kind="month_final")[0].detail["output"],
-                    "decrees": [
-                        {"decree": d.model_dump(mode="json"), "mode": mode,
-                         "prior_interim": self.court.prior_interim(d.id),
-                         "deliberations": [f.model_dump(mode="json") for f in self.court.products(d.id, kind=("deliberation", "choice"))]}
-                        for d, mode in self.court.landing_sources()
-                    ],
+                    "decrees": self.court.landing_materials(),
                 }, ensure_ascii=False),
                 calendar.id,
             )

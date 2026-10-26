@@ -83,7 +83,7 @@ DecreeRef = Annotated[
     int | None,
     Field(
         default=None,
-        description="来源旨意：整夜本份 decrees 的零基下标；月末输入 decrees 的零基下标，无所属旨意省略。",
+        description="来源旨意：整夜本份 decrees 的零基下标；月末输入 decrees 的零基下标，无所属旨意省略。旧明发旨只列 id、kind、key、data.secret，全文与经办记录用 read_records 按 kind、key 查询；它的后续后果仍填该旨下标。",
     ),
 ]
 

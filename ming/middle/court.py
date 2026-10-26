@@ -544,6 +544,24 @@ class Court:
         return [(EntityView.model_validate(row), mode)
                 for row, mode in landing_sources(self._ledger, self.calendar().data)]
 
+    def landing_materials(self) -> list[Item]:
+        """Share monthly indices; historical public decrees are lookup pointers only."""
+        materials: list[Item] = []
+        for decree, mode in self.landing_sources():
+            deliberations = self.products(decree.id, kind=("deliberation", "choice"))
+            current = mode is not None or bool(deliberations)
+            materials.append({
+                "decree": decree.model_dump(mode="json") if current else {
+                    "id": str(decree.id), "kind": decree.kind, "key": decree.key,
+                    "data": {"secret": False},
+                },
+                "mode": mode,
+                "deliberations": [f.model_dump(mode="json") for f in deliberations],
+                "prior_interim": self.prior_interim(decree.id) if current else [],
+                **({"known_people": sorted(self.known_people(decree))} if decree.data["secret"] else {}),
+            })
+        return materials
+
     def observe(self, on_change: Callable[[], None]) -> None:
         self._ledger.on_commit = on_change
 
