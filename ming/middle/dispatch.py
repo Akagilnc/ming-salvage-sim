@@ -48,8 +48,12 @@ def landing_entities(
         for kind, key in sorted(pairs)
         for e in ledger.entities(kind=kind, key=key)
     }
-    references = [source for source, _mode in sources]
-    found.update(((row["kind"], row["key"]), row) for row in ledger.entities(entity_id=list(references)))
+    # Fact origins need only IDs; decree events and dispositions need entities.
+    references: set[int | None] = set() if isinstance(result, Unhandled) else {e.decree for e in result.decree_events}
+    found.update(((row["kind"], row["key"]), row) for row in ledger.entities(entity_id=[
+        source for index, (source, mode) in enumerate(sources)
+        if mode is not None or index in references
+    ]))
     if isinstance(result, Unhandled):
         return found
     if any(f.entity_type == "affair" and any(c.field == "monthly_funding" for c in f.changes) for f in result.facts):
@@ -73,7 +77,9 @@ def landing_entities(
     return found
 
 
-def landing_sources(ledger: Ledger, date: Item) -> list[tuple[Item, LandingMode | None]]:
+def landing_sources(
+    ledger: Ledger, date: Item, *, include_history: bool = True,
+) -> list[tuple[Item, LandingMode | None]]:
     """The ordered decree references shared by monthly input, validation and landing."""
     sources: dict[UUID, tuple[Item, LandingMode | None]] = {
         row["id"]: (row, "landed") for row in ledger.read(queries.errands(date))
@@ -90,6 +96,9 @@ def landing_sources(ledger: Ledger, date: Item) -> list[tuple[Item, LandingMode 
         elif row["data"].get("interim"):
             mode = "attempted"
         sources[row["id"]] = (row, mode)
+    if include_history:
+        for row in ledger.read(ENTITY_ROWS.where(queries.public_decree())):
+            sources.setdefault(row["id"], (row, None))
     return list(sources.values())
 
 
@@ -138,9 +147,10 @@ def dispatch(
         changed[(entity.kind, entity.key)] = entity
         existing[(entity.kind, entity.key)] = entity.snapshot()
 
-    decrees = record_decrees(result, owner, known, record) + [
-        known("decree", ledger.get(source).key) for source, _mode in sources
+    decrees = [decree.id for decree in record_decrees(result, owner, known, record)] + [
+        source for source, _mode in sources
     ]
+    decree_keys = {row["id"]: row["key"] for row in existing.values() if row["kind"] == "decree"}
     if not isinstance(result, Unhandled):
         for fact in result.facts:
             pair = fact.entity_type, fact.entity
@@ -160,7 +170,7 @@ def dispatch(
                 detail["limit_reason"] = reasons[i, j]
             fact_origin = {
                 "discovered": fact.discovered,
-                **({"origin_ref": str(decrees[fact.decree].id)} if fact.decree is not None else {}),
+                **({"origin_ref": str(decrees[fact.decree])} if fact.decree is not None else {}),
             }
             changes = detail["changes"]
             if entity.kind == "person":
@@ -180,12 +190,12 @@ def dispatch(
                 report.model_dump(),
             )
         for event in result.decree_events:
-            target = decrees[cast(int, event.decree)]
+            target = known("decree", decree_keys[decrees[cast(int, event.decree)]])
             fact_origin = {"origin_ref": str(target.id)}
             record(target, event.kind, {"text": event.text})
         fact_origin = {}
     for index, mode in ((i, mode) for i, (_source, mode) in enumerate(sources) if mode is not None):
-        target = decrees[index]
+        target = known("decree", decree_keys[decrees[index]])
         for kind, detail in decree_disposition(ledger, target, cast(LandingMode, mode), date, not isinstance(result, Unhandled)):
             record(target, kind, detail)
     record(

@@ -237,7 +237,7 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
                 and prompt["date"] == court.facts("emperor", kind="secret_report")[-1].detail["date"]
             )
             assert {o["decree"]["id"] for o in world["decrees"]} == {
-                str(d.id) for d in orders if month == 0 or d.id == secret.id
+                str(d.id) for d in orders if month == 0 or d.id == secret.id or failure != "declaration"
             }
             for person, count in (
                 (handler, month + 1),

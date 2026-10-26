@@ -162,7 +162,7 @@ def test_two_nights_feed_world_and_arrivals_wait_for_audience(tmp_path, game_db,
     received = []
     steps["simulation"] = replaying([(RECORDED / "simulation.txt").read_text()] * 2, received)
     declarations = []
-    steps["Declaration"] = replaying([(RECORDED / "month_journey_dates.json").read_text(), (RECORDED / "month_empty.txt").read_text()], declarations)
+    steps["Declaration"] = replaying([(RECORDED / "month_journey_dates.json").read_text(), (RECORDED / "month_decree_money.txt").read_text()], declarations)
     with TestClient(create_app(tmp_path)) as client:
         save = client.post("/actions", json={"action": "load", "save": game_db.name}).json()["save"]
         for case in ("travel", "approved"):
@@ -194,10 +194,18 @@ def test_two_nights_feed_world_and_arrivals_wait_for_audience(tmp_path, game_db,
                                          "date": {"year": 1627, "month": 11, "day": 16}}]
             )
             ledger = audit(tmp_path / save)
-            if month == 11:
-                decrees = {e["id"] for e in ledger["entities"] if e["kind"] == "decree"}
-                assert {d["decree"]["id"] for d in json.loads(received[-1].parts[0].content)["context"]["decrees"]} == decrees
-                assert {d["decree"]["id"] for d in _declaration_prompt(declarations[:1])["decrees"]} == decrees
+            decrees = {e["id"] for e in ledger["entities"] if e["kind"] == "decree"}
+            assert {d["decree"]["id"] for d in json.loads(received[-1].parts[0].content)["context"]["decrees"]} == (decrees if month == 11 else set())
+            assert {d["decree"]["id"] for d in _declaration_prompt(declarations[-1:])["decrees"]} == decrees
+            assert len([f for f in ledger["facts"] if f["kind"] == "landed" and f["entity_id"] in decrees]) == len(decrees)
+            if month == 12:
+                sources = _declaration_prompt(declarations[-1:])["decrees"]
+                assert all(set(d["decree"]) == {"id", "kind", "key", "data"} and d["decree"]["data"] == {"secret": False} and d["mode"] is None for d in sources)
+                assert not [f for f in ledger["facts"] if f["kind"] == "unhandled"]
+                movement = [f for f in ledger["facts"] if f["kind"] == "received" or (f["kind"] == "changed" and "taels" in f["detail"]["actual"])]
+                assert [(f["kind"], f["detail"]["actual"]) for f in movement] == [("changed", {"taels": -300000}), ("received", 300000)]
+                assert {f["detail"]["origin_ref"] for f in movement} == {sources[0]["decree"]["id"]}
+                assert len([f for f in ledger["facts"] if f["kind"] == "deliberation"]) == len(decrees)
             movement = [f for f in ledger["facts"] if f["kind"] == "arrived"]
             assert movement and all(f in observed[-1]["facts"] for f in movement)
             assert len(movement) == (2 if month == 12 else 1)
