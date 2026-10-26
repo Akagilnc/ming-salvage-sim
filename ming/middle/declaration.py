@@ -85,7 +85,7 @@ DecreeRef = Annotated[
     int | None,
     Field(
         default=None,
-        description="来源旨意：整夜本份 decrees 的零基下标；月末本旨省略，使用当前旨意来源。",
+        description="来源旨意：整夜本份 decrees 的零基下标；月末输入 decrees 的零基下标，无所属旨意省略。",
     ),
 ]
 

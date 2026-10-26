@@ -22,21 +22,11 @@ def _declaration_prompt(messages):
     return json.loads(messages[0].parts[0].content.split("\n", 1)[1])
 
 
-def declaration_reply(messages, response_file, quiet_month=None, stage="landing", extra_facts=()):
-    prompt = _declaration_prompt(messages) if stage == "landing" else json.loads(messages[0].parts[0].content)
-    source = prompt["source"] if stage == "landing" else next(iter(prompt["context"].get("decrees", [])), None)
-    if response_file == "night_ordering.json":
-        if source is None or source["kind"] != "decree":
-            return (RECORDED / ("month_empty.txt" if stage == "landing" else "simulation.txt")).read_text()
-        name = "secret" if source["data"].get("secret") else "public"
-        return json.loads((RECORDED / response_file).read_text())[name][stage]
-    name = response_file if source["data"].get("secret") and prompt["date"]["month"] != quiet_month else "month_empty.txt"
-    reply = (RECORDED / name).read_text()
-    if name == response_file and extra_facts:
-        declaration = json.loads(reply)
-        declaration["facts"].extend(extra_facts)
-        return json.dumps(declaration, ensure_ascii=False)
-    return reply
+def declaration_reply(messages, response_file, quiet_month=None):
+    prompt = _declaration_prompt(messages)
+    secret = any(item["decree"]["data"]["secret"] for item in prompt["decrees"])
+    name = response_file if secret and prompt["date"]["month"] != quiet_month else "month_empty.txt"
+    return (RECORDED / name).read_text()
 
 
 @pytest.mark.parametrize("game_db", ["secret_night"], indirect=True)
@@ -134,12 +124,7 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
     steps["Declaration"] = replaying(
         partial(
             declaration_reply,
-            response_file="month_invalid.txt" if failure == "declaration" else "month_secret_appointment.json" if failure is None else "month_travel.txt",
-            extra_facts=[*json.loads((RECORDED / "month_travel.txt").read_text())["facts"], {
-                "entity_type": "person", "entity": "韩爌", "create": False,
-                "changes": [{"field": "intrigue", "value": 75}], "text": "",
-                "discovered": True,
-            }] if failure is None else (),
+            response_file="month_invalid.txt" if failure == "declaration" else "month_secret_appointment.json" if failure is None else "month_secret_travel.txt",
         ),
         declarations,
     )
@@ -228,7 +213,7 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
             court = client.app.state.web.game.court
             assert client.get("/state").json()["game"]["failure"] is None
             assert client.get("/state").json()["game"]["unhandled_monthly"] == (
-                [{"entity_id": str(secret.id), "kind": "decree", "text": secret.data["text"]}]
+                [{"entity_id": str(court.calendar().id), "kind": "world", "text": None}]
                 if failure == "declaration" else []
             )
             if failure is None and month < 2:
@@ -237,24 +222,24 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
                 assert private
                 for person in ("emperor", handler, "王承恩", "杨嗣昌", "韩爌"):
                     assert private & {f.entity_id for f in court.facts("emperor" if person == "emperor" else Officials(people=[person]), kind="changed")} == (private if person in ("emperor", handler) else set())
-            assert {d.id for d in court.entities("public", kind="decree")} == {
-                public.id
-            }
+            assert {d.id for d in court.entities("public", kind="decree")} == (
+                set() if failure == "declaration" else {public.id}
+            )
             exposure = court.products(secret.id, kind="exposure", current=False)
             assert [f.detail["score"] for f in exposure] == [3, 6, 9, 12][: month + 1]
             assert exposure[-1].detail["stage"] == ("半公开" if month >= 3 else "密")
             assert {f.entity_id for f in court.facts("audit", kind="unhandled")} == (
-                {secret.id} if failure == "declaration" else set()
+                {court.calendar().id} if failure == "declaration" else set()
             )
             world = next(
                 prompt for r in declarations
                 if r.kind == "request" and r.parts[0].part_kind == "user-prompt"
-                and (prompt := _declaration_prompt([r]))["scope"] == "world"
+                and (prompt := _declaration_prompt([r]))["scope"] == "month"
                 and prompt["date"] == exposure[-1].detail["date"]
             )
-            assert [o["decree"]["id"] for o in world["others"]] == [
+            assert {o["decree"]["id"] for o in world["decrees"]} == {
                 str(d.id) for d in orders if month == 0 or d.id == secret.id
-            ]
+            }
             for person, count in (
                 (handler, month + 1),
                 ("王承恩", 0),
@@ -371,25 +356,16 @@ def test_discoveries_stay_private_and_completion_stops_only_reports(
             client.post(
                 "/actions", json={"action": "load", "save": game_db.name}
             ).raise_for_status()
-        assert (
-            json.loads(simulations[-1].parts[0].content)["context"]["secret_orders"][0][
-                "decree"
-            ]["data"]["exposure"]["stage"]
-            == stages[2]
-        )
+        assert not json.loads(simulations[-1].parts[0].content)["context"]["decrees"]
 
 
 @pytest.mark.parametrize("game_db", ["first_night"], indirect=True)
 def test_month_lands_an_earlier_public_decree_before_a_later_secret(
     tmp_path: Path, game_db: Path, steps, audit
 ) -> None:
-    """A public decree completed before a secret errand must land first.
-
-    night_secret.json creates the secret first, so it cannot show the inversion.
-    """
+    """Both decrees share one monthly declaration, without per-decree landing."""
     cases = json.loads((RECORDED / "night_ordering.json").read_text())
-    steps["Declaration"] = replaying(partial(declaration_reply, response_file="night_ordering.json"))
-    steps["simulation"] = replaying(partial(declaration_reply, response_file="night_ordering.json", stage="simulation"))
+    steps["Declaration"] = replaying([(RECORDED / "month_ordering.txt").read_text()])
     with TestClient(create_app(tmp_path)) as client:
         save = client.post(
             "/actions", json={"action": "load", "save": game_db.name}

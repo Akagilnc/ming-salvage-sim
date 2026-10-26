@@ -1,4 +1,4 @@
-"""Per-decree court verdicts; rejected decrees offer their own inbox choices."""
+"""Per-decree verdict products; month drafts publish the initial forks together."""
 
 from typing import Any
 from uuid import UUID, uuid4
@@ -6,7 +6,6 @@ from uuid import UUID, uuid4
 from pydantic_ai import PromptedOutput
 
 from ming.middle.court import Court
-from ming.middle.declaration import PendingPetition
 from ming.middle.invoke import ModelSource, build_agent, invoke
 from ming.middle.month_work import Deliberation, prompt
 from ming.middle.records import Materials, read_records
@@ -29,18 +28,11 @@ class Deliberations:
     async def run(
         self, decree: EntityView, route: UUID, decision: dict[str, Any] | None = None
     ) -> dict[str, Any]:
-        """The verdict its caller asked for: the segment's own, or one push's."""
+        """Initial verdict or next-month reconsideration of one selected push."""
         done = self.court.deliberation(decree.id, decision)
         if done is not None:
             return done
         decree = self.court.entity(decree.id)
-        if decision and not decree.data.get("endorsements"):
-            endorsement = {"endorser": "御笔", "form": "御笔手敕", "decision_key": decision}
-            self.court.record(
-                decree.id, [("endorsed", {**endorsement, "date": self.court.calendar().data})],
-                {"endorsements": [endorsement]},
-            )
-            decree = self.court.entity(decree.id)
         identity = Officials(people=decree.data["people"], exclude_secrets=True)
         world = self.court.entities("audit", kind="world")[0]
         result = await invoke(
@@ -58,31 +50,11 @@ class Deliberations:
         self.court.log.info("model output: %s", result.output.model_dump_json())
         date = self.court.calendar().data
         segment = uuid4()
-        petitions: list[PendingPetition] = []
-        if result.output.verdict != "准":
-            petition = PendingPetition(
-                text=result.output.text,
-                options=(["强颁"] if result.output.verdict == "驳" else [])
-                + ["收回", "留中"]
-                + (["御笔强推"] if result.output.verdict == "驳" and not decree.data.get("endorsements") else []),
-                id=uuid4(),
-                route_id=route,
-                entity_id=decree.id,
-                segment_id=segment,
-                available=date,
-                blocking=True,
-                source="deliberation",
-            )
-            petitions.append(petition)
         verdict: dict[str, Any] = {
             **result.output.model_dump(),
             "id": str(segment),
             "route_id": str(route),
             "decision_key": decision,
-            **({
-                "presented_petition_id": str(petitions[0].id),
-                "petition_instruction": "此岔路已由外廷呈入奏折匣，推演不另写奏疏。",
-            } if petitions else {}),
         }
-        self.court.record_product(decree.id, "deliberation", verdict, petitions=petitions)
+        self.court.record_product(decree.id, "deliberation", verdict)
         return {**verdict, "date": date}

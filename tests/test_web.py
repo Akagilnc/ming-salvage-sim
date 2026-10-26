@@ -245,11 +245,10 @@ def test_menu_creates_distinct_games_and_opens_only_existing_saves(
         (
             path,
             "opening_db"
-            if path in {"petition", "multiple-petitions", "choice-error"}
+            if path in {"multiple-petitions", "choice-error"}
             else "first_night",
         )
         for path in (
-            "petition",
             "multiple-petitions",
             "choice-error",
             "decree",
@@ -265,27 +264,12 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
 ) -> None:
     money = json.loads((RECORDED / "month_money_once_300000.json").read_text())["reply"]
     received = {name: [] for name in ("deliberation", "simulation", "gazette")}
-    if path in {"petition", "multiple-petitions", "choice-error"}:
-        case = (
-            RECORDED
-            / (
-                "month_multiple_petitions.txt"
-                if path == "multiple-petitions"
-                else "month_petition.txt"
-            )
-        ).read_text()
-        steps["simulation"] = replaying(
-            [
-                case,
-                *(
-                    [
-                        RuntimeError("forecast unavailable")
-                        if path == "choice-error"
-                        else (RECORDED / "simulation.txt").read_text()
-                    ]
-                    * sum(len(p["options"]) for p in json.loads(case)["petitions"])
-                ),
-            ]
+    if path in {"multiple-petitions", "choice-error"}:
+        case = (RECORDED / "month_multiple_petitions.txt").read_text()
+        steps["simulation"] = replaying([case])
+        steps["month_final"] = replaying(
+            ([RuntimeError("final unavailable")] if path == "choice-error" else [])
+            + [(RECORDED / "simulation.txt").read_text()]
         )
     app = create_app(game_db.parent)
     with TestClient(app) as client:
@@ -383,11 +367,7 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
             assert not set(products).intersection({"simulation", "declaration"})
             assert {
                 f["entity_id"] for f in ledger["facts"] if f["kind"] == "simulation"
-            } == (
-                {decree["data"]["night_id"]}
-                if path not in {"precompute-error", "precompute-structure"}
-                else set()
-            )
+            } == set()
             assert client.get("/state").json()["game"]["date"]["month"] == 10
             assert clock == ([5, 5] if path == "precompute-error" else [])
             assert {
@@ -410,7 +390,7 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
             assert not [f for f in audit(db)["facts"] if f["kind"] == "unhandled"]
             client.post("/actions", json={"action": "retry"})
             game = client.get("/state").json()["game"]
-        if path in {"petition", "multiple-petitions", "choice-error"}:
+        if path in {"multiple-petitions", "choice-error"}:
             client.portal.call(app.state.web.game.drain)
             assert (game["date"]["month"], game["face"], game["running"]) == (
                 10,
@@ -419,7 +399,8 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
             )
             before = audit(db)
             client.get("/state")
-            client.get("/records")
+            assert not [f for f in client.get("/records").json()["facts"] if f["kind"] in {"month_draft", "month_final", "forecast"}]
+            assert not [f for f in before["facts"] if f["kind"] in {"month_final", "forecast"}]
             assert audit(db) == before
             for petition in game["petitions"][:]:
                 choice = {"action": "choose", "petition": petition["id"], "option": 0}
@@ -427,30 +408,25 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
                     client.post("/actions", json={**choice, "option": -1}).status_code
                     == 400
                 )
-                if path == "choice-error":
-                    steps["simulation"] = replaying(
-                        [
-                            RuntimeError("continuation unavailable"),
-                            (RECORDED / "simulation.txt").read_text(),
-                        ]
-                    )
                 assert client.post("/actions", json=choice).status_code == 204
-                if path == "choice-error":
-                    failure = client.get("/state").json()["game"]["failure"]
-                    assert failure["action"] == "choose"
-                    assert failure["payload"]["petition"] == choice["petition"]
-                    assert failure["payload"]["option"] == 0
-                    assert (
-                        client.post("/actions", json={"action": "retry"}).status_code
-                        == 204
-                    )
                 assert client.post("/actions", json=choice).status_code == 400
                 game["petitions"].remove(petition)
+                if game["petitions"]:
+                    assert not [f for f in audit(db)["facts"] if f["kind"] == "month_final"]
                 assert {
                     p["id"] for p in client.get("/state").json()["game"]["petitions"]
                 } == {p["id"] for p in game["petitions"]}
         # Choice completion no longer waits for the shared month action.
         client.portal.call(app.state.web.game.drain)
+        if path == "choice-error":
+            game = client.get("/state").json()["game"]
+            assert game["failure"]["action"] == "month"
+            assert game["date"]["month"] == 10
+            before = audit(db)
+            assert not [f for f in before["facts"] if f["kind"] == "month_final"]
+            client.post("/actions", json={"action": "load", "save": save}).raise_for_status()
+            client.post("/actions", json={"action": "retry"}).raise_for_status()
+            assert len([f for f in audit(db)["facts"] if f["kind"] == "month_draft"]) == 1
         game = client.get("/state").json()["game"]
         assert (
             game["date"]["month"],
@@ -461,6 +437,9 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
         ) == (11, "desk", False, None, [])
         ledger = audit(db)
         assert len([f for f in ledger["facts"] if f["kind"] == "gazette"]) == 1
+        assert len([f for f in ledger["facts"] if f["kind"] == "month_draft"]) == 1
+        assert len([f for f in ledger["facts"] if f["kind"] == "month_final"]) == 1
+        assert len([f for f in ledger["facts"] if f["kind"] == "declaration"]) == 1
         assert [
             f["detail"]["date"]
             for f in client.get("/records").json()["facts"]
@@ -472,13 +451,12 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
                 f["kind"] for f in ledger["facts"] if f["entity_id"] == decree["id"]
             } >= {
                 "deliberation",
-                "declaration",
                 "landed",
             }
             assert [
                 f
                 for f in ledger["facts"]
-                if f["kind"] == "changed" and f["detail"]["origin_ref"] == decree["id"]
+                if f["kind"] == "changed" and "taels" in f["detail"]["actual"]
             ]
             materials = {
                 name: [

@@ -35,6 +35,7 @@ RECORDED_REPLIES = {
     "scene": INVALID_NIGHT["scene"],
     "NightDeclaration": INVALID_NIGHT["reply"],
     "Declaration": (RECORDED / "month_empty.txt").read_text(),
+    "month_final": (RECORDED / "simulation.txt").read_text(),
     **{
         name: (RECORDED / "sources_empty.txt").read_text()
         for name in ("urgent", "impeachment")
@@ -175,7 +176,7 @@ def rejected_night(first_night, tmp_path_factory):
             ).raise_for_status()
         client.post("/actions", json={"action": "load", "save": path.name})
         client.portal.call(client.app.state.web.game.drain)
-        assert client.get("/state").json()["game"]["petitions"]
+        assert client.get("/state").json()["game"]["petitions"] == []
     return path
 
 

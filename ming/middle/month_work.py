@@ -3,6 +3,8 @@
 import json
 from typing import Any, Literal
 
+from pydantic import Field
+
 from ming.middle.court import Court
 from ming.middle.declaration import Petition, StrictModel
 from ming.middle.view import Identity, Officials, character_input
@@ -20,10 +22,12 @@ class Deliberation(StrictModel):
     verdict: Literal["准", "驳", "中旨亦不可颁"]
 
 
-class Simulation(StrictModel):
+class MonthText(StrictModel):
     text: str
-    petitions: list[Petition]
-    month_end: bool
+
+
+class Simulation(MonthText):
+    petitions: list[Petition] = Field(default_factory=list[Petition])
 
 
 def prompt(court: Court, identity: Identity, context: Any) -> str:

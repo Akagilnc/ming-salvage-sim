@@ -31,6 +31,8 @@ from ming.middle.queries import CATALOGUE, FUNDED_AFFAIRS
 from ming.middle.night import read_night
 from ming.middle.opening import REFERENCES
 from ming.middle.appointments import ALIASES, cabinet_members, cabinet_records, incumbency_record, office_pairs, reference_key
+from ming.middle.calendar import calendar_row
+from ming.middle.dispatch import landing_sources
 from ming.middle.rules import Names, check_rules, fail, name_expected
 from ming.middle.records import TranslationMaterials, read_records
 from ming.middle.invoke import ModelSource, build_agent, invoke
@@ -162,14 +164,15 @@ def check_decrees(
     source: UUID,
     names: dict[str, dict[str, list[str]]],
 ) -> None:
-    # Only a night has a decrees list to index. Month shares omit the source.
+    # Both declarations index their input's decree list, never free-text names.
+    monthly = landing_sources(ledger, calendar_row(ledger)["data"]) if not isinstance(out, NightDeclaration) else []
     labeled = (("facts", out.facts), ("decree_events", out.decree_events))
     for label, items in labeled:
         for i, item in enumerate(items):
             ref = item.decree
             path = f"{label}[{i}].decree"
             if isinstance(out, NightDeclaration):
-                if ref is not None and not 0 <= ref < len(out.decrees):
+                if ref is not None and (type(ref) is not int or not 0 <= ref < len(out.decrees)):
                     fail(
                         path,
                         ref,
@@ -181,12 +184,12 @@ def check_decrees(
                     fail(
                         path,
                         ref,
-                        "指定所属旨意；只有月末本旨声明可省略来源",
+                        "指定所属旨意的下标",
                         names,
-                        "补上所属旨意的下标，重交整份。只有月末本旨可省略。",
+                        "补上所属旨意的下标，重交整份。",
                     )
-            elif ref is not None:
-                fail(path, ref, "省略 decree", names, "省略 decree，重交整份。")
+            elif (ref is None and (isinstance(item, DecreeEvent) or item.discovered)) or (ref is not None and not 0 <= ref < len(monthly)):
+                fail(path, ref, "输入 decrees 的零基下标", names, "使用输入旨意的下标，重交整份。")
     if isinstance(out, NightDeclaration) and out.decrees:
         turns = read_night(ledger, source).turns
         for i, decree in enumerate(out.decrees):

@@ -7,7 +7,7 @@ from functools import partial
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from shutil import copyfileobj
-from typing import Any, TypeVar, cast
+from typing import Any, TypeVar
 from uuid import UUID, uuid4
 
 from pydantic_ai import Agent
@@ -22,7 +22,7 @@ from ming.middle import queries
 from ming.middle.appointments import office_pairs, incumbency_record, named
 
 from ming.ledger import Entity, Item, Ledger
-from ming.middle.dispatch import dispatch, latest_detail
+from ming.middle.dispatch import dispatch, landing_sources
 from ming.middle.fiscal import Accounts, due_levies
 from ming.middle.calendar import advance_month, calendar_row, settle_journeys
 from ming.middle.declaration import (
@@ -267,7 +267,11 @@ class Court:
         *,
         monthly: LandingMode | None = None,
     ) -> None:
-        dispatch(self._ledger, result, source, monthly)
+        dispatch(
+            self._ledger, result, source, monthly,
+            sources=[(d.id, mode) for d, mode in self.landing_sources()]
+            if monthly and source == self.calendar().id else (),
+        )
 
     def record_catalogue(
         self, identity: Identity, date: Item | None = None,
@@ -516,34 +520,28 @@ class Court:
             )
         ]
 
-    def landing_sources(self) -> list[tuple[EntityView, UUID, LandingMode]]:
-        # A secret errand lands each month until done: in its decree month from
-        # its night's simulation, afterwards from the world's.
-        calendar = self.calendar()
-        current = {d.id for d in self.current_decrees()}
-        sources: list[tuple[EntityView, UUID, LandingMode]] = [
-            (d, UUID(d.data["night_id"]) if d.id in current else calendar.id, "landed")
-            for d in self.errands()
-        ]
-        for row in self._ledger.read(
-            queries.decrees_with("deliberation", self.calendar().data)
-        ):
-            decree = EntityView.model_validate(row)
-            products = self.products(decree.id, kind=("deliberation", "choice"))
-            events = [(f.kind, f.detail) for f in products]
-            verdict = cast(Item, latest_detail(events, "deliberation"))
-            choice = latest_detail(events, "choice")
-            if verdict["verdict"] == "准" or (choice and choice["text"] == "强颁"):
-                sources.append((decree, UUID(verdict["route_id"]), "landed"))
-            elif decree.data.get("interim"):
-                sources.append((decree, UUID(verdict["route_id"]), "attempted"))
-        # Completion order is entities.rowid, the order ENTITY_ROWS already uses.
-        order = {
-            row["id"]: index
-            for index, row in enumerate(self._ledger.entities(kind="decree"))
-        }
-        sources.sort(key=lambda item: order[item[0].id])
-        return sources + [(calendar, calendar.id, "landed")]
+    def pending_pushes(self) -> list[tuple[EntityView, Item]]:
+        """Prior-month backing without its corresponding durable reconsideration."""
+        endorsement = F.position.table.alias("backing").c
+        verdict = F.position.table.alias("reconsideration").c
+        rows = ENTITY_ROWS.add_columns(endorsement.detail.label("backing")).join(
+            endorsement.position.table, endorsement.entity_id == E.id,
+        ).where(
+            E.kind == "decree", endorsement.kind == "endorsed",
+            endorsement.detail["decision_key"]["petition_id"].as_string().is_not(None),
+            tuple_(endorsement.date["year"].as_integer(), endorsement.date["month"].as_integer())
+            < (self.calendar().data["year"], self.calendar().data["month"]),
+            ~select(verdict.position).where(
+                verdict.entity_id == E.id, verdict.kind == "deliberation",
+                verdict.detail["decision_key"] == endorsement.detail["decision_key"],
+            ).exists(),
+        )
+        return [(EntityView.model_validate(row), row["backing"]["decision_key"])
+                for row in self._ledger.read(rows)]
+
+    def landing_sources(self) -> list[tuple[EntityView, LandingMode | None]]:
+        return [(EntityView.model_validate(row), mode)
+                for row, mode in landing_sources(self._ledger, self.calendar().data)]
 
     def observe(self, on_change: Callable[[], None]) -> None:
         self._ledger.on_commit = on_change

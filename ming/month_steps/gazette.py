@@ -29,7 +29,9 @@ class Gazette:
             return
         result = await invoke(
             self.agent,
-            prompt(self.court, "public", calendar.model_dump(mode="json")),
+            prompt(self.court, "public", {
+                "month_final": self.court.products(calendar.id, kind="month_final")[0].detail["output"],
+            }),
             deps=Materials(self.court, "public"),
             event_stream_handler=partial(stream_text, self.on_delta)
             if self.on_delta

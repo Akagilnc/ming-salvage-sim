@@ -72,25 +72,21 @@ LANDING = (
 
 
 @pytest.mark.parametrize(
-    ("first", "extra", "steps"),
+    ("first", "steps"),
     [
-        ("simulation.txt", 0, None),
-        ("month_deferred.txt", 0, None),
-        ("month_zero.txt", 1, None),
-        ("sources", 0, None),
-        ("allocation", 0, "allocation"),
-        ("deltas", 0, None),
+        ("simulation.txt", None),
+        ("sources", None),
+        ("deltas", None),
     ],
     indirect=["steps"],
 )
 def test_month_advances_after_reopening(
-    game_db: Path, steps, audit, first: str, extra: int
+    game_db: Path, steps, audit, first: str
 ) -> None:
     received = []
     declarations = []
     steps["Declaration"] = replaying(
-        ([(RECORDED / "month_allocation.txt").read_text()] if first == "allocation" else [])
-        + [(RECORDED / "month_empty.txt").read_text()] * 6,
+        [(RECORDED / "month_empty.txt").read_text()] * 6,
         declarations,
     )
     if first == "sources":
@@ -101,15 +97,7 @@ def test_month_advances_after_reopening(
             )
     steps["simulation"] = replaying(
         [
-            *(
-                [(RECORDED / name).read_text() for name in (
-                    "month_allocation_night.txt", "month_allocation_world.txt"
-                )]
-                if first == "allocation" else [
-                    (RECORDED / ("simulation.txt" if first in {"sources", "deltas"} else first)).read_text()
-                ]
-            ),
-            *[(RECORDED / "simulation.txt").read_text()] * (20 if first == "deltas" else 2 + extra),
+            *[(RECORDED / "simulation.txt").read_text()] * 3,
         ],
         received,
     )
@@ -117,11 +105,6 @@ def test_month_advances_after_reopening(
         save = client.post(
             "/actions", json={"action": "load", "save": game_db.name}
         ).json()["save"]
-        if first == "allocation":
-            client.post("/actions", json={"action": "open"}).raise_for_status()
-            for words in json.loads((RECORDED / "night_allocation.json").read_text())["words"]:
-                client.post("/actions", json={"action": "say", "words": words}).raise_for_status()
-            client.portal.call(client.app.state.web.game.drain)
         if first == "deltas":
             steps["Declaration"] = replaying(lambda messages: json.dumps({"facts": [{"entity_type": "faction", "entity": "阉党", "create": False,
                 "changes": [{"field": "satisfaction", "value": delta}], "text": ""} for delta in {10: (8, -3), 11: (80, -3), 12: (-200, 0)}[_declaration_prompt(messages)["date"]["month"]]]}), declarations)
@@ -144,7 +127,7 @@ def test_month_advances_after_reopening(
                 None,
             )
             if first == "deltas":
-                assert next(e["data"]["satisfaction"] for e in audit(game_db)["entities"] if e["kind"] == "faction" and e["key"] == "阉党") == [82, 97, 0][index]
+                assert next(e["data"]["satisfaction"] for e in audit(game_db)["entities"] if e["kind"] == "faction" and e["key"] == "阉党") == [72, 97, 0][index]
                 material = _declaration_prompt(declarations)
                 assert "entities" not in material
             if first == "sources":
@@ -200,36 +183,19 @@ def test_month_advances_after_reopening(
                 )
                 == 60
             )
-            assert len([e for e in ledger["entities"] if e["kind"] == "affair"]) == (
-                2 if first == "allocation" else 0
-            )
+            assert not [e for e in ledger["entities"] if e["kind"] == "affair"]
             assert not [f for f in ledger["facts"] if f["kind"] == "forecast"]
-            material = next(
-                prompt for request in declarations
-                if request.kind == "request" and request.parts[0].part_kind == "user-prompt"
-                and (prompt := _declaration_prompt([request]))["scope"] == "world"
-            )
-            assert [o["decree"]["id"] for o in material["others"]] == [
+            material = _declaration_prompt(declarations)
+            assert material["scope"] == "month"
+            assert [o["decree"]["id"] for o in material["decrees"]] == [
                 e["id"] for e in ledger["entities"] if e["kind"] == "decree"
                 and (months == 1 or e["data"]["secret"])
             ]
-            for other in material["others"]:
-                assert [f["kind"] for f in other["deliberation"]] == (
-                    [] if other["decree"]["data"]["secret"] else ["deliberation"]
-                )
-                if other["deliberation"]:
-                    assert other["deliberation"][0]["detail"]["verdict"] == "准"
-            if first == "allocation":
-                assert [
-                    f["detail"]["actual"]["taels"] for f in ledger["facts"]
-                    if f["kind"] == "changed" and "taels" in f["detail"]["actual"]
-                ] == [-100000, -200000]
-            assert (
-                len([f for f in ledger["facts"] if f["kind"] == "simulation"])
-                == (year - 1627) * 12 + month - 10 + extra + (first in {"allocation", "deltas"})
-            )
+            assert len([f for f in ledger["facts"] if f["kind"] == "month_draft"]) == months
+            assert len([f for f in ledger["facts"] if f["kind"] == "month_final"]) == months
+            assert len([f for f in ledger["facts"] if f["kind"] == "declaration"]) == months
             material = json.loads(
-                received[0 if month == 11 and extra else -1].parts[0].content
+                received[-1].parts[0].content
             )
             assert {c["petition_id"] for c in material["context"]["prior_choices"]} == {
                 f["detail"]["petition_id"]
@@ -244,10 +210,8 @@ def test_month_advances_after_reopening(
                 e["id"] for e in ledger["entities"] if e["kind"] == "calendar"
             )
             assert {
-                f["entity_id"] for f in ledger["facts"] if f["kind"] == "simulation"
-            } == {calendar} | {
-                e["id"] for e in ledger["entities"] if e["kind"] == "night"
-            }
+                f["entity_id"] for f in ledger["facts"] if f["kind"] in {"month_draft", "month_final"}
+            } == {calendar}
             state = client.get("/state").json()["game"]
             client.post("/actions", json={"action": "load", "save": save})
             assert client.get("/state").json()["game"] == state
@@ -711,8 +675,9 @@ def test_fiscal_petition_lands_only_declared_outcome_without_readding_levies(
     opening_db, game_db: Path, steps, audit, case: tuple
 ) -> None:
     recording = json.loads((RECORDED / case[0]).read_text())
-    for name in ("simulation", "Declaration"):
-        steps[name] = replaying(recording[name])
+    steps["simulation"] = replaying(recording["simulation"][:1])
+    steps["month_final"] = replaying(recording["simulation"][1:])
+    steps["Declaration"] = replaying(recording["Declaration"])
     if case[5] is not None:
         steps["Declaration"] = replaying([(RECORDED / case[5]).read_text()])
     with TestClient(create_app(game_db.parent)) as client:
