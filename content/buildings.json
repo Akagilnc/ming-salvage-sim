@@ -1,7 +1,6 @@
 {
   "meta": {
-    "money_unit": "万两/月",
-    "score_unit": "0-100",
+    "field_definitions": "ming/middle/fields.py 的 building 行",
     "category_whitelist": [
       "财政",
       "军事",
@@ -10,15 +9,7 @@
       "交通",
       "内廷"
     ],
-    "note": "开局/预设建筑。日常运行纯程序化：每月按 output_metric/output_amount 加产出（乘 condition/100 折算）、扣 maintenance。condition/risk/level 静态，只在诏书执行评估的 building_delta 改。玩家诏书新立建筑走 new_buildings → add_building。",
-    "fields": {
-      "level": "规模 1-5",
-      "condition": "完好 0-100，产出折算系数",
-      "maintenance": "每月维护费 万两，固定从国库扣",
-      "risk": "贪腐/事故/被毁可能 0-100",
-      "output_metric": "产出去向白名单：国库/内库/民心/皇威，或空串表示纯叙事无结算产出",
-      "output_amount": "每月产出量；output_metric 为国库/内库时单位万两，民心/皇威时为量表点数"
-    }
+    "note": "开局/预设建筑；运行中的变更走通用实体字段声明，月产与维护由引擎结算。"
   },
   "buildings": [
     {
@@ -566,6 +557,9 @@
       "output_metric": "",
       "output_amount": 0,
       "status": "天启六年大捷后城防尚固，红夷炮在城，墙垛需岁修。"
-    }
+    },
+    {"id": "royal_gold_mine", "region_id": "beizhili", "name": "皇家天佑金矿", "category": "财政", "level": 5, "condition": 100, "maintenance": 0, "risk": 0, "output_metric": "国库", "output_amount": 800},
+    {"id": "imperial_bank", "region_id": "beizhili", "name": "大明中央银行", "category": "财政", "level": 5, "condition": 100, "maintenance": 0, "risk": 0, "output_metric": "内库", "output_amount": 300},
+    {"id": "imperial_airlines", "region_id": "beizhili", "name": "帝国航空", "category": "交通", "level": 5, "condition": 100, "maintenance": 0, "risk": 0, "output_metric": "皇威", "output_amount": 10}
   ]
 }

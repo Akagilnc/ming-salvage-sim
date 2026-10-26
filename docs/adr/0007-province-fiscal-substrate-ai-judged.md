@@ -2,8 +2,6 @@
 
 Status: accepted（实现 deferred;字段草表见 [docs/FISCAL_PROVINCE_SUBSTRATE.md](../FISCAL_PROVINCE_SUBSTRATE.md)）
 
-> 注:ADR 0006 由并行的 chat-action 分支占用;本编号取 0007 避撞。文档碎片化(CONTEXT/ADR 散在 probe 分支、main 仅有 0005)是单独的分支收口问题,不在本 ADR 范围。
-
 探针要把游戏 LLM 后端当裁判,需要一块**省级财政基座**让 AI 站在上面演绎崇祯财政绝境。现有实现不够格:`tax_per_turn` 是手填定额、`_province_efficiency` 是黑箱单系数,既不史实、也不给 AI「为什么收不上来」的因果,AI 只能凭空编财政叙事 → DB↔叙事漂移。
 
 我们决定:**省级财政重设计为「引擎持真钱账本 + clamp,AI 当裁判软判」的基座**,落点如下:

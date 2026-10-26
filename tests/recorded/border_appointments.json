@@ -1,0 +1,205 @@
+{
+  "source": {
+    "host": "claude-cli",
+    "session_id": "82bf8cd9-fd71-4464-a412-6e53ada5e29b",
+    "native": "/Users/akagilnc/WorkSpace/vault/ak-cc-wiki/raw/ming-llm-runner/2026-10-24/1965/fixer-j3-border/explicit-recording/record-native.json",
+    "input": "/Users/akagilnc/WorkSpace/vault/ak-cc-wiki/raw/ming-llm-runner/2026-10-24/1965/fixer-j3-border/explicit-recording/record-input.json",
+    "schema": "/Users/akagilnc/WorkSpace/vault/ak-cc-wiki/raw/ming-llm-runner/2026-10-24/1965/fixer-j3-border/explicit-recording/record-schema.json"
+  },
+  "cases": {
+    "wei": {
+      "facts": [
+        {
+          "entity_type": "incumbency",
+          "entity": "兴和守御千户所正千户",
+          "create": false,
+          "changes": [
+            {
+              "field": "holders",
+              "value": [
+                "杨嗣昌"
+              ]
+            }
+          ],
+          "text": "杨嗣昌任兴和守御千户所正千户，任命已生效。"
+        },
+        {
+          "entity_type": "incumbency",
+          "entity": "隆庆卫指挥使",
+          "create": false,
+          "changes": [
+            {
+              "field": "holders",
+              "value": [
+                "李待问"
+              ]
+            }
+          ],
+          "text": "李待问任隆庆卫指挥使，任命已生效。"
+        },
+        {
+          "entity_type": "incumbency",
+          "entity": "辽东都司宁远卫指挥使",
+          "create": false,
+          "changes": [
+            {
+              "field": "holders",
+              "value": [
+                "练国事"
+              ]
+            }
+          ],
+          "text": "练国事任辽东都司宁远卫指挥使，任命已生效。"
+        },
+        {
+          "entity_type": "incumbency",
+          "entity": "山海卫指挥使",
+          "create": false,
+          "changes": [
+            {
+              "field": "holders",
+              "value": [
+                "郭允厚"
+              ]
+            }
+          ],
+          "text": "郭允厚任山海卫指挥使，任命已生效。"
+        },
+        {
+          "entity_type": "incumbency",
+          "entity": "锦州总兵官",
+          "create": false,
+          "changes": [
+            {
+              "field": "holders",
+              "value": [
+                "孙传庭"
+              ]
+            }
+          ],
+          "text": "孙传庭任锦州总兵官，任命已生效。"
+        },
+        {
+          "entity_type": "incumbency",
+          "entity": "山西天城卫指挥使",
+          "create": false,
+          "changes": [
+            {
+              "field": "holders",
+              "value": [
+                "卢象升"
+              ]
+            }
+          ],
+          "text": "卢象升任山西天城卫指挥使，任命已生效。"
+        },
+        {
+          "entity_type": "incumbency",
+          "entity": "山西高山守御千户所正千户",
+          "create": false,
+          "changes": [
+            {
+              "field": "holders",
+              "value": [
+                "毕自严"
+              ]
+            }
+          ],
+          "text": "毕自严任山西高山守御千户所正千户，任命已生效。"
+        },
+        {
+          "entity_type": "incumbency",
+          "entity": "山西镇虏卫指挥使",
+          "create": false,
+          "changes": [
+            {
+              "field": "holders",
+              "value": [
+                "洪承畴"
+              ]
+            }
+          ],
+          "text": "洪承畴任山西镇虏卫指挥使，任命已生效。"
+        }
+      ],
+      "decree_events": [],
+      "reports": []
+    },
+    "wei_replace": {
+      "facts": [
+        {
+          "entity_type": "incumbency",
+          "entity": "居庸关守御千户所指挥使",
+          "create": false,
+          "changes": [
+            {
+              "field": "holders",
+              "value": [
+                "郭允厚"
+              ]
+            }
+          ],
+          "text": "上案之后，郭允厚任居庸关守御千户所指挥使，任命已生效。"
+        },
+        {
+          "entity_type": "incumbency",
+          "entity": "山西天成卫指挥使",
+          "create": false,
+          "changes": [
+            {
+              "field": "holders",
+              "value": [
+                "李待问"
+              ]
+            }
+          ],
+          "text": "上案之后，李待问任山西天成卫指挥使，任命已生效。"
+        },
+        {
+          "entity_type": "incumbency",
+          "entity": "辽东广宁中屯卫总兵官",
+          "create": false,
+          "changes": [
+            {
+              "field": "holders",
+              "value": [
+                "练国事"
+              ]
+            }
+          ],
+          "text": "上案之后，练国事任辽东广宁中屯卫总兵官，任命已生效。"
+        },
+        {
+          "entity_type": "incumbency",
+          "entity": "山海关指挥使",
+          "create": false,
+          "changes": [
+            {
+              "field": "holders",
+              "value": [
+                "孙传庭"
+              ]
+            }
+          ],
+          "text": "上案之后，孙传庭任山海关指挥使，任命已生效。"
+        },
+        {
+          "entity_type": "incumbency",
+          "entity": "山西高山卫指挥使",
+          "create": false,
+          "changes": [
+            {
+              "field": "holders",
+              "value": [
+                "卢象升"
+              ]
+            }
+          ],
+          "text": "上案之后，卢象升任山西高山卫指挥使，任命已生效。"
+        }
+      ],
+      "decree_events": [],
+      "reports": []
+    }
+  }
+}

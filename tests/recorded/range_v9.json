@@ -1,0 +1,285 @@
+{
+  "source": {
+    "host": "claude-cli",
+    "session_id": "394a0612-cf65-4643-a37e-87770006cb32",
+    "instructions": "你是模拟游戏的事实转译官，按schema交Declaration，只交已经发生的变化，不改数值，不补其他事实。数值界限由引擎落账夹范围，转译保留上游名义数。字段名照allowed_fields：鸟铳装备firearm_equipment，随军红夷炮cannon_equipment，行速travel_speed，财政支付政策payment_policy对象；实体已经存在，create=false。",
+    "input": {
+      "facts": "京营鸟铳装备改为120，随军红夷炮改为负2门；洪承畴行速改为3；宗室禄米_base应付保留比例factor改为1.5、暂欠比例defer改为负0.5。按照原始数字交付，由引擎夹范围。",
+      "catalogue": {
+        "army": [
+          "京营"
+        ],
+        "person": [
+          "洪承畴"
+        ],
+        "fiscal": [
+          "宗室禄米_base"
+        ]
+      },
+      "allowed_fields": {
+        "army": [
+          "firearm_equipment",
+          "cannon_equipment"
+        ],
+        "person": [
+          "travel_speed"
+        ],
+        "fiscal": [
+          "payment_policy"
+        ]
+      },
+      "field_schema": {
+        "fiscal.payment_policy": {
+          "factor": "number",
+          "defer": "number",
+          "until": "optional date"
+        }
+      },
+      "schema": {
+        "$defs": {
+          "Change": {
+            "additionalProperties": false,
+            "properties": {
+              "field": {
+                "title": "Field",
+                "type": "string"
+              },
+              "value": {
+                "title": "Value"
+              },
+              "purpose": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "补欠",
+                      "当月饷",
+                      "犒赏",
+                      "专项"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "账户付给军队或财政科目的款须写名目；value仍为带符号的两数。",
+                "title": "Purpose"
+              },
+              "counterpart": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/EntityRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "钱粮另一边的实体引用；每笔只声明付方一次，收方由引擎按实际金额记账，不必另写 fact。无出处收入可不填。"
+              }
+            },
+            "required": [
+              "field",
+              "value"
+            ],
+            "title": "Change",
+            "type": "object"
+          },
+          "DecreeEvent": {
+            "additionalProperties": false,
+            "properties": {
+              "decree": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "来源旨意：整夜本份 decrees 的零基下标；月末本旨省略，使用当前旨意来源。",
+                "title": "Decree"
+              },
+              "kind": {
+                "description": "handled：实际发生的一道传递、经办（转交、往返），每道各记一条；completed：推演已认定该差事办结，包括关联事务已成往事。无记录、接不住不算办结。没有新建事务也不算办结。",
+                "enum": [
+                  "handled",
+                  "completed"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "text": {
+                "title": "Text",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "text"
+            ],
+            "title": "DecreeEvent",
+            "type": "object"
+          },
+          "EntityRef": {
+            "additionalProperties": false,
+            "properties": {
+              "entity_type": {
+                "title": "Entity Type",
+                "type": "string"
+              },
+              "entity": {
+                "title": "Entity",
+                "type": "string"
+              }
+            },
+            "required": [
+              "entity_type",
+              "entity"
+            ],
+            "title": "EntityRef",
+            "type": "object"
+          },
+          "Fact": {
+            "additionalProperties": false,
+            "properties": {
+              "entity_type": {
+                "description": "账本实体类型，如 person、army、affair",
+                "title": "Entity Type",
+                "type": "string"
+              },
+              "entity": {
+                "description": "实体的账本正名或新实体的名字",
+                "title": "Entity",
+                "type": "string"
+              },
+              "create": {
+                "description": "是否新建；已有实体填 false",
+                "title": "Create",
+                "type": "boolean"
+              },
+              "affair": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "本条后果所属事务的正名；可指同份声明新建的 affair，无所属事务可省略。",
+                "title": "Affair"
+              },
+              "decree": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "来源旨意：整夜本份 decrees 的零基下标；月末本旨省略，使用当前旨意来源。",
+                "title": "Decree"
+              },
+              "discovered": {
+                "default": false,
+                "description": "是否为密令内部查获实情；不按有无字段变化判断。",
+                "title": "Discovered",
+                "type": "boolean"
+              },
+              "changes": {
+                "items": {
+                  "$ref": "#/$defs/Change"
+                },
+                "title": "Changes",
+                "type": "array"
+              },
+              "text": {
+                "description": "发生的事实，原文记在这个实体上；没有字段变化也可以只记文字。物理实况正文只写后果，不写密令来源，密令来源只放在结构化来源关系里。",
+                "title": "Text",
+                "type": "string"
+              }
+            },
+            "required": [
+              "entity_type",
+              "entity",
+              "create",
+              "changes",
+              "text"
+            ],
+            "title": "Fact",
+            "type": "object"
+          },
+          "Report": {
+            "additionalProperties": false,
+            "properties": {
+              "entity_type": {
+                "title": "Entity Type",
+                "type": "string"
+              },
+              "entity": {
+                "title": "Entity",
+                "type": "string"
+              },
+              "text": {
+                "title": "Text",
+                "type": "string"
+              },
+              "audience": {
+                "enum": [
+                  "public",
+                  "official"
+                ],
+                "title": "Audience",
+                "type": "string"
+              }
+            },
+            "required": [
+              "entity_type",
+              "entity",
+              "text",
+              "audience"
+            ],
+            "title": "Report",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "facts": {
+            "items": {
+              "$ref": "#/$defs/Fact"
+            },
+            "title": "Facts",
+            "type": "array"
+          },
+          "reports": {
+            "items": {
+              "$ref": "#/$defs/Report"
+            },
+            "title": "Reports",
+            "type": "array"
+          },
+          "decree_events": {
+            "items": {
+              "$ref": "#/$defs/DecreeEvent"
+            },
+            "title": "Decree Events",
+            "type": "array"
+          }
+        },
+        "required": [
+          "facts"
+        ],
+        "title": "Declaration",
+        "type": "object"
+      }
+    }
+  },
+  "reply": "{\"facts\": [{\"entity_type\": \"army\", \"entity\": \"京营\", \"create\": false, \"changes\": [{\"field\": \"firearm_equipment\", \"value\": 120}, {\"field\": \"cannon_equipment\", \"value\": -2}], \"text\": \"京营鸟铳装备改为120，随军红夷炮改为负2门。\"}, {\"entity_type\": \"person\", \"entity\": \"洪承畴\", \"create\": false, \"changes\": [{\"field\": \"travel_speed\", \"value\": 3}], \"text\": \"洪承畴行速改为3。\"}, {\"entity_type\": \"fiscal\", \"entity\": \"宗室禄米_base\", \"create\": false, \"changes\": [{\"field\": \"payment_policy\", \"value\": {\"factor\": 1.5, \"defer\": -0.5}}], \"text\": \"宗室禄米应付保留比例改为1.5，暂欠比例改为负0.5。\"}]}"
+}

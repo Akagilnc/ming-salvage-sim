@@ -1,0 +1,30 @@
+{
+  "facts": [
+    {
+      "entity_type": "account",
+      "entity": "国库",
+      "create": false,
+      "decree": 0,
+      "changes": [
+        {
+          "field": "taels",
+          "value": -300000,
+          "counterpart": {
+            "entity_type": "account",
+            "entity": "内库"
+          }
+        }
+      ],
+      "text": "国库拨银300000两至内库。"
+    }
+  ],
+  "reports": [
+    {
+      "entity_type": "account",
+      "entity": "国库",
+      "text": "国库向外廷奏报已拨300000两。",
+      "audience": "official"
+    }
+  ],
+  "decree_events": []
+}

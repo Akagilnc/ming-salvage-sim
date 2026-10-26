@@ -1,0 +1,8282 @@
+{
+  "external": {
+    "source": "《明史》卷75职官四（外官）、卷76职官五（都司卫所）、卷73职官二（督抚巡按）；京官含南京、两京府尹等专名，均不另带属地。监仓、织造、市舶等分驻职按游戏设定归外官。",
+    "departments": ["府", "州", "县", "承宣布政使司", "提刑按察使司", "王府长史司", "儒学", "都转运盐使司", "巡检司", "驿", "宣慰司", "都指挥使司", "卫", "千户所", "镇", "衍圣公府", "行太仆寺", "苑马寺", "盐课提举司", "市舶提举司", "茶马司", "盐课司", "盐仓", "仓", "库", "织染局", "批验所", "铁冶所", "税课司", "税课局", "递运所", "河泊所", "河道", "医学", "阴阳学", "僧纲司", "僧正司", "僧会司", "道纪司", "道正司", "道会司", "留守司", "宣抚司", "安抚司", "招讨司", "长官司"],
+    "offices": ["总督", "巡抚", "经略", "总理", "赞理", "抚治", "巡按御史", "提督", "巡视", "守备太监", "织造提督太监", "镇守太监", "市舶提督太监", "监督仓场太监"]
+  },
+  "offices": [
+    {
+      "name": "吏部尚书",
+      "department": "吏部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·吏部；一员/多员按该条员额。"
+    },
+    {
+      "name": "吏部左侍郎",
+      "department": "吏部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·吏部；一员/多员按该条员额。"
+    },
+    {
+      "name": "吏部右侍郎",
+      "department": "吏部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·吏部；一员/多员按该条员额。"
+    },
+    {
+      "name": "吏部司务",
+      "department": "吏部",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·吏部；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京吏部尚书",
+      "department": "南京吏部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·吏部；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京吏部右侍郎",
+      "department": "南京吏部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·吏部；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京吏部司务",
+      "department": "南京吏部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·吏部；一员/多员按该条员额。"
+    },
+    {
+      "name": "吏部文选清吏司郎中",
+      "department": "吏部",
+      "multiple": false,
+      "aliases": [
+        "吏部文选司郎中"
+      ],
+      "source": "《明史》卷72·职官志·吏部；一员/多员按该条员额。"
+    },
+    {
+      "name": "吏部文选清吏司员外郎",
+      "department": "吏部",
+      "multiple": false,
+      "aliases": [
+        "吏部文选司员外郎"
+      ],
+      "source": "《明史》卷72·职官志·吏部；一员/多员按该条员额。"
+    },
+    {
+      "name": "吏部文选清吏司主事",
+      "department": "吏部",
+      "multiple": true,
+      "aliases": [
+        "吏部文选司主事"
+      ],
+      "source": "《明史》卷72·职官志·吏部；一员/多员按该条员额。"
+    },
+    {
+      "name": "吏部验封清吏司郎中",
+      "department": "吏部",
+      "multiple": false,
+      "aliases": [
+        "吏部验封司郎中"
+      ],
+      "source": "《明史》卷72·职官志·吏部；一员/多员按该条员额。"
+    },
+    {
+      "name": "吏部验封清吏司员外郎",
+      "department": "吏部",
+      "multiple": false,
+      "aliases": [
+        "吏部验封司员外郎"
+      ],
+      "source": "《明史》卷72·职官志·吏部；一员/多员按该条员额。"
+    },
+    {
+      "name": "吏部验封清吏司主事",
+      "department": "吏部",
+      "multiple": false,
+      "aliases": [
+        "吏部验封司主事"
+      ],
+      "source": "《明史》卷72·职官志·吏部；一员/多员按该条员额。"
+    },
+    {
+      "name": "吏部稽勋清吏司郎中",
+      "department": "吏部",
+      "multiple": false,
+      "aliases": [
+        "吏部稽勋司郎中"
+      ],
+      "source": "《明史》卷72·职官志·吏部；一员/多员按该条员额。"
+    },
+    {
+      "name": "吏部稽勋清吏司员外郎",
+      "department": "吏部",
+      "multiple": false,
+      "aliases": [
+        "吏部稽勋司员外郎"
+      ],
+      "source": "《明史》卷72·职官志·吏部；一员/多员按该条员额。"
+    },
+    {
+      "name": "吏部稽勋清吏司主事",
+      "department": "吏部",
+      "multiple": false,
+      "aliases": [
+        "吏部稽勋司主事"
+      ],
+      "source": "《明史》卷72·职官志·吏部；一员/多员按该条员额。"
+    },
+    {
+      "name": "吏部考功清吏司郎中",
+      "department": "吏部",
+      "multiple": false,
+      "aliases": [
+        "吏部考功司郎中"
+      ],
+      "source": "《明史》卷72·职官志·吏部；一员/多员按该条员额。"
+    },
+    {
+      "name": "吏部考功清吏司员外郎",
+      "department": "吏部",
+      "multiple": false,
+      "aliases": [
+        "吏部考功司员外郎"
+      ],
+      "source": "《明史》卷72·职官志·吏部；一员/多员按该条员额。"
+    },
+    {
+      "name": "吏部考功清吏司主事",
+      "department": "吏部",
+      "multiple": true,
+      "aliases": [
+        "吏部考功司主事"
+      ],
+      "source": "《明史》卷72·职官志·吏部；一员/多员按该条员额。"
+    },
+    {
+      "name": "吏部郎中",
+      "department": "吏部",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·吏部；一员/多员按该条员额。"
+    },
+    {
+      "name": "吏部员外郎",
+      "department": "吏部",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·吏部；一员/多员按该条员额。"
+    },
+    {
+      "name": "吏部主事",
+      "department": "吏部",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·吏部；一员/多员按该条员额。"
+    },
+    {
+      "name": "户部尚书",
+      "department": "户部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "户部左侍郎",
+      "department": "户部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "户部右侍郎",
+      "department": "户部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "户部司务",
+      "department": "户部",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京户部尚书",
+      "department": "南京户部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京户部右侍郎",
+      "department": "南京户部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京户部司务",
+      "department": "南京户部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "户部浙江清吏司郎中",
+      "department": "户部",
+      "multiple": false,
+      "aliases": [
+        "户部浙江司郎中"
+      ],
+      "source": "《明史》卷72·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "户部浙江清吏司员外郎",
+      "department": "户部",
+      "multiple": false,
+      "aliases": [
+        "户部浙江司员外郎"
+      ],
+      "source": "《明史》卷72·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "户部浙江清吏司主事",
+      "department": "户部",
+      "multiple": true,
+      "aliases": [
+        "户部浙江司主事"
+      ],
+      "source": "《明史》卷72·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "户部江西清吏司郎中",
+      "department": "户部",
+      "multiple": false,
+      "aliases": [
+        "户部江西司郎中"
+      ],
+      "source": "《明史》卷72·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "户部江西清吏司员外郎",
+      "department": "户部",
+      "multiple": false,
+      "aliases": [
+        "户部江西司员外郎"
+      ],
+      "source": "《明史》卷72·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "户部江西清吏司主事",
+      "department": "户部",
+      "multiple": true,
+      "aliases": [
+        "户部江西司主事"
+      ],
+      "source": "《明史》卷72·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "户部湖广清吏司郎中",
+      "department": "户部",
+      "multiple": false,
+      "aliases": [
+        "户部湖广司郎中"
+      ],
+      "source": "《明史》卷72·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "户部湖广清吏司员外郎",
+      "department": "户部",
+      "multiple": false,
+      "aliases": [
+        "户部湖广司员外郎"
+      ],
+      "source": "《明史》卷72·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "户部湖广清吏司主事",
+      "department": "户部",
+      "multiple": true,
+      "aliases": [
+        "户部湖广司主事"
+      ],
+      "source": "《明史》卷72·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "户部陕西清吏司郎中",
+      "department": "户部",
+      "multiple": true,
+      "aliases": [
+        "户部陕西司郎中"
+      ],
+      "source": "《明史》卷72·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "户部陕西清吏司员外郎",
+      "department": "户部",
+      "multiple": false,
+      "aliases": [
+        "户部陕西司员外郎"
+      ],
+      "source": "《明史》卷72·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "户部陕西清吏司主事",
+      "department": "户部",
+      "multiple": true,
+      "aliases": [
+        "户部陕西司主事"
+      ],
+      "source": "《明史》卷72·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "户部广东清吏司郎中",
+      "department": "户部",
+      "multiple": false,
+      "aliases": [
+        "户部广东司郎中"
+      ],
+      "source": "《明史》卷72·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "户部广东清吏司员外郎",
+      "department": "户部",
+      "multiple": false,
+      "aliases": [
+        "户部广东司员外郎"
+      ],
+      "source": "《明史》卷72·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "户部广东清吏司主事",
+      "department": "户部",
+      "multiple": true,
+      "aliases": [
+        "户部广东司主事"
+      ],
+      "source": "《明史》卷72·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "户部山东清吏司郎中",
+      "department": "户部",
+      "multiple": true,
+      "aliases": [
+        "户部山东司郎中"
+      ],
+      "source": "《明史》卷72·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "户部山东清吏司员外郎",
+      "department": "户部",
+      "multiple": false,
+      "aliases": [
+        "户部山东司员外郎"
+      ],
+      "source": "《明史》卷72·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "户部山东清吏司主事",
+      "department": "户部",
+      "multiple": true,
+      "aliases": [
+        "户部山东司主事"
+      ],
+      "source": "《明史》卷72·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "户部福建清吏司郎中",
+      "department": "户部",
+      "multiple": false,
+      "aliases": [
+        "户部福建司郎中"
+      ],
+      "source": "《明史》卷72·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "户部福建清吏司员外郎",
+      "department": "户部",
+      "multiple": false,
+      "aliases": [
+        "户部福建司员外郎"
+      ],
+      "source": "《明史》卷72·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "户部福建清吏司主事",
+      "department": "户部",
+      "multiple": true,
+      "aliases": [
+        "户部福建司主事"
+      ],
+      "source": "《明史》卷72·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "户部河南清吏司郎中",
+      "department": "户部",
+      "multiple": false,
+      "aliases": [
+        "户部河南司郎中"
+      ],
+      "source": "《明史》卷72·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "户部河南清吏司员外郎",
+      "department": "户部",
+      "multiple": false,
+      "aliases": [
+        "户部河南司员外郎"
+      ],
+      "source": "《明史》卷72·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "户部河南清吏司主事",
+      "department": "户部",
+      "multiple": true,
+      "aliases": [
+        "户部河南司主事"
+      ],
+      "source": "《明史》卷72·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "户部山西清吏司郎中",
+      "department": "户部",
+      "multiple": true,
+      "aliases": [
+        "户部山西司郎中"
+      ],
+      "source": "《明史》卷72·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "户部山西清吏司员外郎",
+      "department": "户部",
+      "multiple": false,
+      "aliases": [
+        "户部山西司员外郎"
+      ],
+      "source": "《明史》卷72·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "户部山西清吏司主事",
+      "department": "户部",
+      "multiple": true,
+      "aliases": [
+        "户部山西司主事"
+      ],
+      "source": "《明史》卷72·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "户部四川清吏司郎中",
+      "department": "户部",
+      "multiple": false,
+      "aliases": [
+        "户部四川司郎中"
+      ],
+      "source": "《明史》卷72·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "户部四川清吏司员外郎",
+      "department": "户部",
+      "multiple": false,
+      "aliases": [
+        "户部四川司员外郎"
+      ],
+      "source": "《明史》卷72·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "户部四川清吏司主事",
+      "department": "户部",
+      "multiple": true,
+      "aliases": [
+        "户部四川司主事"
+      ],
+      "source": "《明史》卷72·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "户部广西清吏司郎中",
+      "department": "户部",
+      "multiple": false,
+      "aliases": [
+        "户部广西司郎中"
+      ],
+      "source": "《明史》卷72·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "户部广西清吏司员外郎",
+      "department": "户部",
+      "multiple": false,
+      "aliases": [
+        "户部广西司员外郎"
+      ],
+      "source": "《明史》卷72·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "户部广西清吏司主事",
+      "department": "户部",
+      "multiple": true,
+      "aliases": [
+        "户部广西司主事"
+      ],
+      "source": "《明史》卷72·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "户部贵州清吏司郎中",
+      "department": "户部",
+      "multiple": true,
+      "aliases": [
+        "户部贵州司郎中"
+      ],
+      "source": "《明史》卷72·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "户部贵州清吏司员外郎",
+      "department": "户部",
+      "multiple": false,
+      "aliases": [
+        "户部贵州司员外郎"
+      ],
+      "source": "《明史》卷72·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "户部贵州清吏司主事",
+      "department": "户部",
+      "multiple": true,
+      "aliases": [
+        "户部贵州司主事"
+      ],
+      "source": "《明史》卷72·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "户部云南清吏司郎中",
+      "department": "户部",
+      "multiple": true,
+      "aliases": [
+        "户部云南司郎中"
+      ],
+      "source": "《明史》卷72·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "户部云南清吏司员外郎",
+      "department": "户部",
+      "multiple": false,
+      "aliases": [
+        "户部云南司员外郎"
+      ],
+      "source": "《明史》卷72·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "户部云南清吏司主事",
+      "department": "户部",
+      "multiple": true,
+      "aliases": [
+        "户部云南司主事"
+      ],
+      "source": "《明史》卷72·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "户部郎中",
+      "department": "户部",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "户部员外郎",
+      "department": "户部",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "户部主事",
+      "department": "户部",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·户部；一员/多员按该条员额。"
+    },
+    {
+      "name": "礼部尚书",
+      "department": "礼部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·礼部；一员/多员按该条员额。"
+    },
+    {
+      "name": "礼部左侍郎",
+      "department": "礼部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·礼部；一员/多员按该条员额。"
+    },
+    {
+      "name": "礼部右侍郎",
+      "department": "礼部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·礼部；一员/多员按该条员额。"
+    },
+    {
+      "name": "礼部司务",
+      "department": "礼部",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·礼部；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京礼部尚书",
+      "department": "南京礼部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·礼部；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京礼部右侍郎",
+      "department": "南京礼部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·礼部；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京礼部司务",
+      "department": "南京礼部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·礼部；一员/多员按该条员额。"
+    },
+    {
+      "name": "礼部仪制清吏司郎中",
+      "department": "礼部",
+      "multiple": false,
+      "aliases": [
+        "礼部仪制司郎中"
+      ],
+      "source": "《明史》卷72·职官志·礼部；一员/多员按该条员额。"
+    },
+    {
+      "name": "礼部仪制清吏司员外郎",
+      "department": "礼部",
+      "multiple": false,
+      "aliases": [
+        "礼部仪制司员外郎"
+      ],
+      "source": "《明史》卷72·职官志·礼部；一员/多员按该条员额。"
+    },
+    {
+      "name": "礼部仪制清吏司主事",
+      "department": "礼部",
+      "multiple": true,
+      "aliases": [
+        "礼部仪制司主事"
+      ],
+      "source": "《明史》卷72·职官志·礼部；一员/多员按该条员额。"
+    },
+    {
+      "name": "礼部祠祭清吏司郎中",
+      "department": "礼部",
+      "multiple": false,
+      "aliases": [
+        "礼部祠祭司郎中"
+      ],
+      "source": "《明史》卷72·职官志·礼部；一员/多员按该条员额。"
+    },
+    {
+      "name": "礼部祠祭清吏司员外郎",
+      "department": "礼部",
+      "multiple": false,
+      "aliases": [
+        "礼部祠祭司员外郎"
+      ],
+      "source": "《明史》卷72·职官志·礼部；一员/多员按该条员额。"
+    },
+    {
+      "name": "礼部祠祭清吏司主事",
+      "department": "礼部",
+      "multiple": true,
+      "aliases": [
+        "礼部祠祭司主事"
+      ],
+      "source": "《明史》卷72·职官志·礼部；一员/多员按该条员额。"
+    },
+    {
+      "name": "礼部主客清吏司郎中",
+      "department": "礼部",
+      "multiple": false,
+      "aliases": [
+        "礼部主客司郎中"
+      ],
+      "source": "《明史》卷72·职官志·礼部；一员/多员按该条员额。"
+    },
+    {
+      "name": "礼部主客清吏司员外郎",
+      "department": "礼部",
+      "multiple": false,
+      "aliases": [
+        "礼部主客司员外郎"
+      ],
+      "source": "《明史》卷72·职官志·礼部；一员/多员按该条员额。"
+    },
+    {
+      "name": "礼部主客清吏司主事",
+      "department": "礼部",
+      "multiple": true,
+      "aliases": [
+        "礼部主客司主事"
+      ],
+      "source": "《明史》卷72·职官志·礼部；一员/多员按该条员额。"
+    },
+    {
+      "name": "礼部精膳清吏司郎中",
+      "department": "礼部",
+      "multiple": false,
+      "aliases": [
+        "礼部精膳司郎中"
+      ],
+      "source": "《明史》卷72·职官志·礼部；一员/多员按该条员额。"
+    },
+    {
+      "name": "礼部精膳清吏司员外郎",
+      "department": "礼部",
+      "multiple": false,
+      "aliases": [
+        "礼部精膳司员外郎"
+      ],
+      "source": "《明史》卷72·职官志·礼部；一员/多员按该条员额。"
+    },
+    {
+      "name": "礼部精膳清吏司主事",
+      "department": "礼部",
+      "multiple": false,
+      "aliases": [
+        "礼部精膳司主事"
+      ],
+      "source": "《明史》卷72·职官志·礼部；一员/多员按该条员额。"
+    },
+    {
+      "name": "礼部郎中",
+      "department": "礼部",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·礼部；一员/多员按该条员额。"
+    },
+    {
+      "name": "礼部员外郎",
+      "department": "礼部",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·礼部；一员/多员按该条员额。"
+    },
+    {
+      "name": "礼部主事",
+      "department": "礼部",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·礼部；一员/多员按该条员额。"
+    },
+    {
+      "name": "兵部尚书",
+      "department": "兵部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·兵部；一员/多员按该条员额。"
+    },
+    {
+      "name": "兵部左侍郎",
+      "department": "兵部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·兵部；一员/多员按该条员额。"
+    },
+    {
+      "name": "兵部右侍郎",
+      "department": "兵部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·兵部；一员/多员按该条员额。"
+    },
+    {
+      "name": "兵部司务",
+      "department": "兵部",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·兵部；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京兵部尚书",
+      "department": "南京兵部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·兵部；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京兵部右侍郎",
+      "department": "南京兵部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·兵部；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京兵部司务",
+      "department": "南京兵部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·兵部；一员/多员按该条员额。"
+    },
+    {
+      "name": "兵部武选清吏司郎中",
+      "department": "兵部",
+      "multiple": false,
+      "aliases": [
+        "兵部武选司郎中"
+      ],
+      "source": "《明史》卷72·职官志·兵部；一员/多员按该条员额。"
+    },
+    {
+      "name": "兵部武选清吏司员外郎",
+      "department": "兵部",
+      "multiple": false,
+      "aliases": [
+        "兵部武选司员外郎"
+      ],
+      "source": "《明史》卷72·职官志·兵部；一员/多员按该条员额。"
+    },
+    {
+      "name": "兵部武选清吏司主事",
+      "department": "兵部",
+      "multiple": true,
+      "aliases": [
+        "兵部武选司主事"
+      ],
+      "source": "《明史》卷72·职官志·兵部；一员/多员按该条员额。"
+    },
+    {
+      "name": "兵部职方清吏司郎中",
+      "department": "兵部",
+      "multiple": false,
+      "aliases": [
+        "兵部职方司郎中"
+      ],
+      "source": "《明史》卷72·职官志·兵部；一员/多员按该条员额。"
+    },
+    {
+      "name": "兵部职方清吏司员外郎",
+      "department": "兵部",
+      "multiple": true,
+      "aliases": [
+        "兵部职方司员外郎"
+      ],
+      "source": "《明史》卷72·职官志·兵部；一员/多员按该条员额。"
+    },
+    {
+      "name": "兵部职方清吏司主事",
+      "department": "兵部",
+      "multiple": true,
+      "aliases": [
+        "兵部职方司主事"
+      ],
+      "source": "《明史》卷72·职官志·兵部；一员/多员按该条员额。"
+    },
+    {
+      "name": "兵部车驾清吏司郎中",
+      "department": "兵部",
+      "multiple": false,
+      "aliases": [
+        "兵部车驾司郎中"
+      ],
+      "source": "《明史》卷72·职官志·兵部；一员/多员按该条员额。"
+    },
+    {
+      "name": "兵部车驾清吏司员外郎",
+      "department": "兵部",
+      "multiple": false,
+      "aliases": [
+        "兵部车驾司员外郎"
+      ],
+      "source": "《明史》卷72·职官志·兵部；一员/多员按该条员额。"
+    },
+    {
+      "name": "兵部车驾清吏司主事",
+      "department": "兵部",
+      "multiple": true,
+      "aliases": [
+        "兵部车驾司主事"
+      ],
+      "source": "《明史》卷72·职官志·兵部；一员/多员按该条员额。"
+    },
+    {
+      "name": "兵部武库清吏司郎中",
+      "department": "兵部",
+      "multiple": false,
+      "aliases": [
+        "兵部武库司郎中"
+      ],
+      "source": "《明史》卷72·职官志·兵部；一员/多员按该条员额。"
+    },
+    {
+      "name": "兵部武库清吏司员外郎",
+      "department": "兵部",
+      "multiple": false,
+      "aliases": [
+        "兵部武库司员外郎"
+      ],
+      "source": "《明史》卷72·职官志·兵部；一员/多员按该条员额。"
+    },
+    {
+      "name": "兵部武库清吏司主事",
+      "department": "兵部",
+      "multiple": true,
+      "aliases": [
+        "兵部武库司主事"
+      ],
+      "source": "《明史》卷72·职官志·兵部；一员/多员按该条员额。"
+    },
+    {
+      "name": "兵部郎中",
+      "department": "兵部",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·兵部；一员/多员按该条员额。"
+    },
+    {
+      "name": "兵部员外郎",
+      "department": "兵部",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·兵部；一员/多员按该条员额。"
+    },
+    {
+      "name": "兵部主事",
+      "department": "兵部",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·兵部；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑部尚书",
+      "department": "刑部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑部左侍郎",
+      "department": "刑部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑部右侍郎",
+      "department": "刑部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑部司务",
+      "department": "刑部",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京刑部尚书",
+      "department": "南京刑部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京刑部右侍郎",
+      "department": "南京刑部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京刑部司务",
+      "department": "南京刑部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑部浙江清吏司郎中",
+      "department": "刑部",
+      "multiple": false,
+      "aliases": [
+        "刑部浙江司郎中"
+      ],
+      "source": "《明史》卷72·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑部浙江清吏司员外郎",
+      "department": "刑部",
+      "multiple": false,
+      "aliases": [
+        "刑部浙江司员外郎"
+      ],
+      "source": "《明史》卷72·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑部浙江清吏司主事",
+      "department": "刑部",
+      "multiple": true,
+      "aliases": [
+        "刑部浙江司主事"
+      ],
+      "source": "《明史》卷72·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑部江西清吏司郎中",
+      "department": "刑部",
+      "multiple": false,
+      "aliases": [
+        "刑部江西司郎中"
+      ],
+      "source": "《明史》卷72·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑部江西清吏司员外郎",
+      "department": "刑部",
+      "multiple": false,
+      "aliases": [
+        "刑部江西司员外郎"
+      ],
+      "source": "《明史》卷72·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑部江西清吏司主事",
+      "department": "刑部",
+      "multiple": true,
+      "aliases": [
+        "刑部江西司主事"
+      ],
+      "source": "《明史》卷72·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑部湖广清吏司郎中",
+      "department": "刑部",
+      "multiple": false,
+      "aliases": [
+        "刑部湖广司郎中"
+      ],
+      "source": "《明史》卷72·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑部湖广清吏司员外郎",
+      "department": "刑部",
+      "multiple": false,
+      "aliases": [
+        "刑部湖广司员外郎"
+      ],
+      "source": "《明史》卷72·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑部湖广清吏司主事",
+      "department": "刑部",
+      "multiple": true,
+      "aliases": [
+        "刑部湖广司主事"
+      ],
+      "source": "《明史》卷72·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑部陕西清吏司郎中",
+      "department": "刑部",
+      "multiple": false,
+      "aliases": [
+        "刑部陕西司郎中"
+      ],
+      "source": "《明史》卷72·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑部陕西清吏司员外郎",
+      "department": "刑部",
+      "multiple": false,
+      "aliases": [
+        "刑部陕西司员外郎"
+      ],
+      "source": "《明史》卷72·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑部陕西清吏司主事",
+      "department": "刑部",
+      "multiple": true,
+      "aliases": [
+        "刑部陕西司主事"
+      ],
+      "source": "《明史》卷72·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑部广东清吏司郎中",
+      "department": "刑部",
+      "multiple": false,
+      "aliases": [
+        "刑部广东司郎中"
+      ],
+      "source": "《明史》卷72·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑部广东清吏司员外郎",
+      "department": "刑部",
+      "multiple": false,
+      "aliases": [
+        "刑部广东司员外郎"
+      ],
+      "source": "《明史》卷72·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑部广东清吏司主事",
+      "department": "刑部",
+      "multiple": true,
+      "aliases": [
+        "刑部广东司主事"
+      ],
+      "source": "《明史》卷72·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑部山东清吏司郎中",
+      "department": "刑部",
+      "multiple": false,
+      "aliases": [
+        "刑部山东司郎中"
+      ],
+      "source": "《明史》卷72·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑部山东清吏司员外郎",
+      "department": "刑部",
+      "multiple": false,
+      "aliases": [
+        "刑部山东司员外郎"
+      ],
+      "source": "《明史》卷72·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑部山东清吏司主事",
+      "department": "刑部",
+      "multiple": true,
+      "aliases": [
+        "刑部山东司主事"
+      ],
+      "source": "《明史》卷72·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑部福建清吏司郎中",
+      "department": "刑部",
+      "multiple": false,
+      "aliases": [
+        "刑部福建司郎中"
+      ],
+      "source": "《明史》卷72·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑部福建清吏司员外郎",
+      "department": "刑部",
+      "multiple": false,
+      "aliases": [
+        "刑部福建司员外郎"
+      ],
+      "source": "《明史》卷72·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑部福建清吏司主事",
+      "department": "刑部",
+      "multiple": true,
+      "aliases": [
+        "刑部福建司主事"
+      ],
+      "source": "《明史》卷72·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑部河南清吏司郎中",
+      "department": "刑部",
+      "multiple": false,
+      "aliases": [
+        "刑部河南司郎中"
+      ],
+      "source": "《明史》卷72·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑部河南清吏司员外郎",
+      "department": "刑部",
+      "multiple": false,
+      "aliases": [
+        "刑部河南司员外郎"
+      ],
+      "source": "《明史》卷72·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑部河南清吏司主事",
+      "department": "刑部",
+      "multiple": true,
+      "aliases": [
+        "刑部河南司主事"
+      ],
+      "source": "《明史》卷72·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑部山西清吏司郎中",
+      "department": "刑部",
+      "multiple": false,
+      "aliases": [
+        "刑部山西司郎中"
+      ],
+      "source": "《明史》卷72·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑部山西清吏司员外郎",
+      "department": "刑部",
+      "multiple": false,
+      "aliases": [
+        "刑部山西司员外郎"
+      ],
+      "source": "《明史》卷72·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑部山西清吏司主事",
+      "department": "刑部",
+      "multiple": true,
+      "aliases": [
+        "刑部山西司主事"
+      ],
+      "source": "《明史》卷72·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑部四川清吏司郎中",
+      "department": "刑部",
+      "multiple": false,
+      "aliases": [
+        "刑部四川司郎中"
+      ],
+      "source": "《明史》卷72·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑部四川清吏司员外郎",
+      "department": "刑部",
+      "multiple": false,
+      "aliases": [
+        "刑部四川司员外郎"
+      ],
+      "source": "《明史》卷72·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑部四川清吏司主事",
+      "department": "刑部",
+      "multiple": true,
+      "aliases": [
+        "刑部四川司主事"
+      ],
+      "source": "《明史》卷72·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑部广西清吏司郎中",
+      "department": "刑部",
+      "multiple": false,
+      "aliases": [
+        "刑部广西司郎中"
+      ],
+      "source": "《明史》卷72·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑部广西清吏司员外郎",
+      "department": "刑部",
+      "multiple": false,
+      "aliases": [
+        "刑部广西司员外郎"
+      ],
+      "source": "《明史》卷72·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑部广西清吏司主事",
+      "department": "刑部",
+      "multiple": true,
+      "aliases": [
+        "刑部广西司主事"
+      ],
+      "source": "《明史》卷72·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑部贵州清吏司郎中",
+      "department": "刑部",
+      "multiple": false,
+      "aliases": [
+        "刑部贵州司郎中"
+      ],
+      "source": "《明史》卷72·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑部贵州清吏司员外郎",
+      "department": "刑部",
+      "multiple": false,
+      "aliases": [
+        "刑部贵州司员外郎"
+      ],
+      "source": "《明史》卷72·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑部贵州清吏司主事",
+      "department": "刑部",
+      "multiple": true,
+      "aliases": [
+        "刑部贵州司主事"
+      ],
+      "source": "《明史》卷72·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑部云南清吏司郎中",
+      "department": "刑部",
+      "multiple": false,
+      "aliases": [
+        "刑部云南司郎中"
+      ],
+      "source": "《明史》卷72·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑部云南清吏司员外郎",
+      "department": "刑部",
+      "multiple": false,
+      "aliases": [
+        "刑部云南司员外郎"
+      ],
+      "source": "《明史》卷72·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑部云南清吏司主事",
+      "department": "刑部",
+      "multiple": true,
+      "aliases": [
+        "刑部云南司主事"
+      ],
+      "source": "《明史》卷72·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑部郎中",
+      "department": "刑部",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑部员外郎",
+      "department": "刑部",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑部主事",
+      "department": "刑部",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·刑部；一员/多员按该条员额。"
+    },
+    {
+      "name": "工部尚书",
+      "department": "工部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·工部；一员/多员按该条员额。"
+    },
+    {
+      "name": "工部左侍郎",
+      "department": "工部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·工部；一员/多员按该条员额。"
+    },
+    {
+      "name": "工部右侍郎",
+      "department": "工部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·工部；一员/多员按该条员额。"
+    },
+    {
+      "name": "工部司务",
+      "department": "工部",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·工部；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京工部尚书",
+      "department": "南京工部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·工部；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京工部右侍郎",
+      "department": "南京工部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·工部；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京工部司务",
+      "department": "南京工部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·工部；一员/多员按该条员额。"
+    },
+    {
+      "name": "工部营缮清吏司郎中",
+      "department": "工部",
+      "multiple": false,
+      "aliases": [
+        "工部营缮司郎中"
+      ],
+      "source": "《明史》卷72·职官志·工部；一员/多员按该条员额。"
+    },
+    {
+      "name": "工部营缮清吏司员外郎",
+      "department": "工部",
+      "multiple": true,
+      "aliases": [
+        "工部营缮司员外郎"
+      ],
+      "source": "《明史》卷72·职官志·工部；一员/多员按该条员额。"
+    },
+    {
+      "name": "工部营缮清吏司主事",
+      "department": "工部",
+      "multiple": true,
+      "aliases": [
+        "工部营缮司主事"
+      ],
+      "source": "《明史》卷72·职官志·工部；一员/多员按该条员额。"
+    },
+    {
+      "name": "工部虞衡清吏司郎中",
+      "department": "工部",
+      "multiple": false,
+      "aliases": [
+        "工部虞衡司郎中"
+      ],
+      "source": "《明史》卷72·职官志·工部；一员/多员按该条员额。"
+    },
+    {
+      "name": "工部虞衡清吏司员外郎",
+      "department": "工部",
+      "multiple": true,
+      "aliases": [
+        "工部虞衡司员外郎"
+      ],
+      "source": "《明史》卷72·职官志·工部；一员/多员按该条员额。"
+    },
+    {
+      "name": "工部虞衡清吏司主事",
+      "department": "工部",
+      "multiple": true,
+      "aliases": [
+        "工部虞衡司主事"
+      ],
+      "source": "《明史》卷72·职官志·工部；一员/多员按该条员额。"
+    },
+    {
+      "name": "工部都水清吏司郎中",
+      "department": "工部",
+      "multiple": true,
+      "aliases": [
+        "工部都水司郎中"
+      ],
+      "source": "《明史》卷72·职官志·工部；一员/多员按该条员额。"
+    },
+    {
+      "name": "工部都水清吏司员外郎",
+      "department": "工部",
+      "multiple": false,
+      "aliases": [
+        "工部都水司员外郎"
+      ],
+      "source": "《明史》卷72·职官志·工部；一员/多员按该条员额。"
+    },
+    {
+      "name": "工部都水清吏司主事",
+      "department": "工部",
+      "multiple": true,
+      "aliases": [
+        "工部都水司主事"
+      ],
+      "source": "《明史》卷72·职官志·工部；一员/多员按该条员额。"
+    },
+    {
+      "name": "工部屯田清吏司郎中",
+      "department": "工部",
+      "multiple": false,
+      "aliases": [
+        "工部屯田司郎中"
+      ],
+      "source": "《明史》卷72·职官志·工部；一员/多员按该条员额。"
+    },
+    {
+      "name": "工部屯田清吏司员外郎",
+      "department": "工部",
+      "multiple": false,
+      "aliases": [
+        "工部屯田司员外郎"
+      ],
+      "source": "《明史》卷72·职官志·工部；一员/多员按该条员额。"
+    },
+    {
+      "name": "工部屯田清吏司主事",
+      "department": "工部",
+      "multiple": true,
+      "aliases": [
+        "工部屯田司主事"
+      ],
+      "source": "《明史》卷72·职官志·工部；一员/多员按该条员额。"
+    },
+    {
+      "name": "工部郎中",
+      "department": "工部",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·工部；一员/多员按该条员额。"
+    },
+    {
+      "name": "工部员外郎",
+      "department": "工部",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·工部；一员/多员按该条员额。"
+    },
+    {
+      "name": "工部主事",
+      "department": "工部",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·工部；一员/多员按该条员额。"
+    },
+    {
+      "name": "内阁大学士",
+      "department": "内阁",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·内阁及卷251·钱龙锡传、卷306·来宗道附传，阁臣多员；首辅另依#1965作单员游戏职务，次辅只记身份，均不是此泛称的别名。"
+    },
+    {
+      "name": "内阁首辅",
+      "department": "内阁",
+      "multiple": false,
+      "aliases": ["首辅"],
+      "source": "游戏设定（P9、#1965，owner e4d92185）：将居首大学士的称呼建为内阁单员京官职务；须在任阁臣，出阁卸首辅。史实参考《明史》卷72·内阁。"
+    },
+    {
+      "name": "中极殿大学士",
+      "department": "内阁",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·内阁；大学士不定员，卷251记钱龙锡等同拜东阁大学士，不以殿名误限一人。"
+    },
+    {
+      "name": "建极殿大学士",
+      "department": "内阁",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·内阁；大学士不定员，卷251记钱龙锡等同拜东阁大学士，不以殿名误限一人。"
+    },
+    {
+      "name": "文华殿大学士",
+      "department": "内阁",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·内阁；大学士不定员，卷251记钱龙锡等同拜东阁大学士，不以殿名误限一人。"
+    },
+    {
+      "name": "武英殿大学士",
+      "department": "内阁",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·内阁；大学士不定员，卷251记钱龙锡等同拜东阁大学士，不以殿名误限一人。"
+    },
+    {
+      "name": "文渊阁大学士",
+      "department": "内阁",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·内阁；大学士不定员，卷251记钱龙锡等同拜东阁大学士，不以殿名误限一人。"
+    },
+    {
+      "name": "东阁大学士",
+      "department": "内阁",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·内阁；大学士不定员，卷251记钱龙锡等同拜东阁大学士，不以殿名误限一人。"
+    },
+    {
+      "name": "宗人令",
+      "department": "宗人府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·宗人府；一员/多员按该条员额。"
+    },
+    {
+      "name": "左宗正",
+      "department": "宗人府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·宗人府；一员/多员按该条员额。"
+    },
+    {
+      "name": "右宗正",
+      "department": "宗人府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·宗人府；一员/多员按该条员额。"
+    },
+    {
+      "name": "左宗人",
+      "department": "宗人府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·宗人府；一员/多员按该条员额。"
+    },
+    {
+      "name": "右宗人",
+      "department": "宗人府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·宗人府；一员/多员按该条员额。"
+    },
+    {
+      "name": "宗人府经历",
+      "department": "宗人府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·宗人府；一员/多员按该条员额。"
+    },
+    {
+      "name": "左都御史",
+      "department": "都察院",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·都察院；一员/多员按该条员额。"
+    },
+    {
+      "name": "右都御史",
+      "department": "都察院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·都察院及总督巡抚：外任督抚等加都御史、副都御史衔，多员并存。"
+    },
+    {
+      "name": "左副都御史",
+      "department": "都察院",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·都察院；一员/多员按该条员额。"
+    },
+    {
+      "name": "右副都御史",
+      "department": "都察院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·都察院及总督巡抚：外任督抚等加都御史、副都御史衔，多员并存。"
+    },
+    {
+      "name": "左佥都御史",
+      "department": "都察院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·都察院：洪武十六年左右佥都御史各二人，十七年升秩；外任督抚另有加衔。"
+    },
+    {
+      "name": "右佥都御史",
+      "department": "都察院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·都察院：洪武十六年左右佥都御史各二人，十七年升秩；外任督抚另有加衔。"
+    },
+    {
+      "name": "都察院经历",
+      "department": "都察院",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·都察院；一员/多员按该条员额。"
+    },
+    {
+      "name": "都察院都事",
+      "department": "都察院",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·都察院；一员/多员按该条员额。"
+    },
+    {
+      "name": "都察院照磨",
+      "department": "都察院",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·都察院；一员/多员按该条员额。"
+    },
+    {
+      "name": "都察院检校",
+      "department": "都察院",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·都察院；一员/多员按该条员额。"
+    },
+    {
+      "name": "都察院司狱",
+      "department": "都察院",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·都察院；一员/多员按该条员额。"
+    },
+    {
+      "name": "监察御史",
+      "department": "都察院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·都察院；一员/多员按该条员额。"
+    },
+    {
+      "name": "都察院司务",
+      "department": "都察院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·都察院；一员/多员按该条员额。"
+    },
+    {
+      "name": "总督",
+      "department": "都察院",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·都察院；一员/多员按该条员额。"
+    },
+    {
+      "name": "巡抚",
+      "department": "都察院",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·都察院；一员/多员按该条员额。"
+    },
+    {
+      "name": "经略",
+      "department": "都察院",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·都察院；一员/多员按该条员额。"
+    },
+    {
+      "name": "总理",
+      "department": "都察院",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·都察院；一员/多员按该条员额。"
+    },
+    {
+      "name": "赞理",
+      "department": "都察院",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·都察院；一员/多员按该条员额。"
+    },
+    {
+      "name": "抚治",
+      "department": "都察院",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·都察院；一员/多员按该条员额。"
+    },
+    {
+      "name": "巡按御史",
+      "department": "都察院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·都察院；一员/多员按该条员额。"
+    },
+    {
+      "name": "通政使",
+      "department": "通政使司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·通政使司；一员/多员按该条员额。"
+    },
+    {
+      "name": "左通政",
+      "department": "通政使司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·通政使司；一员/多员按该条员额。"
+    },
+    {
+      "name": "右通政",
+      "department": "通政使司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·通政使司；一员/多员按该条员额。"
+    },
+    {
+      "name": "誊黄右通政",
+      "department": "通政使司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·通政使司；一员/多员按该条员额。"
+    },
+    {
+      "name": "左参议",
+      "department": "通政使司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·通政使司；一员/多员按该条员额。"
+    },
+    {
+      "name": "右参议",
+      "department": "通政使司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·通政使司；一员/多员按该条员额。"
+    },
+    {
+      "name": "通政使司经历",
+      "department": "通政使司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·通政使司；一员/多员按该条员额。"
+    },
+    {
+      "name": "通政使司知事",
+      "department": "通政使司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·通政使司；一员/多员按该条员额。"
+    },
+    {
+      "name": "大理寺卿",
+      "department": "大理寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·大理寺；一员/多员按该条员额。"
+    },
+    {
+      "name": "大理寺左少卿",
+      "department": "大理寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·大理寺；一员/多员按该条员额。"
+    },
+    {
+      "name": "大理寺右少卿",
+      "department": "大理寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·大理寺；一员/多员按该条员额。"
+    },
+    {
+      "name": "大理寺左寺丞",
+      "department": "大理寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·大理寺；一员/多员按该条员额。"
+    },
+    {
+      "name": "大理寺右寺丞",
+      "department": "大理寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·大理寺；一员/多员按该条员额。"
+    },
+    {
+      "name": "大理寺左寺正",
+      "department": "大理寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·大理寺；一员/多员按该条员额。"
+    },
+    {
+      "name": "大理寺右寺正",
+      "department": "大理寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·大理寺；一员/多员按该条员额。"
+    },
+    {
+      "name": "大理寺司务",
+      "department": "大理寺",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·大理寺；一员/多员按该条员额。"
+    },
+    {
+      "name": "大理寺评事",
+      "department": "大理寺",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·大理寺；一员/多员按该条员额。"
+    },
+    {
+      "name": "大理寺寺副",
+      "department": "大理寺",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·大理寺；一员/多员按该条员额。"
+    },
+    {
+      "name": "詹事",
+      "department": "詹事府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·詹事府；一员/多员按该条员额。"
+    },
+    {
+      "name": "詹事府主簿",
+      "department": "詹事府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·詹事府；一员/多员按该条员额。"
+    },
+    {
+      "name": "少詹事",
+      "department": "詹事府",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·詹事府；一员/多员按该条员额。"
+    },
+    {
+      "name": "詹事府丞",
+      "department": "詹事府",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·詹事府；一员/多员按该条员额。"
+    },
+    {
+      "name": "詹事府录事",
+      "department": "詹事府",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·詹事府；一员/多员按该条员额。"
+    },
+    {
+      "name": "通事舍人",
+      "department": "詹事府",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·詹事府；一员/多员按该条员额。"
+    },
+    {
+      "name": "翰林院学士",
+      "department": "翰林院",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·翰林院；一员/多员按该条员额。"
+    },
+    {
+      "name": "翰林院孔目",
+      "department": "翰林院",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·翰林院；一员/多员按该条员额。"
+    },
+    {
+      "name": "翰林院侍读学士",
+      "department": "翰林院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·翰林院；一员/多员按该条员额。"
+    },
+    {
+      "name": "翰林院侍讲学士",
+      "department": "翰林院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·翰林院；一员/多员按该条员额。"
+    },
+    {
+      "name": "翰林院侍读",
+      "department": "翰林院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·翰林院；一员/多员按该条员额。"
+    },
+    {
+      "name": "翰林院侍讲",
+      "department": "翰林院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·翰林院；一员/多员按该条员额。"
+    },
+    {
+      "name": "翰林院五经博士",
+      "department": "翰林院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·翰林院；一员/多员按该条员额。"
+    },
+    {
+      "name": "翰林院典籍",
+      "department": "翰林院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·翰林院；一员/多员按该条员额。"
+    },
+    {
+      "name": "翰林院待诏",
+      "department": "翰林院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·翰林院；一员/多员按该条员额。"
+    },
+    {
+      "name": "翰林院修撰",
+      "department": "翰林院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·翰林院；一员/多员按该条员额。"
+    },
+    {
+      "name": "翰林院编修",
+      "department": "翰林院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·翰林院；一员/多员按该条员额。"
+    },
+    {
+      "name": "翰林院检讨",
+      "department": "翰林院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·翰林院；一员/多员按该条员额。"
+    },
+    {
+      "name": "庶吉士",
+      "department": "翰林院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·翰林院；一员/多员按该条员额。"
+    },
+    {
+      "name": "国子监祭酒",
+      "department": "国子监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·国子监；一员/多员按该条员额。"
+    },
+    {
+      "name": "国子监司业",
+      "department": "国子监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·国子监；一员/多员按该条员额。"
+    },
+    {
+      "name": "国子监监丞",
+      "department": "国子监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·国子监；一员/多员按该条员额。"
+    },
+    {
+      "name": "国子监典簿",
+      "department": "国子监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·国子监；一员/多员按该条员额。"
+    },
+    {
+      "name": "国子监典籍",
+      "department": "国子监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·国子监；一员/多员按该条员额。"
+    },
+    {
+      "name": "国子监五经博士",
+      "department": "国子监",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·国子监；一员/多员按该条员额。"
+    },
+    {
+      "name": "国子监助教",
+      "department": "国子监",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·国子监；一员/多员按该条员额。"
+    },
+    {
+      "name": "国子监学正",
+      "department": "国子监",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·国子监；一员/多员按该条员额。"
+    },
+    {
+      "name": "国子监学录",
+      "department": "国子监",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·国子监；一员/多员按该条员额。"
+    },
+    {
+      "name": "国子监掌馔",
+      "department": "国子监",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·国子监；一员/多员按该条员额。"
+    },
+    {
+      "name": "太常寺卿",
+      "department": "太常寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·太常寺；一员/多员按该条员额。"
+    },
+    {
+      "name": "太常寺少卿",
+      "department": "太常寺",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·太常寺；一员/多员按该条员额。"
+    },
+    {
+      "name": "太常寺寺丞",
+      "department": "太常寺",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·太常寺；一员/多员按该条员额。"
+    },
+    {
+      "name": "光禄寺卿",
+      "department": "光禄寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·光禄寺；一员/多员按该条员额。"
+    },
+    {
+      "name": "光禄寺少卿",
+      "department": "光禄寺",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·光禄寺；一员/多员按该条员额。"
+    },
+    {
+      "name": "光禄寺寺丞",
+      "department": "光禄寺",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·光禄寺；一员/多员按该条员额。"
+    },
+    {
+      "name": "太仆寺卿",
+      "department": "太仆寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·太仆寺；一员/多员按该条员额。"
+    },
+    {
+      "name": "太仆寺少卿",
+      "department": "太仆寺",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·太仆寺；一员/多员按该条员额。"
+    },
+    {
+      "name": "太仆寺寺丞",
+      "department": "太仆寺",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·太仆寺；一员/多员按该条员额。"
+    },
+    {
+      "name": "鸿胪寺卿",
+      "department": "鸿胪寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·鸿胪寺；一员/多员按该条员额。"
+    },
+    {
+      "name": "鸿胪寺左少卿",
+      "department": "鸿胪寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·鸿胪寺；一员/多员按该条员额。"
+    },
+    {
+      "name": "鸿胪寺右少卿",
+      "department": "鸿胪寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·鸿胪寺；一员/多员按该条员额。"
+    },
+    {
+      "name": "鸿胪寺左寺丞",
+      "department": "鸿胪寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·鸿胪寺；一员/多员按该条员额。"
+    },
+    {
+      "name": "鸿胪寺右寺丞",
+      "department": "鸿胪寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·鸿胪寺；一员/多员按该条员额。"
+    },
+    {
+      "name": "鸿胪寺主簿",
+      "department": "鸿胪寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·鸿胪寺；一员/多员按该条员额。"
+    },
+    {
+      "name": "鸿胪寺鸣赞",
+      "department": "鸿胪寺",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·鸿胪寺；一员/多员按该条员额。"
+    },
+    {
+      "name": "鸿胪寺序班",
+      "department": "鸿胪寺",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·鸿胪寺；一员/多员按该条员额。"
+    },
+    {
+      "name": "尚宝司卿",
+      "department": "尚宝司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·尚宝司；一员/多员按该条员额。"
+    },
+    {
+      "name": "尚宝司少卿",
+      "department": "尚宝司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·尚宝司；一员/多员按该条员额。"
+    },
+    {
+      "name": "尚宝司丞",
+      "department": "尚宝司",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·尚宝司；一员/多员按该条员额。"
+    },
+    {
+      "name": "吏科都给事中",
+      "department": "吏科",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·吏科；一员/多员按该条员额。"
+    },
+    {
+      "name": "吏科左给事中",
+      "department": "吏科",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·吏科；一员/多员按该条员额。"
+    },
+    {
+      "name": "吏科右给事中",
+      "department": "吏科",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·吏科；一员/多员按该条员额。"
+    },
+    {
+      "name": "吏科给事中",
+      "department": "吏科",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·吏科；一员/多员按该条员额。"
+    },
+    {
+      "name": "户科都给事中",
+      "department": "户科",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·户科；一员/多员按该条员额。"
+    },
+    {
+      "name": "户科左给事中",
+      "department": "户科",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·户科；一员/多员按该条员额。"
+    },
+    {
+      "name": "户科右给事中",
+      "department": "户科",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·户科；一员/多员按该条员额。"
+    },
+    {
+      "name": "户科给事中",
+      "department": "户科",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·户科；一员/多员按该条员额。"
+    },
+    {
+      "name": "礼科都给事中",
+      "department": "礼科",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·礼科；一员/多员按该条员额。"
+    },
+    {
+      "name": "礼科左给事中",
+      "department": "礼科",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·礼科；一员/多员按该条员额。"
+    },
+    {
+      "name": "礼科右给事中",
+      "department": "礼科",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·礼科；一员/多员按该条员额。"
+    },
+    {
+      "name": "礼科给事中",
+      "department": "礼科",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·礼科；一员/多员按该条员额。"
+    },
+    {
+      "name": "兵科都给事中",
+      "department": "兵科",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·兵科；一员/多员按该条员额。"
+    },
+    {
+      "name": "兵科左给事中",
+      "department": "兵科",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·兵科；一员/多员按该条员额。"
+    },
+    {
+      "name": "兵科右给事中",
+      "department": "兵科",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·兵科；一员/多员按该条员额。"
+    },
+    {
+      "name": "兵科给事中",
+      "department": "兵科",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·兵科；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑科都给事中",
+      "department": "刑科",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·刑科；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑科左给事中",
+      "department": "刑科",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·刑科；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑科右给事中",
+      "department": "刑科",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·刑科；一员/多员按该条员额。"
+    },
+    {
+      "name": "刑科给事中",
+      "department": "刑科",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·刑科；一员/多员按该条员额。"
+    },
+    {
+      "name": "工科都给事中",
+      "department": "工科",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·工科；一员/多员按该条员额。"
+    },
+    {
+      "name": "工科左给事中",
+      "department": "工科",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·工科；一员/多员按该条员额。"
+    },
+    {
+      "name": "工科右给事中",
+      "department": "工科",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·工科；一员/多员按该条员额。"
+    },
+    {
+      "name": "工科给事中",
+      "department": "工科",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·工科；一员/多员按该条员额。"
+    },
+    {
+      "name": "中书舍人",
+      "department": "中书科",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·中书科；一员/多员按该条员额。"
+    },
+    {
+      "name": "行人司司正",
+      "department": "行人司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·行人司；一员/多员按该条员额。"
+    },
+    {
+      "name": "行人司左司副",
+      "department": "行人司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·行人司；一员/多员按该条员额。"
+    },
+    {
+      "name": "行人司右司副",
+      "department": "行人司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·行人司；一员/多员按该条员额。"
+    },
+    {
+      "name": "行人",
+      "department": "行人司",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·行人司；一员/多员按该条员额。"
+    },
+    {
+      "name": "钦天监监正",
+      "department": "钦天监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·钦天监；一员/多员按该条员额。"
+    },
+    {
+      "name": "钦天监主簿",
+      "department": "钦天监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·钦天监；一员/多员按该条员额。"
+    },
+    {
+      "name": "钦天监监副",
+      "department": "钦天监",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·钦天监；一员/多员按该条员额。"
+    },
+    {
+      "name": "五官灵台郎",
+      "department": "钦天监",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·钦天监；一员/多员按该条员额。"
+    },
+    {
+      "name": "五官保章正",
+      "department": "钦天监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·钦天监；一员/多员按该条员额。"
+    },
+    {
+      "name": "五官挈壶正",
+      "department": "钦天监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·钦天监；一员/多员按该条员额。"
+    },
+    {
+      "name": "五官监候",
+      "department": "钦天监",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·钦天监；一员/多员按该条员额。"
+    },
+    {
+      "name": "五官司历",
+      "department": "钦天监",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·钦天监；一员/多员按该条员额。"
+    },
+    {
+      "name": "五官司晨",
+      "department": "钦天监",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·钦天监；一员/多员按该条员额。"
+    },
+    {
+      "name": "漏刻博士",
+      "department": "钦天监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·钦天监；一员/多员按该条员额。"
+    },
+    {
+      "name": "太医院院使",
+      "department": "太医院",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·太医院；一员/多员按该条员额。"
+    },
+    {
+      "name": "太医院院判",
+      "department": "太医院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·太医院；一员/多员按该条员额。"
+    },
+    {
+      "name": "御医",
+      "department": "太医院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·太医院；一员/多员按该条员额。"
+    },
+    {
+      "name": "兵马指挥司指挥",
+      "department": "兵马指挥司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·兵马指挥司；一员/多员按该条员额。"
+    },
+    {
+      "name": "兵马指挥司吏目",
+      "department": "兵马指挥司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·兵马指挥司；一员/多员按该条员额。"
+    },
+    {
+      "name": "兵马指挥司副指挥",
+      "department": "兵马指挥司",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·兵马指挥司；一员/多员按该条员额。"
+    },
+    {
+      "name": "司礼监掌印太监",
+      "department": "司礼监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·司礼监；一员/多员按该条员额。"
+    },
+    {
+      "name": "司礼监太监",
+      "department": "司礼监",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·司礼监；一员/多员按该条员额。"
+    },
+    {
+      "name": "内官监掌印太监",
+      "department": "内官监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·内官监；一员/多员按该条员额。"
+    },
+    {
+      "name": "内官监太监",
+      "department": "内官监",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·内官监；一员/多员按该条员额。"
+    },
+    {
+      "name": "御用监掌印太监",
+      "department": "御用监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·御用监；一员/多员按该条员额。"
+    },
+    {
+      "name": "御用监太监",
+      "department": "御用监",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·御用监；一员/多员按该条员额。"
+    },
+    {
+      "name": "司设监掌印太监",
+      "department": "司设监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·司设监；一员/多员按该条员额。"
+    },
+    {
+      "name": "司设监太监",
+      "department": "司设监",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·司设监；一员/多员按该条员额。"
+    },
+    {
+      "name": "御马监掌印太监",
+      "department": "御马监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·御马监；一员/多员按该条员额。"
+    },
+    {
+      "name": "御马监太监",
+      "department": "御马监",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·御马监；一员/多员按该条员额。"
+    },
+    {
+      "name": "神宫监掌印太监",
+      "department": "神宫监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·神宫监；一员/多员按该条员额。"
+    },
+    {
+      "name": "神宫监太监",
+      "department": "神宫监",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·神宫监；一员/多员按该条员额。"
+    },
+    {
+      "name": "尚膳监掌印太监",
+      "department": "尚膳监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·尚膳监；一员/多员按该条员额。"
+    },
+    {
+      "name": "尚膳监太监",
+      "department": "尚膳监",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·尚膳监；一员/多员按该条员额。"
+    },
+    {
+      "name": "尚宝监掌印太监",
+      "department": "尚宝监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·尚宝监；一员/多员按该条员额。"
+    },
+    {
+      "name": "尚宝监太监",
+      "department": "尚宝监",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·尚宝监；一员/多员按该条员额。"
+    },
+    {
+      "name": "印绶监掌印太监",
+      "department": "印绶监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·印绶监；一员/多员按该条员额。"
+    },
+    {
+      "name": "印绶监太监",
+      "department": "印绶监",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·印绶监；一员/多员按该条员额。"
+    },
+    {
+      "name": "直殿监掌印太监",
+      "department": "直殿监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·直殿监；一员/多员按该条员额。"
+    },
+    {
+      "name": "直殿监太监",
+      "department": "直殿监",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·直殿监；一员/多员按该条员额。"
+    },
+    {
+      "name": "尚衣监掌印太监",
+      "department": "尚衣监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·尚衣监；一员/多员按该条员额。"
+    },
+    {
+      "name": "尚衣监太监",
+      "department": "尚衣监",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·尚衣监；一员/多员按该条员额。"
+    },
+    {
+      "name": "都知监掌印太监",
+      "department": "都知监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·都知监；一员/多员按该条员额。"
+    },
+    {
+      "name": "都知监太监",
+      "department": "都知监",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·都知监；一员/多员按该条员额。"
+    },
+    {
+      "name": "司礼监秉笔太监",
+      "department": "司礼监",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·司礼监；一员/多员按该条员额。"
+    },
+    {
+      "name": "司礼监随堂太监",
+      "department": "司礼监",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·司礼监；一员/多员按该条员额。"
+    },
+    {
+      "name": "东厂提督",
+      "department": "东厂",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·东厂；一员/多员按该条员额。"
+    },
+    {
+      "name": "內承運庫掌印太监",
+      "department": "內承運庫",
+      "multiple": false,
+      "aliases": [
+        "内承运库掌印太监",
+        "內承運庫掌印太監"
+      ],
+      "source": "《明史》卷74·职官志·內承運庫；一员/多员按该条员额。"
+    },
+    {
+      "name": "知府",
+      "department": "府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·府；一员/多员按该条员额。"
+    },
+    {
+      "name": "府经历",
+      "department": "府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·府；一员/多员按该条员额。"
+    },
+    {
+      "name": "府知事",
+      "department": "府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·府；一员/多员按该条员额。"
+    },
+    {
+      "name": "府照磨",
+      "department": "府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·府；一员/多员按该条员额。"
+    },
+    {
+      "name": "府检校",
+      "department": "府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·府；一员/多员按该条员额。"
+    },
+    {
+      "name": "府司狱",
+      "department": "府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·府；一员/多员按该条员额。"
+    },
+    {
+      "name": "府同知",
+      "department": "府",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·府；一员/多员按该条员额。"
+    },
+    {
+      "name": "府通判",
+      "department": "府",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·府；一员/多员按该条员额。"
+    },
+    {
+      "name": "推官",
+      "department": "府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·府；一员/多员按该条员额。"
+    },
+    {
+      "name": "知州",
+      "department": "州",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·州；一员/多员按该条员额。"
+    },
+    {
+      "name": "州吏目",
+      "department": "州",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·州；一员/多员按该条员额。"
+    },
+    {
+      "name": "州同知",
+      "department": "州",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·州；一员/多员按该条员额。"
+    },
+    {
+      "name": "州判官",
+      "department": "州",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·州；一员/多员按该条员额。"
+    },
+    {
+      "name": "知县",
+      "department": "县",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·县；一员/多员按该条员额。"
+    },
+    {
+      "name": "县丞",
+      "department": "县",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·县；一员/多员按该条员额。"
+    },
+    {
+      "name": "主簿",
+      "department": "县",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·县；一员/多员按该条员额。"
+    },
+    {
+      "name": "典史",
+      "department": "县",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·县；一员/多员按该条员额。"
+    },
+    {
+      "name": "左布政使",
+      "department": "承宣布政使司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·承宣布政使司；一员/多员按该条员额。"
+    },
+    {
+      "name": "右布政使",
+      "department": "承宣布政使司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·承宣布政使司；一员/多员按该条员额。"
+    },
+    {
+      "name": "布政司经历",
+      "department": "承宣布政使司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·承宣布政使司；一员/多员按该条员额。"
+    },
+    {
+      "name": "布政司都事",
+      "department": "承宣布政使司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·承宣布政使司；一员/多员按该条员额。"
+    },
+    {
+      "name": "布政司照磨",
+      "department": "承宣布政使司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·承宣布政使司；一员/多员按该条员额。"
+    },
+    {
+      "name": "布政司检校",
+      "department": "承宣布政使司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·承宣布政使司；一员/多员按该条员额。"
+    },
+    {
+      "name": "布政司左参政",
+      "department": "承宣布政使司",
+      "multiple": true,
+      "aliases": [
+        "左参政"
+      ],
+      "source": "《明史》卷75·职官志·承宣布政使司；一员/多员按该条员额。"
+    },
+    {
+      "name": "布政司右参政",
+      "department": "承宣布政使司",
+      "multiple": true,
+      "aliases": [
+        "督粮参政",
+        "右参政"
+      ],
+      "source": "《明史》卷75·职官志·承宣布政使司；一员/多员按该条员额。"
+    },
+    {
+      "name": "布政司左参议",
+      "department": "承宣布政使司",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·承宣布政使司；一员/多员按该条员额。"
+    },
+    {
+      "name": "布政司右参议",
+      "department": "承宣布政使司",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·承宣布政使司；一员/多员按该条员额。"
+    },
+    {
+      "name": "按察使",
+      "department": "提刑按察使司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·提刑按察使司；一员/多员按该条员额。"
+    },
+    {
+      "name": "按察司经历",
+      "department": "提刑按察使司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·提刑按察使司；一员/多员按该条员额。"
+    },
+    {
+      "name": "按察司知事",
+      "department": "提刑按察使司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·提刑按察使司；一员/多员按该条员额。"
+    },
+    {
+      "name": "按察司照磨",
+      "department": "提刑按察使司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·提刑按察使司；一员/多员按该条员额。"
+    },
+    {
+      "name": "按察司副使",
+      "department": "提刑按察使司",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·提刑按察使司；一员/多员按该条员额。"
+    },
+    {
+      "name": "按察司佥事",
+      "department": "提刑按察使司",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·提刑按察使司；一员/多员按该条员额。"
+    },
+    {
+      "name": "王府左长史",
+      "department": "王府长史司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·王府长史司；一员/多员按该条员额。"
+    },
+    {
+      "name": "王府右长史",
+      "department": "王府长史司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·王府长史司；一员/多员按该条员额。"
+    },
+    {
+      "name": "王府审理正",
+      "department": "王府长史司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·王府长史司；一员/多员按该条员额。"
+    },
+    {
+      "name": "王府审理副",
+      "department": "王府长史司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·王府长史司；一员/多员按该条员额。"
+    },
+    {
+      "name": "王府纪善",
+      "department": "王府长史司",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·王府长史司；一员/多员按该条员额。"
+    },
+    {
+      "name": "府学教授",
+      "department": "儒学",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·儒学；一员/多员按该条员额。"
+    },
+    {
+      "name": "州学学正",
+      "department": "儒学",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·儒学；一员/多员按该条员额。"
+    },
+    {
+      "name": "县学教谕",
+      "department": "儒学",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·儒学；一员/多员按该条员额。"
+    },
+    {
+      "name": "训导",
+      "department": "儒学",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·儒学；一员/多员按该条员额。"
+    },
+    {
+      "name": "盐运使",
+      "department": "都转运盐使司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·都转运盐使司；一员/多员按该条员额。"
+    },
+    {
+      "name": "盐运同知",
+      "department": "都转运盐使司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·都转运盐使司；一员/多员按该条员额。"
+    },
+    {
+      "name": "盐运副使",
+      "department": "都转运盐使司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·都转运盐使司；一员/多员按该条员额。"
+    },
+    {
+      "name": "盐运判官",
+      "department": "都转运盐使司",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·都转运盐使司；一员/多员按该条员额。"
+    },
+    {
+      "name": "巡检",
+      "department": "巡检司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·巡检司；一员/多员按该条员额。"
+    },
+    {
+      "name": "副巡检",
+      "department": "巡检司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·巡检司；一员/多员按该条员额。"
+    },
+    {
+      "name": "驿丞",
+      "department": "驿",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·驿；一员/多员按该条员额。"
+    },
+    {
+      "name": "宣慰使",
+      "department": "宣慰司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·宣慰司；一员/多员按该条员额。"
+    },
+    {
+      "name": "宣慰同知",
+      "department": "宣慰司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·宣慰司；一员/多员按该条员额。"
+    },
+    {
+      "name": "宣慰副使",
+      "department": "宣慰司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·宣慰司；一员/多员按该条员额。"
+    },
+    {
+      "name": "都指挥使",
+      "department": "都指挥使司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·都指挥使司；一员/多员按该条员额。"
+    },
+    {
+      "name": "都指挥同知",
+      "department": "都指挥使司",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·都指挥使司；一员/多员按该条员额。"
+    },
+    {
+      "name": "都指挥佥事",
+      "department": "都指挥使司",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·都指挥使司；一员/多员按该条员额。"
+    },
+    {
+      "name": "卫指挥使",
+      "department": "卫",
+      "multiple": false,
+      "aliases": ["指挥使"],
+      "source": "《明史》卷76·职官志·卫；一员/多员按该条员额。"
+    },
+    {
+      "name": "卫指挥同知",
+      "department": "卫",
+      "multiple": true,
+      "aliases": ["指挥同知"],
+      "source": "《明史》卷76·职官志·卫；一员/多员按该条员额。"
+    },
+    {
+      "name": "卫指挥佥事",
+      "department": "卫",
+      "multiple": true,
+      "aliases": ["指挥佥事"],
+      "source": "《明史》卷76·职官志·卫；一员/多员按该条员额。"
+    },
+    {
+      "name": "卫镇抚",
+      "department": "卫",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·卫；一员/多员按该条员额。"
+    },
+    {
+      "name": "正千户",
+      "department": "千户所",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·卫；一员/多员按该条员额。"
+    },
+    {
+      "name": "副千户",
+      "department": "千户所",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·卫；一员/多员按该条员额。"
+    },
+    {
+      "name": "百户",
+      "department": "千户所",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·卫；一员/多员按该条员额。"
+    },
+    {
+      "name": "锦衣卫指挥使",
+      "department": "锦衣卫",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·锦衣卫；一员/多员按该条员额。"
+    },
+    {
+      "name": "锦衣卫都指挥使",
+      "department": "锦衣卫",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·锦衣卫；一员/多员按该条员额。"
+    },
+    {
+      "name": "锦衣卫指挥同知",
+      "department": "锦衣卫",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·锦衣卫；一员/多员按该条员额。"
+    },
+    {
+      "name": "锦衣卫指挥佥事",
+      "department": "锦衣卫",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·锦衣卫；一员/多员按该条员额。"
+    },
+    {
+      "name": "锦衣卫千户",
+      "department": "锦衣卫",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·锦衣卫；一员/多员按该条员额。"
+    },
+    {
+      "name": "锦衣卫北镇抚司镇抚",
+      "department": "锦衣卫",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·锦衣卫；一员/多员按该条员额。"
+    },
+    {
+      "name": "左都督",
+      "department": "五军都督府",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·五军都督府；一员/多员按该条员额。"
+    },
+    {
+      "name": "右都督",
+      "department": "五军都督府",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·五军都督府；一员/多员按该条员额。"
+    },
+    {
+      "name": "都督同知",
+      "department": "五军都督府",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·五军都督府；一员/多员按该条员额。"
+    },
+    {
+      "name": "都督佥事",
+      "department": "五军都督府",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·五军都督府；一员/多员按该条员额。"
+    },
+    {
+      "name": "总兵官",
+      "department": "镇",
+      "multiple": false,
+      "aliases": [
+        "总兵"
+      ],
+      "source": "《明史》卷76·职官志·镇；一员/多员按该条员额。"
+    },
+    {
+      "name": "副总兵",
+      "department": "镇",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·镇；一员/多员按该条员额。"
+    },
+    {
+      "name": "参将",
+      "department": "镇",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·镇；一员/多员按该条员额。"
+    },
+    {
+      "name": "游击将军",
+      "department": "镇",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·镇；一员/多员按该条员额。"
+    },
+    {
+      "name": "守备",
+      "department": "镇",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·镇；一员/多员按该条员额。"
+    },
+    {
+      "name": "把总",
+      "department": "镇",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·镇；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京宗人府经历",
+      "department": "南京宗人府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·宗人府；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京右都御史",
+      "department": "南京都察院",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·都察院；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京右副都御史",
+      "department": "南京都察院",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·都察院；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京右佥都御史",
+      "department": "南京都察院",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·都察院；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京都察院司务",
+      "department": "南京都察院",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·都察院；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京都察院经历",
+      "department": "南京都察院",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·都察院；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京都察院照磨",
+      "department": "南京都察院",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·都察院；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京都察院司狱",
+      "department": "南京都察院",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·都察院；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京监察御史",
+      "department": "南京都察院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·都察院；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京通政使",
+      "department": "南京通政使司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·通政使司；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京右通政",
+      "department": "南京通政使司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·通政使司；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京右参议",
+      "department": "南京通政使司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·通政使司；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京通政使司经历",
+      "department": "南京通政使司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·通政使司；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京大理寺卿",
+      "department": "南京大理寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·大理寺；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京大理寺右寺丞",
+      "department": "南京大理寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·大理寺；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京大理寺司务",
+      "department": "南京大理寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·大理寺；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京大理寺左寺正",
+      "department": "南京大理寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·大理寺；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京大理寺右寺正",
+      "department": "南京大理寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·大理寺；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京大理寺评事",
+      "department": "南京大理寺",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·大理寺；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京詹事府主簿",
+      "department": "南京詹事府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·詹事府；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京翰林院学士",
+      "department": "南京翰林院",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·翰林院；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京翰林院孔目",
+      "department": "南京翰林院",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·翰林院；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京国子监祭酒",
+      "department": "南京国子监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·国子监；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京国子监司业",
+      "department": "南京国子监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·国子监；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京国子监助教",
+      "department": "南京国子监",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·国子监；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京国子监学正",
+      "department": "南京国子监",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·国子监；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京国子监学录",
+      "department": "南京国子监",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·国子监；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京太常寺卿",
+      "department": "南京太常寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·太常寺；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京太常寺少卿",
+      "department": "南京太常寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京太常寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京光禄寺卿",
+      "department": "南京光禄寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·光禄寺；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京光禄寺少卿",
+      "department": "南京光禄寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京光禄寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京太仆寺卿",
+      "department": "南京太仆寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·太仆寺；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京太仆寺少卿",
+      "department": "南京太仆寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京太仆寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京太仆寺寺丞",
+      "department": "南京太仆寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京太仆寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京鸿胪寺卿",
+      "department": "南京鸿胪寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·鸿胪寺；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京鸿胪寺主簿",
+      "department": "南京鸿胪寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·鸿胪寺；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京鸿胪寺序班",
+      "department": "南京鸿胪寺",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·鸿胪寺；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京尚宝司卿",
+      "department": "南京尚宝司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·尚宝司；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京钦天监监正",
+      "department": "南京钦天监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·钦天监；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京钦天监主簿",
+      "department": "南京钦天监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·钦天监；一员/多员按该条员额。"
+    },
+    {
+      "name": "南京钦天监监副",
+      "department": "南京钦天监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京钦天监；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "太师",
+      "department": "",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·；三公、三孤无定员、无专授，为加官赠官，不另设衙门。"
+    },
+    {
+      "name": "太傅",
+      "department": "",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·；三公、三孤无定员、无专授，为加官赠官，不另设衙门。"
+    },
+    {
+      "name": "太保",
+      "department": "",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·；三公、三孤无定员、无专授，为加官赠官，不另设衙门。"
+    },
+    {
+      "name": "少师",
+      "department": "",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·；三公、三孤无定员、无专授，为加官赠官，不另设衙门。"
+    },
+    {
+      "name": "少傅",
+      "department": "",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·；三公、三孤无定员、无专授，为加官赠官，不另设衙门。"
+    },
+    {
+      "name": "少保",
+      "department": "",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·；三公、三孤无定员、无专授，为加官赠官，不另设衙门。"
+    },
+    {
+      "name": "太子太师",
+      "department": "东宫",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·东宫；太子三师三少及宾客，无定员、无专授。"
+    },
+    {
+      "name": "太子太傅",
+      "department": "东宫",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·东宫；太子三师三少及宾客，无定员、无专授。"
+    },
+    {
+      "name": "太子太保",
+      "department": "东宫",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·东宫；太子三师三少及宾客，无定员、无专授。"
+    },
+    {
+      "name": "太子少师",
+      "department": "东宫",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·东宫；太子三师三少及宾客，无定员、无专授。"
+    },
+    {
+      "name": "太子少傅",
+      "department": "东宫",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·东宫；太子三师三少及宾客，无定员、无专授。"
+    },
+    {
+      "name": "太子少保",
+      "department": "东宫",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·东宫；太子三师三少及宾客，无定员、无专授。"
+    },
+    {
+      "name": "太子宾客",
+      "department": "东宫",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·东宫；太子三师三少及宾客，无定员、无专授。"
+    },
+    {
+      "name": "南京吏部文选清吏司郎中",
+      "department": "南京吏部",
+      "multiple": false,
+      "aliases": [
+        "南京吏部文选司郎中"
+      ],
+      "source": "《明史》卷75·职官志·南京吏部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京吏部文选清吏司主事",
+      "department": "南京吏部",
+      "multiple": false,
+      "aliases": [
+        "南京吏部文选司主事"
+      ],
+      "source": "《明史》卷75·职官志·南京吏部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京吏部验封清吏司郎中",
+      "department": "南京吏部",
+      "multiple": false,
+      "aliases": [
+        "南京吏部验封司郎中"
+      ],
+      "source": "《明史》卷75·职官志·南京吏部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京吏部稽勋清吏司郎中",
+      "department": "南京吏部",
+      "multiple": false,
+      "aliases": [
+        "南京吏部稽勋司郎中"
+      ],
+      "source": "《明史》卷75·职官志·南京吏部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京吏部考功清吏司郎中",
+      "department": "南京吏部",
+      "multiple": false,
+      "aliases": [
+        "南京吏部考功司郎中"
+      ],
+      "source": "《明史》卷75·职官志·南京吏部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京吏部考功清吏司主事",
+      "department": "南京吏部",
+      "multiple": false,
+      "aliases": [
+        "南京吏部考功司主事"
+      ],
+      "source": "《明史》卷75·职官志·南京吏部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京户部浙江清吏司郎中",
+      "department": "南京户部",
+      "multiple": false,
+      "aliases": [
+        "南京户部浙江司郎中"
+      ],
+      "source": "《明史》卷75·职官志·南京户部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京户部浙江清吏司员外郎",
+      "department": "南京户部",
+      "multiple": false,
+      "aliases": [
+        "南京户部浙江司员外郎"
+      ],
+      "source": "《明史》卷75·职官志·南京户部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京户部浙江清吏司主事",
+      "department": "南京户部",
+      "multiple": false,
+      "aliases": [
+        "南京户部浙江司主事"
+      ],
+      "source": "《明史》卷75·职官志·南京户部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京户部江西清吏司郎中",
+      "department": "南京户部",
+      "multiple": false,
+      "aliases": [
+        "南京户部江西司郎中"
+      ],
+      "source": "《明史》卷75·职官志·南京户部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京户部江西清吏司员外郎",
+      "department": "南京户部",
+      "multiple": false,
+      "aliases": [
+        "南京户部江西司员外郎"
+      ],
+      "source": "《明史》卷75·职官志·南京户部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京户部江西清吏司主事",
+      "department": "南京户部",
+      "multiple": false,
+      "aliases": [
+        "南京户部江西司主事"
+      ],
+      "source": "《明史》卷75·职官志·南京户部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京户部湖广清吏司郎中",
+      "department": "南京户部",
+      "multiple": false,
+      "aliases": [
+        "南京户部湖广司郎中"
+      ],
+      "source": "《明史》卷75·职官志·南京户部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京户部湖广清吏司员外郎",
+      "department": "南京户部",
+      "multiple": false,
+      "aliases": [
+        "南京户部湖广司员外郎"
+      ],
+      "source": "《明史》卷75·职官志·南京户部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京户部湖广清吏司主事",
+      "department": "南京户部",
+      "multiple": false,
+      "aliases": [
+        "南京户部湖广司主事"
+      ],
+      "source": "《明史》卷75·职官志·南京户部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京户部陕西清吏司郎中",
+      "department": "南京户部",
+      "multiple": false,
+      "aliases": [
+        "南京户部陕西司郎中"
+      ],
+      "source": "《明史》卷75·职官志·南京户部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京户部陕西清吏司主事",
+      "department": "南京户部",
+      "multiple": false,
+      "aliases": [
+        "南京户部陕西司主事"
+      ],
+      "source": "《明史》卷75·职官志·南京户部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京户部广东清吏司郎中",
+      "department": "南京户部",
+      "multiple": false,
+      "aliases": [
+        "南京户部广东司郎中"
+      ],
+      "source": "《明史》卷75·职官志·南京户部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京户部广东清吏司员外郎",
+      "department": "南京户部",
+      "multiple": false,
+      "aliases": [
+        "南京户部广东司员外郎"
+      ],
+      "source": "《明史》卷75·职官志·南京户部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京户部广东清吏司主事",
+      "department": "南京户部",
+      "multiple": false,
+      "aliases": [
+        "南京户部广东司主事"
+      ],
+      "source": "《明史》卷75·职官志·南京户部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京户部山东清吏司郎中",
+      "department": "南京户部",
+      "multiple": false,
+      "aliases": [
+        "南京户部山东司郎中"
+      ],
+      "source": "《明史》卷75·职官志·南京户部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京户部山东清吏司主事",
+      "department": "南京户部",
+      "multiple": false,
+      "aliases": [
+        "南京户部山东司主事"
+      ],
+      "source": "《明史》卷75·职官志·南京户部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京户部福建清吏司郎中",
+      "department": "南京户部",
+      "multiple": false,
+      "aliases": [
+        "南京户部福建司郎中"
+      ],
+      "source": "《明史》卷75·职官志·南京户部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京户部福建清吏司员外郎",
+      "department": "南京户部",
+      "multiple": false,
+      "aliases": [
+        "南京户部福建司员外郎"
+      ],
+      "source": "《明史》卷75·职官志·南京户部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京户部福建清吏司主事",
+      "department": "南京户部",
+      "multiple": false,
+      "aliases": [
+        "南京户部福建司主事"
+      ],
+      "source": "《明史》卷75·职官志·南京户部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京户部河南清吏司郎中",
+      "department": "南京户部",
+      "multiple": false,
+      "aliases": [
+        "南京户部河南司郎中"
+      ],
+      "source": "《明史》卷75·职官志·南京户部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京户部河南清吏司主事",
+      "department": "南京户部",
+      "multiple": false,
+      "aliases": [
+        "南京户部河南司主事"
+      ],
+      "source": "《明史》卷75·职官志·南京户部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京户部山西清吏司郎中",
+      "department": "南京户部",
+      "multiple": false,
+      "aliases": [
+        "南京户部山西司郎中"
+      ],
+      "source": "《明史》卷75·职官志·南京户部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京户部山西清吏司主事",
+      "department": "南京户部",
+      "multiple": true,
+      "aliases": [
+        "南京户部山西司主事"
+      ],
+      "source": "《明史》卷75·职官志·南京户部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京户部四川清吏司郎中",
+      "department": "南京户部",
+      "multiple": false,
+      "aliases": [
+        "南京户部四川司郎中"
+      ],
+      "source": "《明史》卷75·职官志·南京户部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京户部四川清吏司主事",
+      "department": "南京户部",
+      "multiple": false,
+      "aliases": [
+        "南京户部四川司主事"
+      ],
+      "source": "《明史》卷75·职官志·南京户部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京户部广西清吏司郎中",
+      "department": "南京户部",
+      "multiple": false,
+      "aliases": [
+        "南京户部广西司郎中"
+      ],
+      "source": "《明史》卷75·职官志·南京户部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京户部广西清吏司主事",
+      "department": "南京户部",
+      "multiple": true,
+      "aliases": [
+        "南京户部广西司主事"
+      ],
+      "source": "《明史》卷75·职官志·南京户部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京户部贵州清吏司郎中",
+      "department": "南京户部",
+      "multiple": false,
+      "aliases": [
+        "南京户部贵州司郎中"
+      ],
+      "source": "《明史》卷75·职官志·南京户部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京户部贵州清吏司主事",
+      "department": "南京户部",
+      "multiple": false,
+      "aliases": [
+        "南京户部贵州司主事"
+      ],
+      "source": "《明史》卷75·职官志·南京户部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京户部云南清吏司郎中",
+      "department": "南京户部",
+      "multiple": false,
+      "aliases": [
+        "南京户部云南司郎中"
+      ],
+      "source": "《明史》卷75·职官志·南京户部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京户部云南清吏司主事",
+      "department": "南京户部",
+      "multiple": true,
+      "aliases": [
+        "南京户部云南司主事"
+      ],
+      "source": "《明史》卷75·职官志·南京户部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京礼部仪制清吏司郎中",
+      "department": "南京礼部",
+      "multiple": false,
+      "aliases": [
+        "南京礼部仪制司郎中"
+      ],
+      "source": "《明史》卷75·职官志·南京礼部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京礼部仪制清吏司主事",
+      "department": "南京礼部",
+      "multiple": false,
+      "aliases": [
+        "南京礼部仪制司主事"
+      ],
+      "source": "《明史》卷75·职官志·南京礼部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京礼部祠祭清吏司郎中",
+      "department": "南京礼部",
+      "multiple": false,
+      "aliases": [
+        "南京礼部祠祭司郎中"
+      ],
+      "source": "《明史》卷75·职官志·南京礼部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京礼部祠祭清吏司主事",
+      "department": "南京礼部",
+      "multiple": false,
+      "aliases": [
+        "南京礼部祠祭司主事"
+      ],
+      "source": "《明史》卷75·职官志·南京礼部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京礼部主客清吏司郎中",
+      "department": "南京礼部",
+      "multiple": false,
+      "aliases": [
+        "南京礼部主客司郎中"
+      ],
+      "source": "《明史》卷75·职官志·南京礼部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京礼部精膳清吏司郎中",
+      "department": "南京礼部",
+      "multiple": false,
+      "aliases": [
+        "南京礼部精膳司郎中"
+      ],
+      "source": "《明史》卷75·职官志·南京礼部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京兵部武选清吏司郎中",
+      "department": "南京兵部",
+      "multiple": false,
+      "aliases": [
+        "南京兵部武选司郎中"
+      ],
+      "source": "《明史》卷75·职官志·南京兵部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京兵部武选清吏司主事",
+      "department": "南京兵部",
+      "multiple": false,
+      "aliases": [
+        "南京兵部武选司主事"
+      ],
+      "source": "《明史》卷75·职官志·南京兵部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京兵部职方清吏司郎中",
+      "department": "南京兵部",
+      "multiple": false,
+      "aliases": [
+        "南京兵部职方司郎中"
+      ],
+      "source": "《明史》卷75·职官志·南京兵部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京兵部职方清吏司员外郎",
+      "department": "南京兵部",
+      "multiple": false,
+      "aliases": [
+        "南京兵部职方司员外郎"
+      ],
+      "source": "《明史》卷75·职官志·南京兵部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京兵部职方清吏司主事",
+      "department": "南京兵部",
+      "multiple": false,
+      "aliases": [
+        "南京兵部职方司主事"
+      ],
+      "source": "《明史》卷75·职官志·南京兵部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京兵部车驾清吏司郎中",
+      "department": "南京兵部",
+      "multiple": false,
+      "aliases": [
+        "南京兵部车驾司郎中"
+      ],
+      "source": "《明史》卷75·职官志·南京兵部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京兵部车驾清吏司员外郎",
+      "department": "南京兵部",
+      "multiple": false,
+      "aliases": [
+        "南京兵部车驾司员外郎"
+      ],
+      "source": "《明史》卷75·职官志·南京兵部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京兵部车驾清吏司主事",
+      "department": "南京兵部",
+      "multiple": true,
+      "aliases": [
+        "南京兵部车驾司主事"
+      ],
+      "source": "《明史》卷75·职官志·南京兵部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京兵部武库清吏司郎中",
+      "department": "南京兵部",
+      "multiple": false,
+      "aliases": [
+        "南京兵部武库司郎中"
+      ],
+      "source": "《明史》卷75·职官志·南京兵部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京兵部武库清吏司主事",
+      "department": "南京兵部",
+      "multiple": false,
+      "aliases": [
+        "南京兵部武库司主事"
+      ],
+      "source": "《明史》卷75·职官志·南京兵部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京刑部浙江清吏司郎中",
+      "department": "南京刑部",
+      "multiple": false,
+      "aliases": [
+        "南京刑部浙江司郎中"
+      ],
+      "source": "《明史》卷75·职官志·南京刑部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京刑部浙江清吏司员外郎",
+      "department": "南京刑部",
+      "multiple": false,
+      "aliases": [
+        "南京刑部浙江司员外郎"
+      ],
+      "source": "《明史》卷75·职官志·南京刑部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京刑部浙江清吏司主事",
+      "department": "南京刑部",
+      "multiple": false,
+      "aliases": [
+        "南京刑部浙江司主事"
+      ],
+      "source": "《明史》卷75·职官志·南京刑部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京刑部江西清吏司郎中",
+      "department": "南京刑部",
+      "multiple": false,
+      "aliases": [
+        "南京刑部江西司郎中"
+      ],
+      "source": "《明史》卷75·职官志·南京刑部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京刑部江西清吏司员外郎",
+      "department": "南京刑部",
+      "multiple": false,
+      "aliases": [
+        "南京刑部江西司员外郎"
+      ],
+      "source": "《明史》卷75·职官志·南京刑部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京刑部江西清吏司主事",
+      "department": "南京刑部",
+      "multiple": false,
+      "aliases": [
+        "南京刑部江西司主事"
+      ],
+      "source": "《明史》卷75·职官志·南京刑部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京刑部湖广清吏司郎中",
+      "department": "南京刑部",
+      "multiple": false,
+      "aliases": [
+        "南京刑部湖广司郎中"
+      ],
+      "source": "《明史》卷75·职官志·南京刑部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京刑部湖广清吏司主事",
+      "department": "南京刑部",
+      "multiple": false,
+      "aliases": [
+        "南京刑部湖广司主事"
+      ],
+      "source": "《明史》卷75·职官志·南京刑部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京刑部陕西清吏司郎中",
+      "department": "南京刑部",
+      "multiple": false,
+      "aliases": [
+        "南京刑部陕西司郎中"
+      ],
+      "source": "《明史》卷75·职官志·南京刑部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京刑部陕西清吏司员外郎",
+      "department": "南京刑部",
+      "multiple": false,
+      "aliases": [
+        "南京刑部陕西司员外郎"
+      ],
+      "source": "《明史》卷75·职官志·南京刑部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京刑部陕西清吏司主事",
+      "department": "南京刑部",
+      "multiple": false,
+      "aliases": [
+        "南京刑部陕西司主事"
+      ],
+      "source": "《明史》卷75·职官志·南京刑部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京刑部广东清吏司郎中",
+      "department": "南京刑部",
+      "multiple": false,
+      "aliases": [
+        "南京刑部广东司郎中"
+      ],
+      "source": "《明史》卷75·职官志·南京刑部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京刑部广东清吏司员外郎",
+      "department": "南京刑部",
+      "multiple": false,
+      "aliases": [
+        "南京刑部广东司员外郎"
+      ],
+      "source": "《明史》卷75·职官志·南京刑部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京刑部广东清吏司主事",
+      "department": "南京刑部",
+      "multiple": true,
+      "aliases": [
+        "南京刑部广东司主事"
+      ],
+      "source": "《明史》卷75·职官志·南京刑部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京刑部山东清吏司郎中",
+      "department": "南京刑部",
+      "multiple": false,
+      "aliases": [
+        "南京刑部山东司郎中"
+      ],
+      "source": "《明史》卷75·职官志·南京刑部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京刑部山东清吏司主事",
+      "department": "南京刑部",
+      "multiple": false,
+      "aliases": [
+        "南京刑部山东司主事"
+      ],
+      "source": "《明史》卷75·职官志·南京刑部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京刑部福建清吏司郎中",
+      "department": "南京刑部",
+      "multiple": false,
+      "aliases": [
+        "南京刑部福建司郎中"
+      ],
+      "source": "《明史》卷75·职官志·南京刑部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京刑部福建清吏司主事",
+      "department": "南京刑部",
+      "multiple": false,
+      "aliases": [
+        "南京刑部福建司主事"
+      ],
+      "source": "《明史》卷75·职官志·南京刑部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京刑部河南清吏司郎中",
+      "department": "南京刑部",
+      "multiple": false,
+      "aliases": [
+        "南京刑部河南司郎中"
+      ],
+      "source": "《明史》卷75·职官志·南京刑部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京刑部河南清吏司员外郎",
+      "department": "南京刑部",
+      "multiple": false,
+      "aliases": [
+        "南京刑部河南司员外郎"
+      ],
+      "source": "《明史》卷75·职官志·南京刑部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京刑部河南清吏司主事",
+      "department": "南京刑部",
+      "multiple": false,
+      "aliases": [
+        "南京刑部河南司主事"
+      ],
+      "source": "《明史》卷75·职官志·南京刑部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京刑部山西清吏司郎中",
+      "department": "南京刑部",
+      "multiple": false,
+      "aliases": [
+        "南京刑部山西司郎中"
+      ],
+      "source": "《明史》卷75·职官志·南京刑部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京刑部山西清吏司主事",
+      "department": "南京刑部",
+      "multiple": false,
+      "aliases": [
+        "南京刑部山西司主事"
+      ],
+      "source": "《明史》卷75·职官志·南京刑部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京刑部四川清吏司郎中",
+      "department": "南京刑部",
+      "multiple": false,
+      "aliases": [
+        "南京刑部四川司郎中"
+      ],
+      "source": "《明史》卷75·职官志·南京刑部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京刑部四川清吏司主事",
+      "department": "南京刑部",
+      "multiple": false,
+      "aliases": [
+        "南京刑部四川司主事"
+      ],
+      "source": "《明史》卷75·职官志·南京刑部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京刑部广西清吏司郎中",
+      "department": "南京刑部",
+      "multiple": false,
+      "aliases": [
+        "南京刑部广西司郎中"
+      ],
+      "source": "《明史》卷75·职官志·南京刑部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京刑部广西清吏司主事",
+      "department": "南京刑部",
+      "multiple": false,
+      "aliases": [
+        "南京刑部广西司主事"
+      ],
+      "source": "《明史》卷75·职官志·南京刑部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京刑部贵州清吏司郎中",
+      "department": "南京刑部",
+      "multiple": false,
+      "aliases": [
+        "南京刑部贵州司郎中"
+      ],
+      "source": "《明史》卷75·职官志·南京刑部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京刑部贵州清吏司主事",
+      "department": "南京刑部",
+      "multiple": false,
+      "aliases": [
+        "南京刑部贵州司主事"
+      ],
+      "source": "《明史》卷75·职官志·南京刑部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京刑部云南清吏司郎中",
+      "department": "南京刑部",
+      "multiple": false,
+      "aliases": [
+        "南京刑部云南司郎中"
+      ],
+      "source": "《明史》卷75·职官志·南京刑部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京刑部云南清吏司主事",
+      "department": "南京刑部",
+      "multiple": false,
+      "aliases": [
+        "南京刑部云南司主事"
+      ],
+      "source": "《明史》卷75·职官志·南京刑部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京工部营缮清吏司郎中",
+      "department": "南京工部",
+      "multiple": false,
+      "aliases": [
+        "南京工部营缮司郎中"
+      ],
+      "source": "《明史》卷75·职官志·南京工部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京工部营缮清吏司员外郎",
+      "department": "南京工部",
+      "multiple": false,
+      "aliases": [
+        "南京工部营缮司员外郎"
+      ],
+      "source": "《明史》卷75·职官志·南京工部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京工部营缮清吏司主事",
+      "department": "南京工部",
+      "multiple": true,
+      "aliases": [
+        "南京工部营缮司主事"
+      ],
+      "source": "《明史》卷75·职官志·南京工部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京工部虞衡清吏司郎中",
+      "department": "南京工部",
+      "multiple": false,
+      "aliases": [
+        "南京工部虞衡司郎中"
+      ],
+      "source": "《明史》卷75·职官志·南京工部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京工部虞衡清吏司主事",
+      "department": "南京工部",
+      "multiple": true,
+      "aliases": [
+        "南京工部虞衡司主事"
+      ],
+      "source": "《明史》卷75·职官志·南京工部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京工部都水清吏司郎中",
+      "department": "南京工部",
+      "multiple": false,
+      "aliases": [
+        "南京工部都水司郎中"
+      ],
+      "source": "《明史》卷75·职官志·南京工部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京工部都水清吏司主事",
+      "department": "南京工部",
+      "multiple": true,
+      "aliases": [
+        "南京工部都水司主事"
+      ],
+      "source": "《明史》卷75·职官志·南京工部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京工部屯田清吏司郎中",
+      "department": "南京工部",
+      "multiple": false,
+      "aliases": [
+        "南京工部屯田司郎中"
+      ],
+      "source": "《明史》卷75·职官志·南京工部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京工部屯田清吏司主事",
+      "department": "南京工部",
+      "multiple": false,
+      "aliases": [
+        "南京工部屯田司主事"
+      ],
+      "source": "《明史》卷75·职官志·南京工部；南京本部诸司员额；不复制北京员额，采用正文所记后期裁并。"
+    },
+    {
+      "name": "南京户部照磨",
+      "department": "南京户部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京户部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京总督粮储",
+      "department": "南京户部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京户部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京刑部照磨",
+      "department": "南京刑部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京刑部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京刑部司狱",
+      "department": "南京刑部",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京刑部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京提督操江",
+      "department": "南京都察院",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京都察院；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京国子监监丞",
+      "department": "南京国子监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京国子监；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京国子监典簿",
+      "department": "南京国子监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京国子监；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京国子监典籍",
+      "department": "南京国子监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京国子监；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京国子监五经博士",
+      "department": "南京国子监",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京国子监；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京太常寺典簿",
+      "department": "南京太常寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京太常寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京太常寺博士",
+      "department": "南京太常寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京太常寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京太常寺协律郎",
+      "department": "南京太常寺",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京太常寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京太常寺赞礼郎",
+      "department": "南京太常寺",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京太常寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京太常寺司乐",
+      "department": "南京太常寺",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京太常寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京光禄寺典簿",
+      "department": "南京光禄寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京光禄寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京太仆寺主簿",
+      "department": "南京太仆寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京太仆寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京鸿胪寺司仪署署丞",
+      "department": "南京鸿胪寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京鸿胪寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京鸿胪寺司宾署署丞",
+      "department": "南京鸿胪寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京鸿胪寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京鸿胪寺鸣赞",
+      "department": "南京鸿胪寺",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京鸿胪寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京行人司左司副",
+      "department": "南京行人司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京行人司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京钦天监五官正",
+      "department": "南京钦天监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京钦天监；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京五官监候",
+      "department": "南京钦天监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京钦天监；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京五官司历",
+      "department": "南京钦天监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京钦天监；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京五官灵台郎",
+      "department": "南京钦天监",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京钦天监；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京太医院院判",
+      "department": "南京太医院",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京太医院；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京太医院吏目",
+      "department": "南京太医院",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京太医院；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京惠民药局大使",
+      "department": "南京太医院",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京太医院；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京生药库大使",
+      "department": "南京太医院",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京太医院；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "应天府尹",
+      "department": "南京应天府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京应天府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "应天府丞",
+      "department": "南京应天府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京应天府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "应天府治中",
+      "department": "南京应天府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京应天府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "应天府推官",
+      "department": "南京应天府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京应天府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "应天府经历",
+      "department": "南京应天府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京应天府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "应天府知事",
+      "department": "南京应天府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京应天府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "应天府照磨",
+      "department": "南京应天府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京应天府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "应天府检校",
+      "department": "南京应天府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京应天府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "应天府司狱",
+      "department": "南京应天府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京应天府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "应天府儒学教授",
+      "department": "南京应天府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京应天府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "应天府通判",
+      "department": "南京应天府",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京应天府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "应天府儒学训导",
+      "department": "南京应天府",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京应天府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京吏科给事中",
+      "department": "南京吏科",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京吏科；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京户科给事中",
+      "department": "南京户科",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京户科；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京礼科给事中",
+      "department": "南京礼科",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京礼科；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京兵科给事中",
+      "department": "南京兵科",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京兵科；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京刑科给事中",
+      "department": "南京刑科",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京刑科；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京工科给事中",
+      "department": "南京工科",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京工科；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "中城兵马指挥司指挥",
+      "department": "中城兵马指挥司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·中城兵马指挥司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "中城兵马指挥司吏目",
+      "department": "中城兵马指挥司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·中城兵马指挥司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "中城兵马指挥司副指挥",
+      "department": "中城兵马指挥司",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·中城兵马指挥司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "东城兵马指挥司指挥",
+      "department": "东城兵马指挥司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·东城兵马指挥司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "东城兵马指挥司吏目",
+      "department": "东城兵马指挥司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·东城兵马指挥司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "东城兵马指挥司副指挥",
+      "department": "东城兵马指挥司",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·东城兵马指挥司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "西城兵马指挥司指挥",
+      "department": "西城兵马指挥司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·西城兵马指挥司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "西城兵马指挥司吏目",
+      "department": "西城兵马指挥司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·西城兵马指挥司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "西城兵马指挥司副指挥",
+      "department": "西城兵马指挥司",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·西城兵马指挥司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南城兵马指挥司指挥",
+      "department": "南城兵马指挥司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·南城兵马指挥司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南城兵马指挥司吏目",
+      "department": "南城兵马指挥司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·南城兵马指挥司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南城兵马指挥司副指挥",
+      "department": "南城兵马指挥司",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·南城兵马指挥司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "北城兵马指挥司指挥",
+      "department": "北城兵马指挥司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·北城兵马指挥司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "北城兵马指挥司吏目",
+      "department": "北城兵马指挥司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·北城兵马指挥司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "北城兵马指挥司副指挥",
+      "department": "北城兵马指挥司",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·北城兵马指挥司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京中城兵马指挥司指挥",
+      "department": "南京中城兵马指挥司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京中城兵马指挥司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京中城兵马指挥司吏目",
+      "department": "南京中城兵马指挥司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京中城兵马指挥司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京中城兵马指挥司副指挥",
+      "department": "南京中城兵马指挥司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京中城兵马指挥司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京东城兵马指挥司指挥",
+      "department": "南京东城兵马指挥司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京东城兵马指挥司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京东城兵马指挥司吏目",
+      "department": "南京东城兵马指挥司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京东城兵马指挥司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京东城兵马指挥司副指挥",
+      "department": "南京东城兵马指挥司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京东城兵马指挥司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京西城兵马指挥司指挥",
+      "department": "南京西城兵马指挥司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京西城兵马指挥司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京西城兵马指挥司吏目",
+      "department": "南京西城兵马指挥司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京西城兵马指挥司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京西城兵马指挥司副指挥",
+      "department": "南京西城兵马指挥司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京西城兵马指挥司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京南城兵马指挥司指挥",
+      "department": "南京南城兵马指挥司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京南城兵马指挥司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京南城兵马指挥司吏目",
+      "department": "南京南城兵马指挥司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京南城兵马指挥司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京南城兵马指挥司副指挥",
+      "department": "南京南城兵马指挥司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京南城兵马指挥司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京北城兵马指挥司指挥",
+      "department": "南京北城兵马指挥司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京北城兵马指挥司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京北城兵马指挥司吏目",
+      "department": "南京北城兵马指挥司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京北城兵马指挥司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京北城兵马指挥司副指挥",
+      "department": "南京北城兵马指挥司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京北城兵马指挥司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京光禄寺大官署署正",
+      "department": "南京光禄寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京光禄寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京光禄寺大官署署丞",
+      "department": "南京光禄寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京光禄寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "光禄寺大官署署正",
+      "department": "光禄寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·光禄寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "光禄寺大官署署丞",
+      "department": "光禄寺",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·光禄寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "光禄寺大官署监事",
+      "department": "光禄寺",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·光禄寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京光禄寺珍羞署署正",
+      "department": "南京光禄寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京光禄寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "光禄寺珍羞署署正",
+      "department": "光禄寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·光禄寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "光禄寺珍羞署署丞",
+      "department": "光禄寺",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·光禄寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "光禄寺珍羞署监事",
+      "department": "光禄寺",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·光禄寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京光禄寺良酝署署正",
+      "department": "南京光禄寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京光禄寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "光禄寺良酝署署正",
+      "department": "光禄寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·光禄寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "光禄寺良酝署署丞",
+      "department": "光禄寺",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·光禄寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "光禄寺良酝署监事",
+      "department": "光禄寺",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·光禄寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京光禄寺掌醢署署正",
+      "department": "南京光禄寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京光禄寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "光禄寺掌醢署署正",
+      "department": "光禄寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·光禄寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "光禄寺掌醢署署丞",
+      "department": "光禄寺",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·光禄寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "光禄寺掌醢署监事",
+      "department": "光禄寺",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·光禄寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "户部照磨",
+      "department": "户部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·户部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "户部检校",
+      "department": "户部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·户部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "宝钞提举司提举",
+      "department": "户部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·户部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "钞纸局大使",
+      "department": "户部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·户部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "太仓银库大使",
+      "department": "户部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·户部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "承运库大使",
+      "department": "户部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·户部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "广积库大使",
+      "department": "户部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·户部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "赃罚库大使",
+      "department": "户部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·户部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "宝钞广惠库大使",
+      "department": "户部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·户部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "御马仓大使",
+      "department": "户部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·户部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "刑部照磨",
+      "department": "刑部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·刑部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "刑部检校",
+      "department": "刑部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·刑部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "刑部司狱",
+      "department": "刑部",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·刑部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "铸印局大使",
+      "department": "礼部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·礼部；铸印局大使一人；副使原二人，万历九年革一人。"
+    },
+    {
+      "name": "铸印局副使",
+      "department": "礼部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·礼部；铸印局大使一人；副使原二人，万历九年革一人。"
+    },
+    {
+      "name": "会同馆大使",
+      "department": "兵部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·兵部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "大通关大使",
+      "department": "兵部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·兵部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "大通关副使",
+      "department": "兵部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·兵部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "会同馆副使",
+      "department": "兵部",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·兵部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "营缮所所正",
+      "department": "工部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·工部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "文思院大使",
+      "department": "工部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·工部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "皮作局大使",
+      "department": "工部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·工部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "宝源局大使",
+      "department": "工部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·工部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "军器局大使",
+      "department": "工部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·工部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "军器局副使",
+      "department": "工部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·工部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "节慎库大使",
+      "department": "工部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·工部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "织染所大使",
+      "department": "工部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·工部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "织染所副使",
+      "department": "工部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·工部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "杂造局大使",
+      "department": "工部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·工部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "杂造局副使",
+      "department": "工部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·工部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "柴炭司大使",
+      "department": "工部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·工部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "柴炭司副使",
+      "department": "工部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·工部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "营缮所所副",
+      "department": "工部",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·工部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "营缮所所丞",
+      "department": "工部",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·工部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "文思院副使",
+      "department": "工部",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·工部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "甲字库大使",
+      "department": "户部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·户部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "乙字库大使",
+      "department": "户部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·户部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "丙字库大使",
+      "department": "户部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·户部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "丁字库大使",
+      "department": "户部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·户部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "戊字库大使",
+      "department": "户部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·户部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "长安门仓副使",
+      "department": "户部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·户部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "东安门仓副使",
+      "department": "户部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·户部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "西安门仓副使",
+      "department": "户部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·户部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "北安门仓副使",
+      "department": "户部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷72·职官志·户部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "浙江道监察御史",
+      "department": "都察院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·都察院；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京浙江道监察御史",
+      "department": "南京都察院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京都察院；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "江西道监察御史",
+      "department": "都察院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·都察院；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京江西道监察御史",
+      "department": "南京都察院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京都察院；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "湖广道监察御史",
+      "department": "都察院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·都察院；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京湖广道监察御史",
+      "department": "南京都察院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京都察院；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "陕西道监察御史",
+      "department": "都察院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·都察院；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京陕西道监察御史",
+      "department": "南京都察院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京都察院；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "广东道监察御史",
+      "department": "都察院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·都察院；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京广东道监察御史",
+      "department": "南京都察院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京都察院；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "山东道监察御史",
+      "department": "都察院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·都察院；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京山东道监察御史",
+      "department": "南京都察院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京都察院；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "福建道监察御史",
+      "department": "都察院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·都察院；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京福建道监察御史",
+      "department": "南京都察院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京都察院；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "河南道监察御史",
+      "department": "都察院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·都察院；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京河南道监察御史",
+      "department": "南京都察院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京都察院；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "山西道监察御史",
+      "department": "都察院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·都察院；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京山西道监察御史",
+      "department": "南京都察院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京都察院；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "四川道监察御史",
+      "department": "都察院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·都察院；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京四川道监察御史",
+      "department": "南京都察院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京都察院；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "广西道监察御史",
+      "department": "都察院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·都察院；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京广西道监察御史",
+      "department": "南京都察院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京都察院；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "贵州道监察御史",
+      "department": "都察院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·都察院；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京贵州道监察御史",
+      "department": "南京都察院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京都察院；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "云南道监察御史",
+      "department": "都察院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·都察院；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京云南道监察御史",
+      "department": "南京都察院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京都察院；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "提督",
+      "department": "都察院",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·都察院；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "巡视",
+      "department": "都察院",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·都察院；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "大理寺右寺副",
+      "department": "大理寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·大理寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "大理寺左寺副",
+      "department": "大理寺",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·大理寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "大理寺左评事",
+      "department": "大理寺",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·大理寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "大理寺右评事",
+      "department": "大理寺",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·大理寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京大理寺左评事",
+      "department": "南京大理寺",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京大理寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京大理寺右评事",
+      "department": "南京大理寺",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京大理寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "左春坊大学士",
+      "department": "詹事府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·詹事府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "左庶子",
+      "department": "詹事府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·詹事府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "左谕德",
+      "department": "詹事府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·詹事府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "左清纪郎",
+      "department": "詹事府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·詹事府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "左中允",
+      "department": "詹事府",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·詹事府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "左赞善",
+      "department": "詹事府",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·詹事府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "左司直郎",
+      "department": "詹事府",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·詹事府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "左司谏",
+      "department": "詹事府",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·詹事府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "右春坊大学士",
+      "department": "詹事府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·詹事府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "右庶子",
+      "department": "詹事府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·詹事府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "右谕德",
+      "department": "詹事府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·詹事府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "右清纪郎",
+      "department": "詹事府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·詹事府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "右中允",
+      "department": "詹事府",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·詹事府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "右赞善",
+      "department": "詹事府",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·詹事府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "右司直郎",
+      "department": "詹事府",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·詹事府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "右司谏",
+      "department": "詹事府",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·詹事府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "司经局洗马",
+      "department": "詹事府",
+      "multiple": false,
+      "aliases": [
+        "洗马"
+      ],
+      "source": "《明史》卷73·职官志·詹事府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "司经局校书",
+      "department": "詹事府",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·詹事府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "司经局正字",
+      "department": "詹事府",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·詹事府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "翰林院侍书",
+      "department": "翰林院",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·翰林院；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "衍圣公府掌书",
+      "department": "衍圣公府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·衍圣公府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "衍圣公府典籍",
+      "department": "衍圣公府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·衍圣公府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "衍圣公府司乐",
+      "department": "衍圣公府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·衍圣公府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "衍圣公府知印",
+      "department": "衍圣公府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·衍圣公府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "衍圣公府奏差",
+      "department": "衍圣公府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·衍圣公府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "衍圣公府书写",
+      "department": "衍圣公府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷73·职官志·衍圣公府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "牺牲所吏目",
+      "department": "太常寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·太常寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "太常寺典簿",
+      "department": "太常寺",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·太常寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "太常寺博士",
+      "department": "太常寺",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·太常寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "太常寺协律郎",
+      "department": "太常寺",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·太常寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "太常寺赞礼郎",
+      "department": "太常寺",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·太常寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "太常寺司乐",
+      "department": "太常寺",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·太常寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "光禄寺录事",
+      "department": "光禄寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·光禄寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "司牲司大使",
+      "department": "光禄寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·光禄寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "光禄寺银库大使",
+      "department": "光禄寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·光禄寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "光禄寺典簿",
+      "department": "光禄寺",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·光禄寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "太仆寺主簿",
+      "department": "太仆寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·太仆寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "常盈库大使",
+      "department": "太仆寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·太仆寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "鸿胪寺司仪署署丞",
+      "department": "鸿胪寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·鸿胪寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "鸿胪寺司宾署署丞",
+      "department": "鸿胪寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·鸿胪寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "钦天监春官正",
+      "department": "钦天监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·钦天监；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "钦天监夏官正",
+      "department": "钦天监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·钦天监；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "钦天监中官正",
+      "department": "钦天监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·钦天监；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "钦天监秋官正",
+      "department": "钦天监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·钦天监；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "钦天监冬官正",
+      "department": "钦天监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·钦天监；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "生药库大使",
+      "department": "太医院",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·太医院；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "生药库副使",
+      "department": "太医院",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·太医院；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "惠民药局大使",
+      "department": "太医院",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·太医院；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "惠民药局副使",
+      "department": "太医院",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·太医院；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "上林苑监左监正",
+      "department": "上林苑监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·上林苑监；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "上林苑监右监正",
+      "department": "上林苑监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·上林苑监；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "上林苑监左监副",
+      "department": "上林苑监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·上林苑监；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "上林苑监右监副",
+      "department": "上林苑监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·上林苑监；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "上林苑监左监丞",
+      "department": "上林苑监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·上林苑监；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "上林苑监右监丞",
+      "department": "上林苑监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·上林苑监；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "上林苑监典簿",
+      "department": "上林苑监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·上林苑监；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "上林苑监良牧署典署",
+      "department": "上林苑监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·上林苑监；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "上林苑监良牧署署丞",
+      "department": "上林苑监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·上林苑监；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "上林苑监良牧署录事",
+      "department": "上林苑监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·上林苑监；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "上林苑监蕃育署典署",
+      "department": "上林苑监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·上林苑监；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "上林苑监蕃育署署丞",
+      "department": "上林苑监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·上林苑监；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "上林苑监蕃育署录事",
+      "department": "上林苑监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·上林苑监；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "上林苑监林衡署典署",
+      "department": "上林苑监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·上林苑监；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "上林苑监林衡署署丞",
+      "department": "上林苑监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·上林苑监；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "上林苑监林衡署录事",
+      "department": "上林苑监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·上林苑监；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "上林苑监嘉蔬署典署",
+      "department": "上林苑监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·上林苑监；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "上林苑监嘉蔬署署丞",
+      "department": "上林苑监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·上林苑监；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "上林苑监嘉蔬署录事",
+      "department": "上林苑监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·上林苑监；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "顺天府尹",
+      "department": "顺天府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·顺天府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "顺天府丞",
+      "department": "顺天府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·顺天府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "顺天府治中",
+      "department": "顺天府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·顺天府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "顺天府推官",
+      "department": "顺天府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·顺天府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "顺天府儒学教授",
+      "department": "顺天府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·顺天府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "顺天府儒学训导",
+      "department": "顺天府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·顺天府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "顺天府经历",
+      "department": "顺天府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·顺天府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "顺天府知事",
+      "department": "顺天府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·顺天府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "顺天府照磨",
+      "department": "顺天府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·顺天府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "顺天府检校",
+      "department": "顺天府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·顺天府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "顺天府司狱",
+      "department": "顺天府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·顺天府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "顺天府通判",
+      "department": "顺天府",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·顺天府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "教坊司奉銮",
+      "department": "教坊司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·教坊司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "教坊司左韶舞",
+      "department": "教坊司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·教坊司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "教坊司右韶舞",
+      "department": "教坊司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·教坊司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "教坊司左司乐",
+      "department": "教坊司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·教坊司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "教坊司右司乐",
+      "department": "教坊司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·教坊司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京铸印局副使",
+      "department": "南京礼部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京礼部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京教坊司右韶舞",
+      "department": "南京礼部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京礼部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京教坊司左司乐",
+      "department": "南京礼部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京礼部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京教坊司右司乐",
+      "department": "南京礼部",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·南京礼部；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "僧录司左善世",
+      "department": "僧录司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·僧录司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "僧录司右善世",
+      "department": "僧录司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·僧录司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "僧录司左阐教",
+      "department": "僧录司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·僧录司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "僧录司右阐教",
+      "department": "僧录司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·僧录司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "僧录司左讲经",
+      "department": "僧录司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·僧录司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "僧录司右讲经",
+      "department": "僧录司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·僧录司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "僧录司左觉义",
+      "department": "僧录司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·僧录司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "僧录司右觉义",
+      "department": "僧录司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·僧录司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "道录司左正一",
+      "department": "道录司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·道录司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "道录司右正一",
+      "department": "道录司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·道录司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "道录司左演法",
+      "department": "道录司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·道录司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "道录司右演法",
+      "department": "道录司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·道录司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "道录司左至灵",
+      "department": "道录司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·道录司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "道录司右至灵",
+      "department": "道录司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·道录司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "道录司左玄义",
+      "department": "道录司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·道录司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "道录司右玄义",
+      "department": "道录司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·道录司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "惜薪司掌印太监",
+      "department": "惜薪司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·惜薪司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "惜薪司佥书太监",
+      "department": "惜薪司",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·惜薪司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "钟鼓司掌印太监",
+      "department": "钟鼓司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·钟鼓司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "钟鼓司佥书太监",
+      "department": "钟鼓司",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·钟鼓司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "宝钞司掌印太监",
+      "department": "宝钞司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·宝钞司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "宝钞司佥书太监",
+      "department": "宝钞司",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·宝钞司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "混堂司掌印太监",
+      "department": "混堂司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·混堂司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "混堂司佥书太监",
+      "department": "混堂司",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·混堂司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "兵仗局掌印太监",
+      "department": "兵仗局",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·兵仗局；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "兵仗局佥书太监",
+      "department": "兵仗局",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·兵仗局；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "银作局掌印太监",
+      "department": "银作局",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·银作局；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "银作局佥书太监",
+      "department": "银作局",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·银作局；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "浣衣局掌印太监",
+      "department": "浣衣局",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·浣衣局；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "浣衣局佥书太监",
+      "department": "浣衣局",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·浣衣局；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "巾帽局掌印太监",
+      "department": "巾帽局",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·巾帽局；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "巾帽局佥书太监",
+      "department": "巾帽局",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·巾帽局；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "针工局掌印太监",
+      "department": "针工局",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·针工局；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "针工局佥书太监",
+      "department": "针工局",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·针工局；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "内织染局掌印太监",
+      "department": "内织染局",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·内织染局；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "内织染局佥书太监",
+      "department": "内织染局",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·内织染局；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "酒醋面局掌印太监",
+      "department": "酒醋面局",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·酒醋面局；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "酒醋面局佥书太监",
+      "department": "酒醋面局",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·酒醋面局；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "司苑局掌印太监",
+      "department": "司苑局",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·司苑局；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "司苑局佥书太监",
+      "department": "司苑局",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·司苑局；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "内府供用库掌印太监",
+      "department": "内府供用库",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·内府供用库；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "内府供用库佥书太监",
+      "department": "内府供用库",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·内府供用库；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "司钥库掌印太监",
+      "department": "司钥库",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·司钥库；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "司钥库佥书太监",
+      "department": "司钥库",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·司钥库；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "提督军器库太监",
+      "department": "兵仗局",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·兵仗局；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "內承運庫近侍太监",
+      "department": "內承運庫",
+      "multiple": true,
+      "aliases": [
+        "内承运库近侍太监"
+      ],
+      "source": "《明史》卷74·职官志·內承運庫；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "內承運庫佥书太监",
+      "department": "內承運庫",
+      "multiple": true,
+      "aliases": [
+        "内承运库佥书太监"
+      ],
+      "source": "《明史》卷74·职官志·內承運庫；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "御酒房提督太监",
+      "department": "御酒房",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·御酒房；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "牲口房提督太监",
+      "department": "牲口房",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·牲口房；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "礼仪房提督太监",
+      "department": "礼仪房",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·礼仪房；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "御药房正提督太监",
+      "department": "御药房",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·御药房；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "御药房副提督太监",
+      "department": "御药房",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·御药房；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "御茶房正提督太监",
+      "department": "御茶房",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·御茶房；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "御茶房副提督太监",
+      "department": "御茶房",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·御茶房；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "刻漏房掌房",
+      "department": "刻漏房",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·刻漏房；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "甜食房掌房",
+      "department": "甜食房",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·甜食房；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "弹子房掌房",
+      "department": "弹子房",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·弹子房；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "中书房掌房",
+      "department": "中书房",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·中书房；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "文书房掌房",
+      "department": "文书房",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·文书房；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "京营提督太监",
+      "department": "京营",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·京营；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "京营坐营太监",
+      "department": "京营",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·京营；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京正守备太监",
+      "department": "司礼监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·司礼监；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京副守备太监",
+      "department": "司礼监",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·司礼监；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "守备太监",
+      "department": "",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·在外宦官：天寿山守备、湖广承天府守备各太监一员。属地另记；本局不将外差统一归给某一内监（游戏设定）。"
+    },
+    {
+      "name": "织造提督太监",
+      "department": "",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·在外宦官：南京、苏州、杭州各一员。属地另记；外差不统一归给内官监（游戏设定）。"
+    },
+    {
+      "name": "镇守太监",
+      "department": "",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·在外宦官：各省各镇设镇守太监。本局各属地取一员，不统一归给内官监（游戏设定）。"
+    },
+    {
+      "name": "市舶提督太监",
+      "department": "",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·在外宦官：广东、福建、浙江三市舶司各设太监提督。本局各属地取一员，不统一归给内官监（游戏设定）。"
+    },
+    {
+      "name": "监督仓场太监",
+      "department": "",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷74·在外宦官：各仓各场俱设监督太监。本局各属地取一员，不统一归给内官监（游戏设定）。"
+    },
+    {
+      "name": "尚服",
+      "department": "尚服局",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·尚服局；女官六局原制，永乐后职多移宦官，所存尚宝四司；各职二人。"
+    },
+    {
+      "name": "司宝",
+      "department": "尚服局",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·尚服局；女官六局原制，永乐后职多移宦官，所存尚宝四司；各职二人。"
+    },
+    {
+      "name": "典宝",
+      "department": "尚服局",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·尚服局；女官六局原制，永乐后职多移宦官，所存尚宝四司；各职二人。"
+    },
+    {
+      "name": "掌宝",
+      "department": "尚服局",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·尚服局；女官六局原制，永乐后职多移宦官，所存尚宝四司；各职二人。"
+    },
+    {
+      "name": "司衣",
+      "department": "尚服局",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·尚服局；女官六局原制，永乐后职多移宦官，所存尚宝四司；各职二人。"
+    },
+    {
+      "name": "典衣",
+      "department": "尚服局",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·尚服局；女官六局原制，永乐后职多移宦官，所存尚宝四司；各职二人。"
+    },
+    {
+      "name": "掌衣",
+      "department": "尚服局",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·尚服局；女官六局原制，永乐后职多移宦官，所存尚宝四司；各职二人。"
+    },
+    {
+      "name": "司饰",
+      "department": "尚服局",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·尚服局；女官六局原制，永乐后职多移宦官，所存尚宝四司；各职二人。"
+    },
+    {
+      "name": "典饰",
+      "department": "尚服局",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·尚服局；女官六局原制，永乐后职多移宦官，所存尚宝四司；各职二人。"
+    },
+    {
+      "name": "掌饰",
+      "department": "尚服局",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·尚服局；女官六局原制，永乐后职多移宦官，所存尚宝四司；各职二人。"
+    },
+    {
+      "name": "司仗",
+      "department": "尚服局",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·尚服局；女官六局原制，永乐后职多移宦官，所存尚宝四司；各职二人。"
+    },
+    {
+      "name": "典仗",
+      "department": "尚服局",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·尚服局；女官六局原制，永乐后职多移宦官，所存尚宝四司；各职二人。"
+    },
+    {
+      "name": "掌仗",
+      "department": "尚服局",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷74·职官志·尚服局；女官六局原制，永乐后职多移宦官，所存尚宝四司；各职二人。"
+    },
+    {
+      "name": "王府典簿",
+      "department": "王府长史司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·王府长史司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "王府典膳正",
+      "department": "王府长史司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·王府长史司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "王府奉祠正",
+      "department": "王府长史司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·王府长史司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "王府典乐",
+      "department": "王府长史司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·王府长史司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "王府典宝正",
+      "department": "王府长史司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·王府长史司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "王府良医正",
+      "department": "王府长史司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·王府长史司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "王府典仪正",
+      "department": "王府长史司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·王府长史司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "王府工正",
+      "department": "王府长史司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·王府长史司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "王府伴读",
+      "department": "王府长史司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·王府长史司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "王府仓大使",
+      "department": "王府长史司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·王府长史司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "王府库大使",
+      "department": "王府长史司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·王府长史司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "王府教授",
+      "department": "王府长史司",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·王府长史司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "布政司理问",
+      "department": "承宣布政使司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·承宣布政使司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "布政司副理问",
+      "department": "承宣布政使司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·承宣布政使司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "布政司司狱",
+      "department": "承宣布政使司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·承宣布政使司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "布政司库大使",
+      "department": "承宣布政使司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·承宣布政使司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "布政司库副使",
+      "department": "承宣布政使司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·承宣布政使司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "布政司仓大使",
+      "department": "承宣布政使司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·承宣布政使司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "布政司仓副使",
+      "department": "承宣布政使司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·承宣布政使司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "按察司检校",
+      "department": "提刑按察使司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·提刑按察使司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "按察司司狱",
+      "department": "提刑按察使司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·提刑按察使司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "行太仆寺卿",
+      "department": "行太仆寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·行太仆寺；少卿初一人，嘉靖三年陕西甘肃各增一员；寺丞无定员。"
+    },
+    {
+      "name": "行太仆寺主簿",
+      "department": "行太仆寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·行太仆寺；少卿初一人，嘉靖三年陕西甘肃各增一员；寺丞无定员。"
+    },
+    {
+      "name": "行太仆寺少卿",
+      "department": "行太仆寺",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·行太仆寺；少卿初一人，嘉靖三年陕西甘肃各增一员；寺丞无定员。"
+    },
+    {
+      "name": "行太仆寺寺丞",
+      "department": "行太仆寺",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·行太仆寺；少卿初一人，嘉靖三年陕西甘肃各增一员；寺丞无定员。"
+    },
+    {
+      "name": "苑马寺卿",
+      "department": "苑马寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·苑马寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "苑马寺少卿",
+      "department": "苑马寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·苑马寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "苑马寺主簿",
+      "department": "苑马寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·苑马寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "牧监监正",
+      "department": "苑马寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·苑马寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "牧监监副",
+      "department": "苑马寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·苑马寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "牧监录事",
+      "department": "苑马寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·苑马寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "苑圉长",
+      "department": "苑马寺",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·苑马寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "苑马寺寺丞",
+      "department": "苑马寺",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·苑马寺；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "盐运司经历",
+      "department": "都转运盐使司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·都转运盐使司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "盐运司知事",
+      "department": "都转运盐使司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·都转运盐使司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "盐运司库大使",
+      "department": "都转运盐使司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·都转运盐使司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "盐运司库副使",
+      "department": "都转运盐使司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·都转运盐使司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "盐课提举",
+      "department": "盐课提举司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·盐课提举司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "盐课同提举",
+      "department": "盐课提举司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·盐课提举司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "盐课提举司吏目",
+      "department": "盐课提举司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·盐课提举司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "盐课副提举",
+      "department": "盐课提举司",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·盐课提举司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "市舶提举",
+      "department": "市舶提举司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·市舶提举司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "市舶提举司吏目",
+      "department": "市舶提举司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·市舶提举司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "市舶副提举",
+      "department": "市舶提举司",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·市舶提举司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "茶马司大使",
+      "department": "茶马司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·茶马司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "茶马司副使",
+      "department": "茶马司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·茶马司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "盐课司大使",
+      "department": "盐课司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·盐课司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "盐课司副使",
+      "department": "盐课司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·盐课司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "盐仓大使",
+      "department": "盐仓",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·盐仓；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "盐仓副使",
+      "department": "盐仓",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·盐仓；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "仓大使",
+      "department": "仓",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·仓；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "仓副使",
+      "department": "仓",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·仓；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "库大使",
+      "department": "库",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·库；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "库副使",
+      "department": "库",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·库；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "织染局大使",
+      "department": "织染局",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·织染局；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "织染局副使",
+      "department": "织染局",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·织染局；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "批验所大使",
+      "department": "批验所",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·批验所；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "批验所副使",
+      "department": "批验所",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·批验所；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "铁冶所大使",
+      "department": "铁冶所",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·铁冶所；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "铁冶所副使",
+      "department": "铁冶所",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·铁冶所；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "税课司大使",
+      "department": "税课司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·税课司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "税课局大使",
+      "department": "税课司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·税课司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "递运所大使",
+      "department": "递运所",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·递运所；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "河泊所官",
+      "department": "河泊所",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·河泊所；按课粮多寡设一、二或三人。"
+    },
+    {
+      "name": "闸官",
+      "department": "河道",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·河道；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "坝官",
+      "department": "河道",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·河道；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "府医学正科",
+      "department": "医学",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·医学；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "州医学典科",
+      "department": "医学",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·医学；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "县医学训科",
+      "department": "医学",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·医学；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "府阴阳学正术",
+      "department": "阴阳学",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·阴阳学；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "州阴阳学典术",
+      "department": "阴阳学",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·阴阳学；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "县阴阳学训术",
+      "department": "阴阳学",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·阴阳学；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "都纲",
+      "department": "僧纲司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·僧纲司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "副都纲",
+      "department": "僧纲司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·僧纲司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "僧正",
+      "department": "僧正司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·僧正司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "僧会",
+      "department": "僧会司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·僧会司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "都纪",
+      "department": "道纪司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·道纪司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "副都纪",
+      "department": "道纪司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·道纪司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "道正",
+      "department": "道正司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·道正司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "道会",
+      "department": "道会司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷75·职官志·道会司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京守备",
+      "department": "南京守备",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·南京守备；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京协同守备",
+      "department": "南京守备",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·南京守备；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "总督京营戎政",
+      "department": "京营",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·京营；总督一人；协理侍郎崇祯初增一人。"
+    },
+    {
+      "name": "协理京营戎政",
+      "department": "京营",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·京营；总督一人；协理侍郎崇祯初增一人。"
+    },
+    {
+      "name": "五军营左副将",
+      "department": "京营",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·京营；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "五军营右副将",
+      "department": "京营",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·京营；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "五军营备兵坐营官",
+      "department": "京营",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·京营；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "五军营大号头官",
+      "department": "京营",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·京营；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "五军营监枪号头官",
+      "department": "京营",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·京营；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "五军营参将",
+      "department": "京营",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·京营；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "五军营练勇参将",
+      "department": "京营",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·京营；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "五军营游击将军",
+      "department": "京营",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·京营；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "五军营佐击将军",
+      "department": "京营",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·京营；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "五军营中军官",
+      "department": "京营",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·京营；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "五军营随征千总",
+      "department": "京营",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·京营；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "五军营随营千总",
+      "department": "京营",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·京营；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "五军营选锋把总",
+      "department": "京营",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·京营；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "五军营把总",
+      "department": "京营",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·京营；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "神枢营左副将",
+      "department": "京营",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·京营；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "神枢营右副将",
+      "department": "京营",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·京营；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "神枢营备兵坐营官",
+      "department": "京营",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·京营；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "神枢营大号头官",
+      "department": "京营",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·京营；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "神枢营监枪号头官",
+      "department": "京营",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·京营；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "神枢营游击将军",
+      "department": "京营",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·京营；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "神枢营参将",
+      "department": "京营",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·京营；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "神枢营练勇参将",
+      "department": "京营",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·京营；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "神枢营佐击将军",
+      "department": "京营",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·京营；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "神枢营中军官",
+      "department": "京营",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·京营；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "神枢营千总",
+      "department": "京营",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·京营；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "神枢营选锋把总",
+      "department": "京营",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·京营；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "神枢营把总",
+      "department": "京营",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·京营；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "神机营左副将",
+      "department": "京营",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·京营；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "神机营右副将",
+      "department": "京营",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·京营；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "神机营备兵坐营官",
+      "department": "京营",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·京营；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "神机营大号头官",
+      "department": "京营",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·京营；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "神机营监枪号头官",
+      "department": "京营",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·京营；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "神机营游击将军",
+      "department": "京营",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·京营；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "神机营练勇参将",
+      "department": "京营",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·京营；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "神机营佐击将军",
+      "department": "京营",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·京营；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "神机营中军官",
+      "department": "京营",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·京营；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "神机营千总",
+      "department": "京营",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·京营；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "神机营选锋把总",
+      "department": "京营",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·京营；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "神机营把总",
+      "department": "京营",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·京营；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "中军都督府经历",
+      "department": "中军都督府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·中军都督府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "中军都督府都事",
+      "department": "中军都督府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·中军都督府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "左军都督府经历",
+      "department": "左军都督府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·左军都督府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "左军都督府都事",
+      "department": "左军都督府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·左军都督府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "右军都督府经历",
+      "department": "右军都督府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·右军都督府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "右军都督府都事",
+      "department": "右军都督府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·右军都督府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "前军都督府经历",
+      "department": "前军都督府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·前军都督府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "前军都督府都事",
+      "department": "前军都督府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·前军都督府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "后军都督府经历",
+      "department": "后军都督府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·后军都督府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "后军都督府都事",
+      "department": "后军都督府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·后军都督府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京中军都督府经历",
+      "department": "南京中军都督府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·南京中军都督府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京中军都督府都事",
+      "department": "南京中军都督府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·南京中军都督府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京左军都督府经历",
+      "department": "南京左军都督府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·南京左军都督府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京左军都督府都事",
+      "department": "南京左军都督府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·南京左军都督府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京右军都督府经历",
+      "department": "南京右军都督府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·南京右军都督府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京右军都督府都事",
+      "department": "南京右军都督府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·南京右军都督府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京前军都督府经历",
+      "department": "南京前军都督府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·南京前军都督府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京前军都督府都事",
+      "department": "南京前军都督府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·南京前军都督府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京后军都督府经历",
+      "department": "南京后军都督府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·南京后军都督府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京后军都督府都事",
+      "department": "南京后军都督府",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·南京后军都督府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京左都督",
+      "department": "南京五军都督府",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·南京五军都督府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京右都督",
+      "department": "南京五军都督府",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·南京五军都督府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京都督同知",
+      "department": "南京五军都督府",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·南京五军都督府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "南京都督佥事",
+      "department": "南京五军都督府",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·南京五军都督府；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "卫经历",
+      "department": "卫",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·卫；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "卫知事",
+      "department": "卫",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·卫；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "卫吏目",
+      "department": "卫",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·卫；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "卫仓大使",
+      "department": "卫",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·卫；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "卫仓副使",
+      "department": "卫",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·卫；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "千户所吏目",
+      "department": "千户所",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·千户所；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "千户所镇抚",
+      "department": "千户所",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·千户所；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "总旗",
+      "department": "千户所",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·千户所；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "小旗",
+      "department": "千户所",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·千户所；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "正留守",
+      "department": "留守司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·留守司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "副留守",
+      "department": "留守司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·留守司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "留守司经历",
+      "department": "留守司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·留守司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "留守司都事",
+      "department": "留守司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·留守司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "留守司断事",
+      "department": "留守司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·留守司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "留守司副断事",
+      "department": "留守司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·留守司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "留守司吏目",
+      "department": "留守司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·留守司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "留守司指挥同知",
+      "department": "留守司",
+      "multiple": true,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·留守司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "都司经历",
+      "department": "都指挥使司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·都指挥使司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "都司都事",
+      "department": "都指挥使司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·都指挥使司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "都司断事",
+      "department": "都指挥使司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·都指挥使司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "都司副断事",
+      "department": "都指挥使司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·都指挥使司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "都司吏目",
+      "department": "都指挥使司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·都指挥使司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "都司司狱",
+      "department": "都指挥使司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·都指挥使司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "宣慰佥事",
+      "department": "宣慰司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·宣慰司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "宣慰司经历",
+      "department": "宣慰司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·宣慰司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "宣慰司都事",
+      "department": "宣慰司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·宣慰司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "宣抚使",
+      "department": "宣抚司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·宣抚司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "宣抚同知",
+      "department": "宣抚司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·宣抚司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "宣抚副使",
+      "department": "宣抚司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·宣抚司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "宣抚佥事",
+      "department": "宣抚司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·宣抚司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "宣抚司经历",
+      "department": "宣抚司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·宣抚司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "宣抚司知事",
+      "department": "宣抚司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·宣抚司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "宣抚司照磨",
+      "department": "宣抚司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·宣抚司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "安抚使",
+      "department": "安抚司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·安抚司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "安抚同知",
+      "department": "安抚司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·安抚司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "安抚副使",
+      "department": "安抚司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·安抚司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "安抚佥事",
+      "department": "安抚司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·安抚司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "安抚司吏目",
+      "department": "安抚司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·安抚司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "招讨使",
+      "department": "招讨司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·招讨司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "副招讨",
+      "department": "招讨司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·招讨司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "招讨司吏目",
+      "department": "招讨司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·招讨司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "长官",
+      "department": "长官司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·长官司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "副长官",
+      "department": "长官司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·长官司；正文所列官；员额依一员或多员登记。"
+    },
+    {
+      "name": "长官司吏目",
+      "department": "长官司",
+      "multiple": false,
+      "aliases": [],
+      "source": "《明史》卷76·职官志·长官司；正文所列官；员额依一员或多员登记。"
+    }
+  ]
+}

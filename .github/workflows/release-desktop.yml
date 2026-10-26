@@ -31,8 +31,9 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          python-version: "3.14"
           cache: pip
+          cache-dependency-path: requirements.txt
 
       - name: Setup Node
         uses: actions/setup-node@v5
@@ -69,8 +70,9 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          python-version: "3.14"
           cache: pip
+          cache-dependency-path: requirements.txt
 
       - name: Setup Node
         uses: actions/setup-node@v5

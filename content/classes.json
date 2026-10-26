@@ -1,5 +1,5 @@
 {
-  "_comment": "阶级人口：朝堂外社会基本盘。region_id='' 为全国汇总；其它对应 regions.id。机制：lev 高 + sat 低 → 易触发该省/该阶级骚乱事件，由 LLM 判定。人口单位=人（ADR 0088，与 manpower 同刻度）；流民=第八阶级省级切片（ADR 0087），全国行 population=省级求和派生（仅展示汇总，不参与守恒主账）。",
+  "_comment": "阶级人口：朝堂外社会基本盘。region_id='' 为全国汇总；其它对应 regions.id。机制：lev 高 + sat 低 → 易触发该省/该阶级骚乱事件，由 LLM 判定。字段含义与单位见 ming/middle/fields.py 的 class 行；流民=第八阶级省级切片（ADR 0087），全国行 population=省级求和派生（仅展示汇总，不参与守恒主账）。",
   "classes": [
     {"name": "农民",   "region_id": "", "population": 110000000, "satisfaction": 32, "leverage": 35, "agenda": "求免赋赈灾、活命"},
     {"name": "士绅",   "region_id": "", "population": 800000,    "satisfaction": 50, "leverage": 75, "agenda": "护功名免田、抗清丈、避加征"},

@@ -8,4 +8,4 @@
 
 ## 测试执行（owner 2026-08-22 暂记）
 
-全量测试验证一律用 `python -m pytest tests/ -q -n auto`（与 CI 同参；`-n auto` = pytest-xdist 多核并行，全量 ~2 分钟，不带它串行跑同一套要 10 分钟+）。切片轮次仍按 #1185 只跑聚焦测试。
+全量跑法以 `.github/workflows/ci.yml` 的 Python pytest 步骤为准；全量时点与切片聚焦范围见 `CLAUDE.md`「测试分级」。

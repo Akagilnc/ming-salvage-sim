@@ -1,0 +1,200 @@
+{
+  "translation_source": "~/WorkSpace/vault/ak-cc-wiki/raw/ming-llm-runner/2026-10-22/issue-1952-implementation/1952-record-travel/messages.json",
+  "words": [
+    "传召南京户部尚书毕自严入京陛见。",
+    "准。",
+    "起复徐光启，传召入京入直备顾问。",
+    "准。",
+    "退朝"
+  ],
+  "scene_responses": [
+    {
+      "parts": [
+        {
+          "content": "【旁白】王承恩躬身上前,双手拢在袖中,垂目听完了旨意。\n\n【王承恩】回万岁爷,**毕自严现任南京户部尚书,人在南京,不在京师,今夜到不了殿上。**从南京到京师,驿路千里,旨意要先发出去,等他接旨、交印、动身,路上少说也得十天半月。奴婢请旨:是否即刻拟旨,以六百里加急发往南京,着他速速入京陛见?\n\n【王承恩·低语】万岁爷,毕尚书的奏稿还没正式题本。外头都传他私下写过户部的实情。他若奉旨入京,**路上和到京之后,魏忠贤那边的耳目都会盯着他。**万岁爷若要先听他的实话,不妨在旨里只写\"着来京议事\",不提亏空,也不提清丈盐课。这样他到了京,才好放心开口。",
+          "id": null,
+          "provider_name": null,
+          "provider_details": null,
+          "part_kind": "text"
+        }
+      ],
+      "usage": {
+        "input_tokens": 50,
+        "cache_write_tokens": 0,
+        "cache_read_tokens": 0,
+        "output_tokens": 141,
+        "input_audio_tokens": 0,
+        "cache_audio_read_tokens": 0,
+        "output_audio_tokens": 0,
+        "audio_seconds": 0.0,
+        "details": {},
+        "cost": null
+      },
+      "model_name": "sonnet",
+      "timestamp": "2026-10-21T12:36:12.716747Z",
+      "kind": "response",
+      "provider_name": null,
+      "provider_url": null,
+      "provider_details": null,
+      "provider_response_id": null,
+      "finish_reason": null,
+      "run_id": "01a15e76-2058-75d5-b49c-f7afdfac933d",
+      "conversation_id": "01a15e76-2058-75d5-b49c-f7b03127c6b4",
+      "metadata": null,
+      "workspace_ref": null,
+      "failed_attempts": null,
+      "state": "complete"
+    },
+    {
+      "parts": [
+        {
+          "content": "【王承恩】奴婢领旨。旨意拟好了,请万岁爷过目。\n\n【旨】**谕南京户部尚书毕自严:朕嗣位之初,庶务待理,知卿久领度支,精于钱粮。着卿接旨后即交代部务,乘驿速赴京师,陛见议事。沿途不必张扬,不得迁延。**钦此。\n\n【王承恩·低语】万岁爷,旨里只写\"议事\",没有半个字提亏空和盐课。六百里加急走兵部驿递,经手的人不少,**我想另派一个信得过的内侍随旨同去,口传一句\"到京先入宫,不必先拜外朝\",**这样他的消息不会先传到别处。万岁爷若觉得妥当,奴婢这就去办。旨意没问题的话,请万岁爷示下,就可以用宝发出了。",
+          "id": null,
+          "provider_name": null,
+          "provider_details": null,
+          "part_kind": "text"
+        }
+      ],
+      "usage": {
+        "input_tokens": 50,
+        "cache_write_tokens": 0,
+        "cache_read_tokens": 0,
+        "output_tokens": 123,
+        "input_audio_tokens": 0,
+        "cache_audio_read_tokens": 0,
+        "output_audio_tokens": 0,
+        "audio_seconds": 0.0,
+        "details": {},
+        "cost": null
+      },
+      "model_name": "sonnet",
+      "timestamp": "2026-10-21T12:36:40.213744Z",
+      "kind": "response",
+      "provider_name": null,
+      "provider_url": null,
+      "provider_details": null,
+      "provider_response_id": null,
+      "finish_reason": null,
+      "run_id": "01a15e76-5cc9-77cb-b96a-01e7f133a00e",
+      "conversation_id": "01a15e76-5cc9-77cb-b96a-01e83ea843dc",
+      "metadata": null,
+      "workspace_ref": null,
+      "failed_attempts": null,
+      "state": "complete"
+    },
+    {
+      "parts": [
+        {
+          "content": "【王承恩】回万岁爷,**徐光启人在上海,不在京师,今夜到不了殿上。**他是前礼部右少卿,罢居在家。上海到京师水陆千里,旨意发出后,他还要接旨、料理行装、启程,路上少说也得月余。\n\n奴婢拟了旨,请万岁爷过目。\n\n【旨】**谕前礼部右少卿徐光启:卿学通天人,精于历算农政、火器诸务,朕素所知闻。今起复卿原职,着有司给驿,速赴京师入直,以备顾问。卿宜即日启程,不得推诿迁延。**钦此。\n\n【王承恩·低语】万岁爷,徐光启是西学一路的人,守旧的言官少不得拿\"西法\"二字攻他。**他这趟进京,朝中怕有人要先发难。**起复的旨意不如走正途,由吏部、礼部行文,明明白白召回,别让人说是内廷私召。魏忠贤那边眼下未必在意这个罢官的老臣,但万岁爷若要用他试办火器,到了京城,这事还得先想好怎么安置他。\n\n旨意没问题的话,请万岁爷示下,奴婢就送去用宝。",
+          "id": null,
+          "provider_name": null,
+          "provider_details": null,
+          "part_kind": "text"
+        }
+      ],
+      "usage": {
+        "input_tokens": 50,
+        "cache_write_tokens": 0,
+        "cache_read_tokens": 0,
+        "output_tokens": 157,
+        "input_audio_tokens": 0,
+        "cache_audio_read_tokens": 0,
+        "output_audio_tokens": 0,
+        "audio_seconds": 0.0,
+        "details": {},
+        "cost": null
+      },
+      "model_name": "sonnet",
+      "timestamp": "2026-10-21T12:36:56.210314Z",
+      "kind": "response",
+      "provider_name": null,
+      "provider_url": null,
+      "provider_details": null,
+      "provider_response_id": null,
+      "finish_reason": null,
+      "run_id": "01a15e76-c6b6-7350-934f-b375c183e7fa",
+      "conversation_id": "01a15e76-c6b6-7350-934f-b37611e9d8be",
+      "metadata": null,
+      "workspace_ref": null,
+      "failed_attempts": null,
+      "state": "complete"
+    },
+    {
+      "parts": [
+        {
+          "content": "【旁白】王承恩双手接过旨稿,躬身退了半步,吩咐小内侍捧来宝匣。\n\n【王承恩】**奴婢领旨,徐光启起复的旨意这就用宝,交吏部、礼部会同行文,给驿发往上海。**明发的是起复原职,入直备顾问,不提火器,也不提西法。\n\n【旁白】小内侍应声捧匣而去,殿中静了片刻。\n\n【王承恩·低语】万岁爷,还有一桩没了。前头毕自严那道旨,您只说了\"准\",**奴婢请的\"另派内侍口传'到京先入宫'\"那一节,万岁爷还没有明示。**这一节要不要办,奴婢等万岁爷一句话。要办,今夜就挑人随旨南下。不办,旨意便照常走兵部驿递。",
+          "id": null,
+          "provider_name": null,
+          "provider_details": null,
+          "part_kind": "text"
+        }
+      ],
+      "usage": {
+        "input_tokens": 50,
+        "cache_write_tokens": 0,
+        "cache_read_tokens": 0,
+        "output_tokens": 110,
+        "input_audio_tokens": 0,
+        "cache_audio_read_tokens": 0,
+        "output_audio_tokens": 0,
+        "audio_seconds": 0.0,
+        "details": {},
+        "cost": null
+      },
+      "model_name": "sonnet",
+      "timestamp": "2026-10-21T12:37:13.903701Z",
+      "kind": "response",
+      "provider_name": null,
+      "provider_url": null,
+      "provider_details": null,
+      "provider_response_id": null,
+      "finish_reason": null,
+      "run_id": "01a15e77-091a-776a-a6cc-30157730ff16",
+      "conversation_id": "01a15e77-091a-776a-a6cc-30160dae0084",
+      "metadata": null,
+      "workspace_ref": null,
+      "failed_attempts": null,
+      "state": "complete"
+    },
+    {
+      "parts": [
+        {
+          "content": "【旁白】王承恩听得\"退朝\"二字,忙退后三步,垂手躬身。殿中内侍齐声唱退,烛火在穿堂风里晃了一晃。\n\n【王承恩】**万岁爷起驾。毕自严、徐光启两道旨意,奴婢今夜就办妥,明早回禀。**\n\n【王承恩·低语】万岁爷,\"到京先入宫\"那一节,您还没发话。奴婢先按稳妥的办,**旨意只走明路,另挑一个嘴严的人暗中随行护着毕自严。**万岁爷若不愿这么办,明早吩咐奴婢一声,追得上。",
+          "id": null,
+          "provider_name": null,
+          "provider_details": null,
+          "part_kind": "text"
+        }
+      ],
+      "usage": {
+        "input_tokens": 50,
+        "cache_write_tokens": 0,
+        "cache_read_tokens": 0,
+        "output_tokens": 82,
+        "input_audio_tokens": 0,
+        "cache_audio_read_tokens": 0,
+        "output_audio_tokens": 0,
+        "audio_seconds": 0.0,
+        "details": {},
+        "cost": null
+      },
+      "model_name": "sonnet",
+      "timestamp": "2026-10-21T12:37:37.971192Z",
+      "kind": "response",
+      "provider_name": null,
+      "provider_url": null,
+      "provider_details": null,
+      "provider_response_id": null,
+      "finish_reason": null,
+      "run_id": "01a15e77-5560-76a1-ab29-dffa6ae5d74a",
+      "conversation_id": "01a15e77-5560-76a1-ab29-dffbb6630c1f",
+      "metadata": null,
+      "workspace_ref": null,
+      "failed_attempts": null,
+      "state": "complete"
+    }
+  ],
+  "replies": [
+    "{\"facts\":[],\"decrees\":[{\"text\":\"谕南京户部尚书毕自严:朕嗣位之初,庶务待理,知卿久领度支,精于钱粮。着卿接旨后即交代部务,乘驿速赴京师,陛见议事。沿途不必张扬,不得迁延。钦此。\",\"origin\":\"emperor\",\"secret\":false,\"turn\":2,\"people\":[\"毕自严\",\"王承恩\"]},{\"text\":\"谕前礼部右少卿徐光启:卿学通天人,精于历算农政、火器诸务,朕素所知闻。今起复卿原职,着有司给驿,速赴京师入直,以备顾问。卿宜即日启程,不得推诿迁延。钦此。\",\"origin\":\"emperor\",\"secret\":false,\"turn\":4,\"people\":[\"徐光启\",\"王承恩\"]}],\"decree_events\":[{\"kind\":\"handled\",\"decree\":0,\"text\":\"王承恩拟就召毕自严入京陛见的旨意,皇帝准之,走兵部驿递发往南京。\"},{\"kind\":\"handled\",\"decree\":1,\"text\":\"王承恩奉旨用宝,交吏部、礼部会同行文,给驿发往上海起复徐光启。\"}]}"
+  ]
+}

@@ -1,0 +1,67 @@
+# P8、禁正则与禁裸 noqa 管全仓 Python；分层和类型检查限定游戏包。
+# P8 六项上限与 CI 的咬合方式见 .github/workflows/ci.yml 的 python 任务。
+
+[tool.pytest.ini_options]
+addopts = "--dist loadgroup"
+
+[tool.ruff]
+include = ["*.py", "*.spec"]
+target-version = "py314"
+
+[tool.ruff.lint]
+preview = true
+explicit-preview-rules = true
+# P8：语句 200 / 参数 5 / 分支 12 / return 6 / 局部变量 15（PLR0914 仍是 preview，显式开启）；
+# TID251 禁正则模块；PGH004 禁裸 `# noqa`。
+select = ["PLR0915", "PLR0913", "PLR0912", "PLR0911", "PLR0914", "TID251", "PGH004"]
+
+[tool.ruff.lint.pylint]
+max-statements = 200
+max-args = 5
+max-branches = 12
+max-returns = 6
+max-locals = 15
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"re".msg = "禁用正则模块（仓内约束、全局锚定宪法）"
+
+[tool.pyright]
+include = ["ming"]
+typeCheckingMode = "strict"
+pythonVersion = "3.14"
+
+[tool.importlinter]
+root_packages = ["ming"]
+
+# 分层：入口 → 使用者 → 中间层 → 账本；入口读中间层是既定例外。
+[[tool.importlinter.contracts]]
+name = "layers: desktop > web | entry > game > audience | month > middle > ledger"
+type = "layers"
+layers = ["ming.desktop", "ming.web | ming.__main__", "ming.game", "ming.audience | ming.month", "ming.month_steps", "ming.middle", "ming.ledger"]
+
+[[tool.importlinter.contracts]]
+name = "month steps communicate only through the ledger door"
+type = "independence"
+modules = ["ming.month_steps.deliberation", "ming.month_steps.simulation", "ming.month_steps.petitions", "ming.month_steps.landing", "ming.month_steps.gazette", "ming.month_steps.sources", "ming.month_steps.secrets"]
+
+# 账本只有一个门：只被中间层导入。
+[[tool.importlinter.contracts]]
+name = "ledger only via middle"
+type = "protected"
+protected_modules = ["ming.ledger"]
+allowed_importers = ["ming.middle.*"]
+
+# Negative sample: add `from ming.ledger.projection import ReadModel` to
+# ming/middle/calendar.py; lint-imports must reject it. All row writes live in
+# ReadModel.policy; the facade imports it only to assemble the library runner.
+[[tool.importlinter.contracts]]
+name = "read-table writer is private to the ledger runner"
+type = "protected"
+protected_modules = ["ming.ledger.projection"]
+allowed_importers = ["ming.ledger"]
+
+[[tool.importlinter.contracts]]
+name = "query schema stays behind the ledger read API"
+type = "protected"
+protected_modules = ["ming.ledger.tables"]
+allowed_importers = ["ming.ledger", "ming.ledger.projection"]

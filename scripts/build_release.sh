@@ -3,14 +3,14 @@
 #
 # 前置（在干净 clone 里跑一次）：
 #   python -m venv .venv && . .venv/bin/activate
-#   pip install -r requirements.txt -r requirements-release.txt   # 本仓无 pyproject/setup.py，用 requirements.txt（非 -e .）
+#   pip install -r requirements.txt -r requirements-release.txt
 # 然后：
 #   scripts/build_release.sh
 #
 # 产物：dist/Ming_LLM-<macos|linux>.zip
 #   macOS → 解压得 Ming_LLM.app（双击即用，原生窗口；含 Info.plist 放行本地 HTTP）
 #   Linux → 解压得 Ming_LLM（可执行）+ _internal/（依赖子目录）
-# LLM 后端在 app 内「设置」里自理，落 ~/.ming_sim/，不随包发（零配置文件）。
+# LLM 后端在 app 内「设置」里自理，落 ~/.ming/saves/，不随包发。
 #
 # PYTHON 覆盖：默认用 .venv/bin/python（若在），否则 python3。
 set -euo pipefail

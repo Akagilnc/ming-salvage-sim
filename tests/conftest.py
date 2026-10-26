@@ -1,649 +1,314 @@
-from __future__ import annotations
-"""pytest 基建：只读 opening 盘面 + 按用例隔离的临时库 fixture。
+"""Recorded model boundary: native overrides selected only by the declared call name."""
 
-纯读用例可共享一次真实 seed 的只读盘面；写库用例仍各拿一个全新临时 SQLite，
-互不污染。content 绑定到 context 和 issues 两个模块（各有自己的 _ctx）。
-"""
-
-
-import copy
+import asyncio
+import json
 from contextlib import contextmanager
-import os
-import shutil
+from collections import defaultdict
+from pathlib import Path
+from shutil import copyfile, copytree
 
 import pytest
-
-from ming_sim.opening_seed import seed_opening_world
-from ming_sim.content import GameContent
-from ming_sim.context import bind_content as ctx_bind
-import ming_sim.issues as issues_mod
-import ming_sim.entities.issue.legacy as issue_legacy
-from ming_sim.db import GameDB
-
-# 全新库 load_state 只 seed 危机/账本/开局公共见闻，不 seed powers/完整军政盘面（那些另处加载）。
-# #1356：不再 seed 固定开局邸报文。测试需要齐全盘面（powers/characters/armies），用现有存档副本作基底，最可靠。
-_SEED_DB = os.path.join(os.path.dirname(__file__), "..", "data", "probe.db")
-# 月初快照呈现前四键（国库/内库/民心/皇威）：测试侧钉死的顺序，生产不读。
-MONTH_OPEN_KEYS = ("国库", "内库", "民心", "皇威")
-
-
-
-def clear_pending_rows(db, turn):
-    """重置测试输入，不模拟月链对已答事实的处理。"""
-    db.conn.execute("DELETE FROM pending_decisions WHERE turn=? AND kind='decision'", (turn,))
-    db.conn.commit()
-
-
-def clear_resolve_rows(db, turn):
-    db.conn.execute("DELETE FROM pending_resolve_context WHERE turn=?", (turn,))
-    db.conn.commit()
-
-
-def settle_region_tick(db, region_id, actions=None):
-    """单省月度 settle：经生产批量桥 settle_ming_province_substrate_ticks 取本省结果；错误 fail-loud。"""
-    outcomes = db.settle_ming_province_substrate_ticks(
-        {region_id: actions} if actions else None,
-    )
-    for outcome in outcomes:
-        if outcome.region_id == region_id:
-            if outcome.error is not None:
-                raise outcome.error
-            return outcome.result
-    raise ValueError(f"region {region_id!r} 无 settle 财政基座")
-
-
-@pytest.fixture(scope="session")
-def content() -> GameContent:
-    c = GameContent.load()
-    ctx_bind(c)
-    issues_mod.bind_content(c)
-    return c
-
-
-def _seed_opening_db(path: str, content) -> None:
-    """生产开局同核：seed_opening_world + load_state + sync_opening_legacies，写入 path。"""
-    db = GameDB(path, content)
-    try:
-        seed_opening_world(db)
-        state = db.load_state()
-        from ming_sim.applier import atomic
-        with atomic(db):
-            issue_legacy.sync_opening_legacies(db, state)
-    finally:
-        db.conn.close()
-
-
-@contextmanager
-def _opening_game(content, workdir):
-    """创建并清理一个与生产开局序列同核的临时盘面。
-
-    ``workdir`` 由调用方（``read_game``）用 pytest 的 ``tmp_path_factory`` 划给本
-    session：库连同 ``materials/`` 派生树都落其中。放系统共享临时目录会让同父目录
-    多档跨运行互相借用对方遗留的库与材料树（#1888 J6 实测固定名 other.db 残留旧
-    schema，用例开库即报 no such column）。
-    """
-    path = os.path.join(str(workdir), "opening.db")
-    db = None
-    try:
-        _seed_opening_db(path, content)
-        db = GameDB(path, content)
-        state = db.load_state()
-        yield db, state, content
-    finally:
-        if db is not None:
-            db.conn.close()
-
-
-
-
-def wait_for_background_jobs(db):
-    """Join fixture-owned native writes before the next direct DB access."""
-    from ming_sim.decree_forecast import _owner_for
-    from ming_sim.session_write_queue import get_session_write_queue
-
-    owners = list(getattr(db, "_test_session_owners", ()))
-    owner = _owner_for(db)
-    if owner is not None and owner not in owners:
-        owners.append(owner)
-    for owner in owners:
-        assert get_session_write_queue(owner).wait_idle()
-
-
-def own_session_until_game_teardown(db, owner) -> None:
-    """让 ``game`` fixture 在关闭 SQLite 前排空该 session 的已接纳工作。
-
-    Same write queue → one drain target. When a newer owner shares that queue
-    (light shell rebound as forecast owner), replace the prior entry so the
-    current weakref target stays strongly held until teardown.
-    """
-    owners = getattr(db, "_test_session_owners", None)
-    if owners is None:
-        owners = []
-        db._test_session_owners = owners
-    queue = getattr(owner, "_write_queue", None)
-    for i, existing in enumerate(owners):
-        if existing is owner:
-            return
-        if queue is not None and getattr(existing, "_write_queue", None) is queue:
-            owners[i] = owner
-            return
-    owners.append(owner)
-
-
-def note_queue_until_game_teardown(db, queue) -> None:
-    """登记写队列本身。drain 不得因此关掉夹具拥有的连接。"""
-    from types import SimpleNamespace
-
-    own_session_until_game_teardown(db, SimpleNamespace(_write_queue=queue))
-
-
-def _drain_registered_sessions_before_close(db) -> None:
-    """排空已登记队列上未完成的写票，再由夹具自己关库。
-
-    关库顺序只看写票是否完成，不看执行器类型。委托真实线程池的替身
-    仍有在飞任务时，barrier 等到票完成才返回。
-    """
-    from ming_sim.session_write_queue import drain_and_close_session
-
-    owners = list(getattr(db, "_test_session_owners", ()) or ())
-    for owner in reversed(owners):
-        drain_and_close_session(owner)
-
-
-@pytest.fixture(scope="session")
-def _game_template_path(content, tmp_path_factory):
-    """Session 级开局模板 DB（只 seed 一次）。供 ``game`` 每案文件拷贝，避免逐案建库。
-
-    方案 (c)：模板 DB 一次建 + 每案文件拷贝。不用 (d) 事务回滚——全 suite 大量用例自带
-    commit/rollback、跨连接可见性、崩溃恢复与 applier 事务边界（ADR 0008 族），禁区命中。
-
-    落 pytest 管理的 session 临时目录（而非系统共享临时目录）：``_materials_campaign_dir``
-    按 db 所在父目录派生 ``materials/``，共用父目录会让跨运行遗留库/材料树互相借用
-    （#1888 J6）。
-    """
-    workdir = tmp_path_factory.mktemp("game-template")
-    path = str(workdir / "template.db")
-    _seed_opening_db(path, content)
-    yield path
-
-
-@pytest.fixture(scope="session")
-def read_game(content, tmp_path_factory):
-    """返回共享的真实开局盘面，供不改变 DB/state/content 的纯读测试使用。
-
-    只 seed 一次，并用 SQLite ``query_only`` 把误写变成响亮失败。任何写库路径、
-    会改变 state/content 的路径，或需要验证事务/隔离的测试必须继续使用 ``game``。
-    """
-    with _opening_game(content, tmp_path_factory.mktemp("opening-game")) as opening:
-        db, _state, _content = opening
-        db.conn.execute("PRAGMA query_only = ON")
-        yield opening
-
-
-def _rebind_session_content(content) -> None:
-    """把各模块 _content 绑回 session 级共享 GameContent。
-
-    WebGame/GameSession 常 `GameContent.load()` 新对象并 `_bind_all_content`，
-    把 issues/context/agents/… 指到另一份盘面；仅还原 `content.characters`
-    不够——后续 `game` 夹具仍用 session content，而 `apply_person_changes_only`
-    走 `_ctx()` 会改到已退役的那份，DB 与断言侧 content 分叉。
-    """
-    from ming_sim.session import _bind_all_content
-
-    _bind_all_content(content)
-
-
-@pytest.fixture(autouse=True)
-def _restore_content_characters(content):
-    """content 是 session 作用域共享对象，但建 GameSession（读档/_sync_offices_from_db_impl）
-    会按 DB characters 表重建并**整体替换** content.characters。基底 data/probe.db 是旧档、
-    缺 characters.json 独有的角色（如宗藩王 朱常洵 等），一旦某用例建过 session，content
-    就从 101 缩成 58、宗藩王永久消失，泄漏到后续用例——实证宗藩可见性测试（含 /chat 守门）
-    在全量里被静默 skip（「基底盘面无宗藩人物」），等于没验。
-
-    每用例前快照、后还原 content.characters（深拷贝，连带 in-place 改的 office_type/status
-    等字段一并隔离），并从前后两端把 bind_content 模块绑回本 session content，
-    断掉 GameSession 另 load 后留下的跨用例 _content 漂移。只拷 characters：
-    观测到的泄漏在此面，region/faction 等不涉，避免无谓开销。"""
-    saved = copy.deepcopy(content.characters)
-    _rebind_session_content(content)
-    yield
-    content.characters = saved
-    _rebind_session_content(content)
-
-
-@pytest.fixture(autouse=True)
-def _transport_retry_interval_instant():
-    """#1792：测试默认不真等 attempt 间隔（生产默认 5s）。
-
-    需时钟断言的用例自行 monkeypatch `_sleep_retry_interval` 推进受控时钟。
-    独立 MonkeyPatch：测试内 monkeypatch.undo() 不会撤掉本兜底。
-    """
-    import ming_sim.llm_transport as transport_mod
-
-    mp = pytest.MonkeyPatch()
-    mp.setattr(transport_mod, "_sleep_retry_interval", lambda _seconds: None)
-    try:
-        yield
-    finally:
-        mp.undo()
-
-
-@pytest.fixture(autouse=True)
-def _deterministic_rescript_forecasts():
-    from tests.month_chain_helpers import InlineExecutor
-
-    mp = pytest.MonkeyPatch()
-    mp.setattr("ming_sim.rescript_forecast._executor", InlineExecutor())
-    try:
-        yield
-    finally:
-        mp.undo()
-
-
-@pytest.fixture
-def game(content, _game_template_path, monkeypatch, tmp_path):
-    """返回 (db, state, content)：开局同核临时库，用例间隔离。
-
-    Setup 形态（#1233 刀1 方案 c）：session 模板 DB 一次 seed，每案 ``shutil.copyfile``
-    后 ``GameDB``+``load_state``。断言语义与逐案 ``seed_opening_world`` 相同（同核开局态），
-    只把 setup 从 O(seed) 降到 O(copy)。
-
-    不依赖 gitignored data/probe.db（#5）：characters 直接来自 content（101 全）。
-
-    库落本用例 ``tmp_path`` 下的独立子目录（pytest 随用例回收），不落系统共享临时目录：
-    ``_materials_campaign_dir`` 按 db 父目录派生 ``materials/``，共用父目录会让跨运行
-    遗留库与材料树互相借用（#1888 J6：固定名 other.db 残留旧 schema，开库即报
-    no such column: office_type）。子目录另隔一层，免得与用例自建的
-    ``tmp_path/materials`` dest_root 撞名。
-    """
-    del monkeypatch
-    workdir = tmp_path / "game"
-    workdir.mkdir(parents=True, exist_ok=True)
-    path = str(workdir / "game.db")
-    db = None
-    try:
-        shutil.copyfile(_game_template_path, path)
-        db = GameDB(path, content)
-        state = db.load_state()
-        yield db, state, content
-    finally:
-        if db is not None:
-            _drain_registered_sessions_before_close(db)
-            db.conn.close()
-
-
-@pytest.fixture
-def saved_game(content, tmp_path):
-    """返回 (db, state, content)：data/probe.db「玩过存档」副本（带历史 issue / 账本流水 / 已退场
-    人物 / 到期密令 / 帝国修正等运行时状态），用例间隔离。
-
-    与 `game`（fresh seed 开局态）区别：这些用例的断言依赖**玩过后的特定运行时状态**（某历史
-    issue、国库余额、帝国修正下的 metric 增量、due secret_order 等），fresh seed 无法复现。暂用
-    probe.db 隔离，缺则**明确 skip 并注明原因**（非隐藏假绿，#5）——区别于原 `game` 缺 probe.db
-    时静默 skip 掉**全部**盘面用例。后续应逐个 deterministic 化（测试自带 setup 注入所需状态），
-    见 #5 followup。
-
-    副本落本用例 ``tmp_path`` 独占子目录（pytest 随用例回收），同 `game` 的理由（#1888 J6）。"""
-    if not os.path.exists(_SEED_DB) or os.path.getsize(_SEED_DB) == 0:
-        pytest.skip("缺玩过存档 data/probe.db（gitignored）；本用例依赖运行时状态，待 deterministic 化（#5 followup）")
-    workdir = tmp_path / "saved-game"
-    workdir.mkdir(parents=True, exist_ok=True)
-    path = str(workdir / "saved.db")
-    db = None
-    try:
-        shutil.copy(_SEED_DB, path)
-        db = GameDB(path, content)
-        region_n = db.conn.execute("SELECT COUNT(*) AS n FROM regions").fetchone()["n"]
-        if int(region_n or 0) == 0:
-            pytest.skip("data/probe.db 无盘面（空库）；本用例依赖玩过存档")
-        state = db.load_state()
-        yield db, state, content
-    finally:
-        # setup（copy/GameDB/load_state）抛错也清 temp（cmr #5 r2 coderabbit）；封装 db.conn.close()（gemini #5）。
-        # 库文件本身由 pytest 随 tmp_path 回收，无需逐个删。
-        if db is not None:
-            db.conn.close()
-
-
-def active_ming_character(db, content) -> str:
-    """取一个开局 active 的大明大臣姓名，供人物状态测试用（不硬编死名字）。"""
-    for name, ch in content.characters.items():
-        if getattr(ch, "power_id", "ming") != "ming":
-            continue
-        if getattr(ch, "office_type", "") == "后宫":
-            continue
-        if db.characters.get_character_status(name)[0] == "active":
-            return name
-    raise AssertionError("找不到 active 的大明大臣")
-
-
-# ADR 0010 / #1023 / #547：人物抽象轴偏门哨兵（单一真源；世界事实数值不在此列）。
-CHARACTER_AXIS_SENTINEL = {
-    "loyalty": 17,
-    "ability": 37,
-    "integrity": 57,
-    "courage": 77,
-    "identity": 97,
+from pydantic_ai import Agent
+from pydantic_ai.models import override_allow_model_requests
+from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelResponse
+from pydantic_ai.models.test import TestModel
+from starlette.testclient import TestClient
+
+from ming.__main__ import main
+from ming.middle.court import Court
+from ming.middle.opening import CONTENT, build_opening
+from ming.web import create_app
+from tests.test_court import replaying
+
+RECORDED = Path(__file__).parent / "recorded"
+AGENT_RUN = Agent.run
+HISTORY_ACTIONS = {
+    "month": ({"action": "month"},),
+    "night": ({"action": "open"}, {"action": "dismiss"}),
 }
 
 
-def plant_character_axis_sentinels(db, content, name: str) -> dict[str, int]:
-    """把人物五轴写成 CHARACTER_AXIS_SENTINEL（DB + content 内存镜像同步）。"""
-    db.conn.execute(
-        "UPDATE characters SET loyalty=?, ability=?, integrity=?, courage=?, identity=? "
-        "WHERE name=?",
-        (*CHARACTER_AXIS_SENTINEL.values(), name),
-    )
-    db.conn.commit()
-    character = content.characters[name]
-    for field, value in CHARACTER_AXIS_SENTINEL.items():
-        setattr(character, field, value)
-    return dict(CHARACTER_AXIS_SENTINEL)
+INVALID_NIGHT = json.loads((RECORDED / "night_invalid.json").read_text())["cases"][
+    "missing_fields"
+]
+RECORDED_REPLIES = {
+    "scene": INVALID_NIGHT["scene"],
+    "NightDeclaration": INVALID_NIGHT["reply"],
+    "Declaration": (RECORDED / "month_empty.txt").read_text(),
+    "month_final": (RECORDED / "simulation.txt").read_text(),
+    **{
+        name: (RECORDED / "sources_empty.txt").read_text()
+        for name in ("urgent", "impeachment")
+    },
+    **{
+        name: (RECORDED / f"{name}.txt").read_text()
+        for name in ("deliberation", "simulation", "gazette", "secret_report")
+    },
+}
 
 
-def open_audience_night(db, state, *, time_of_day: str = "戌时", location: str = "乾清宫") -> int:
-    """开一场召对夜，返回 night_id（539/547 夜脚手架真源）。"""
-    from ming_sim import audience_night as an
-
-    return int(an.open_night(db, state, time_of_day=time_of_day, location=location)["id"])
-
-
-def append_night_chat(
-    db, state, night_id: int, minister: str, user_text: str, answer: str, seq: int,
-) -> tuple[int, int]:
-    """写入一对 user/minister 消息 + chat_turns 行；返回 (turn_id, minister_message_id)。"""
-    uid = db.chat_messages.insert(minister_name=minister, turn=state.turn, role="user", content=user_text)
-    db.conn.commit()
-    mid = db.chat_messages.insert(minister_name=minister, turn=state.turn, role="minister", content=answer)
-    db.conn.commit()
-    cur = db.conn.execute(
-        "INSERT INTO chat_turns "
-        "(minister_name,turn,year,period,user_message_id,minister_message_id,night_id,night_seq) "
-        "VALUES (?,?,?,?,?,?,?,?)",
-        (minister, state.turn, state.year, state.period, uid, mid, night_id, seq),
-    )
-    db.conn.commit()
-    return int(cur.lastrowid), int(mid)
-
-
-@pytest.fixture(autouse=True)
-def _isolated_user_data_dir(tmp_path):
-    """全套测试隔离 user-data（错误包/拒收镜像）——集中兜底（cmr S1 r2 P1）。
-
-    没有它，任何走 run_settle/写包路径的用例都把测试产物写进真实 data/error_packs
-    （实证 18 包 75MB + 假行混真 jsonl + attempt 序号灌高）。各用例自己 setenv 指
-    自己的 tmp_path 仍可覆盖本兜底（后设者胜）。
-
-    同步把 import 时钉死的 user_data 常量（``RUNTIME_LLM_PATH``）拨到本用例 tmp——否则 env 改了
-    常量仍指仓内 ``data/``，xdist 多 worker 会抢同一固定路径（#1233 刀2 gate）。
-
-    用独立 MonkeyPatch 实例而非共享的 monkeypatch fixture：后者与测试同一实例，
-    测试里 monkeypatch.undo() 会把本兜底一并撤掉（实证 test_noready_recovery
-    undo 后 settle 把空目录建回真实 data/）。"""
-    import ming_sim.llm_config as _llm_config
-
-    user_root = tmp_path / "user_data"
-    user_root.mkdir(parents=True, exist_ok=True)
-
-    mp = pytest.MonkeyPatch()
-    mp.setenv("MING_SIM_USER_DATA_DIR", str(user_root))
-    mp.setattr(_llm_config, "RUNTIME_LLM_PATH", str(user_root / "runtime_llm.json"))
-    yield
-    mp.undo()
-
-
-def open_hall_turn(
-    db, state, minister_name, *, agno_session_id="", agno_runs_before=0,
-):
-    """测试 setup（非生产 API）：开夜 + 建轮 + 具名大臣 ensure_summon_enter。
-
-    只组合现行生产 seam，不复活已删 attach/beat。
-    """
-    from ming_sim.audience_night import (
-        METHOD_XUANRU,
-        NIGHT_STATUS_CLOSING,
-        NIGHT_STATUS_OPEN,
-        SCENE_CHAT_SPEAKER,
-        ensure_summon_enter,
-        get_open_night,
-        open_night,
-    )
-    night = get_open_night(db)
-    if night is not None and str(night.get("status") or "") == NIGHT_STATUS_CLOSING:
-        open_night(db, state)  # raises
-    if night is None or str(night.get("status") or "") != NIGHT_STATUS_OPEN:
-        night = open_night(db, state)
-    night_id = int(night["id"])
-    ctid = db.create_chat_turn(
-        state,
-        minister_name,
-        agno_session_id or f"test:{minister_name}",
-        int(agno_runs_before or 0),
-        night_id=night_id,
-        status="generating",
-    )
-    name = str(minister_name or "").strip()
-    if name and name != SCENE_CHAT_SPEAKER:
-        ensure_summon_enter(
-            db, night_id, name,
-            method=METHOD_XUANRU,
-            origin_chat_turn_id=ctid,
+@contextmanager
+def recorded_steps(case=None, start=0, invocations=None):
+    replies = {
+        name: TestModel(call_tools=[], custom_output_text=text)
+        for name, text in RECORDED_REPLIES.items()
+    }
+    if case is not None:
+        case = json.loads((RECORDED / f"night_{case}.json").read_text())
+        replies["scene"] = replaying(
+            [m for m in ModelMessagesTypeAdapter.validate_python(case["scene_responses"])
+             if isinstance(m, ModelResponse)] if "scene_responses" in case else
+            [turn["scene"] for turn in case["turns"][start:]]
         )
-    return night_id, ctid
+        replies["NightDeclaration"] = replaying(case["replies"])
+
+    async def recorded(agent, *args, **kwargs):
+        # Only the external model is substituted; Agent, tools and validators run normally.
+        if invocations is not None:
+            invocations[agent.name].append(kwargs["deps"].identity)
+        with agent.override(model=replies[agent.name]):
+            return await AGENT_RUN(agent, *args, **kwargs)
+
+    with override_allow_model_requests(False), pytest.MonkeyPatch.context() as patch:
+        patch.setattr(Agent, "run", recorded)
+        if case is not None and "turns" in case:
+            patch.setattr("ming.game.uuid4", iter(t["id"] for t in case["turns"][start:]).__next__)
+        yield replies
 
 
-# The offline model needs the exact reply, not a parsed fragment of a prose prompt.
-# ContextVar keeps concurrent translation workers' inputs independent.
-from tests.offline_audience_reply import reply as _offline_audience_reply
+@pytest.fixture
+def model_invocations():
+    return defaultdict(list)
 
 
-def offline_empty_audience_translate(prompt, llm_config):
-    """离线转译边界：无政务声明，但逐字保留受控输入中的回话。"""
-    del prompt, llm_config
-    reply = _offline_audience_reply.get()
-    if reply is None:
-        raise RuntimeError("离线转译未收到本轮结构化回话")
-    return {"commissions": [], "promises": [], "scene_facts": [
-        {"body": reply, "role": "scene", "audibility": "殿上公开", "person_names": []},
-    ]}
+@pytest.fixture
+def steps(request, model_invocations):
+    with recorded_steps(getattr(request, "param", None), invocations=model_invocations) as replies:
+        yield replies
 
 
 @pytest.fixture(scope="session", autouse=True)
-def _offline_audience_translation_provider():
-    """测试 worker 全生命周期隔离 audience provider。
+def opening_template_db(tmp_path_factory):
+    home = tmp_path_factory.mktemp("home")
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("HOME", str(home))
+        patch.setenv("USERPROFILE", str(home))
+        patch.setenv("CODEX_HOME", str(home / ".codex"))
+        patch.setenv("GROK_HOME", str(home / ".grok"))
+        yield build_opening()
 
-    后台转译可能晚于单个 test teardown 才进入 provider；因此此桩必须覆盖整个
-    pytest worker，而不是随 function-scoped monkeypatch 提前撤销。需特定结果的
-    用例仍可在本边界上临时覆盖，撤销后回到离线实现。
-    """
-    import ming_sim.audience_translate as audience_translate
 
-    mp = pytest.MonkeyPatch()
-    build_prompt = audience_translate.build_audience_translate_prompt
+@pytest.fixture(scope="session")
+def opening_db(request, tmp_path_factory, opening_template_db):
+    directory = tmp_path_factory.mktemp("opening")
+    if getattr(request, "param", None) is not None:
+        content = copytree(CONTENT, directory / "content")
+        opening = json.loads((content / "opening.json").read_text())
+        if request.param == "shortage":
+            for account in opening["accounts"]:
+                account["taels"] = 0
+            config = json.loads((content / "fiscal_config.json").read_text())
+            for item in config["items"]:
+                if item["key"] in {"官俸_base", "宫廷_base"}:
+                    item["value"] = {"官俸_base": 2000, "宫廷_base": 1000}[item["key"]]
+            (content / "fiscal_config.json").write_text(json.dumps(config))
+        elif request.param == "two-payments-shortage":
+            next(a for a in opening["accounts"] if a["name"] == "国库")["taels"] = 250000
+        elif request.param == "prestige":
+            opening["world"][0]["imperial_prestige"] = 100
+        else:
+            opening["calendar"][0].update(year=request.param, month=1)
+        (content / "opening.json").write_text(json.dumps(opening))
+        if request.param == 1640:
+            events = json.loads((content / "events.json").read_text())
+            next(e for e in events if e["id"] == "jiao_levy_start_1637")[
+                "terminal_reason"
+            ] = "已准"
+            (content / "events.json").write_text(json.dumps(events))
+        template = build_opening(content, content / "opening.sqlite")
+        court = Court.new_game(directory, TestModel(), template)
+        court.close()
+        return court.db_path
+    with TestClient(create_app(directory)) as client:
+        save = client.post("/actions", json={"action": "new"}).json()["save"]
+        fresh = client.get("/state").json()["game"]
+        assert (fresh["night"], fresh["date"]) == (
+            None,
+            {"id": "world", "year": 1627, "month": 10},
+        )
+    return directory / save
 
-    def capture_reply(*, reply, **kwargs):
-        _offline_audience_reply.set(reply)
-        return build_prompt(reply=reply, **kwargs)
 
-    mp.setattr(audience_translate, "build_audience_translate_prompt", capture_reply)
-    mp.setattr(
-        audience_translate, "_default_translate_runner", offline_empty_audience_translate,
+@pytest.fixture(scope="session")
+def first_night(opening_db, tmp_path_factory, request):
+    recording = getattr(request, "param", None)
+    actions = [{"action": "open"}]
+    if recording is not None:
+        case = json.loads((RECORDED / f"night_{recording}.json").read_text())
+        actions += [{"action": "say", "words": words} for words in case["words"]]
+        actions.append({"action": "dismiss"})
+    return extend_history(
+        opening_db, tmp_path_factory.mktemp("first-night"), actions, case=recording
     )
-    yield
-    mp.undo()
 
 
-def stub_scene_agent(monkeypatch, agent):
-    """#1842：经 create_scene_agent 工厂缝注入 scene agent（禁实例双桩属性）。
-
-    Stream calls emit RunContent events; non-stream calls return the agent output directly.
-    """
-    class _RunContent:
-        event = "RunContent"
-
-        def __init__(self, content: str):
-            self.content = content
-
-    class _RunCompleted:
-        content = ""
-        tools: list = []
-
-    class _SceneAgentAdapter:
-        def __init__(self, inner):
-            self._inner = inner
-            self.name = getattr(inner, "name", "scene")
-            # transport bind_transport_sdk_budget 读 agent.model；须透传真 model。
-            self.model = getattr(inner, "model", None)
-
-        def run(self, *a, **k):
-            out = self._inner.run(*a, **k) if hasattr(self._inner, "run") else self._inner
-            if not k.get("stream"):
-                return out
-            if hasattr(out, "__iter__") and not hasattr(out, "content"):
-                return out
-
-            def events():
-                text = str(getattr(out, "content", "") or "")
-                if text:
-                    yield _RunContent(text)
-                done = _RunCompleted()
-                done.content = text
-                done.tools = list(getattr(out, "tools", None) or [])
-                yield done
-
-            return events()
-
-    adapted = _SceneAgentAdapter(agent)
-    monkeypatch.setattr(
-        "ming_sim.session.create_scene_agent",
-        lambda *a, **k: adapted,
+@pytest.fixture(scope="session")
+def spoken_night(first_night, tmp_path_factory):
+    case = json.loads((RECORDED / "night_invalid.json").read_text())
+    return extend_history(
+        first_night,
+        tmp_path_factory.mktemp("spoken-night"),
+        ({"action": "say", "words": case["emperor_words"]},),
     )
-    return adapted
 
 
-def stub_month_translate(monkeypatch, fn):
-    """Inject a monthly translator through the existing runner seam."""
-    monkeypatch.setattr("ming_sim.month_translate._default_month_translate_runner", fn)
+@pytest.fixture(scope="session")
+def rejected_night(first_night, tmp_path_factory):
+    path = tmp_path_factory.mktemp("rejected-night") / first_night.name
+    copyfile(first_night, path)
+    with (
+        recorded_steps("approved") as replies,
+        TestClient(create_app(path.parent)) as client,
+    ):
+        replies["deliberation"] = replaying(
+            [(RECORDED / "deliberation_rejected.txt").read_text()]
+        )
+        client.post("/actions", json={"action": "load", "save": path.name})
+        for words in json.loads((RECORDED / "night_approved.json").read_text())[
+            "words"
+        ]:
+            client.post(
+                "/actions", json={"action": "say", "words": words}
+            ).raise_for_status()
+        client.post("/actions", json={"action": "load", "save": path.name})
+        client.portal.call(client.app.state.web.game.drain)
+        assert client.get("/state").json()["game"]["petitions"] == []
+    return path
 
 
-def stub_audience_translate(monkeypatch, fn=None):
-    """#1842：经 `_default_translate_runner` 缝注入转译（禁实例 `_audience_translate_fn`）。"""
-    runner = offline_empty_audience_translate if fn is None else fn
-    monkeypatch.setattr(
-        "ming_sim.audience_translate._default_translate_runner",
-        runner,
+@pytest.fixture(scope="session")
+def secret_night(first_night, tmp_path_factory):
+    case = json.loads((RECORDED / "night_secret.json").read_text())
+    return extend_history(
+        first_night,
+        tmp_path_factory.mktemp("secret-night"),
+        tuple({"action": "say", "words": words} for words in case["words"]),
+        "secret",
     )
-    return runner
 
 
-def persist_and_schedule_scene(sess, db, result, *, speaker: str = "殿上"):
-    """#1842 单权威：镜像 Web/CLI——回话落定后再 schedule（ADR 0155 / 0036）。
-
-    测试侧不得再复制本流程；生产入口仍走 Web/CLI 各自 persist 尾。
-    """
-    pending = getattr(result, "pending_audience_translation", None)
-    if not pending:
-        return None
-    ctid = int(pending.get("chat_turn_id") or 0)
-    if ctid <= 0:
-        return None
-    answer = str(getattr(result, "answer", "") or "")
-    db.persist_minister_reply(
-        speaker, int(sess.state.turn), answer, ctid,
+@pytest.fixture(scope="session")
+def backing_offer(first_night, tmp_path_factory):
+    case = json.loads((RECORDED / "night_endorsed.json").read_text())
+    return extend_history(
+        first_night, tmp_path_factory.mktemp("backing-offer"),
+        [{"action": "say", "words": turn["emperor_words"]} for turn in case["turns"][:2]],
+        case="endorsed",
     )
-    return sess.schedule_pending_scene_translation(result)
+
+
+@pytest.fixture(scope="session")
+def backed_night(backing_offer, tmp_path_factory, request):
+    case = getattr(request, "param", "endorsed")
+    recording = json.loads((RECORDED / f"night_{case}.json").read_text())
+    return extend_history(
+        backing_offer, tmp_path_factory.mktemp(f"{case}-night"),
+        [{"action": "say", "words": turn["emperor_words"]} for turn in recording["turns"][2:]],
+        case=case, start=2,
+    )
+
+
+def extend_history(source, directory, actions, case=None, start=0):
+    path = directory / source.name
+    copyfile(source, path)
+    with recorded_steps(case, start) as replies, TestClient(create_app(directory)) as client:
+        if case is None:
+            replies["NightDeclaration"] = TestModel(
+                call_tools=[],
+                custom_output_text=(RECORDED / "night_empty.txt").read_text(),
+            )
+        client.post("/actions", json={"action": "load", "save": path.name})
+        for action in actions:
+            client.post("/actions", json=action).raise_for_status()
+            client.portal.call(client.app.state.web.game.drain)
+        assert client.get("/state").json()["game"]["failure"] is None
+    return path
+
+
+@pytest.fixture(scope="session")
+def pending_histories(request, tmp_path_factory):
+    history = request.param
+    actions = HISTORY_ACTIONS[history]
+    node = request.getfixturevalue(
+        "opening_db" if history == "month" else "first_night"
+    )
+    paths = {}
+    for size, added in ((1, actions[-1:]), (2, actions), (4, actions * 2)):
+        node = extend_history(node, tmp_path_factory.mktemp("history"), added)
+        directory = tmp_path_factory.mktemp("pending-history")
+        path = (
+            extend_history(node, directory, HISTORY_ACTIONS["night"])
+            if history == "month"
+            else copyfile(node, directory / node.name)
+        )
+        with recorded_steps() as replies, TestClient(create_app(directory)) as client:
+            petitions = (RECORDED / "month_multiple_petitions.txt").read_text()
+            replies["simulation"] = replaying(
+                [
+                    petitions,
+                    *[(RECORDED / "simulation.txt").read_text()]
+                    * sum(
+                        len(p["options"]) for p in json.loads(petitions)["petitions"]
+                    ),
+                ]
+            )
+            client.post("/actions", json={"action": "load", "save": path.name})
+            client.post("/actions", json={"action": "month"}).raise_for_status()
+            client.portal.call(client.app.state.web.game.drain)
+            client.post("/actions", json={"action": "load", "save": path.name})
+            client.portal.call(client.app.state.web.game.drain)
+            assert client.get("/state").json()["game"]["failure"] is None
+        paths[size] = path
+    return paths
 
 
 @pytest.fixture
-def _offline_scene_beat_generator():
-    """兼容旧请求名：仅保留离线转译 stub。"""
-    import ming_sim.audience_translate as at
-    mp = pytest.MonkeyPatch()
-    mp.setattr(at, "_default_translate_runner", offline_empty_audience_translate)
-    yield
-    mp.undo()
-
-
-def stub_webgame_boundary(monkeypatch) -> None:
-    """WebGame 外部 LLM 边界中和：runtime 配置与高亮判官（单权威；#1847 D14）。
-
-    #544 / #1353 r6：高亮判官同属回话后 LLM 边界——离线中和，禁 sk-test 打真 OpenAI。
-    """
-    import web_app
-
-    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
-    monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
+def game_db(request, tmp_path):
+    # Sources are closed before copying; no live connection or WAL is shared.
+    source = request.getfixturevalue(getattr(request, "param", "opening_db"))
+    path = tmp_path / source.name
+    copyfile(source, path)
+    return path
 
 
 @pytest.fixture
-def webgame_env(tmp_path, monkeypatch, _offline_scene_beat_generator):
-    """真实 WebGame 的环境与外部边界（新档、temp DB）；本夹具不构造 WebGame。
+def audit(capsys):
+    def read(db: Path, *, identity: str = "audit"):
+        capsys.readouterr()
+        main(
+            [
+                "read",
+                "--db",
+                str(db),
+                "--identity",
+                identity,
+            ]
+        )
+        return json.loads(capsys.readouterr().out)
 
-    需在同一用例内多次开档（关档重开、对账）的用例请求本夹具，自行构造。
-    """
-    monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    stub_webgame_boundary(monkeypatch)
+    return read
 
 
 @pytest.fixture
-def web_game(webgame_env, monkeypatch):
-    """真实 WebGame（新档、temp DB）；构造即不连 LLM，仅 runtime 与动作级 LLM 边界中和。
+def clock(monkeypatch):
+    waits = []
+    real_sleep = asyncio.sleep
 
-    单权威开局/生命周期夹具（#1847 消费者闭包复用）。测试只经本夹具取 runtime，
-    不得平行复制 env/API key/WebGame 构造与 session.close teardown。
-    """
-    import web_app
+    async def sleep(delay):
+        if delay == 5:
+            waits.append(delay)
+            delay = 0
+        await real_sleep(delay)
 
-    game = web_app.WebGame(fresh=False)
-    monkeypatch.setattr(web_app, "web_game", game)
-    try:
-        yield game
-    finally:
-        game.session.close()
-
-
-@pytest.fixture(autouse=True)
-def _isolate_cli_bin_resolution():
-    """全套测试隔离 runner 可执行定位：清 _BIN_CACHE，并把登录 shell 探测短路成
-    "不触发"（_DISCOVERED_LOGIN_PATH="" → _login_shell_path 立即返 None）。
-
-    这样任何走 _resolve_cli_bin 的 runner 测试（test_cli_backend / test_llm_channel_config
-    等）在缺 codex/claude/agy 的机器上都不会真 spawn 一个 zsh，解析类测试也不串 cache。
-    （cmr r2 codex X-R1：原 fixture 只在 test_cli_backend.py，漏了 test_llm_channel_config.py
-    的 runner 测试——移到 conftest 集中兜底。）
-
-    用独立 MonkeyPatch 实例（同 _isolated_user_data_dir）：测试里 monkeypatch.undo() 不会
-    把本兜底一并撤掉。需真跑 _login_shell_path 解析逻辑的测试，自行把 _DISCOVERED_LOGIN_PATH
-    重置为 None 并 mock _RAW_RUN。"""
-    import ming_sim.cli_backend as _cb
-    _cb._BIN_CACHE.clear()
-    mp = pytest.MonkeyPatch()
-    mp.setattr(_cb, "_DISCOVERED_LOGIN_PATH", "")
-    yield
-    mp.undo()
-    _cb._BIN_CACHE.clear()
-
-
-
-def monthly_progress_reports(db):
-    return [
-        {
-            "dossier_id": item["dossier_id"],
-            "progress_band": "在办",
-            "memorial_text": "本月密奏已达",
-        }
-        for item in db.list_monthly_dossier_progress_nudges()
-    ]
-
-
-def with_monthly_reports(db, extracted=None):
-    out = dict(extracted or {})
-    if "dossier_progress_reports" in out:
-        return out
-    reports = monthly_progress_reports(db)
-    if reports:
-        out["dossier_progress_reports"] = reports
-    return out
+    monkeypatch.setattr(asyncio, "sleep", sleep)
+    return waits

@@ -36,11 +36,11 @@ def smart_crop(src, tw, th, focus_top=0.5):
     top  = int((nh - th) * focus_top)
     return img.crop((left, top, left + tw, top + th))
 
-def stamp(draw, x, y, text, fnt, sw=7):
+def stamp(draw, xy, text, fnt, sw=7):
     """Gold text with dark stroke, no background."""
-    draw.text((x, y), text, font=fnt, fill=DARK,
+    draw.text(xy, text, font=fnt, fill=DARK,
               stroke_width=sw, stroke_fill=DARK)
-    draw.text((x, y), text, font=fnt, fill=GOLD)
+    draw.text(xy, text, font=fnt, fill=GOLD)
 
 def text_size(draw, text, fnt):
     bb = draw.textbbox((0, 0), text, font=fnt)
@@ -63,8 +63,6 @@ def fit_font(draw, text, path, start_size, max_w):
 # ─────────────────────────────────────────────────────────────────
 def overlay_logo(img, lang="cn"):
     W, H = img.size
-    max_w = int(W * 0.82)
-
     if lang == "cn":
         path = XINGKAI
         t1, t2 = "明末", "力挽狂澜"
@@ -75,21 +73,15 @@ def overlay_logo(img, lang="cn"):
         sz1, sz2 = int(H * 0.22), int(H * 0.13)
 
     draw = ImageDraw.Draw(img)
-    f1 = fit_font(draw, t1, path, sz1, max_w)
-    f2 = fit_font(draw, t2, path, sz2, max_w)
+    f1 = fit_font(draw, t1, path, sz1, int(W * 0.82))
+    f2 = fit_font(draw, t2, path, sz2, int(W * 0.82))
 
     t1w, t1h = text_size(draw, t1, f1)
     t2w, t2h = text_size(draw, t2, f2)
-    gap = int(H * 0.03)
-    block_h = t1h + gap + t2h
-
     # bottom-third placement
-    ty1 = H - block_h - int(H * 0.08)
-    ty2 = ty1 + t1h + gap
-    mid = W // 2
-
-    stamp(draw, mid - t1w // 2, ty1, t1, f1, sw=8)
-    stamp(draw, mid - t2w // 2, ty2, t2, f2, sw=6)
+    ty1 = H - (t1h + int(H * 0.03) + t2h) - int(H * 0.08)
+    stamp(draw, (W // 2 - t1w // 2, ty1), t1, f1, sw=8)
+    stamp(draw, (W // 2 - t2w // 2, ty1 + t1h + int(H * 0.03)), t2, f2, sw=6)
 
     return img
 
@@ -97,39 +89,29 @@ def overlay_logo(img, lang="cn"):
 # make_small_capsule  —  left half art / right half pure text logo
 # ─────────────────────────────────────────────────────────────────
 def make_small_capsule(lang):
-    W, H = 462, 174
-    bg = smart_crop(os.path.join(ASSETS, "小宣传图.jpg"), W, H)
+    bg = smart_crop(os.path.join(ASSETS, "小宣传图.jpg"), 462, 174)
     draw = ImageDraw.Draw(bg)
-
-    split = W // 2          # text lives in right half
-    logo_w = W - split - 8  # available text width
+    logo_w = bg.width - bg.width // 2 - 8  # text lives in right half
 
     if lang == "schinese":
         path = XINGKAI
         t1, t2 = "明末", "力挽狂澜"
-        sz1, sz2 = 68, 36
+        sizes = (68, 36)
     else:
         path = PALATINO
         t1, t2 = "Ming Dynasty", "Last Stand"
-        sz1, sz2 = 42, 28
+        sizes = (42, 28)
 
-    f1 = fit_font(draw, t1, path, sz1, logo_w)
-    f2 = fit_font(draw, t2, path, sz2, logo_w)
+    f1 = fit_font(draw, t1, path, sizes[0], logo_w)
+    f2 = fit_font(draw, t2, path, sizes[1], logo_w)
+    size1 = text_size(draw, t1, f1)
+    size2 = text_size(draw, t2, f2)
+    ty1 = (bg.height - (size1[1] + 6 + size2[1])) // 2
+    mid = bg.width // 2 + logo_w // 2 + 4
 
-    t1w, t1h = text_size(draw, t1, f1)
-    t2w, t2h = text_size(draw, t2, f2)
-    gap = 6
-    block_h = t1h + gap + t2h
-    ty1 = (H - block_h) // 2
-    ty2 = ty1 + t1h + gap
-
-    mid = split + logo_w // 2 + 4
-
-    stamp(draw, mid - t1w // 2, ty1, t1, f1, sw=5)
-    stamp(draw, mid - t2w // 2, ty2, t2, f2, sw=3)
-
-    fname = f"capsule_sm_{lang}.jpg"
-    bg.save(os.path.join(OUT, fname), quality=95)
+    stamp(draw, (mid - size1[0] // 2, ty1), t1, f1, sw=5)
+    stamp(draw, (mid - size2[0] // 2, ty1 + size1[1] + 6), t2, f2, sw=3)
+    bg.save(os.path.join(OUT, f"capsule_sm_{lang}.jpg"), quality=95)
     print(f"✓ Small Capsule 462x174 {lang.upper()}")
 
 # ─────────────────────────────────────────────────────────────────

@@ -1,0 +1,143 @@
+"""Persistent audience records, owned by the same entity/event ledger."""
+
+from operator import itemgetter
+from typing import Any, Literal
+from uuid import UUID, uuid4
+
+from pydantic import BaseModel, Field
+from sqlalchemy import JSON, CompoundSelect, Select, func, literal, or_, select, true, union_all
+from sqlalchemy.sql.elements import ColumnElement
+
+from ming.ledger import ENTITY_COLUMNS as E, FACT_COLUMNS as F, FACT_ROWS, Entity, Ledger
+from ming.middle.calendar import calendar_row
+from ming.middle.queries import LATEST_NIGHT, NIGHT_ROWS
+
+INITIAL_HALL = ("王承恩",)
+
+
+class TurnView(BaseModel):
+    id: str
+    emperor_words: str
+    scene: str
+    hall: list[str]
+
+
+class NightView(BaseModel):
+    id: UUID
+    closed: bool
+    hall: list[str]
+    date: dict[str, int]
+    turns: list[TurnView] = Field(default_factory=list[TurnView])
+    result: Literal["translated", "unhandled"] | None = None
+
+
+def change_hall(hall: list[str], add: list[str], remove: list[str]) -> list[str]:
+    return list(dict.fromkeys(p for p in hall + add if p not in remove))
+
+
+def hall_history(night_id: ColumnElement[Any], turn_position: ColumnElement[Any]) -> Select[Any]:
+    """Members when this turn's words were spoken, with first surviving entries."""
+    # Scene changes precede their turn record; speech uses the preceding turn's state.
+    previous = F.position.table.alias().c
+    boundary = select(func.max(previous.position)).where(
+        previous.entity_id == night_id, previous.kind == "turn", previous.position < turn_position,
+    ).correlate_except(previous.position.table).scalar_subquery()
+    hall = F.position.table.alias().c
+    added = func.json_each(hall.detail["add"]).table_valued("key", "value")
+    candidates = union_all(
+        *(select(literal(person).label("person"), literal(0).label("position"), literal(index).label("ordinal"))
+          for index, person in enumerate(INITIAL_HALL)),
+        select(added.c.value.label("person"), hall.position, added.c.key.label("ordinal")).select_from(
+            hall.position.table.join(added, true()),
+        ).where(hall.entity_id == night_id, hall.kind == "hall", hall.position <= boundary)
+        .correlate_except(hall.position.table, added),
+    ).subquery()
+    removed = func.json_each(hall.detail["remove"]).table_valued("value")
+    absent = select(hall.position).where(
+        hall.entity_id == night_id, hall.kind == "hall",
+        hall.position >= candidates.c.position, hall.position <= boundary,
+        select(removed.c.value).where(removed.c.value == candidates.c.person).correlate_except(removed).exists(),
+    ).correlate_except(hall.position.table)
+    ranked = select(
+        candidates.c.person, candidates.c.position, candidates.c.ordinal,
+        func.row_number().over(
+            partition_by=candidates.c.person, order_by=(candidates.c.position, candidates.c.ordinal),
+        ).label("entry"),
+    ).where(
+        or_(candidates.c.position == 0, candidates.c.position <= boundary), ~absent.exists(),
+    ).correlate_except(candidates).subquery()
+    return select(ranked.c.person, ranked.c.position, ranked.c.ordinal).where(ranked.c.entry == 1).correlate_except(ranked)
+
+
+def read_night(ledger: Ledger, night_id: UUID) -> NightView:
+    night = ledger.entities(entity_id=night_id, query=NIGHT_ROWS)[0]
+    members = hall_history(F.entity_id, F.position).subquery()
+    hall = select(func.json_group_array(func.json_object(
+        "person", members.c.person, "position", members.c.position, "ordinal", members.c.ordinal,
+    ), type_=JSON)).scalar_subquery()
+    turns = [TurnView(
+        **item["detail"], emperor_words=item["emperor_words"],
+        hall=[member["person"] for member in sorted(item["hall"], key=itemgetter("position", "ordinal"))],
+    ) for item in ledger.facts(entity_id=night_id, kind="turn", query=FACT_ROWS.add_columns(hall.label("hall")))]
+    return NightView(
+        id=night_id,
+        **night["data"],
+        turns=turns,
+        result=night["result"],
+    )
+
+
+def witnessed_nights(people: list[str], query: Select[Any]) -> Select[Any]:
+    added = func.json_each(F.detail["add"]).table_valued("value")
+    removed = func.json_each(F.detail["remove"]).table_valued("value")
+    return query.where(E.kind == "night", or_(
+        literal(bool(set(INITIAL_HALL).intersection(people))),
+        select(F.position).where(
+            F.entity_id == E.id, F.kind == "hall",
+            select(added.c.value).where(
+                added.c.value.in_(people),
+                ~select(removed.c.value).where(removed.c.value == added.c.value).exists(),
+            ).exists(),
+        ).correlate(E.id.table).exists(),
+    ))
+
+
+def known_people(data: ColumnElement[Any], people: list[str] | None = None) -> CompoundSelect[Any]:
+    """Involved people, the handler, and the hall at the approval turn."""
+    night_id = func.replace(data["night_id"].as_string(), "-", "")
+    turn = F.position.table.alias().c
+    turns = select(turn.position, func.row_number().over(order_by=turn.position).label("number")).where(
+        turn.entity_id == night_id, turn.kind == "turn",
+    ).correlate_except(turn.position.table).subquery()
+    turn_position = select(turns.c.position).where(
+        turns.c.number == data["turn"].as_integer(),
+    ).correlate_except(turns).scalar_subquery()
+    attendees = hall_history(night_id, turn_position)
+    attendees = attendees.with_only_columns(attendees.selected_columns.person)
+    assigned = func.json_each(func.json_insert(
+        data["people"], "$[#]", data["handler"].as_string(),
+    )).table_valued("value")
+    declared = select(assigned.c.value.label("person")).correlate_except(assigned)
+    if people is not None:
+        declared = declared.where(assigned.c.value.in_(people))
+        attendees = attendees.where(attendees.selected_columns.person.in_(people))
+    return declared.union(attendees)
+
+
+def open_night(ledger: Ledger) -> UUID:
+    for row in ledger.read(LATEST_NIGHT):
+        if not row["data"]["closed"]:
+            return row["id"]
+    date = calendar_row(ledger)["data"]
+    night = Entity(
+        "night", str(uuid4()), "", {"closed": False, "hall": list(INITIAL_HALL), "date": {k: date[k] for k in ("year", "month")}}
+    )
+    ledger.commit([night])
+    return night.id
+
+
+def dismiss(ledger: Ledger, night_id: UUID) -> None:
+    night = ledger.get(night_id)
+    if not night.data["closed"]:
+        night.record("dismissed", "", {}, {"closed": True})
+        ledger.commit([night])

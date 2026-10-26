@@ -4,23 +4,20 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --host 127.0.0.1",
-    "build": "tsc -b && vite build",
-    "test": "vitest run --environment jsdom",
-    "preview": "vite preview --host 127.0.0.1"
+    "dev": "cd .. && ./start.sh",
+    "build": "tsc -b && vite build"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^5.1.1",
-    "lucide-react": "^0.561.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
+    "react-markdown": "^10.1.0",
+    "remark-cjk-friendly": "~2.3.3",
     "typescript": "^5.9.3",
     "vite": "^7.2.7"
   },
   "devDependencies": {
     "@types/react": "^19.2.14",
-    "@types/react-dom": "^19.2.3",
-    "jsdom": "^29.1.1",
-    "vitest": "^4.1.9"
+    "@types/react-dom": "^19.2.3"
   }
 }

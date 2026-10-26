@@ -3,13 +3,13 @@ REM 一键打 zip 分发包（#186，Windows）。onedir 形态：解压后根�
 REM
 REM 前置（在干净 clone 里跑一次）：
 REM   python -m venv .venv ^&^& .venv\Scripts\activate
-REM   pip install -r requirements.txt -r requirements-release-windows.txt   REM 本仓无 pyproject/setup.py，用 requirements.txt（非 -e .）
+REM   pip install -r requirements.txt -r requirements-release-windows.txt
 REM 然后：
 REM   scripts\build_release.bat
 REM
 REM 产物：dist\Ming_LLM-windows.zip
 REM   解压后根目录 = 单一可执行 Ming_LLM.exe + _internal\（依赖子目录）。
-REM   LLM 后端在 app 内「设置」里自理，落 %USERPROFILE%\.ming_sim\，不随包发（零配置文件）。
+REM   LLM 后端在 app 内「设置」里自理，落 %USERPROFILE%\.ming\saves\，不随包发。
 REM
 REM PYTHON 覆盖：默认 .venv\Scripts\python.exe（若在），否则 python。
 setlocal

@@ -1,0 +1,234 @@
+{
+  "source": "/tmp/1947-v10-live",
+  "words": [
+    "传召南京户部尚书毕自严入京陛见。",
+    "都准了。",
+    "起复徐光启，传召入京入直备顾问。",
+    "甚好甚好。准了。",
+    "退朝"
+  ],
+  "scene_responses": [
+    {
+      "parts": [
+        {
+          "content": "Let me check the hall and 毕自严's file.",
+          "id": "reasoning",
+          "signature": null,
+          "provider_name": "openai",
+          "provider_details": null,
+          "part_kind": "thinking"
+        },
+        {
+          "tool_name": "read_records",
+          "args": "{\"kind\": \"person\", \"key\": \"毕自严\"}",
+          "tool_call_id": "chatcmpl-tool-900f301e3144823b",
+          "tool_kind": null,
+          "id": null,
+          "provider_name": null,
+          "provider_details": null,
+          "part_kind": "tool-call"
+        },
+        {
+          "tool_name": "get_hall",
+          "args": "{}",
+          "tool_call_id": "chatcmpl-tool-90874a265e4d1fb0",
+          "tool_kind": null,
+          "id": null,
+          "provider_name": null,
+          "provider_details": null,
+          "part_kind": "tool-call"
+        }
+      ],
+      "model_name": "deepseek/deepseek-v4.1-flash-1017",
+      "kind": "response"
+    },
+    {
+      "parts": [
+        {
+          "content": "毕自严在南京（nanzhili），不在京师，今夜到不了。需据实回奏。\n\n殿上只有王承恩。戏：王承恩回奏，传达。\n\n不需要改名单。仅演。",
+          "id": "reasoning",
+          "signature": null,
+          "provider_name": "openai",
+          "provider_details": null,
+          "part_kind": "thinking"
+        },
+        {
+          "content": "【王承恩】躬身应了一声，随即退到殿角，命小内使往内阁值房查勘。片刻回来，他趋至御前，垂手低声道：\n\n“皇爷，**南京户部尚书毕自严，现驻南京衙门，不在京师**。南京到京，水路两千余里，便是驿递加紧，也得半月上下才到得。今夜是召不来的了。”\n\n他略顿一顿，声音更低些：\n\n“老奴多一句嘴：毕自严在南京户部，是个只知道算账的实心人，与朝中诸公素无深交，故此这些年才一直搁在南京不动。**陛下这道旨意一下，外头便会猜陛下要动钱粮的账了**——魏公公那边的耳目，怕比内阁先知道。”",
+          "id": null,
+          "provider_name": null,
+          "provider_details": null,
+          "part_kind": "text"
+        }
+      ],
+      "model_name": "deepseek/deepseek-v4.1-flash-1017",
+      "kind": "response"
+    },
+    {
+      "parts": [
+        {
+          "content": "The player says \"都准了\" — approving... what? Presumably approving the summon of 毕自严 (already done — 宣召入京), and approving 王承恩's suggestion? Actually \"都准了\" likely means approving the 宣召 (send the summons to Nanjing) and the observation about secrecy. So I should have 王承恩 draft the 旨 — 传旨召南京户部尚书毕自严入京陛见.\n\nPer rules: 皇帝对谁吩咐了要办的事，就由谁把皇帝说的话拟成正式的圣旨，念给皇帝听. Here 皇帝 already said 传召毕自严. So 王承恩 should draft the 旨 and read it out.\n\nAlso 王承恩 hinted at secrecy — \"都准了\" could also include \"此事机密，不许外传\" measures. Let me have 王承恩 read the 旨, then note about 驿递 / 兵部驰驿, and ask whether to 密旨 or 明发.\n\nLet me write the 旨 with 拟票 style. Also the date: 天启七年十月.\n\nNote the gazette says 毕自严 private draft; he's 南京户部尚书. Actually historically 毕自严 was 南京户部尚书 in 1627? He was 户部尚书 later. Fine.\n\n王承恩 reads the 旨. Then he asks a clarifying question: 是否密发，是否着兵部马上飞递，是否令沿途护送。 Per rules \"实在搞不明白的地方就问皇帝\".\n\nKeep it as one scene with 【旨】 and 【王承恩】.\n\nAlso should I check hall? The hall currently presumably empty or 王承恩 only. Not needed to change since nobody enters.\n\nWrite in period language, concise.",
+          "id": "reasoning",
+          "signature": null,
+          "provider_name": "openai",
+          "provider_details": null,
+          "part_kind": "thinking"
+        },
+        {
+          "content": "【王承恩】俯首领旨，退至御案旁，取过牙牌与纸笔，先在心里默了一遍词句，才跪下道：\n\n“老奴拟旨。请皇爷听着，有不合处，老奴改了再念。”\n\n他端正身子，捧稿念道：\n\n【旨】“朕闻南京户部尚书毕自严，久任计曹，清勤素著。今库藏告竭，边饷孔亟，特召该部尚书驰驿来京，入阁陛见，面陈财计。所部事务，交南京户部右侍郎暂署。沿途驿递，照例给夫马廪给，不许迟滞留难。钦此。”\n\n【王承恩】念完把稿子双手举高一寸，又压低声音道：\n\n“**这道旨的紧要处，不在召人，在‘驿递’两字**。若要快，得着兵部发符验，一路换马；可由兵部过手，便到崔呈秀眼里了。老奴这里有两路可以走：一路是**内阁明发**，堂堂正正，人还未到，风声先到；一路是放老奴手中，交厂卫外的急脚递送去南京，**只说是户部寻常行文，人来之前，无人知是诏旨**。\n\n皇爷是要明着召，还是暗里召？”\n\n他顿了顿，仍低着头：“还有一事——毕自严到京，总得先见着人。若魏公公那边先递了帖子去，人还没入宫，话先被人买走了。**要不要着他一到京，先不入驿馆，径赴东华门**？”",
+          "id": null,
+          "provider_name": null,
+          "provider_details": null,
+          "part_kind": "text"
+        }
+      ],
+      "model_name": "deepseek/deepseek-v4.1-flash-1017",
+      "kind": "response"
+    },
+    {
+      "parts": [
+        {
+          "content": "The player issues a new command: 起复徐光启，传召入京入直备顾问。I should check the person's file.\n\n徐光启 — in 1627, he was dismissed from office (削籍?) Actually 徐光启 in 天启年间 was 礼部右侍郎, then 魏忠贤 党羽 attacked him, he resigned/罢归 in 1625, living in 上海. He returned in 崇祯元年 (1628) as 礼部左侍郎... Let me check the archive via tool.\n\nAlso 起复 is an action — needs a 旨. Two things: 起复徐光启 (restore official rank), 传召入京入直备顾问.\n\nLet me read person and hall.",
+          "id": "reasoning",
+          "signature": null,
+          "provider_name": "openai",
+          "provider_details": null,
+          "part_kind": "thinking"
+        },
+        {
+          "tool_name": "read_records",
+          "args": "{\"kind\": \"person\", \"key\": \"徐光启\"}",
+          "tool_call_id": "call_63240aeaf2144524a87de0af",
+          "tool_kind": null,
+          "id": null,
+          "provider_name": null,
+          "provider_details": null,
+          "part_kind": "tool-call"
+        },
+        {
+          "tool_name": "get_hall",
+          "args": "{}",
+          "tool_call_id": "call_f079ed7a271644388f852d2f",
+          "tool_kind": null,
+          "id": null,
+          "provider_name": null,
+          "provider_details": null,
+          "part_kind": "tool-call"
+        }
+      ],
+      "model_name": "deepseek/deepseek-v4.1-flash-1017",
+      "kind": "response"
+    },
+    {
+      "parts": [
+        {
+          "content": "徐光启 is in 南直隶 (上海), 罢居. So can't come tonight. Need 起复旨.\n\n王承恩 reports: 徐光启 in 上海, 南直隶, cannot arrive tonight. Also 起复 requires 吏部 examination/旨意; 徐光启 was 罢居 by 阉党 attack — 起复 needs 旨.\n\n王承恩 could advise: 徐光启起复，吏部那边是崔呈秀一党... Actually 吏部尚书 in 1627 was 周应秋 (阉党). 起复 an official 削籍 by 阉党 means openly signalling anti-阉党. 王承恩 would note the risk: 起复徐光启，等于明说与魏公公相反.\n\nAlso 徐光启 as 入直备顾问 — 入直如内廷? For 火器/历法 need.\n\nWrite the scene: 王承恩 reports location, drafts 旨 (I should draft it—as he's the one asked? The player said \"起复徐光启，传召入京入直备顾问\". 王承恩 was the one taking charge last time. He'd draft the 旨 and read it.\n\nNote 起复 requires 吏部覆 or 特旨. 王承恩 may ask: 起复何官? 以何官衔入直? Suggest 原官礼部右侍郎 or 加 少卿? Actually his 原官 was 礼部右少卿 per archive. Could 起复 with 原官 or 升 礼部右侍郎. 王承恩 asks the emperor to decide the office since 起复必须有官衔.\n\nAlso mention: 上海到京 水路 三千余里（上海到京 约 2400 里），驿递 二十日上下.\n\nWrite segment.",
+          "id": "reasoning",
+          "signature": null,
+          "provider_name": "openai",
+          "provider_details": null,
+          "part_kind": "thinking"
+        },
+        {
+          "content": "【王承恩】先是一怔，随即伏身应诺，退到内阁值房问了一回，回来时脚步比去时急，到御前跪定了才开口：\n\n“皇爷，徐光启……此人老奴记得。**原官礼部右少卿，天启五年被劾，削了职，如今罢居上海，在南直隶**。上海到京，水路三千余里，便是驰驿，也得二十日开外。今夜传不来。”\n\n他抬眼看了一下御案，声音放低：\n\n“老奴照实说三句。第一句：**徐光启是魏公公手里罢的人**。当年参他的是阉党言官，说他‘以夷变夏、暗通西人’。今日陛下起复他，旨意一明发，**内外立刻明白陛下要翻的是哪一笔账**——这比召毕自严重得多。第二句：起复是要吏部过手的，如今吏部尚书周应秋，是魏公公的人，**呈上去的官衔、履历，先过他一道眼**；他若拖着不办，陛下这道恩旨就在部里烂掉。第三句：徐光启罢居两年，人还活着，心气不知如何，老奴不敢保他一召即来。”\n\n他顿了顿，把纸笔挪到膝前：\n\n“故此老奴拟旨，拟了两段。**起复与召入直，老奴分开写**，免得吏部一处卡住，连召见也被带累。请皇爷听着——”\n\n【旨】“徐光启，原任礼部右少卿，因事罢职，朕念其素究农政、火器、历算，实心任事，着**起复原官，改礼部右侍郎**，仍支原俸。所司即日行文南直隶，不得推诿迟延。钦此。”\n\n【王承恩】念完这一段，把稿子放下，抬头道：\n\n“第二段老奴先不念。只因里头有个字，得请皇爷定下——**‘入直’二字，入的是哪里的直**？若入内阁之直，那便得有阁臣缺、或加‘兼东阁大学士’，这一下就牵动内阁；若入的是**内廷顾问之直**，如先朝召人讲历法、看火器的旧例，只须在禁中给一间值房、一道牙牌，**吏部管不着，魏公公也无话可说**。\n\n老奴的意思，徐光启所长的三样——农政、火器、历算——**都不是内阁里能办的事，都该在禁中办**。皇爷是要他做阁臣，还是要他在身边当顾问？”",
+          "id": null,
+          "provider_name": null,
+          "provider_details": null,
+          "part_kind": "text"
+        }
+      ],
+      "model_name": "deepseek/deepseek-v4.1-flash-1017",
+      "kind": "response"
+    },
+    {
+      "parts": [
+        {
+          "content": "The player says \"甚好甚好。准了。\" — approving. Which? The previous segment: Wang Cheng'en asked whether Xu Guangqi should be a cabinet minister or inner-court adviser, and offered two-part decree. The emperor says \"准了\" — both decrees approved. So Wang Cheng'en should enact: first decree for restoration of office (礼部右侍郎), second decree — but the emperor didn't specify 入阁 vs 内廷顾问. Wang asked; emperor said \"甚好甚好。准了\" — ambiguous but likely approving Wang's proposal: 内廷顾问之直 with 值房牙牌. Wang being smart, he'd construe \"准了\" as approving his own suggestion (内廷顾问), but as a careful servant he should confirm... Actually he suggested \"老奴的意思...都该在禁中办\" — so \"准了\" = approve that recommendation. Wang should read the second decree in that form, noting he takes 准了 as approving 内廷顾问之直.\n\nAlso earlier unresolved: 毕自严's decree — the emperor said \"都准了\" then this. Actually earlier the emperor said \"都准了\" regarding 毕自严's decree and Wang's questions about 明发/暗里 and 东华门. Now \"准了\" for Xu Guangqi.\n\nHmm, careful: the previous turn's response ended with Wang asking 阁臣 vs 顾问. The emperor's \"甚好甚好。准了\" approves. Wang now reads second decree.\n\nAlso need to handle the earlier pending questions? The 毕自严 questions (明发 or 暗里; 东华门) — \"都准了\" was before those? Let's check ordering: \n\nTurn 1: 传召毕自严. Wang reports.\nTurn 2: 都准了 — Wang drafts 旨 for 毕自严, reads it, then asks about 驿递明发/暗里 and 东华门.\nTurn 3: 起复徐光启，传召入京入直备顾问 — Wang reports, drafts first 旨, asks 阁臣 vs 顾问.\nTurn 4: 甚好甚好。准了。\n\nSo \"准了\" approves the 起复旨 + Wang's 禁中顾问 proposal. But the 毕自严 questions from turn 2 remain unanswered by the emperor — actually \"都准了\" in turn 2 came before questions. Hmm, the emperor in turn 2 said \"都准了\" then Wang drafted. So the 驿递/东华门 questions are unanswered. Wang might gently re-raise them briefly at the end, since they're still pending and practical (whether to send the 毕自严 decree 明发 or 暗).\n\nNow, do I need tools? Hall list — let me check current hall. The scene is 御前召对 with only 王承恩 present presumably. I could call get_hall to be accurate. Let me call get_hall.\n\nAlso the decree needs to be recorded? Decrees may be logged in unhandled? The gazette unhandled is empty. Probably I just play the drama. Maybe call get_hall to see who's on the hall.\n\nLet me do get_hall.\n\nThen write scene: Wang reads the second 旨 for 徐光启 起复为礼部右侍郎、入禁中值房备顾问（不兼阁衔）, gives 牙牌, arranges 上海 to 京 驿递, and asks about 毕自严 pending choices. Also 王承恩 notes that two decrees both going out same day would alert 魏忠贤.\n\nContent of 旨: 「徐光启着起复原官礼部右侍郎，入直禁中，备朕顾问，凡农政、火器、历算诸事，悉听条陈。给牙牌一面，许不时召对。所司知之。钦此。」\n\nCareful: 起复原官 then 改礼部右侍郎 — from earlier. Also 吏部周应秋 issue: Wang might advise the 起复旨 to be sent via 内阁明发 anyway since 起复 needs 吏部; but the 入直 part is 中旨 directly, no 吏部. Wang says the second 旨 he'll issue as 中旨 (内降), not through 内阁票拟 — that's a real practice and it angers 外朝. He should flag: 中旨频出，外朝会说陛下绕开内阁; but 魏忠贤 controls 内阁... Actually 内阁 now is 阉党 (黄立极、施凤来、张瑞图、李国普?). So 中旨 is a way to bypass. Wang could advise: 两道旨意同发，一明一暗.\n\nAlso mention 徐光启 age (he was 65 in 1627), 上海, 与西人（利玛窦已故，汤若望在京?）Actually 汤若望 was in 西安 in 1627. Wang wouldn't know details well.\n\nAlso note: 徐光启's 起复 needs to avoid 吏部 stalling — Wang suggests 中旨直下吏部 with 期限, or 皇帝 hands 牙牌 to 内臣 送去? Actually 起复 must go through 吏部 for 官凭/敕命. Wang suggests: 旨内写明「所司即日行文，限五日复奏」 to pressure 周应秋.\n\nKeep it reasonably concise but rich. Include 王承恩·低语 maybe for the political read.\n\nLet me get hall first.",
+          "id": "reasoning",
+          "signature": null,
+          "provider_name": "openai",
+          "provider_details": null,
+          "part_kind": "thinking"
+        },
+        {
+          "tool_name": "get_hall",
+          "args": "{}",
+          "tool_call_id": "call_2aae610da0a14e90b4a1a011",
+          "tool_kind": null,
+          "id": null,
+          "provider_name": null,
+          "provider_details": null,
+          "part_kind": "tool-call"
+        }
+      ],
+      "model_name": "deepseek/deepseek-v4.1-flash-1017",
+      "kind": "response"
+    },
+    {
+      "parts": [
+        {
+          "content": "Now write the scene.",
+          "id": "reasoning",
+          "signature": null,
+          "provider_name": "openai",
+          "provider_details": null,
+          "part_kind": "thinking"
+        },
+        {
+          "content": "【王承恩】听得“准了”二字，便不再问，把膝上那张纸翻过来，就着御案边的烛光添了几行，重新跪正，声音不疾不徐：\n\n“老奴领会皇爷的意思是：徐光启不入阁，**只在禁中给值房、给牙牌，备顾问，不兼阁衔**。这样吏部只办他的起复，管不着他的入直，周应秋要拖，也只拖得动半边。”\n\n他把第二段念出来：\n\n【旨】“徐光启既复原官，着入直禁中，备朕顾问。凡农政、水利、火器、历算诸事，悉听其具奏条陈。**给牙牌一面，许不时召对**，不由内阁票拟。所司知之。钦此。”\n\n【王承恩】念毕，把两稿并排放着，压住声音：\n\n“老奴还有三句话，说完便去办。\n\n第一句：**这两道旨不能同一天出**。毕自严那道是明发的，走内阁、过兵部符验；徐光启这道老奴办成中旨，直下吏部。两道一同发，外头立刻把两件事连成一件事看——‘陛下召一个管账的、一个造炮的’，**魏公公不必细查，就知道陛下在备什么**。老奴的意思：毕自严的旨今日先发，走明路；徐光启的旨压两日，等毕自严已在道上，再出。人未至而名先扬，反害了这两人。\n\n第二句：起复终究要吏部给凭。老奴在旨尾添了**‘限五日复奏’**四字，周应秋若拖过五日，便是抗旨，那时候陛下拿这个由头动他，名正言顺。这一句要不要留，请皇爷示下。\n\n第三句，是老奴早先没敢催的——”他抬眼，“毕自严那道旨，是**明发**还是**暗发**？人到了京，是径直赴东华门，还是先进驿馆？这两处没定，老奴不敢遣急脚递。若皇爷一并准了，老奴今夜就把两件事的文书都办齐，明晨发出去。”",
+          "id": null,
+          "provider_name": null,
+          "provider_details": null,
+          "part_kind": "text"
+        }
+      ],
+      "model_name": "deepseek/deepseek-v4.1-flash-1017",
+      "kind": "response"
+    },
+    {
+      "parts": [
+        {
+          "content": "The player says 退朝. I should call dismiss. But also perhaps there's a closing scene. Let me check the tool: \"退朝：本轮回话落账后收夜，不等后台转译。\" So I should call dismiss and then write the closing scene? Let's call dismiss and provide a brief closing段.\n\nActually the instruction says 皇帝要退朝时，调用「退朝」。So call the tool. Then write closing scene.",
+          "id": "reasoning",
+          "signature": null,
+          "provider_name": "openai",
+          "provider_details": null,
+          "part_kind": "thinking"
+        },
+        {
+          "tool_name": "dismiss",
+          "args": "{}",
+          "tool_call_id": "call_c50becdc4278439690d51e97",
+          "tool_kind": null,
+          "id": null,
+          "provider_name": null,
+          "provider_details": null,
+          "part_kind": "tool-call"
+        }
+      ],
+      "model_name": "deepseek/deepseek-v4.1-flash-1017",
+      "kind": "response"
+    },
+    {
+      "parts": [
+        {
+          "content": "【王承恩】听得“退朝”二字，起身退后三步，向殿外连连击掌两声，扬声道：“**皇爷驾起——诸臣退班。**”殿角执灯的小内使应声而动，灯火次第亮起，照见殿门外阶上的秋露。他回身趋至御案前，将两稿并牙牌一并收入袖中，低声道：\n\n“老奴今夜就去办：**毕自严的旨明发，走内阁、过兵部符验；徐光启的旨压两日，直下吏部，旨尾‘限五日复奏’四字，老奴留着。**毕自严到京，先不入驿馆，老奴遣人在东华门外候着，人一到就换便衣车子领进来。”\n\n他扶着御座旁的灯台，声音又低下去：\n\n“还有一句，今夜不当讲，可老奴不能不提——**魏公公今日没露面**。新君登极这一个多月，他日日入贺，今日召对半日，他竟一次不曾遣人来问。这不像是不知道，倒像是**知道了而不问**。皇爷明日若见他，他还是一副老实模样；他若要问起谁知道今夜殿上说了什么，老奴自会认在老奴身上。”\n\n灯影一晃，他垂下头去：“皇爷仔细脚下，廊上露重。”",
+          "id": null,
+          "provider_name": null,
+          "provider_details": null,
+          "part_kind": "text"
+        }
+      ],
+      "model_name": "deepseek/deepseek-v4.1-flash-1017",
+      "kind": "response"
+    }
+  ],
+  "replies": [
+    "{\"facts\": [], \"decrees\": [{\"text\": \"徐光启，原任礼部右少卿，因事罢职，朕念其素究农政、火器、历算，实心任事，着起复原官，改礼部右侍郎，仍支原俸。所司即日行文南直隶，不得推诿迟延。钦此。\", \"origin\": \"emperor\", \"secret\": false, \"turn\": 4, \"people\": [\"徐光启\", \"王承恩\"], \"endorsements\": [], \"interim\": false}]}"
+  ],
+  "translation_source": {
+    "host": "claude-cli",
+    "session_id": "f1275199-f5d2-4c0a-9d7e-38824a858849",
+    "contract": "#1965; NightDeclaration; content/prompts/month_translate.md",
+    "raw": "/Users/akagilnc/WorkSpace/vault/ak-cc-wiki/raw/ming-llm-runner/2026-10-24/1965/ming-1965-night-v2/approved.native.json"
+  }
+}

@@ -1,0 +1,136 @@
+{
+  "source": {
+    "host": "claude-cli",
+    "native": "/Users/akagilnc/WorkSpace/vault/ak-cc-wiki/raw/ming-llm-runner/2026-10-24/1965/officials-current-live",
+    "scene_sessions": [
+      "dfc96903-3412-43f6-8f67-efcaa811a366",
+      "5cd6ee82-9658-4572-98fe-2d34534d9df2"
+    ],
+    "translation_session": "ae091cc8-0924-49e2-a1ae-1ac0514d597a"
+  },
+  "words": [
+    "王承恩，拟旨：内阁全部大学士一律即刻免职，包括内阁大学士、东阁大学士及各殿阁大学士所有现任，不留署理、不补新任；司礼监掌印太监王体乾同样即刻免职。朕以中旨明发，不经票拟。其余人的其他兼职、所在和差事不动。",
+    "准。立即生效，照此发出。退朝。"
+  ],
+  "scene_responses": [
+    {
+      "kind": "response",
+      "parts": [
+        {
+          "part_kind": "tool-call",
+          "tool_name": "get_hall",
+          "args": {},
+          "tool_call_id": "toolu_01PwHaE5BaaQdVukq1RMHk1n"
+        }
+      ]
+    },
+    {
+      "kind": "response",
+      "parts": [
+        {
+          "part_kind": "tool-call",
+          "tool_name": "read_records",
+          "args": {
+            "kind": "person", "key": "王体乾"
+          },
+          "tool_call_id": "toolu_01AKUkRvvtXeikKx7n9BWwDp"
+        }
+      ]
+    },
+    {
+      "kind": "response",
+      "parts": [
+        {
+          "part_kind": "tool-call",
+          "tool_name": "read_records",
+          "args": {
+            "kind": "person", "key": "王承恩"
+          },
+          "tool_call_id": "toolu_01PNq1XGCSRhM7p9i35qA8Kj"
+        }
+      ]
+    },
+    {
+      "kind": "response",
+      "parts": [
+        {
+          "part_kind": "tool-call",
+          "tool_name": "read_records",
+          "args": {
+            "kind": "person", "key": "黄立极"
+          },
+          "tool_call_id": "toolu_01Pg9hJFxGyFiEHZFNABvFpb"
+        }
+      ]
+    },
+    {
+      "kind": "response",
+      "parts": [
+        {
+          "part_kind": "tool-call",
+          "tool_name": "read_records",
+          "args": {
+            "kind": "person", "key": "施凤来"
+          },
+          "tool_call_id": "toolu_019j4DFn9SoxoyEAAm2trncs"
+        }
+      ]
+    },
+    {
+      "kind": "response",
+      "parts": [
+        {
+          "part_kind": "tool-call",
+          "tool_name": "read_records",
+          "args": {
+            "kind": "person", "key": "张瑞图"
+          },
+          "tool_call_id": "toolu_019tBwzqTQDdfQg5B5yTNdYp"
+        }
+      ]
+    },
+    {
+      "kind": "response",
+      "parts": [
+        {
+          "part_kind": "tool-call",
+          "tool_name": "read_records",
+          "args": {
+            "kind": "person", "key": "李国普"
+          },
+          "tool_call_id": "toolu_01QfG15vNqX4eZ8EeTkCjBji"
+        }
+      ]
+    },
+    {
+      "kind": "response",
+      "parts": [
+        {
+          "part_kind": "text",
+          "content": "【旁白】殿上烛火低垂，只剩王承恩一人侍立在御座旁。他听完圣意，手里的笔顿了一顿，没有马上落纸。\n\n【王承恩】奴婢遵旨。**奴婢先把旨意的稿子念给万岁爷听，一字一句都照万岁爷的原话。**\n\n【旁白】他铺开黄纸，写一行就停一停，最后把稿子捧在手里，弯着腰念出来。\n\n【旨】\n皇帝敕谕：\n内阁大学士黄立极、施凤来、张瑞图，中极殿大学士李国普，**以上在阁诸臣即日一律免职**。凡内阁大学士、东阁大学士及各殿阁大学士的现任官员，都在这道旨意之内。不设署理，也不补新任。\n司礼监掌印太监王体乾，同日免去掌印一职。\n以上诸人另有兼职、差遣的，以及现在所在的地方，一律照旧，不在这道旨意之内。\n此旨由朕亲自颁出，明发中外，不经内阁票拟。钦此。\n\n【旁白】念完以后，他没有退回原处，往御座边又靠近了半步。\n\n【王承恩·低语】万岁爷，奴婢心里有两件事，不说出来怕误了大事。**头一件是掌印的位子空出来以后，印由谁来管。**按司礼监的老规矩，掌印不在，大印交给排在前头的秉笔代管。如今宫里排在最前头的秉笔是谁，万岁爷心里有数。王体乾不过是给人看门的，把他撤了，印说不定直接落到那位手里。万岁爷要是不打算让那位碰印，这道旨最好再添一句，写明印归谁收着，哪怕暂时收进乾清宫也行。\n第二件，李国普李阁老跟另外三位不是一路人。他为人厚道，这些年在阁里还替言官说过话。这次一起免了，外头只会当他是陪着落马的。奴婢不敢多嘴，只是把这一层报给万岁爷知道。\n\n【王承恩】稿子已经拟好了。**万岁爷要是认可，奴婢就照这个誊正用宝；要是改，请万岁爷吩咐，奴婢逐字照改。**"
+        }
+      ]
+    },
+    {
+      "kind": "response",
+      "parts": [
+        {
+          "part_kind": "tool-call",
+          "tool_name": "dismiss",
+          "args": {},
+          "tool_call_id": "toolu_013nLgvZNcLqx3ABgTL1FBkm"
+        }
+      ]
+    },
+    {
+      "kind": "response",
+      "parts": [
+        {
+          "part_kind": "text",
+          "content": "【旁白】王承恩听到\"准\"字，跪下叩了一个头，起身回到案前，把稿子一字不改誊在黄绫上。誊好以后他又从头到尾默念一遍，这才捧过宝匣，双手请出御宝，端端正正钤在年月上面。\n\n【王承恩】**奴婢遵旨，这道旨今夜就由文书房明发出去，不经内阁，一个字也不改。**明天一早，六科抄发，各衙门就都知道了。\n\n【旁白】他把誊好的旨意装进匣子，叫来殿外候着的文书房内官，当面点清交了过去。那内官看到匣子上的封签，脸色一下子白了，捧着匣子往外走，脚步都乱了。\n\n【王承恩·低语】万岁爷，旨意已经发出去了。掌印那件事，奴婢今夜先打发信邸的旧人守着司礼监的印房，**明天以前，谁来也不让动印**，就等万岁爷早上发话。\n\n【旁白】殿门一扇扇关上，宫灯沿着长廊一盏盏灭了。消息传到外朝要到天亮，到了那时，京城各家府第里怕是没几个人睡得着。\n\n【旁白】退朝。"
+        }
+      ]
+    }
+  ],
+  "declaration": "{\"facts\":[{\"entity_type\":\"incumbency\",\"entity\":\"内阁大学士\",\"create\":false,\"decree\":0,\"changes\":[{\"field\":\"holders\",\"value\":[]}],\"text\":\"中旨明发，内阁大学士黄立极、施凤来、张瑞图等在阁诸臣即日一律免职，不设署理，不补新任。\"},{\"entity_type\":\"incumbency\",\"entity\":\"中极殿大学士\",\"create\":false,\"decree\":0,\"changes\":[{\"field\":\"holders\",\"value\":[]}],\"text\":\"中旨明发，中极殿大学士李国普即日免职，不设署理，不补新任。\"},{\"entity_type\":\"incumbency\",\"entity\":\"司礼监掌印太监\",\"create\":false,\"decree\":0,\"changes\":[{\"field\":\"holders\",\"value\":[]}],\"text\":\"中旨明发，司礼监掌印太监王体乾即日免去掌印一职。\"},{\"entity_type\":\"person\",\"entity\":\"王承恩\",\"create\":false,\"changes\":[],\"text\":\"王承恩当夜派信邸旧人守住司礼监印房，在皇帝次日发话之前，不许任何人动印。\"}],\"reports\":[],\"decree_events\":[{\"decree\":0,\"kind\":\"handled\",\"text\":\"王承恩将定稿一字不改誊在黄绫上，钤用御宝后装匣，当面点清交给文书房内官，当夜由文书房明发，不经内阁。\"}],\"decrees\":[{\"text\":\"皇帝敕谕：\\n内阁大学士黄立极、施凤来、张瑞图，中极殿大学士李国普，**以上在阁诸臣即日一律免职**。凡内阁大学士、东阁大学士及各殿阁大学士的现任官员，都在这道旨意之内。不设署理，也不补新任。\\n司礼监掌印太监王体乾，同日免去掌印一职。\\n以上诸人另有兼职、差遣的，以及现在所在的地方，一律照旧，不在这道旨意之内。\\n此旨由朕亲自颁出，明发中外，不经内阁票拟。钦此。\",\"origin\":\"emperor\",\"secret\":false,\"turn\":2,\"endorsements\":[],\"interim\":true,\"people\":[\"黄立极\",\"施凤来\",\"张瑞图\",\"李国普\",\"王体乾\",\"王承恩\"]}]}"
+}

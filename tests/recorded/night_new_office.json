@@ -1,0 +1,401 @@
+{
+  "source": {
+    "host": "claude-cli",
+    "probe": "/Users/akagilnc/WorkSpace/vault/ak-cc-wiki/raw/ming-llm-runner/2026-10-24/1965/ming-1965-F2-probe.py",
+    "native": "/Users/akagilnc/WorkSpace/vault/ak-cc-wiki/raw/ming-llm-runner/2026-10-24/1965/ming-1965-F2-live",
+    "translation_sessions": [
+      "ee5c9fd3-f14d-4808-aa9a-1e8dd4315415",
+      "794d77ff-222c-4df1-b6d0-44a133cc07db"
+    ]
+  },
+  "turns": [
+    {
+      "id": "597fa9f0-a618-4a61-b244-7f213d08ce42",
+      "emperor_words": "宣杨嗣昌、孙元化觐见。头一道：杨嗣昌擢户部右侍郎，专管陕西赈银稽核，此旨朕以中旨明发天下，不经内阁票拟。第二道：孙元化督造西洋红夷炮二十门，所需工料由内库支给；此旨朕亲下手敕，朕自己担着，仍照常发内阁票拟。王承恩，两道都拟来念给朕听。",
+      "scene": "【旁白】乾清宫东暖阁，灯已挑过两回。小黄门出去传召，不到一盏茶工夫，两人一前一后进了殿。前头是户部郎中杨嗣昌，衣冠整肃，步子稳；后头是兵部职方主事孙元化，袍角还沾着灰，像是从城外炮场直接赶来的。二人在御案前跪下行礼。\n\n【王承恩】（躬身领旨，从案边取过素笺，提笔写了一阵，捧起来念）奴婢拟了，请皇爷听。\n\n【旨】皇帝谕：户部郎中杨嗣昌，熟知钱谷，办事精细。陕西延安、庆阳、平凉等府连年大旱，饥民四处流散，赈济的事刻不容缓。**特擢杨嗣昌为户部右侍郎，专管陕西赈银稽核**：凡是赈银的拨发、解运、散放，都由他查对册籍，逐项核实，不许侵吞冒领，也不许截留挪用。此系朕特旨，不经内阁票拟，即日明发天下。钦此。\n\n【旨】敕兵部职方清吏司主事孙元化：辽左边事紧急，守城靠的是利器。**命你督造西洋红夷大炮二十门，所需工料由内库支给，不动太仓银两。**铸炮的匠役、物料、试放，都由你一手督理，务求炮身坚固、准头可靠，不许虚报冒领，也不许偷工减料。这道敕书是朕亲笔所下，责任由朕一人承担。仍交内阁照常票拟施行。钦此。\n\n【王承恩】（念完，把纸搁回案上，略一迟疑）**第二道里“内库支给”这一句，奴婢斗胆请示皇爷：要不要写明银数上限，还是先写“实用实销”？**不写数目，内库那边可以一拖再拖；写了数目，就是一锤定音。\n\n【王承恩·低语】（俯身凑近御座）皇爷，有两件事，奴婢得先说在前头。中旨不经内阁，可明发出去还得经司礼监用印、传出宫门，**眼下掌印的是魏忠贤。**这道旨他一定要过目，看过了，他也就明白皇爷开始绕开内阁、自己提拔人了。第二件，内承运库的钥匙和账簿都在他那一系的人手里，旨意上写了“内库支给”，银子能不能拿出来、几时拿出来，要看那边肯不肯开库。\n\n【杨嗣昌】（叩首，起身时神色沉静，却没马上谢恩）臣叩谢天恩。只是有件事，臣不敢不当面奏明：**陕西请的三十万两赈银，户部已经驳回了，眼下一两也没拨出去。**臣专管稽核，可没有银子，就没有账可核。陛下若要臣替陕西把住这道关，恳请先明定这笔银子从哪里出、出多少，臣才好一笔一笔查下去。另外，郎中骤升侍郎，又是中旨特简，部里同僚难免议论。臣不怕议论，只怕议论拖慢了公事。\n\n【孙元化】（伏地叩首，声音有些发紧，却掩不住喜色）臣蒙陛下亲敕，粉身难报！红夷炮二十门，**难处不在银子多少，而在匠人和铜铁。**通晓西法铸造的匠人，京中能凑出几个；要想炮身不炸膛，最好再从澳门请几名熟手过来。铜料也得先拨下来，臣好先开模试铸一两门，验过了，再接着铸剩下的。\n\n【旁白】殿中一时安静下来。杨嗣昌垂手站着，孙元化还伏在地上没起身。两人都在等，等御座上的人把这两道旨定下来。",
+      "hall": [
+        "王承恩"
+      ]
+    },
+    {
+      "id": "7d28046d-ac6f-493c-b1f4-33e8eb2d35e5",
+      "emperor_words": "两道都准了，照此发出。",
+      "scene": "【旁白】御座上一句\"照此发出\"，王承恩躬身应了一声\"是\"，把两张素笺并排摆在案角，用镇纸压住，一个字都没改。\n\n【王承恩】（转向殿下，提高了声音，字字清楚）皇爷口谕：两道旨意准了，照拟发出。**杨嗣昌着擢户部右侍郎，专管陕西赈银稽核，中旨明发，不经票拟；孙元化督造西洋红夷炮二十门，工料由内库支给，敕交内阁照常票拟。**钦此。\n\n【杨嗣昌】（撩袍再拜，叩首三次）臣杨嗣昌，领旨谢恩。（起身后，他的目光在案角那两张纸上停了一下，又收回来，垂手站定）**臣明日一早就去部里调陕西历年请赈、驳赈的原册，先把旧账理清楚。**银子什么时候到，臣什么时候核。\n\n【孙元化】（又叩了一个头，这才抬起身，眼眶有些发红）臣孙元化，领敕谢恩！**臣回去就把炮场的模子、匠籍造成清册，三日之内呈上。**用多少铜、多少铁、多少工，一项一项写明白，绝不敢多报一两。\n\n【王承恩·低语】（趁两人谢恩，俯身贴近御座）皇爷，内库那句照原样发出去了，没写银数。奴婢只提一句：孙主事说三日内呈清册，这是个老实办法。**清册一到，是交内库照数支领，还是先送御前过目，皇爷到时候要拿个主意。**要是直接交给那边，他们拿着清册一条一条挑毛病，拖上一两个月不是难事。另外，中旨今夜用不了印，最早也得明日辰时送进司礼监。到时候魏忠贤那边怎么回话，奴婢会留心听着。\n\n【旁白】殿外打过二更。两人谢完恩站在原处，没有皇帝的话不敢退下。杨嗣昌的手笼在袖子里，指节绷得很紧；孙元化袍角上的炮灰，在灯下看得清清楚楚。",
+      "hall": [
+        "王承恩",
+        "杨嗣昌",
+        "孙元化"
+      ]
+    }
+  ],
+  "words": [
+    "宣杨嗣昌、孙元化觐见。头一道：杨嗣昌擢户部右侍郎，专管陕西赈银稽核，此旨朕以中旨明发天下，不经内阁票拟。第二道：孙元化督造西洋红夷炮二十门，所需工料由内库支给；此旨朕亲下手敕，朕自己担着，仍照常发内阁票拟。王承恩，两道都拟来念给朕听。",
+    "两道都准了，照此发出。"
+  ],
+  "scene_responses": [
+    {
+      "parts": [
+        {
+          "tool_name": "get_hall",
+          "args": {},
+          "tool_call_id": "toolu_01JaWVNtiHm8wcVg614gk3on",
+          "tool_kind": null,
+          "id": null,
+          "provider_name": null,
+          "provider_details": null,
+          "part_kind": "tool-call"
+        }
+      ],
+      "usage": {
+        "input_tokens": 0,
+        "cache_write_tokens": 0,
+        "cache_read_tokens": 0,
+        "output_tokens": 0,
+        "input_audio_tokens": 0,
+        "cache_audio_read_tokens": 0,
+        "output_audio_tokens": 0,
+        "audio_seconds": 0.0,
+        "details": {},
+        "cost": null
+      },
+      "model_name": null,
+      "timestamp": "2026-10-23T10:31:09.793212Z",
+      "kind": "response",
+      "provider_name": null,
+      "provider_url": null,
+      "provider_details": null,
+      "provider_response_id": null,
+      "finish_reason": null,
+      "run_id": null,
+      "conversation_id": null,
+      "metadata": null,
+      "workspace_ref": null,
+      "failed_attempts": null,
+      "state": "complete"
+    },
+    {
+      "parts": [
+        {
+          "tool_name": "read_records",
+          "args": {"kind": "person", "key": "杨嗣昌"},
+          "tool_call_id": "toolu_01UqTWjgaWEjDRbwhZmVk5Qi",
+          "tool_kind": null,
+          "id": null,
+          "provider_name": null,
+          "provider_details": null,
+          "part_kind": "tool-call"
+        }
+      ],
+      "usage": {
+        "input_tokens": 0,
+        "cache_write_tokens": 0,
+        "cache_read_tokens": 0,
+        "output_tokens": 0,
+        "input_audio_tokens": 0,
+        "cache_audio_read_tokens": 0,
+        "output_audio_tokens": 0,
+        "audio_seconds": 0.0,
+        "details": {},
+        "cost": null
+      },
+      "model_name": null,
+      "timestamp": "2026-10-23T10:31:09.793226Z",
+      "kind": "response",
+      "provider_name": null,
+      "provider_url": null,
+      "provider_details": null,
+      "provider_response_id": null,
+      "finish_reason": null,
+      "run_id": null,
+      "conversation_id": null,
+      "metadata": null,
+      "workspace_ref": null,
+      "failed_attempts": null,
+      "state": "complete"
+    },
+    {
+      "parts": [
+        {
+          "tool_name": "read_records",
+          "args": {"kind": "person", "key": "孙元化"},
+          "tool_call_id": "toolu_01W4eVUpBt2a7JL6eE9P3Fzb",
+          "tool_kind": null,
+          "id": null,
+          "provider_name": null,
+          "provider_details": null,
+          "part_kind": "tool-call"
+        }
+      ],
+      "usage": {
+        "input_tokens": 0,
+        "cache_write_tokens": 0,
+        "cache_read_tokens": 0,
+        "output_tokens": 0,
+        "input_audio_tokens": 0,
+        "cache_audio_read_tokens": 0,
+        "output_audio_tokens": 0,
+        "audio_seconds": 0.0,
+        "details": {},
+        "cost": null
+      },
+      "model_name": null,
+      "timestamp": "2026-10-23T10:31:09.793231Z",
+      "kind": "response",
+      "provider_name": null,
+      "provider_url": null,
+      "provider_details": null,
+      "provider_response_id": null,
+      "finish_reason": null,
+      "run_id": null,
+      "conversation_id": null,
+      "metadata": null,
+      "workspace_ref": null,
+      "failed_attempts": null,
+      "state": "complete"
+    },
+    {
+      "parts": [
+        {
+          "tool_name": "set_hall",
+          "args": {
+            "add": [
+              "杨嗣昌",
+              "孙元化"
+            ],
+            "remove": []
+          },
+          "tool_call_id": "toolu_01Q17rhoC4prKZPgrLn5fB5X",
+          "tool_kind": null,
+          "id": null,
+          "provider_name": null,
+          "provider_details": null,
+          "part_kind": "tool-call"
+        }
+      ],
+      "usage": {
+        "input_tokens": 0,
+        "cache_write_tokens": 0,
+        "cache_read_tokens": 0,
+        "output_tokens": 0,
+        "input_audio_tokens": 0,
+        "cache_audio_read_tokens": 0,
+        "output_audio_tokens": 0,
+        "audio_seconds": 0.0,
+        "details": {},
+        "cost": null
+      },
+      "model_name": null,
+      "timestamp": "2026-10-23T10:31:09.793234Z",
+      "kind": "response",
+      "provider_name": null,
+      "provider_url": null,
+      "provider_details": null,
+      "provider_response_id": null,
+      "finish_reason": null,
+      "run_id": null,
+      "conversation_id": null,
+      "metadata": null,
+      "workspace_ref": null,
+      "failed_attempts": null,
+      "state": "complete"
+    },
+    {
+      "parts": [
+        {
+          "content": "【旁白】乾清宫东暖阁，灯已挑过两回。小黄门出去传召，不到一盏茶工夫，两人一前一后进了殿。前头是户部郎中杨嗣昌，衣冠整肃，步子稳；后头是兵部职方主事孙元化，袍角还沾着灰，像是从城外炮场直接赶来的。二人在御案前跪下行礼。\n\n【王承恩】（躬身领旨，从案边取过素笺，提笔写了一阵，捧起来念）奴婢拟了，请皇爷听。\n\n【旨】皇帝谕：户部郎中杨嗣昌，熟知钱谷，办事精细。陕西延安、庆阳、平凉等府连年大旱，饥民四处流散，赈济的事刻不容缓。**特擢杨嗣昌为户部右侍郎，专管陕西赈银稽核**：凡是赈银的拨发、解运、散放，都由他查对册籍，逐项核实，不许侵吞冒领，也不许截留挪用。此系朕特旨，不经内阁票拟，即日明发天下。钦此。\n\n【旨】敕兵部职方清吏司主事孙元化：辽左边事紧急，守城靠的是利器。**命你督造西洋红夷大炮二十门，所需工料由内库支给，不动太仓银两。**铸炮的匠役、物料、试放，都由你一手督理，务求炮身坚固、准头可靠，不许虚报冒领，也不许偷工减料。这道敕书是朕亲笔所下，责任由朕一人承担。仍交内阁照常票拟施行。钦此。\n\n【王承恩】（念完，把纸搁回案上，略一迟疑）**第二道里“内库支给”这一句，奴婢斗胆请示皇爷：要不要写明银数上限，还是先写“实用实销”？**不写数目，内库那边可以一拖再拖；写了数目，就是一锤定音。\n\n【王承恩·低语】（俯身凑近御座）皇爷，有两件事，奴婢得先说在前头。中旨不经内阁，可明发出去还得经司礼监用印、传出宫门，**眼下掌印的是魏忠贤。**这道旨他一定要过目，看过了，他也就明白皇爷开始绕开内阁、自己提拔人了。第二件，内承运库的钥匙和账簿都在他那一系的人手里，旨意上写了“内库支给”，银子能不能拿出来、几时拿出来，要看那边肯不肯开库。\n\n【杨嗣昌】（叩首，起身时神色沉静，却没马上谢恩）臣叩谢天恩。只是有件事，臣不敢不当面奏明：**陕西请的三十万两赈银，户部已经驳回了，眼下一两也没拨出去。**臣专管稽核，可没有银子，就没有账可核。陛下若要臣替陕西把住这道关，恳请先明定这笔银子从哪里出、出多少，臣才好一笔一笔查下去。另外，郎中骤升侍郎，又是中旨特简，部里同僚难免议论。臣不怕议论，只怕议论拖慢了公事。\n\n【孙元化】（伏地叩首，声音有些发紧，却掩不住喜色）臣蒙陛下亲敕，粉身难报！红夷炮二十门，**难处不在银子多少，而在匠人和铜铁。**通晓西法铸造的匠人，京中能凑出几个；要想炮身不炸膛，最好再从澳门请几名熟手过来。铜料也得先拨下来，臣好先开模试铸一两门，验过了，再接着铸剩下的。\n\n【旁白】殿中一时安静下来。杨嗣昌垂手站着，孙元化还伏在地上没起身。两人都在等，等御座上的人把这两道旨定下来。",
+          "id": null,
+          "provider_name": null,
+          "provider_details": null,
+          "part_kind": "text"
+        }
+      ],
+      "usage": {
+        "input_tokens": 0,
+        "cache_write_tokens": 0,
+        "cache_read_tokens": 0,
+        "output_tokens": 0,
+        "input_audio_tokens": 0,
+        "cache_audio_read_tokens": 0,
+        "output_audio_tokens": 0,
+        "audio_seconds": 0.0,
+        "details": {},
+        "cost": null
+      },
+      "model_name": null,
+      "timestamp": "2026-10-23T10:31:09.793240Z",
+      "kind": "response",
+      "provider_name": null,
+      "provider_url": null,
+      "provider_details": null,
+      "provider_response_id": null,
+      "finish_reason": null,
+      "run_id": null,
+      "conversation_id": null,
+      "metadata": null,
+      "workspace_ref": null,
+      "failed_attempts": null,
+      "state": "complete"
+    },
+    {
+      "parts": [
+        {
+          "tool_name": "get_hall",
+          "args": {},
+          "tool_call_id": "toolu_0186EWUnEXw8Rsh9kspGuwyy",
+          "tool_kind": null,
+          "id": null,
+          "provider_name": null,
+          "provider_details": null,
+          "part_kind": "tool-call"
+        }
+      ],
+      "usage": {
+        "input_tokens": 0,
+        "cache_write_tokens": 0,
+        "cache_read_tokens": 0,
+        "output_tokens": 0,
+        "input_audio_tokens": 0,
+        "cache_audio_read_tokens": 0,
+        "output_audio_tokens": 0,
+        "audio_seconds": 0.0,
+        "details": {},
+        "cost": null
+      },
+      "model_name": null,
+      "timestamp": "2026-10-23T10:31:09.793244Z",
+      "kind": "response",
+      "provider_name": null,
+      "provider_url": null,
+      "provider_details": null,
+      "provider_response_id": null,
+      "finish_reason": null,
+      "run_id": null,
+      "conversation_id": null,
+      "metadata": null,
+      "workspace_ref": null,
+      "failed_attempts": null,
+      "state": "complete"
+    },
+    {
+      "parts": [
+        {
+          "tool_name": "read_records",
+          "args": {"kind": "person", "key": "杨嗣昌"},
+          "tool_call_id": "toolu_01EqoQxwKZhcDvcJWh1oUXH3",
+          "tool_kind": null,
+          "id": null,
+          "provider_name": null,
+          "provider_details": null,
+          "part_kind": "tool-call"
+        }
+      ],
+      "usage": {
+        "input_tokens": 0,
+        "cache_write_tokens": 0,
+        "cache_read_tokens": 0,
+        "output_tokens": 0,
+        "input_audio_tokens": 0,
+        "cache_audio_read_tokens": 0,
+        "output_audio_tokens": 0,
+        "audio_seconds": 0.0,
+        "details": {},
+        "cost": null
+      },
+      "model_name": null,
+      "timestamp": "2026-10-23T10:31:09.793246Z",
+      "kind": "response",
+      "provider_name": null,
+      "provider_url": null,
+      "provider_details": null,
+      "provider_response_id": null,
+      "finish_reason": null,
+      "run_id": null,
+      "conversation_id": null,
+      "metadata": null,
+      "workspace_ref": null,
+      "failed_attempts": null,
+      "state": "complete"
+    },
+    {
+      "parts": [
+        {
+          "tool_name": "read_records",
+          "args": {"kind": "person", "key": "孙元化"},
+          "tool_call_id": "toolu_013i7gyJuzzU5w1pJ1HzRXud",
+          "tool_kind": null,
+          "id": null,
+          "provider_name": null,
+          "provider_details": null,
+          "part_kind": "tool-call"
+        }
+      ],
+      "usage": {
+        "input_tokens": 0,
+        "cache_write_tokens": 0,
+        "cache_read_tokens": 0,
+        "output_tokens": 0,
+        "input_audio_tokens": 0,
+        "cache_audio_read_tokens": 0,
+        "output_audio_tokens": 0,
+        "audio_seconds": 0.0,
+        "details": {},
+        "cost": null
+      },
+      "model_name": null,
+      "timestamp": "2026-10-23T10:31:09.793248Z",
+      "kind": "response",
+      "provider_name": null,
+      "provider_url": null,
+      "provider_details": null,
+      "provider_response_id": null,
+      "finish_reason": null,
+      "run_id": null,
+      "conversation_id": null,
+      "metadata": null,
+      "workspace_ref": null,
+      "failed_attempts": null,
+      "state": "complete"
+    },
+    {
+      "parts": [
+        {
+          "content": "【旁白】御座上一句\"照此发出\"，王承恩躬身应了一声\"是\"，把两张素笺并排摆在案角，用镇纸压住，一个字都没改。\n\n【王承恩】（转向殿下，提高了声音，字字清楚）皇爷口谕：两道旨意准了，照拟发出。**杨嗣昌着擢户部右侍郎，专管陕西赈银稽核，中旨明发，不经票拟；孙元化督造西洋红夷炮二十门，工料由内库支给，敕交内阁照常票拟。**钦此。\n\n【杨嗣昌】（撩袍再拜，叩首三次）臣杨嗣昌，领旨谢恩。（起身后，他的目光在案角那两张纸上停了一下，又收回来，垂手站定）**臣明日一早就去部里调陕西历年请赈、驳赈的原册，先把旧账理清楚。**银子什么时候到，臣什么时候核。\n\n【孙元化】（又叩了一个头，这才抬起身，眼眶有些发红）臣孙元化，领敕谢恩！**臣回去就把炮场的模子、匠籍造成清册，三日之内呈上。**用多少铜、多少铁、多少工，一项一项写明白，绝不敢多报一两。\n\n【王承恩·低语】（趁两人谢恩，俯身贴近御座）皇爷，内库那句照原样发出去了，没写银数。奴婢只提一句：孙主事说三日内呈清册，这是个老实办法。**清册一到，是交内库照数支领，还是先送御前过目，皇爷到时候要拿个主意。**要是直接交给那边，他们拿着清册一条一条挑毛病，拖上一两个月不是难事。另外，中旨今夜用不了印，最早也得明日辰时送进司礼监。到时候魏忠贤那边怎么回话，奴婢会留心听着。\n\n【旁白】殿外打过二更。两人谢完恩站在原处，没有皇帝的话不敢退下。杨嗣昌的手笼在袖子里，指节绷得很紧；孙元化袍角上的炮灰，在灯下看得清清楚楚。",
+          "id": null,
+          "provider_name": null,
+          "provider_details": null,
+          "part_kind": "text"
+        }
+      ],
+      "usage": {
+        "input_tokens": 0,
+        "cache_write_tokens": 0,
+        "cache_read_tokens": 0,
+        "output_tokens": 0,
+        "input_audio_tokens": 0,
+        "cache_audio_read_tokens": 0,
+        "output_audio_tokens": 0,
+        "audio_seconds": 0.0,
+        "details": {},
+        "cost": null
+      },
+      "model_name": null,
+      "timestamp": "2026-10-23T10:31:09.793251Z",
+      "kind": "response",
+      "provider_name": null,
+      "provider_url": null,
+      "provider_details": null,
+      "provider_response_id": null,
+      "finish_reason": null,
+      "run_id": null,
+      "conversation_id": null,
+      "metadata": null,
+      "workspace_ref": null,
+      "failed_attempts": null,
+      "state": "complete"
+    }
+  ],
+  "replies": [
+    "{\"facts\":[{\"entity_type\":\"incumbency\",\"entity\":\"户部右侍郎\",\"create\":false,\"decree\":0,\"changes\":[{\"field\":\"holders\",\"value\":[\"杨嗣昌\"]}],\"text\":\"杨嗣昌由户部郎中特擢户部右侍郎，专管陕西赈银稽核，当殿领旨谢恩。\"}],\"reports\":[],\"decree_events\":[],\"decrees\":[{\"text\":\"皇帝谕：户部郎中杨嗣昌，熟知钱谷，办事精细。陕西延安、庆阳、平凉等府连年大旱，饥民四处流散，赈济的事刻不容缓。特擢杨嗣昌为户部右侍郎，专管陕西赈银稽核：凡是赈银的拨发、解运、散放，都由他查对册籍，逐项核实，不许侵吞冒领，也不许截留挪用。此系朕特旨，不经内阁票拟，即日明发天下。钦此。\",\"origin\":\"emperor\",\"secret\":false,\"turn\":2,\"endorsements\":[],\"interim\":true,\"people\":[\"杨嗣昌\",\"王承恩\"]},{\"text\":\"敕兵部职方清吏司主事孙元化：辽左边事紧急，守城靠的是利器。命你督造西洋红夷大炮二十门，所需工料由内库支给，不动太仓银两。铸炮的匠役、物料、试放，都由你一手督理，务求炮身坚固、准头可靠，不许虚报冒领，也不许偷工减料。这道敕书是朕亲笔所下，责任由朕一人承担。仍交内阁照常票拟施行。钦此。\",\"origin\":\"emperor\",\"secret\":false,\"turn\":2,\"endorsements\":[{\"endorser\":\"皇帝\",\"form\":\"御笔手敕\",\"source_chat_turn_id\":\"7d28046d-ac6f-493c-b1f4-33e8eb2d35e5\"}],\"interim\":false,\"people\":[\"孙元化\",\"王承恩\"]}]}",
+    "{\"facts\":[{\"entity_type\":\"incumbency\",\"entity\":\"户部右侍郎\",\"create\":false,\"decree\":0,\"changes\":[{\"field\":\"holders\",\"value\":[\"杨嗣昌\"]}],\"text\":\"杨嗣昌由户部郎中特擢户部右侍郎，专管陕西赈银稽核，当殿领旨谢恩。\"}],\"reports\":[],\"decree_events\":[],\"decrees\":[{\"text\":\"皇帝谕：户部郎中杨嗣昌，熟知钱谷，办事精细。陕西延安、庆阳、平凉等府连年大旱，饥民四处流散，赈济的事刻不容缓。特擢杨嗣昌为户部右侍郎，专管陕西赈银稽核：凡是赈银的拨发、解运、散放，都由他查对册籍，逐项核实，不许侵吞冒领，也不许截留挪用。此系朕特旨，不经内阁票拟，即日明发天下。钦此。\",\"origin\":\"emperor\",\"secret\":false,\"turn\":2,\"endorsements\":[],\"interim\":true,\"people\":[\"杨嗣昌\",\"王承恩\"]},{\"text\":\"敕兵部职方清吏司主事孙元化：辽左边事紧急，守城靠的是利器。命你督造西洋红夷大炮二十门，所需工料由内库支给，不动太仓银两。铸炮的匠役、物料、试放，都由你一手督理，务求炮身坚固、准头可靠，不许虚报冒领，也不许偷工减料。这道敕书是朕亲笔所下，责任由朕一人承担。仍交内阁照常票拟施行。钦此。\",\"origin\":\"emperor\",\"secret\":false,\"turn\":2,\"endorsements\":[{\"endorser\":\"御笔\",\"form\":\"御笔手敕\",\"source_chat_turn_id\":\"7d28046d-ac6f-493c-b1f4-33e8eb2d35e5\"}],\"interim\":false,\"people\":[\"孙元化\",\"王承恩\"]}]}"
+  ]
+}

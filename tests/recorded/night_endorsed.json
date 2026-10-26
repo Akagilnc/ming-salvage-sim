@@ -1,0 +1,30 @@
+{
+  "source": "#1953: archive/乾清宫一夜-崇祯元年十一月.md 240–262 plus explicit approval; native claude-cli. Source: re-recorded after merging #1952 through the production HTTP dismiss, claude-cli without --model: ~/.ak-roles/books/Ming_LLM/1953/artifacts/merge-1952-rerecord-nights/production/endorsed-1/ (archive root in month_README.md).",
+  "turns": [
+    {
+      "id": "north-star-backing",
+      "emperor_words": "任命洪承畴为陕西巡抚，调银三十万两赈灾。",
+      "scene": "**毕自严此时插了一句（他还在殿上，没退）：**\n\n> 皇爷。臣斗胆建议——特旨钦命。臣方才领旨办四事，亦是皇爷特旨破例。今日朝中已知皇爷用人不循常法——再加洪承畴一例，言官参劾本就难免，不如一并担之。况且陕西非常之时，须用非常之人。臣愿与王尚书共同会签题本，分担物议。\n\n**毕自严当面站台，王绍徽脸色更难看了——他更不好再拖。**\n\n**毕自严又奏赈银一事：**\n\n> 三十万银子，臣即从太仓拨。只是皇爷要心里有数——\n>\n> 从太仓到延安府，沿途三千里，经户部、陕西布政使、各府县。按方才臣所言解运折损四成、腐败截留二成，三十万银子真能到饥民手里的，约十五至十八万。\n>\n> 若皇爷允臣密遣稽查司一员，押解此银，沿途按月稽核——可保到陕实银二十二至二十五万，亦即多救七万两的命。但多得罪沿途经办官员。\n>\n> 又或，皇爷可令洪承畴到任后就地征购粮米（陕西邻省山西、河南、四川皆有存粮），太仓只拨银、不发粮，到陕购粮反而能多救人——但山西、河南本身也歉收，征购恐推高粮价。\n\n"
+    },
+    {
+      "id": "north-star-command",
+      "emperor_words": "特旨钦命。赈银密遣稽查司押解。",
+      "scene": "**王绍徽闻言，脸色铁青，但终究伏地领旨——毕自严当面站台，他再拖就是抗旨。**\n\n> 臣……领旨。\n>\n> 「特旨钦命陕西督粮参政洪承畴加都察院右副都御史衔，巡抚陕西，便宜行事」——明诏臣即拟、用印明发。\n"
+    },
+    {
+      "id": "north-star-approval",
+      "emperor_words": "都准了。",
+      "scene": "【旁白】殿里烛火已经剪过两回。毕自严、王绍徽先前领了旨，早退出去各自办事了，如今暖阁里只剩王承恩一人侍立在御座旁边。听到皇爷说了声\"准\"，他上前一步，躬身应下。\n\n【王承恩】奴婢遵旨。两位部堂刚才奏的几件事，奴婢都记下了。**奴婢这就合成一道旨念给皇爷听，皇爷听了没错，再发出去。**\n\n【旨】\n奉天承运皇帝，诏曰：\n一、陕西督粮参政洪承畴，熟悉西北粮饷，懂得兵事。今特旨钦命，加都察院右副都御史衔，巡抚陕西，遇事可便宜行事。吏部即日写敕书，派驿马送去，接旨即刻到任，不必进京谢恩。\n二、户部从太仓银里拨出三十万两，专门用于陕西赈济饥民，别项不准挪用。另密派稽查司官一员押解，一路逐站核对数目，每月把核对的账目封好直接呈御前。沿途有人截留、克扣，或谎报解运损耗的，指名参奏。\n三、洪承畴到任后，赈银该怎么花、哪些就地买粮、哪些直接发放，都由他斟酌办理，按月奏报。\n钦此。\n\n【旁白】念完，王承恩把稿子收进袖子里，没有马上退下。他往御座边又靠近半步，压低了声音。\n\n【王承恩·低语】皇爷，还有几句话奴婢得先禀明。第一，稽查司这一员人选奴婢还没定。**押银的人要是从外朝挑，司礼监和东厂当天就会知道。那三十万两银子一路过去，魏家的人肯定要插手。**依奴婢看，还是从信邸带进宫的老人里挑一个靠得住的，挂个户部的虚衔跟着走，这样最稳当。第二，王部堂今天是被逼着领的旨，回去以后，参洪承畴越级升官的本子怕是三五天里就会送进通政司。到时候本子呈上来，皇爷先压着不批就是了。\n\n【王承恩】皇爷要是觉得这道旨没错，奴婢明天一早就送内阁用印、明发出去。押银的人，请皇爷示下。"
+    }
+  ],
+  "replies": [
+    "{\"facts\": [], \"reports\": [], \"decree_events\": [], \"decrees\": [{\"text\": \"特旨钦命陕西督粮参政洪承畴加都察院右副都御史衔，巡抚陕西，便宜行事\", \"origin\": \"emperor\", \"secret\": false, \"turn\": 3, \"people\": [\"洪承畴\", \"王绍徽\"], \"endorsements\": [{\"endorser\": \"毕自严\", \"form\": \"当面站台\", \"source_chat_turn_id\": \"north-star-backing\"}], \"interim\": false}]}"
+  ],
+  "translation_source": {
+    "host": "claude-cli",
+    "session_id": "b9e25889-2e04-482c-a08d-776960a9e343",
+    "contract": "#1965; NightDeclaration; content/prompts/month_translate.md",
+    "raw": "/Users/akagilnc/WorkSpace/vault/ak-cc-wiki/raw/ming-llm-runner/2026-10-24/1965/ming-1965-night-recordings/endorsed.native.json",
+    "response": "```json\n{\n  \"facts\": [],\n  \"reports\": [],\n  \"decree_events\": [],\n  \"decrees\": [\n    {\n      \"text\": \"特旨钦命陕西督粮参政洪承畴加都察院右副都御史衔，巡抚陕西，便宜行事\",\n      \"origin\": \"emperor\",\n      \"secret\": false,\n      \"turn\": 3,\n      \"people\": [\"洪承畴\", \"王绍徽\"],\n      \"endorsements\": [\n        {\n          \"endorser\": \"毕自严\",\n          \"form\": \"当面站台\",\n          \"source_chat_turn_id\": \"north-star-backing\"\n        }\n      ],\n      \"interim\": false\n    }\n  ]\n}\n```"
+  }
+}
