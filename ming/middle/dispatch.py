@@ -20,7 +20,7 @@ from ming.middle.declaration import (
 from ming.middle import queries
 from ming.middle.rules import field_values, money_amounts
 from ming.middle.fiscal import WAN, current_paid, has_obligation
-from ming.middle.appointments import cabinet_members, cabinet_records, incumbency_record
+from ming.middle.appointments import APPOINTMENT_ROLES, cabinet_members, cabinet_records, incumbency_record
 
 def landing_entities(
     ledger: Ledger, result: Declaration | Unhandled, owner: Entity,
@@ -38,7 +38,7 @@ def landing_entities(
         )
         pairs.update(
             ("person", name) for f in result.facts if f.entity_type == "incumbency"
-            for c in f.changes if c.field in {"holders", "acting"} for name in c.value
+            for c in f.changes if c.field in APPOINTMENT_ROLES for name in c.value
         )
         pairs.update(("affair", f.affair) for f in result.facts if f.affair is not None)
     if isinstance(result, NightDeclaration):
@@ -73,7 +73,7 @@ def landing_entities(
         for f in result.facts if f.entity_type == "person"
         for c in f.changes if c.field == "location"
     }
-    incumbents = {name for (kind, _), row in found.items() if kind == "incumbency" for field in ("holders", "acting") for name in row["data"][field]}
+    incumbents = {name for (kind, _), row in found.items() if kind == "incumbency" for field in APPOINTMENT_ROLES for name in row["data"][field]}
     for e in ledger.read(ENTITY_ROWS.where(or_(
         (E.kind == "distance") & E.key.in_(origins),
         (E.kind == "person") & E.key.in_(incumbents),
@@ -253,8 +253,6 @@ def record_decrees(
     if isinstance(result, NightDeclaration):
         for decree in result.decrees:
             data = {**decree.model_dump(), "night_id": str(owner.id)}
-            if decree.secret:
-                data["exposure"] = {"score": 0, "stage": "密"}
             entity = Entity("decree", "", "", data)
             record(entity, "decreed", data)
             decrees.append(entity)
@@ -389,13 +387,15 @@ def retire_chief(
     association: Item,
 ) -> None:
     chief = existing.get(("incumbency", incumbency_record(("内阁首辅", ""), [])[0]))
-    if not chief or not chief["data"]["holders"]:
+    if not chief:
         return
-    if chief["data"]["holders"][0] in cabinet_members(existing):
-        return
-    appointment = known("incumbency", chief["key"])
-    displace(appointment, {"holders": []}, known, record, association)
-    record(appointment, "changed", {**association, "changes": {"holders": []}}, {"holders": []})
+    eligible = cabinet_members(existing)
+    changes: Item = {role: [] for role in APPOINTMENT_ROLES
+               if chief["data"][role] and chief["data"][role][0] not in eligible}
+    if changes:
+        appointment = known("incumbency", chief["key"])
+        displace(appointment, changes, known, record, association)
+        record(appointment, "changed", {**association, "changes": changes}, changes)
 
 
 # This rule is shared by immediate and monthly landing, not a second dispatch path.
@@ -406,7 +406,7 @@ def displace(
     record: Callable[[Entity, str, Item, Item], None],
     association: Item,
 ) -> None:
-    for field in ("holders", "acting"):
+    for field in APPOINTMENT_ROLES:
         if field not in changes:
             continue
         previous = appointment.data[field]
