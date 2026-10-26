@@ -127,7 +127,7 @@ def test_month_advances_after_reopening(
                 "changes": [{"field": "satisfaction", "value": delta}], "text": ""} for delta in {10: (8, -3), 11: (80, -3), 12: (-200, 0)}[_declaration_prompt(messages)["date"]["month"]]]}), declarations)
             steps["scene"] = replaying(["done"])
             steps["NightDeclaration"] = replaying([json.dumps({"facts": [{"entity_type": "faction", "entity": "阉党", "create": False, "changes": [{"field": "satisfaction", "value": 5}], "text": ""}],
-                "decrees": [{"text": "", "origin": "emperor", "secret": True, "turn": 1, "people": ["王承恩"]}] * 2})])
+                "decrees": [{"text": "", "origin": "emperor", "secret": True, "handler": "王承恩", "turn": 1, "people": ["王承恩"]}] * 2})])
             client.post("/actions", json={"action": "open"}).raise_for_status()
             client.post("/actions", json={"action": "say", "words": "拟旨。"}).raise_for_status()
             client.post("/actions", json={"action": "dismiss"}).raise_for_status()

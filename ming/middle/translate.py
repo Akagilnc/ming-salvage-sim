@@ -190,6 +190,14 @@ def check_decrees(
     if isinstance(out, NightDeclaration) and out.decrees:
         turns = read_night(ledger, source).turns
         for i, decree in enumerate(out.decrees):
+            if decree.secret:
+                decree.handler = reference_key(ledger, "person", decree.handler) if decree.handler is not None else None
+                if decree.handler not in names.get("person", {}):
+                    fail(
+                        f"decrees[{i}].handler", decree.handler,
+                        name_expected("person", decree.handler or "", names), names,
+                        "密令须声明唯一承办人，用人物目录正名或所列别名；照整夜戏文记录领旨去办者，重交整份。",
+                    )
             if decree.turn > len(turns):
                 fail(
                     f"decrees[{i}].turn",

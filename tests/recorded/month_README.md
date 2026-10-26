@@ -174,6 +174,10 @@ A-full 也推进至十二月，但原场景仍停在询问，整夜译出零道�
 
 留中用既有 `month_empty.txt`，不另造结局声明。坏输入在测试参数表里手造，不是录音。
 
+## #1977 承办人声明输入
+
+`night_secret.json`、`night_tools.json`、`night_allocation.json`、`night_ordering.json` 的夜间声明现为基于录音的合成测试输入：仅为密令补入新契约的 `handler`（前三份王承恩，末份杨嗣昌）。它们不再是原生回复的逐字副本；场景、旨文与其他声明字段未改。原始录音仍以各文件 `source` 指针及下文归档为准。这些输入只验声明落账与取阅，不证明真实模型能识别承办人；该效果留给合并后真跑。
+
 ## #1952 密令边界录音
 
 归档：`~/WorkSpace/vault/ak-cc-wiki/raw/ming-llm-runner/2026-10-22/issue-1952-implementation/`。

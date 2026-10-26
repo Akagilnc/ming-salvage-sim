@@ -501,7 +501,7 @@ class Court:
         ]
 
     def known_people(self, decree: EntityView) -> set[str]:
-        readers = known_people(literal({k: decree.data[k] for k in ("night_id", "turn", "people")}, type_=JSON)).subquery()
+        readers = known_people(literal(decree.data, type_=JSON)).subquery()
         return {row["person"] for row in self._ledger.read(select(readers.c.person))}
 
     def consequences(self, decree: UUID) -> list[FactView]:

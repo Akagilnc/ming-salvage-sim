@@ -114,18 +114,32 @@ def test_every_model_call_reads_identity_scoped_records(game_db, steps, model_in
                     assert "factions" not in data["context"]
 
 
-@pytest.mark.parametrize("game_db", ["secret_night"], indirect=True)
-@pytest.mark.parametrize("failure", [None, "declaration", "report"])
+@pytest.mark.parametrize("game_db", ["first_night"], indirect=True)
+@pytest.mark.parametrize("handler,failure", [("毕尚书", None), ("徐光启", "declaration"), ("徐光启", "report")], ids=["alias", "absent-handler", "report-retry"])
 def test_secret_orders_keep_their_readers_and_monthly_products(
-    tmp_path: Path, game_db: Path, steps, audit, failure
+    game_db: Path, steps, audit, failure, handler
 ) -> None:
+    case = json.loads((RECORDED / "night_secret.json").read_text())
+    declaration = json.loads(case["replies"][0])
+    declaration["decrees"][0]["people"] = ["毕自严", "王承恩"] if handler == "毕尚书" else [] if failure == "declaration" else ["王承恩"]
+    declaration["decrees"][0].pop("handler")
+    declaration["decrees"][0].update({} if handler == "毕尚书" else {"handler": "户部那位老先生"})
+    invalid = json.dumps(declaration, ensure_ascii=False)
+    declaration["decrees"][0]["handler"] = handler
+    steps["scene"] = replaying([m for m in ModelMessagesTypeAdapter.validate_python(case["scene_responses"]) if isinstance(m, ModelResponse)])
+    steps["NightDeclaration"] = replaying([invalid, json.dumps(declaration, ensure_ascii=False)])
+    handler = "毕自严" if handler == "毕尚书" else handler
     material = []
     declarations = []
     steps["Declaration"] = replaying(
         partial(
             declaration_reply,
             response_file="month_invalid.txt" if failure == "declaration" else "month_secret_appointment.json" if failure is None else "month_travel.txt",
-            extra_facts=json.loads((RECORDED / "month_travel.txt").read_text())["facts"] if failure is None else (),
+            extra_facts=[*json.loads((RECORDED / "month_travel.txt").read_text())["facts"], {
+                "entity_type": "person", "entity": "韩爌", "create": False,
+                "changes": [{"field": "intrigue", "value": 75}], "text": "",
+                "discovered": True,
+            }] if failure is None else (),
         ),
         declarations,
     )
@@ -136,19 +150,28 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
             [
                 ModelResponse(parts=[ToolCallPart("read_records", {"kind": "person", "key": ["毕自严", "徐光启"]})]),
                 (RECORDED / "secret_report.txt").read_text(),
-            ] * 6, material
+            ] * 4, material
         )
-    with TestClient(create_app(tmp_path)) as client:
+    with TestClient(create_app(game_db.parent)) as client:
         client.post(
             "/actions", json={"action": "load", "save": game_db.name}
         ).raise_for_status()
+        for words in case["words"]:
+            client.post("/actions", json={"action": "say", "words": words}).raise_for_status()
+        client.portal.call(client.app.state.web.game.drain)
+        assert client.get("/state").json()["game"]["failure"] is None
         court = client.app.state.web.game.court
         orders = court.entities("audit", kind="decree")
         secret = next(d for d in orders if d.data["secret"])
         public = next(d for d in orders if not d.data["secret"])
         assert (secret.data["turn"], public.data["turn"]) == (3, 6)
+        assert secret.data["handler"] == handler
+        assert public.data.get("handler") is None
+        assert not court.facts("audit", kind="unhandled")
+        assert court.known_people(secret) == {handler, "王承恩", "杨嗣昌"}
         assert secret.data["exposure"] == {"score": 0, "stage": "密"}
         for person, expected in (
+            (handler, {secret.id}),
             ("王承恩", {secret.id, public.id}),
             ("杨嗣昌", {secret.id}),
             ("王绍徽", {public.id}),
@@ -185,19 +208,23 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
             client.portal.call(client.app.state.web.game.drain)
             assert audit(game_db) == before
             steps["secret_report"] = replaying(
-                [(RECORDED / "secret_report.txt").read_text()] * 6, material
+                [(RECORDED / "secret_report.txt").read_text()] * 4, material
             )
             client.post("/actions", json={"action": "retry"}).raise_for_status()
             client.portal.call(client.app.state.web.game.drain)
+        assert all(
+            [p["key"] for p in json.loads(part.content)["speakers"]] == [handler]
+            for message in material for part in message.parts if part.part_kind == "user-prompt"
+        )
         if failure is None:
             returned = next(p.model_response_object() for m in material for p in m.parts if isinstance(p, ToolReturnPart))
             assert {e["key"]: e["data"]["location"] for e in returned["entities"]} == {
                 "毕自严": "北直隶 / 京师", "徐光启": "南直隶 / 南京",
             }
             assert any(f["kind"] == "arrived" for f in returned["facts"])
-            assert returned == character_input(client.portal.call(court.read_records, Officials(people=secret.data["people"]), "person", ["毕自严", "徐光启"]))
-        # The new native night has two knowers and no handled event.
-        for month in range(6):
+            assert returned == character_input(client.portal.call(court.read_records, Officials(people=[handler]), "person", ["毕自严", "徐光启"]))
+        # Four months reach partial disclosure with three knowers.
+        for month in range(4):
             court = client.app.state.web.game.court
             assert client.get("/state").json()["game"]["failure"] is None
             assert client.get("/state").json()["game"]["unhandled_monthly"] == (
@@ -206,12 +233,16 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
             )
             if failure is None and month < 2:
                 asyncio.run(assert_record_queries(court, secret_appointment=True))
+                private = {f.entity_id for f in court.facts("audit", kind="changed") if f.detail.get("discovered")}
+                assert private
+                for person in ("emperor", handler, "王承恩", "杨嗣昌", "韩爌"):
+                    assert private & {f.entity_id for f in court.facts("emperor" if person == "emperor" else Officials(people=[person]), kind="changed")} == (private if person in ("emperor", handler) else set())
             assert {d.id for d in court.entities("public", kind="decree")} == {
                 public.id
             }
             exposure = court.products(secret.id, kind="exposure", current=False)
-            assert [f.detail["score"] for f in exposure] == [2, 4, 6, 8, 10, 12][: month + 1]
-            assert exposure[-1].detail["stage"] == ("半公开" if month == 5 else "密")
+            assert [f.detail["score"] for f in exposure] == [3, 6, 9, 12][: month + 1]
+            assert exposure[-1].detail["stage"] == ("半公开" if month >= 3 else "密")
             assert {f.entity_id for f in court.facts("audit", kind="unhandled")} == (
                 {secret.id} if failure == "declaration" else set()
             )
@@ -225,7 +256,8 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
                 str(d.id) for d in orders if month == 0 or d.id == secret.id
             ]
             for person, count in (
-                ("王承恩", month + 1),
+                (handler, month + 1),
+                ("王承恩", 0),
                 ("杨嗣昌", 0),
                 ("王绍徽", 0),
                 ("魏忠贤", 0),
@@ -238,23 +270,17 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
                 f.detail["date"] for f in court.facts("emperor", kind="secret_report")
             ] == [f.detail["date"] for f in exposure]
             assert not court.facts("public", kind="secret_report")
-            if month < 5:
+            if month < 3:
                 client.post(
                     "/actions", json={"action": "load", "save": game_db.name}
                 ).raise_for_status()
                 client.post("/actions", json={"action": "month"}).raise_for_status()
                 client.portal.call(client.app.state.web.game.drain)
-        for message in material:
-            for part in message.parts:
-                if part.part_kind == "user-prompt":
-                    prompt = json.loads(part.content)["context"]
-                    assert prompt["decree"]["id"] == str(secret.id)
-                    assert all(
-                        "emperor_words" not in f
-                        for f in prompt["facts"] + prompt["products"]
-                    )
+        for prompt in [json.loads(part.content) for message in material for part in message.parts if part.part_kind == "user-prompt"]:
+            assert prompt["context"]["decree"]["id"] == str(secret.id)
+            assert all("emperor_words" not in f for f in prompt["context"]["facts"] + prompt["context"]["products"])
         assert (
-            prompt["decree"]["data"]["exposure"][
+            prompt["context"]["decree"]["data"]["exposure"][
                 "stage"
             ]
             == "半公开"

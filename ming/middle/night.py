@@ -103,7 +103,7 @@ def witnessed_nights(people: list[str], query: Select[Any]) -> Select[Any]:
 
 
 def known_people(data: ColumnElement[Any], people: list[str] | None = None) -> CompoundSelect[Any]:
-    """Declared handlers and the hall before the approval turn's scene changes."""
+    """Involved people, the handler, and the hall at the approval turn."""
     night_id = func.replace(data["night_id"].as_string(), "-", "")
     turn = F.position.table.alias().c
     turns = select(turn.position, func.row_number().over(order_by=turn.position).label("number")).where(
@@ -114,8 +114,10 @@ def known_people(data: ColumnElement[Any], people: list[str] | None = None) -> C
     ).correlate_except(turns).scalar_subquery()
     attendees = hall_history(night_id, turn_position)
     attendees = attendees.with_only_columns(attendees.selected_columns.person)
-    assigned = func.json_each(data["people"]).table_valued("value")
-    declared = select(assigned.c.value.label("person")).correlate_except(assigned)
+    assigned = func.json_each(func.json_insert(
+        data["people"], "$[#]", data["handler"].as_string(),
+    )).table_valued("value")
+    declared = select(assigned.c.value.label("person")).where(assigned.c.value.is_not(None)).correlate_except(assigned)
     if people is not None:
         declared = declared.where(assigned.c.value.in_(people))
         attendees = attendees.where(attendees.selected_columns.person.in_(people))

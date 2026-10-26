@@ -142,6 +142,10 @@ class Decree(StrictModel):
     secret: bool = Field(
         description="密令不明发、不经外廷。按皇帝怎么说与整夜上下文判断是否密令，不按事务类型或有没有密字判断。"
     )
+    handler: str | None = Field(
+        default=None,
+        description="密令必须声明唯一承办人的账本正名：从整夜戏文认定实际领旨去办者；仅拟旨、宣读而不去办者不是承办人。明发旨意不填。",
+    )
     turn: int = Field(
         ge=1,
         description="皇帝认可定稿、成旨的轮次，按输入 turns 从 1 起数。只记已成旨。",
