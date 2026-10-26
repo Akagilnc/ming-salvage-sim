@@ -36,10 +36,7 @@ class Simulations:
     def context(self) -> dict[str, Any]:
         returned = {str(f.detail["id"]) for f in self.court.returned_petitions()}
         return {
-            "decrees": [
-                material for material in self.court.landing_materials()
-                if material["mode"] is not None or material["deliberations"]
-            ],
+            "decrees": self.court.landing_materials(include_history=False),
             "arrivals": self.court.arrivals_this_month(),
             "fiscal_events": self.court.fiscal_events(),
             "prior_choices": [

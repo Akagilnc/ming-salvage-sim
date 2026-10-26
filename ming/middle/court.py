@@ -544,12 +544,14 @@ class Court:
         return [(EntityView.model_validate(row), mode)
                 for row, mode in landing_sources(self._ledger, self.calendar().data)]
 
-    def landing_materials(self) -> list[Item]:
-        """Share monthly indices; historical public decrees are lookup pointers only."""
+    def landing_materials(self, *, include_history: bool = True) -> list[Item]:
+        """Monthly materials; translation also needs historical decree pointers."""
         materials: list[Item] = []
         for decree, mode in self.landing_sources():
             deliberations = self.products(decree.id, kind=("deliberation", "choice"))
             current = mode is not None or bool(deliberations)
+            if not current and not include_history:
+                continue
             materials.append({
                 "decree": decree.model_dump(mode="json") if current else {
                     "id": str(decree.id), "kind": decree.kind, "key": decree.key,
