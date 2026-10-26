@@ -1,7 +1,10 @@
 """Writable entity fields: one authority for model input and numeric landing."""
 
+import json
 from dataclasses import dataclass
 from typing import Literal
+
+from ming.middle.opening import CONTENT
 
 
 @dataclass(frozen=True)
@@ -164,9 +167,8 @@ FIELDS: dict[tuple[str, str], FieldRule] = {
     ("relationship_summary", "founding_lines"): FieldRule("关系底色材料列表。"),
     ("relationship_summary", "source"): FieldRule("关系发起方。"),
     ("relationship_summary", "target"): FieldRule("关系所向方。"),
-    **{("distance", destination): FieldRule("从本行出发地到此目的地的基础路程。", "常速月数") for destination in (
-        "东江 / 皮岛", "乌思藏 / 青海诸部", "云南", "北直隶 / 京师", "南直隶 / 南京", "台湾", "四川", "奴儿干 / 黑龙江诸部", "安南 / 越南", "察哈尔 / 漠南草原", "山东", "山西", "广东", "广西", "建州 / 赫图阿拉", "日本", "朝鲜", "江西", "沈阳 / 辽阳", "河南", "浙江", "湖广", "漠北诸部", "福建", "西域诸部", "贵州", "辽东 / 宁锦", "陕西", "黑龙江北境",
-    )},
+    **{("distance", region["name"]): FieldRule("从本行出发地到此目的地的基础路程。", "常速月数")
+       for region in json.loads((CONTENT / "regions.json").read_text())["regions"]},
 }
 
 FIELDS_BY_KIND: dict[str, dict[str, FieldRule]] = {}
