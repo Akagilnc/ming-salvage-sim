@@ -11,7 +11,7 @@ from ming.ledger import Item, Ledger
 from ming.ledger import ENTITY_COLUMNS as E, FACT_COLUMNS as F, ENTITY_ROWS, FACT_ROWS, ENTITY_ORDER
 from ming.middle.calendar import calendar_if_any
 from ming.middle.queries import available_on, public_decree
-from ming.middle.appointments import CATALOGUE_KINDS, held_by
+from ming.middle.appointments import APPOINTMENT_ROLES, CATALOGUE_KINDS, held_by
 from ming.middle.night import known_people, read_night, witnessed_nights
 
 HIDDEN_JOURNEY = {"remaining_distance", "travel_speed"}
@@ -165,7 +165,7 @@ def visible_appointments(ledger: Ledger, identity: Identity, rows: list[Item]) -
         return rows
     exposure = fact_exposure(identity, EMPTY_ACCOUNTS)
     newer = F.position.table.alias().c
-    latest = {(f["entity_id"], field): f["visible"] for field in ("holders", "acting")
+    latest = {(f["entity_id"], field): f["visible"] for field in APPOINTMENT_ROLES
               for f in ledger.facts(
                   entity_id=[r["id"] for r in rows], kind="changed",
                   query=FACT_ROWS.add_columns(exposure.is_not(None).label("visible")).where(
@@ -177,7 +177,7 @@ def visible_appointments(ledger: Ledger, identity: Identity, rows: list[Item]) -
                       ).exists(),
                   ),
               )}
-    return [r for r in rows if all(latest.get((r["id"], field), True) for field in ("holders", "acting"))]
+    return [r for r in rows if all(latest.get((r["id"], field), True) for field in APPOINTMENT_ROLES)]
 
 
 def person_projection(ledger: Ledger, row: Item, identity: Identity, appointments: list[Item]) -> Item:
@@ -198,7 +198,7 @@ def person_projection(ledger: Ledger, row: Item, identity: Identity, appointment
         data["journey"] = journey(row["data"], ledger.facts(entity_id=row["id"]))
     data = {k: v for k, v in data.items() if k not in HIDDEN_JOURNEY | {"historical_office"}}
     data["appointments"] = [{**r["data"], "role": role}
-                            for r in appointments for role in ("holders", "acting")
+                            for r in appointments for role in APPOINTMENT_ROLES
                             if row["key"] in r["data"][role]]
     if data["appointments"]:
         data.pop("identity_description", None)

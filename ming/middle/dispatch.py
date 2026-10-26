@@ -35,7 +35,7 @@ def landing_entities(
         )
         pairs.update(
             ("person", name) for f in result.facts if f.entity_type == "incumbency"
-            for c in f.changes if c.field in {"holders", "acting"} for name in c.value
+            for c in f.changes if c.field in APPOINTMENT_ROLES for name in c.value
         )
         pairs.update(("affair", f.affair) for f in result.facts if f.affair is not None)
     if isinstance(result, NightDeclaration):
@@ -68,7 +68,7 @@ def landing_entities(
         for f in result.facts if f.entity_type == "person"
         for c in f.changes if c.field == "location"
     }
-    incumbents = {name for (kind, _), row in found.items() if kind == "incumbency" for field in ("holders", "acting") for name in row["data"][field]}
+    incumbents = {name for (kind, _), row in found.items() if kind == "incumbency" for field in APPOINTMENT_ROLES for name in row["data"][field]}
     for e in ledger.read(ENTITY_ROWS.where(or_(
         (E.kind == "distance") & E.key.in_(origins),
         (E.kind == "person") & E.key.in_(incumbents),
@@ -391,7 +391,7 @@ def displace(
     record: Callable[[Entity, str, Item, Item], None],
     association: Item,
 ) -> None:
-    for field in ("holders", "acting"):
+    for field in APPOINTMENT_ROLES:
         if field not in changes:
             continue
         previous = appointment.data[field]

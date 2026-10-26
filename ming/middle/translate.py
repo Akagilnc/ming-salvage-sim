@@ -30,7 +30,7 @@ from ming.middle.declaration import (
 from ming.middle.queries import CATALOGUE, FUNDED_AFFAIRS
 from ming.middle.night import read_night
 from ming.middle.opening import REFERENCES
-from ming.middle.appointments import ALIASES, cabinet_members, cabinet_records, incumbency_record, office_pairs, reference_key
+from ming.middle.appointments import ALIASES, APPOINTMENT_ROLES, cabinet_members, cabinet_records, incumbency_record, office_pairs, reference_key
 from ming.middle.rules import Names, check_rules, fail, name_expected
 from ming.middle.records import TranslationMaterials, read_records
 from ming.middle.invoke import ModelSource, build_agent, invoke
@@ -86,7 +86,7 @@ def allowed_fields(ledger: Ledger) -> dict[str, set[str]]:
     ).where(E.source != "", E.kind != "calendar").distinct()):
         fields.setdefault(row["kind"], set()).add(row["field"])
     fields["affair"].difference_update({"arrears", "month_paid"})
-    fields["incumbency"] = {"holders", "acting"}
+    fields["incumbency"] = set(APPOINTMENT_ROLES)
     # Fiscal settlement, arrears and the content catalogues are engine-owned;
     # translation writes only the levers the month accounts read.
     fields["region"] = (fields.get("region", set()) - {"fiscal"}) | {"fiscal_surcharge"}
@@ -367,7 +367,7 @@ def check_appointment(ledger: Ledger, fact: Fact, path: str, names: Names, cabin
     office = ledger.entities(kind="office", key=pairs[0][0])[0]
     fact.entity = incumbency_record(pairs[0], [])[0]
     for j, change in enumerate(fact.changes):
-        if change.field not in {"holders", "acting"}:
+        if change.field not in APPOINTMENT_ROLES:
             continue
         field = f"{path}.changes[{j}].value"
         value: Any = change.value
