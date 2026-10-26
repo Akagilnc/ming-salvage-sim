@@ -8,9 +8,8 @@ from pydantic_ai import ModelRetry
 
 from ming.middle.appointments import CATALOGUE_KINDS
 from ming.middle.declaration import Declaration, Fact
-from ming.middle.fiscal import WAN, clamp_scale, current_paid, has_obligation, obligation
-
-SCALE_FIELDS = ("imperial_prestige", "public_support", "satisfaction")
+from ming.middle.fiscal import WAN, current_paid, has_obligation, obligation
+from ming.middle.fields import FIELDS
 Names = dict[str, dict[str, list[str]]]
 
 
@@ -49,14 +48,7 @@ def check_rules(out: Declaration, affairs: set[str], names: Names) -> None:
             fail(f"facts[{i}].changes", [field for field in seen if seen.count(field) > 1],
                  "每个字段只出现一次", names, "删掉重名的字段变更，重交整份，不能静默丢项。")
         for j, change in enumerate(fact.changes):
-            if (fact.entity_type, change.field) in {
-                ("account", "taels"), ("region", "fiscal_surcharge"), ("fiscal", "value"),
-                ("army", "manpower"), ("army", "salary_rate"), ("building", "maintenance"),
-                ("building", "condition"), ("building", "output_amount"), ("person", "travel_speed"),
-                ("army", "firearm_equipment"), ("army", "cannon_equipment"),
-                ("world", "imperial_prestige"), ("world", "public_support"),
-                ("faction", "satisfaction"), ("class", "satisfaction"),
-            } and (type(change.value) not in (int, float)
+            if FIELDS[fact.entity_type, change.field].numeric and (type(change.value) not in (int, float)
                    or (type(change.value) is float and not math.isfinite(change.value))):
                 fail(f"facts[{i}].changes[{j}].value", change.value, "有限数字", names,
                      "把这个字段改成有限数字，重交整份。")
@@ -143,18 +135,18 @@ def field_values(
     actual = dict(nominal)
     if amount is not None:
         actual["taels"] = amount
-    for field, cap in (("firearm_equipment", 100), ("cannon_equipment", 12)):
-        if fact.entity_type == "army" and field in actual:
-            actual[field] = min(cap, max(0, actual[field]))
-    if fact.entity_type == "person" and "travel_speed" in actual:
-        actual["travel_speed"] = min(2, max(1, actual["travel_speed"]))
-    for field in SCALE_FIELDS:
-        if field in actual and fact.entity_type in {"world", "faction", "class"}:
-            actual[field] = clamp_scale(data.get(field, 0) + actual[field])
+    for field, value in actual.items():
+        rule = FIELDS[fact.entity_type, field]
+        if rule.mode == "delta" and (fact.entity_type, field) != ("account", "taels"):
+            value += data.get(field, 0)
+        if rule.bounds is not None:
+            value = min(rule.bounds[1], max(rule.bounds[0], value))
+        actual[field] = value
     if "payment_policy" in actual:
         actual["payment_policy"] = {key: min(1, max(0, value)) if key in {"factor", "defer"} else value
                                     for key, value in actual["payment_policy"].items()}
     changes = dict(actual)
-    if "taels" in changes and fact.entity_type == "account":
-        changes["taels"] += data.get("taels", 0)
+    for field in changes:
+        if FIELDS[fact.entity_type, field].mode == "delta" and (fact.entity_type, field) == ("account", "taels"):
+            changes[field] += data.get(field, 0)
     return {"text": fact.text, "changes": changes, "nominal": nominal, "actual": actual, "audience": "world"}

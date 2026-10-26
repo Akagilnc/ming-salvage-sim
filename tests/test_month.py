@@ -543,6 +543,9 @@ DEBT = {
             },
             id="building",
         ),
+        pytest.param(None, {
+            "recording": "month_fiscal_building.txt", "building": "钦定银矿", "maintenance": 2,
+        }, id="building-maintenance"),
         pytest.param(
             "prestige",
             {
@@ -558,9 +561,14 @@ def test_month_keeps_debt_separate_from_reduction_and_temporary_deferral(
     opening_db, game_db: Path, steps, audit, case
 ) -> None:
     case = {**DEBT, **case}
+    recording = ((RECORDED / case["recording"]).read_text() if case["recording"] != "shared_obligation" else None)
+    if "maintenance" in case:
+        recording = json.loads(recording)
+        next(f for f in recording["facts"] if f["entity_type"] == "building")["changes"].append({"field": "maintenance", "value": case["maintenance"]})
+        recording = json.dumps(recording)
     steps["Declaration"] = replaying(
         ModelMessagesTypeAdapter.validate_python(json.loads((RECORDED / "declarations_1972.json").read_text())["cases"]["shared_obligation"])
-        if case["recording"] == "shared_obligation" else [(RECORDED / case["recording"]).read_text()]
+        if case["recording"] == "shared_obligation" else [recording]
     )
     with TestClient(create_app(game_db.parent)) as client:
         client.post("/actions", json={"action": "load", "save": game_db.name})
@@ -639,6 +647,8 @@ def test_month_keeps_debt_separate_from_reduction_and_temporary_deferral(
                     building["output_amount"] * building["condition"] / 100
                 )
                 assert building["condition"] != 100
+                assert rows[("fiscal", "建筑维护_base")]["arrears"] == 0
+                assert next(f["detail"]["due"] for f in reversed(ledger["facts"]) if f["kind"] == "monthly_payment" and f["detail"]["recipient"] == "建筑维护_base") == pytest.approx(32 + case.get("maintenance", 0))
             if "prestige" in case:
                 assert (
                     rows[("world", "天下")]["imperial_prestige"] == case["prestige"]

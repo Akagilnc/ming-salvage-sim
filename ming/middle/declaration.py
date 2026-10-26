@@ -48,7 +48,7 @@ class FiscalEnd(StrictModel):
 
 
 class MonthlyFunding(StrictModel):
-    amount: float = Field(strict=True, allow_inf_nan=False, description="每月专款，两数；零为停拨。")
+    amount: float = Field(strict=True, allow_inf_nan=False, description="每月从出款库付出的正数专款，两数；零为停拨。")
     account: str = Field(description="出款账户的账本正名。")
     until: FiscalEnd | None = Field(default=None, description="止于此月（含）；过期不再应付，无止期一直付。")
 
@@ -61,7 +61,7 @@ class PaymentPolicy(StrictModel):
         description="应付保留比例；折半为0.5，减去部分不记欠。",
     )
     defer: float = Field(
-        default=0, strict=True, allow_inf_nan=False, description="应付中暂欠的比例，未付仍记欠。"
+        default=0, strict=True, allow_inf_nan=False, description="先应用 factor，再将应付中此比例暂欠；未付仍记欠。factor、defer 均由引擎夹到0–1。"
     )
     until: FiscalEnd | None = Field(
         default=None, description="止期含当月；过期回原额，无止期一直有效。"
@@ -70,10 +70,10 @@ class PaymentPolicy(StrictModel):
 
 class Change(StrictModel):
     field: str
-    value: Any = Field(description="字段的新值。payment_order 交完整项目顺序：军饷与财政科目沿用账本字符串，事务用 EntityRef 形状 {entity_type: 'affair', entity: 正名}，同名不同类互不替代；army_order 仍为军队正名列表。")
+    value: Any = Field(description="任意 JSON 值；按输入 allowed_fields 中（实体类型, field）对应行的含义、单位、mode（value 新值、delta 增减）、bounds（落账范围）与 numeric 填写。")
     purpose: Literal["补欠", "当月饷", "犒赏", "专项"] | None = Field(
         default=None,
-        description="账户付给军队或财政科目的款须写名目；value仍为带符号的两数。",
+        description="账户付军队或财政科目必填：补欠冲减欠额且以欠额封顶；当月饷计当月已付且以本月未付封顶；犒赏、专项不按义务封顶。",
     )
     counterpart: EntityRef | None = Field(
         default=None,
@@ -100,26 +100,25 @@ class Fact(StrictModel):
     )
     decree: DecreeRef
     discovered: bool = Field(
-        default=False, description="是否为密令内部查获实情；不按有无字段变化判断。"
+        default=False, description="布尔值，含义见 discovered。"
     )
     changes: list[Change]
     text: str = Field(
         description=(
-            "发生的事实，原文记在这个实体上；没有字段变化也可以只记文字。"
-            "物理实况正文只写后果，不写密令来源，密令来源只放在结构化来源关系里。"
+            "发生的事实，原文记在这个实体上；没有字段变化也可以只记文字。密令实况见 discovered。"
         )
     )
 
 
 class Report(EntityRef):
     text: str
-    audience: Literal["public", "official"]
+    audience: Literal["public", "official"] = Field(description="可见范围，含义见 audience。")
 
 
 class DecreeEvent(StrictModel):
     decree: DecreeRef
     kind: Literal["handled", "completed"] = Field(
-        description="handled：实际发生的一道传递、经办（转交、往返），每道各记一条；completed：推演已认定该差事办结，包括关联事务已成往事。无记录、接不住不算办结。没有新建事务也不算办结。"
+        description="经办或办结，含义见 DecreeEvent。"
     )
     text: str
 
@@ -137,27 +136,23 @@ class Endorsement(StrictModel):
 
 
 class Decree(StrictModel):
-    text: str = Field(description="皇帝已经认可的圣旨定稿全文，原样保留")
-    origin: Literal["emperor", "minister"]
+    text: str = Field(description="定稿全文，原样保留；含义见成旨。")
+    origin: Literal["emperor", "minister"] = Field(description="旨意来历，见字段表 decree.origin。")
     secret: bool = Field(
-        description="密令不明发、不经外廷。按皇帝怎么说与整夜上下文判断是否密令，不按事务类型或有没有密字判断。"
+        description="布尔值，含义见密令。"
     )
     handler: str | None = Field(
         default=None,
-        description="密令必须声明唯一承办人的账本正名：从整夜戏文认定实际领旨去办者；仅拟旨、宣读而不去办者不是承办人。明发旨意不填。",
+        description="人物账本正名或 null，含义见承办人。",
     )
     turn: int = Field(
         ge=1,
-        description="皇帝认可定稿、成旨的轮次，按输入 turns 从 1 起数。只记已成旨。",
+        description="成旨轮次，按输入 turns 从 1 起数；引擎取此轮殿上名单记知情。",
     )
     endorsements: list[Endorsement] = Field(default_factory=list[Endorsement])
-    interim: bool = Field(default=False, description="皇帝明说中旨、不经内阁票拟；中旨仍是明发，经外廷议处。御笔手敕本身不等于中旨")
+    interim: bool = Field(default=False, description="布尔值，含义见中旨。")
     people: list[str] = Field(
-        description=(
-            "旨意涉及的人：旨意所及对象，以及戏文中实际拟旨、宣读或领旨的经手者；"
-            "均用账本正名，旨意事件记入这些人的履历（经手即知）。"
-            "不按殿上名单扩散；仅旁听、被提到或拟在日后经手，不因此算实际经手者。"
-        )
+        description="人物账本正名列表，含义见知情。"
     )
 
 

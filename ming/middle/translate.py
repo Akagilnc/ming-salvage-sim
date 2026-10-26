@@ -1,11 +1,12 @@
 """One retry owner for declarations. Exhaustion alone becomes an unhandled fact."""
 
 import json
+from dataclasses import asdict
 from typing import Any, TypeVar, cast
 from uuid import UUID
 
 from pydantic import ValidationError
-from sqlalchemy import Select, func, select, true
+from sqlalchemy import Select
 from pydantic_ai import (
     Agent,
     PromptedOutput,
@@ -34,17 +35,18 @@ from ming.middle.appointments import ALIASES, cabinet_members, cabinet_records, 
 from ming.middle.rules import Names, check_rules, fail, name_expected
 from ming.middle.records import TranslationMaterials, read_records
 from ming.middle.invoke import ModelSource, build_agent, invoke
+from ming.middle.fields import FIELDS
+from ming.middle.concepts import ACTING, AUDIENCE, DECREE, DECREE_EVENT, DISCOVERED, HANDLER, INTERIM, PEOPLE, SECRET
 
 T = TypeVar("T", bound=Declaration)
-APPOINTMENT_RULES = """任免只声明 incumbency：entity 用史书官名（京官如户部右侍郎、南京户部尚书；外官如陕西巡抚、保定府新城县知县），create=false。官职、属地由目录正名或别名精确解析，同名属地须带上级全名。holders 写正任变更后的完整人名名单，acting 写点名暂署的完整人名名单；一员最多一人，免去全体或撤署写相应空名单。外官须带属地，暂署不算正任。首次任职由引擎创建在任记录；人物不存 office、office_region、office_type 等任职字段。
+APPOINTMENT_RULES = """任免只声明 incumbency：entity 用史书官名（京官如户部右侍郎、南京户部尚书；外官如陕西巡抚、保定府新城县知县），create=false。官职、属地由目录正名或别名精确解析，同名属地须带上级全名。holders、acting 按字段表填写。外官须带属地。首次任职由引擎创建在任记录；人物不存 office、office_region、office_type 等任职字段。
 升转新实职即离原任；旨里写明兼领、仍管的才保留旧职。没有兼领、仍管时，在同份声明里从原任 holders 去掉此人；旧职本来无在任记录不必声明。新官替换同官同地原任，不动同官别地。任免不改变人物状态、所在、在场或行程。罢去全部官职时，在同份声明中把罢官原因写进此人的 identity_description 作为处境。
 尚书现任只算掌部的一员；阁臣的尚书兼衔只记身份与履历文字，不写入在任记录。内阁首辅为单员职务，须为在任阁臣；同份声明可先任大学士再任首辅。离开全部阁职时同时卸首辅，新首辅只替原首辅这一职、不免其大学士。次辅只记身份。"""
 
 INSTRUCTIONS = """你是御前召对的转译官。退朝后通读整夜已落账的全部轮次，一夜只交一次声明。
-decrees 只记成了的旨意：领旨的人已经把皇帝的话拟成正式圣旨念出，皇帝认可了那份定稿。
-认可按意思认，不限于“准”字；皇帝没表态的就是默拒，驳了的也不成旨。认可须对应当时已经拟就的具体旨稿，不预认本轮回话后续新增的拟稿，也不追认更早搁置的请示。不要把问话、大臣请示或未认可的拟稿记成旨。
-text 保留皇帝认可的圣旨定稿全文，不改写、不摘要。origin 记原本是皇帝所下还是大臣所请，people、endorsements、interim 按字段说明填写。
-旨意按字段声明 secret 与成旨 turn，记背书与中旨标记：中旨是明发、经外廷议处，密令不明发、不经外廷；不带交办或拨款载荷，不预先执行待月末办理的后果。
+decrees 只记成了的旨意，含义见成旨。
+text 保留圣旨定稿全文，不改写、不摘要。origin、people、endorsements、interim 按字段说明填写。
+旨意按字段声明 secret 与成旨 turn，记背书与 interim；不带交办或拨款载荷，不预先执行待月末办理的后果。
 当场已经发生的事实用 facts：哪个实体、是否新建、字段变更列表、一段文字。不分类，不设动作枚举。
 只记今夜新发生的实况，不把邸报旧事、档案履历或大臣奏报中的说法当成今夜已经发生的事实。
 是待执行旨意还是当场实况，照整夜戏文判断；未认可的拟旨不能当成已经执行的事实。
@@ -54,7 +56,6 @@ text 保留皇帝认可的圣旨定稿全文，不改写、不摘要。origin �
 无字段变化可以只记文字；对象模型之外的伤情等记入所涉实体履历，不长新字段。
 奏报与公开说法单列 reports，只交实体、文字和 audience；facts 只记物理实况。
 在场进出归场景名单工具，退朝归场景退朝工具；不声明进出、退朝、说话人分段、可闻性或御前主角。
-皇威、民心、满意度与钱粮一样交带正负号的增减，引擎加到现值后夹范围，不交最终值。
 没有的项目交空列表，不凭空增添。
 """
 
@@ -75,36 +76,11 @@ def catalogue(
 CATALOGUES = {"historical_event", "fiscal", "account", "office", "territory", "incumbency"}
 
 
-def allowed_fields(ledger: Ledger) -> dict[str, set[str]]:
-    fields: dict[str, set[str]] = {
-        "affair": {"text", "monthly_funding", "payment_policy"},
-        "decree": {"text", "origin", "people"},
-    }
-    keys = func.json_each(E.data).table_valued("key")
-    for row in ledger.read(select(E.kind, keys.c.key.label("field")).select_from(
-        E.id.table.join(keys, true())
-    ).where(E.source != "", E.kind != "calendar").distinct()):
-        fields.setdefault(row["kind"], set()).add(row["field"])
-    fields["affair"].difference_update({"arrears", "month_paid"})
-    fields["incumbency"] = {"holders", "acting"}
-    # Fiscal settlement, arrears and the content catalogues are engine-owned;
-    # translation writes only the levers the month accounts read.
-    fields["region"] = (fields.get("region", set()) - {"fiscal"}) | {"fiscal_surcharge"}
-    fields["historical_event"] = {"terminal_reason"}
-    fields["account"] = {"taels", "payment_order", "army_order"}
-    fields["fiscal"] = {"value", "payment_policy"}
-    fields["army"] = (fields.get("army", set()) - {"arrears", "month_paid"}) | {
-        "payment_policy"
-    }
-    fields.setdefault("person", set()).add("travel_speed")
-    fields["person"].difference_update(
-        {"transit_to", "remaining_distance", "waiting_audience"}
-    )
-    return fields
-
-
 def check(ledger: Ledger, out: Declaration, source: UUID) -> None:
-    names, fields = catalogue(ledger), allowed_fields(ledger)
+    names = catalogue(ledger)
+    fields: dict[str, set[str]] = {}
+    for kind, field in FIELDS:
+        fields.setdefault(kind, set()).add(field)
     cabinet = cabinet_records(ledger)
     for i, fact in enumerate(out.facts):
         path = f"facts[{i}]"
@@ -452,7 +428,7 @@ def declaration_agent(
         name=output_type.__name__,
         deps_type=TranslationMaterials,
         output_type=PromptedOutput(output_type),
-        instructions=instructions + "\n" + APPOINTMENT_RULES + "\n官职和属地不混在实况名册里；需要核对官名、地名、别名、所属衙门或员额时，用 read_records 带类 office、territory 或正名查询；空参不返回目录。",
+        instructions="\n".join((instructions, DECREE, SECRET, HANDLER, PEOPLE, ACTING, INTERIM, DISCOVERED, AUDIENCE, DECREE_EVENT, APPOINTMENT_RULES)) + "\n官职和属地不混在实况名册里；需要核对官名、地名、别名、所属衙门或员额时，用 read_records 带类 office、territory 或正名查询；空参不返回目录。",
         retries=1,
     )
 
@@ -465,7 +441,8 @@ def declaration_agent(
                 "catalogue": ctx.deps.court.record_catalogue(ctx.deps.identity),
                 "field_schemas": {"payment_policy": PaymentPolicy.model_json_schema(), "monthly_funding": MonthlyFunding.model_json_schema()},
                 "allowed_fields": {
-                    k: sorted(v) for k, v in allowed_fields(ledger).items()
+                    kind: {field: asdict(rule) for (owner, field), rule in FIELDS.items() if owner == kind}
+                    for kind in dict.fromkeys(owner for owner, _ in FIELDS)
                 },
             },
             ensure_ascii=False,

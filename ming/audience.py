@@ -16,6 +16,7 @@ from pydantic_ai.messages import (
 )
 
 from ming.middle.court import Court
+from ming.middle.concepts import ACTING, DECREE, HANDLER, INTERIM, PEOPLE, SECRET
 from ming.middle.declaration import NightDeclaration
 from ming.middle.invoke import ModelSource, TextUpdate, build_agent, invoke, stream_text
 from ming.middle.opening import CONTENT
@@ -51,7 +52,7 @@ class Audience:
             name="scene",
             output_type=str,
             deps_type=Audience,
-            instructions=(CONTENT / "prompts/scene_agent.md").read_text(),
+            instructions="\n".join(((CONTENT / "prompts/scene_agent.md").read_text(), DECREE, SECRET, HANDLER, PEOPLE, ACTING, INTERIM)),
             tools=[read_records, get_hall, set_hall, dismiss],
         )
 

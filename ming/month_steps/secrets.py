@@ -1,6 +1,7 @@
 """Monthly exposure from recorded counts, and each unfinished errand's own report."""
 
 from ming.middle.court import Court
+from ming.middle.concepts import HANDLER, PEOPLE, SECRET
 from ming.middle.invoke import ModelSource, build_agent, invoke
 from ming.middle.month_work import prompt
 from ming.middle.records import Materials, read_records
@@ -16,7 +17,7 @@ class Secrets:
             output_type=str,
             deps_type=Materials,
             tools=[read_records],
-            instructions="按本月实况与风声，用本旨承办人复命的口吻给皇帝写这一道密令的密报。按 catalogue 用 read_records 查本人所知材料，按本人的立场与利害复命；查得什么、听得什么、尚有何难处，由承办人据其所知复命。人物的打算与文字由你发挥。",
+            instructions="按本月实况与风声，用本旨承办人复命的口吻给皇帝写这一道密令的密报。按 catalogue 用 read_records 查本人所知材料，按本人的立场与利害复命；查得什么、听得什么、尚有何难处，由承办人据其所知复命。人物的打算与文字由你发挥。" + "\n" + "\n".join((SECRET, HANDLER, PEOPLE)),
         )
 
     def accumulate(self) -> None:
