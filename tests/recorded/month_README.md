@@ -10,7 +10,7 @@
 - 该局进到 1627 年十一月、无失败；仅证明新推演契约能真调、批齐后能写整月定稿，不证明被替换的转译、邸报和具体历史后果正确。
 - 首次开发调用把 SQLAlchemy 列集合当成表，失败后修正；另一次 `gpt-5.4` 调用被账户拒绝（`model_not_found`），之后逐次改用现役 `PI_MODEL`，没有改宿主或席位配置。失败日志与成功存档都保留在 `record-run/`。
 
-补充转译录音也在该根：`declarations-v2/{travel,completed,combined}/reply.txt` 分别原样用于 `month_secret_travel.txt`、`month_secret_completed.txt`、`month_ordering.txt`；`declarations-v3/appointment/reply.txt` 用于 `month_secret_appointment.json`。它们用生产 `Court.translate` 转译冻结旧实况，补录一份声明里的旨意下标；任免、启程、内部发现是明确写在输入里的合成边界场景，不冒称新一场完整推演。v1 曾按旨文补演额外后果，修正转译输入要求只摘月定稿后重新录 v2；appointment v2 未把两条任免归到密令，v3 在合成实况输入明确全部属于第0道密令后重录，未手改回复。
+补充转译录音也在该根：`declarations-v2/{completed,combined}/reply.txt` 分别原样用于 `month_secret_completed.txt`、`month_ordering.txt`；`declarations-v3/appointment/reply.txt` 用于 `month_secret_appointment.json`。它们用生产 `Court.translate` 转译冻结旧实况，补录一份声明里的旨意下标；任免、启程、内部发现是明确写在输入里的合成边界场景，不冒称新一场完整推演。v1 曾按旨文补演额外后果，修正转译输入要求只摘月定稿后重新录 v2；appointment v2 未把两条任免归到密令，v3 在合成实况输入明确全部属于第0道密令后重录，未手改回复。v2 的 travel 输出与现有 `month_travel.txt` 在声明 schema 下相同，消费者复用既有录件，重复新增的 `month_secret_travel.txt` 已退役，原生 v2 回话仍留卷。
 
 `timelines/<原文件名>-<index>/messages.json` 是三份 `month_fiscal_*.json` 的 `simulation` 现役来源；`timelines/single/messages.json` 是 `month_petition.txt` 的来源。录制用生产推演 Agent 收到完整旧稿，明确仅迁移输出契约、不另推世界；草稿交正文与原有岔路，定稿只交正文，原生回复逐份原样取出，没有人工删除 `month_end` 或拼接正文。这些迁移录音只用于确定性契约，不证明新模型能自主找到岔路或办完赈济。首批中一份服务器 overloaded 失败，已完成的13份保留，显式只补缺失的1640选项1；失败日志与重试日志都留卷。
 
