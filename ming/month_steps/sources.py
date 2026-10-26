@@ -7,6 +7,7 @@ from pydantic_ai import PromptedOutput, RunContext
 
 from ming.middle.calendar import petition_date
 from ming.middle.court import Court
+from ming.middle.concepts import ACTING
 from ming.middle.declaration import Petition, PendingPetition, StrictModel
 from ming.middle.invoke import ModelSource, build_agent, invoke
 from ming.middle.month_work import prompt
@@ -90,7 +91,7 @@ class Sources:
             deps_type=Materials,
             tools=[read_records],
             retries=1,
-            instructions="你演上奏的官员。按输入 catalogue 用 read_records 按需查本人所知见闻；按输入人物立场写下月开局的奏折。正文与选项用奏报口吻，人物才具、操守以言行呈现。",
+            instructions="你演上奏的官员。按输入 catalogue 用 read_records 按需查本人所知见闻；按输入人物立场写下月开局的奏折。正文与选项用奏报口吻，人物才具、操守以言行呈现。" + "\n" + ACTING,
         )
 
         @agent.output_validator

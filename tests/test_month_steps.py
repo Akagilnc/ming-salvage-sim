@@ -579,6 +579,8 @@ def test_month_pays_affair_from_declaration_month(game_db, steps, audit, clock, 
     if case == "shortage":
         declaration["facts"].append({"entity_type": "account", "entity": "国库", "create": False, "changes": [{"field": "taels", "value": -3100000, "counterpart": {"entity_type": "account", "entity": "内库"}}], "text": "移库"})
         funding["amount"] = 100000000
+        declaration["facts"].append({"entity_type": "account", "entity": "国库", "create": False,
+            "changes": [{"field": "payment_order", "value": [*reversed(GUOKU_ORDER), {"entity_type": "affair", "entity": name}]}], "text": "改序"})
     received = []
     steps["Declaration"] = replaying(
         [json.dumps({"facts": [{"entity_type": "affair", "entity": "陕西专款", "create": True, "changes": [{"field": "monthly_funding", "value": {**funding, "account": "太仓假名"}}], "text": "专款"}]}, ensure_ascii=False), json.dumps(declaration, ensure_ascii=False)]
@@ -608,6 +610,7 @@ def test_month_pays_affair_from_declaration_month(game_db, steps, audit, clock, 
             if case == "shortage":
                 assert payments[-1]["paid"] < payments[-1]["due"]
                 assert rows[("account", "国库")]["taels"] == 0
+                assert all(f["detail"]["unpaid"] == 0 for f in ledger["facts"] if f["kind"] == "monthly_payment" and f["detail"]["account"] == "国库" and f["detail"]["recipient"] != name)
             else:
                 assert [p["paid"] for p in payments] == expected[:index + 1]
                 assert rows[("affair", name)]["arrears"] == (25 * min(index + 1, 2) if case == "defer" else 0)
@@ -619,7 +622,7 @@ def test_month_pays_affair_from_declaration_month(game_db, steps, audit, clock, 
             if case == "invalid_account" and index == 0:
                 assert [json.loads(p.content)["field"] for m in received for p in m.parts if p.part_kind == "retry-prompt"] == ["facts[0].changes[0].value.account"]
             recipient = {"entity_type": "affair", "entity": name}
-            original = GUOKU_ORDER if account == "国库" else ["内廷俸_base", "妃嫔_base", "宫廷_base"]
+            original = list(reversed(GUOKU_ORDER)) if case == "shortage" else GUOKU_ORDER if account == "国库" else ["内廷俸_base", "妃嫔_base", "宫廷_base"]
             assert rows[("account", account)]["payment_order"] == ([recipient, *original] if case == "reorder" and index else [*original, recipient])
             if account == "内库":
                 assert rows[("account", "国库")]["payment_order"] == GUOKU_ORDER

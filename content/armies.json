@@ -1,9 +1,7 @@
 {
   "meta": {
-    "manpower_unit": "人",
-    "salary_rate_unit": "两/兵·月（月饷 manpower×salary_rate/10000，万两/月；#1955）",
-    "score_unit": "0-100（arrears 例外，单位为累计欠饷万两、可含小数、无上限）",
-    "note": "MVP 军队盘面为历史近似，不追求完整编制；核心服务于问话、调度、拨饷和月末结算。月饷单位见 salary_rate_unit；#1955 不沿用旧实现按万两向上取整的口径。arrears 字段=累计欠饷万两，由月账按未付差额累加，补欠拨款按实付冲减。firearm_equipment=火器饱和度0-100（鸟铳/三眼铳/佛郎机归此轴）；cannon_equipment=随军红夷级重炮门数0-12（城防炮另挂 region.cannon）。缺省由 content loader 回落火器30/炮0，本表显式给差异化开局值。"
+    "field_definitions": "ming/middle/fields.py 的 army 行",
+    "note": "MVP 军队盘面为历史近似，不追求完整编制；核心服务于问话、调度、拨饷和月末结算。arrears 为引擎记的累计欠饷万两，由月账按未付差额累加，补欠拨款按实付冲减。"
   },
   "armies": [
     {

@@ -4,6 +4,7 @@ import json
 from uuid import UUID
 
 from ming.middle.court import Court
+from ming.middle.concepts import ACTING, AUDIENCE, DECREE_EVENT, DISCOVERED, HANDLER, INTERIM, SECRET
 from ming.middle.invoke import ModelSource, gather_or_raise
 from ming.middle.declaration import Declaration, Unhandled
 from ming.middle.opening import CONTENT
@@ -15,7 +16,8 @@ class Landing:
     def __init__(self, court: Court, model: ModelSource) -> None:
         self.court = court
         self.agent = court.translation_agent(
-            Declaration, (CONTENT / "prompts/month_translate.md").read_text() + COST_RULES,
+            Declaration,
+            "\n".join(((CONTENT / "prompts/month_translate.md").read_text(), COST_RULES, SECRET, HANDLER, ACTING, INTERIM, DISCOVERED, AUDIENCE, DECREE_EVENT)),
             model=model,
         )
 

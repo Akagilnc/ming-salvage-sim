@@ -1,11 +1,13 @@
 """Deterministic monthly obligations and cash flows, in the ledger transaction."""
 
 from copy import deepcopy
+from typing import cast
 
 from ming.ledger import Entity, Item, Ledger
 from ming.middle.calendar import calendar_row
 from ming.middle.declaration import EntityRef, FiscalEnd, MonthlyFunding, PaymentPolicy
 from ming.middle.queries import FUNDED_AFFAIRS
+from ming.middle.fields import FIELDS
 
 WAN = 10_000
 # Building output goes to an account or a 0-100 world scale; "" yields nothing.
@@ -26,10 +28,6 @@ def remitting_region(data: Item) -> bool:
 def settling(data: Item) -> bool:
     """A region the month accounts settle, not every region row."""
     return "settle" in data.get("fiscal", {})
-
-
-def clamp_scale(value: float) -> float:
-    return min(100, max(0, value))
 
 
 def payable_army(data: Item) -> bool:
@@ -266,7 +264,8 @@ class Accounts:
                 self.income(building, metric, amount, "建筑产出")
             elif metric:
                 field = OUTPUT_SCALES[metric]
-                actual = clamp_scale(world.data[field] + amount)
+                lower, upper = cast(tuple[float, float], FIELDS["world", field].bounds)
+                actual = min(upper, max(lower, world.data[field] + amount))
                 detail = {
                     "date": self.date,
                     "source": building.key,

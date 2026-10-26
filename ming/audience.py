@@ -16,6 +16,8 @@ from pydantic_ai.messages import (
 )
 
 from ming.middle.court import Court
+from ming.middle.concepts import ACTING, AUDIENCE, DECREE, DECREE_EVENT, DISCOVERED, HANDLER, INTERIM, PEOPLE, SECRET
+from ming.middle.translate import INSTRUCTIONS
 from ming.middle.declaration import NightDeclaration
 from ming.middle.invoke import ModelSource, TextUpdate, build_agent, invoke, stream_text
 from ming.middle.opening import CONTENT
@@ -30,7 +32,10 @@ class Audience:
         self._night_id: UUID | None = None
         self._turn: asyncio.Task[str] | None = None
         self._dismiss_requested: UUID | None = None
-        self.translation = court.translation_agent(NightDeclaration)
+        self.translation = court.translation_agent(
+            NightDeclaration,
+            "\n".join((INSTRUCTIONS, DECREE, SECRET, HANDLER, PEOPLE, ACTING, INTERIM, DISCOVERED, AUDIENCE, DECREE_EVENT)),
+        )
 
         async def get_hall(ctx: RunContext[Audience]) -> list[str]:
             """看今夜殿上名单。"""
@@ -51,7 +56,7 @@ class Audience:
             name="scene",
             output_type=str,
             deps_type=Audience,
-            instructions=(CONTENT / "prompts/scene_agent.md").read_text(),
+            instructions="\n".join(((CONTENT / "prompts/scene_agent.md").read_text(), DECREE, SECRET, HANDLER, PEOPLE, ACTING, INTERIM)),
             tools=[read_records, get_hall, set_hall, dismiss],
         )
 
