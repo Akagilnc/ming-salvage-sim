@@ -24,7 +24,7 @@ from ming.middle.appointments import office_pairs, incumbency_record, named
 from ming.ledger import Entity, Item, Ledger
 from ming.middle.dispatch import dispatch, landing_sources
 from ming.middle.fiscal import Accounts, due_levies
-from ming.middle.calendar import advance_month, calendar_row, settle_journeys
+from ming.middle.calendar import advance_month, calendar_row, journeys_due, settle_journeys
 from ming.middle.declaration import (
     Declaration,
     LandingMode,
@@ -155,6 +155,13 @@ class Court:
 
     def settle_accounts(self) -> None:
         Accounts(self._ledger).run()
+
+    def arrivals_this_month(self) -> list[Item]:
+        """Read the already determined arrival dates without landing them early."""
+        return [
+            {"person": row["key"], "destination": row["data"]["transit_to"], "date": row["data"]["arrival_date"]}
+            for row in journeys_due(self._ledger)
+        ]
 
     def settle_journeys(self) -> None:
         settle_journeys(self._ledger)

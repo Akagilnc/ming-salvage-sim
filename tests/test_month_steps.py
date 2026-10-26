@@ -162,7 +162,7 @@ def test_two_nights_feed_world_and_arrivals_wait_for_audience(tmp_path, game_db,
     received = []
     steps["simulation"] = replaying([(RECORDED / "simulation.txt").read_text()] * 2, received)
     declarations = []
-    steps["Declaration"] = replaying([(RECORDED / "month_travel.txt").read_text(), (RECORDED / "month_empty.txt").read_text()], declarations)
+    steps["Declaration"] = replaying([(RECORDED / "month_journey_dates.json").read_text(), (RECORDED / "month_empty.txt").read_text()], declarations)
     with TestClient(create_app(tmp_path)) as client:
         save = client.post("/actions", json={"action": "load", "save": game_db.name}).json()["save"]
         for case in ("travel", "approved"):
@@ -189,17 +189,35 @@ def test_two_nights_feed_world_and_arrivals_wait_for_audience(tmp_path, game_db,
                 client.post("/actions", json={"action": "retry"})
             state = client.get("/state").json()["game"]
             assert (state["date"]["month"], state["failure"]) == (month, None)
+            assert json.loads(received[-1].parts[0].content)["context"]["arrivals"] == (
+                [] if month == 11 else [{"person": "徐光启", "destination": "北直隶 / 京师",
+                                         "date": {"year": 1627, "month": 11, "day": 16}}]
+            )
             ledger = audit(tmp_path / save)
             if month == 11:
                 decrees = {e["id"] for e in ledger["entities"] if e["kind"] == "decree"}
                 assert {d["decree"]["id"] for d in json.loads(received[-1].parts[0].content)["context"]["decrees"]} == decrees
                 assert {d["decree"]["id"] for d in _declaration_prompt(declarations[:1])["decrees"]} == decrees
-            movement = [f for f in ledger["facts"] if f["kind"] in {"arrived", "travelled"}]
+            movement = [f for f in ledger["facts"] if f["kind"] == "arrived"]
             assert movement and all(f in observed[-1]["facts"] for f in movement)
-            assert len(movement) == (2 if month == 11 else 3)
-            for person in [e for e in ledger["entities"] if e["kind"] == "person" and e["key"] in {"毕自严", "徐光启"}]:
-                assert person["data"]["remaining_distance"] == pytest.approx(0.6 if person["key"] == "徐光启" and month == 11 else 0)
-                assert person["data"]["location"] == ("南直隶 / 南京" if person["key"] == "徐光启" and month == 11 else "北直隶 / 京师")
+            assert len(movement) == (2 if month == 12 else 1)
+            if interrupt:
+                assert all(f in observed[0]["facts"] for f in movement if f["detail"]["date"]["month"] == 10)
+            for person in [
+                e
+                for e in ledger["entities"]
+                if e["kind"] == "person" and e["key"] in {"毕自严", "徐光启"}
+            ]:
+                assert person["data"]["arrival_date"] == (
+                    {"year": 1627, "month": 11, "day": 16} if person["key"] == "徐光启" and month == 11
+                    else None
+                )
+                if person["data"]["arrival_date"] is None:
+                    assert person["data"]["departure_date"] is None
+                    assert person["data"]["travel_speed"] is None
+                assert person["data"]["location"] == (
+                    "南直隶 / 南京" if person["key"] == "徐光启" and month == 11 else "北直隶 / 京师"
+                )
                 assert person["data"]["waiting_audience"] == (person["key"] == "毕自严" or month == 12)
                 assert person["key"] not in state["night"]["hall"]
             client.post("/actions", json={"action": "load", "save": save})

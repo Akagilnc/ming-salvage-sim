@@ -5,8 +5,6 @@ from collections.abc import Callable, Iterator, Sequence
 from typing import cast
 from uuid import UUID
 
-from sqlalchemy import or_
-
 from ming.ledger import Entity, Item, Ledger
 from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS
 from ming.middle.declaration import (
@@ -21,6 +19,7 @@ from ming.middle import queries
 from ming.middle.rules import field_values, money_amounts
 from ming.middle.fiscal import WAN, current_paid, has_obligation
 from ming.middle.appointments import APPOINTMENT_ROLES, cabinet_members, cabinet_records, incumbency_record
+from ming.middle.travel import move_person
 
 def landing_entities(
     ledger: Ledger, result: Declaration | Unhandled, owner: Entity,
@@ -68,16 +67,8 @@ def landing_entities(
             ((e["kind"], e["key"]), e)
             for e in ledger.entities(kind=("fiscal", "building"))
         )
-    origins = {
-        found.get(("person", f.entity), {"data": {}})["data"].get("location") or str(c.value)
-        for f in result.facts if f.entity_type == "person"
-        for c in f.changes if c.field == "location"
-    }
     incumbents = {name for (kind, _), row in found.items() if kind == "incumbency" for field in APPOINTMENT_ROLES for name in row["data"][field]}
-    for e in ledger.read(ENTITY_ROWS.where(or_(
-        (E.kind == "distance") & E.key.in_(origins),
-        (E.kind == "person") & E.key.in_(incumbents),
-    ))):
+    for e in ledger.entities(kind="person", query=ENTITY_ROWS.where(E.key.in_(incumbents))):
         found.setdefault((e["kind"], e["key"]), e)
     return found
 
@@ -173,7 +164,7 @@ def dispatch(
             }
             changes = detail["changes"]
             if entity.kind == "person":
-                move_person(entity, changes, existing, record)
+                move_person(entity, changes, ledger, record, date)
             if entity.kind == "incumbency":
                 displace(entity, changes, known, record, {**association, "text": fact.text})
             record(entity, "changed", detail, changes)
@@ -313,13 +304,6 @@ def record_receipts(
             )
 
 
-CLEARED_JOURNEY = {
-    "transit_to": "",
-    "remaining_distance": 0,
-    "waiting_audience": False,
-}
-
-
 def latest_detail(events: Sequence[tuple[str, Item]], kind: str) -> Item | None:
     """Latest deliberation or choice of this month, the row both landing and interim use."""
     return next(
@@ -340,44 +324,6 @@ def decree_disposition(
     )
     return ([('interim', {"text": decree.data["text"]})]
             if interim and not ledger.facts(entity_id=decree.id, kind="interim") else []) + ([(mode, {"monthly": mode})] if translated else [])
-
-
-def move_person(
-    person: Entity,
-    changes: dict[str, object],
-    existing: dict[tuple[str, str], Item],
-    record: Callable[[Entity, str, Item, Item], None],
-) -> None:
-    # A first location is a fact, not a journey from an invented origin.
-    if not person.data.get("location"):
-        return
-    destination = changes.pop("location", person.data["location"])
-    if changes.get("status") not in (None, "active"):
-        # Leaving active (卒/下狱/罢黜/归场) clears the journey like offstage does.
-        changes.update(CLEARED_JOURNEY)
-    elif destination != person.data.get("location") and not person.data.get(
-        "transit_to"
-    ):
-        distance = existing[("distance", person.data["location"])]["data"][destination]
-        changes["travel_speed"] = changes.get("travel_speed", 1)
-        record(
-            person,
-            "departed",
-            {
-                "destination": destination,
-                "distance": distance,
-                "travel_speed": changes["travel_speed"],
-            },
-            {
-                "transit_to": destination,
-                "remaining_distance": distance,
-                "travel_speed": changes["travel_speed"],
-                "waiting_audience": False,
-            },
-        )
-        changes["status"] = "active"
-    elif person.data.get("transit_to"):
-        changes["status"] = "active"
 
 
 def retire_chief(

@@ -64,6 +64,8 @@ REFERENCES = {
 
 
 def import_opening(ledger: Ledger, content: Path) -> None:
+    import networkx as nx
+
     entities: list[Entity] = []
     appointments: dict[tuple[str, str], list[str]] = {}
     names = {
@@ -102,11 +104,14 @@ def import_opening(ledger: Ledger, content: Path) -> None:
     for pair, holders in appointments.items():
         key, data = incumbency_record(pair, holders)
         entities.append(Entity("incumbency", key, "characters.json/appointments", data))
-    matrix = json.loads((content / "distance_matrix.json").read_text())["matrix"]
+    graph = json.loads((content / "distance_graph.json").read_text())
+    routes: nx.Graph[str] = nx.Graph()
+    routes.add_nodes_from(graph["nodes"])
+    routes.add_weighted_edges_from((e["from"], e["to"], e["cost"]) for e in graph["edges"])
     entities.extend(
-        Entity("distance", names["region"][origin], "distance_matrix.json", {
-            names["region"][destination]: distance for destination, distance in routes.items()
-        }) for origin, routes in matrix.items()
+        Entity("distance", names["region"][origin], "distance_graph.json", {
+            names["region"][destination]: distance for destination, distance in distances.items()
+        }) for origin, distances in nx.all_pairs_dijkstra_path_length(routes)
     )
     path = content / "minister_dossiers.json"
     try:

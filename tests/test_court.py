@@ -197,7 +197,8 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
     for case in ["range", "purpose_region", "provincial_county", "bad_territory_retry", "acting", "acting_coexist", "acting_withdraw", "acting_invalid", "unqualified", "capital_territory", "scale_recorded", "scale_bounds", "scale_invalid", "salary_invalid", "maintenance_invalid", "fiscal_recorded"]
 ], indirect=["first_night", "game_db"])
 def test_recorded_r2_reply_lands(game_db, steps, audit, case):
-    reply = (json.loads((RECORDED / "range_v9.json").read_text())["reply"] if case != "purpose_region" else
+    reply = (json.dumps({"facts": [f for f in json.loads(json.loads((RECORDED / "range_v9.json").read_text())["reply"])["facts"]
+                                  if f["entity_type"] != "person"]}) if case != "purpose_region" else
              json.dumps(json.loads((RECORDED / "declarations_v9.json").read_text())["cases"]["purpose_region"], ensure_ascii=False))
     received = []
     numeric_cases = {
@@ -230,6 +231,7 @@ def test_recorded_r2_reply_lands(game_db, steps, audit, case):
         "fiscal_recorded": "month_fiscal_values_1982.txt",
     }.get(case)
     reply = (RECORDED / recording).read_text() if recording else reply
+    reply = json.dumps({"facts": json.loads(reply)["facts"]}) if case == "provincial_county" else reply
     if case.startswith("acting") or case in {"unqualified", "capital_territory"}:
         reply = {"facts": [{"entity_type": "incumbency", "entity": "陕西巡抚" if case.startswith("acting") else {"unqualified": "巡抚", "capital_territory": "陕西户部尚书"}[case], "create": False,
                             "changes": [*([{"field": "holders", "value": ["洪承畴"]}] if case == "acting_coexist" else []),
@@ -300,7 +302,6 @@ def test_recorded_r2_reply_lands(game_db, steps, audit, case):
         elif case == "range":
             assert rows[("army", "京营")]["data"]["firearm_equipment"] == 100
             assert rows[("army", "京营")]["data"]["cannon_equipment"] == 0
-            assert rows[("person", "洪承畴")]["data"]["travel_speed"] == 2
             assert rows[("fiscal", "宗室禄米_base")]["data"]["payment_policy"] == {"factor": 1, "defer": 0}
             actual = {f["entity_id"]: f["detail"] for f in ledger["facts"] if f["kind"] == "changed"}
             assert actual[rows[("fiscal", "宗室禄米_base")]["id"]]["nominal"]["payment_policy"] == {"factor": 1.5, "defer": -0.5}

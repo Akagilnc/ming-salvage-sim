@@ -124,7 +124,7 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
     steps["Declaration"] = replaying(
         partial(
             declaration_reply,
-            response_file="month_invalid.txt" if failure == "declaration" else "month_secret_appointment.json" if failure is None else "month_travel.txt",
+            response_file="month_invalid.txt" if failure == "declaration" else "month_secret_appointment.json" if failure is None else "month_journey_dates.json",
         ),
         declarations,
     )

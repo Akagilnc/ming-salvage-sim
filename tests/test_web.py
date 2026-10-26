@@ -219,7 +219,7 @@ def test_menu_creates_distinct_games_and_opens_only_existing_saves(
             "incumbency",
         }
         assert all(
-            set(e["data"]) <= {"name", "appointments", "location", "status", "identity_description", "transit_to", "waiting_audience", "journey"}
+            set(e["data"]) <= {"name", "appointments", "location", "status", "identity_description", "transit_to", "waiting_audience", "departure_date", "arrival_date", "travel_speed"}
             for e in records["entities"]
             if e["kind"] == "person"
         )

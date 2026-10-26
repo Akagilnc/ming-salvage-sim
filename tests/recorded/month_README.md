@@ -209,6 +209,10 @@ A-full 也推进至十二月，但原场景仍停在询问，整夜译出零道�
 
 `month_scale_1982.json` 原样序列化自冻结卷 `~/WorkSpace/vault/ak-cc-wiki/raw/ming-llm-runner/2026-10-26/northstar-rerun/agent-B/ledger-audit-after-month1.json` 中实体 `928b79db-9a1f-440f-b2f6-4ae2d2d25902` 的 `declaration.detail.result`（整份13条事实，不节选）。陕西民心交 -2，HTTP 过月后从开局32落到30；不约束生成文字。上、下界与非数字案是参数表中的合成结构化边界输入，不冒称录音。`month_fiscal_building.txt` 原录保持不动，维护费2的案仅在测试内追加结构化字段。
 
+## #1981 行程日期合成输入
+
+`month_journey_dates.json` 是按新契约手工构造的结构化输入，不是模型录音：毕自严十月初五常速从山东赴京，徐光启十月初五加急从南京赴京（十一月十六日到，保留两轮过月结构）；文字留空。复用在多月抵达／候见恢复与密令读账测试中。原 `month_travel.txt` 不改，仍用作缺启程日的错误输入；`range_v9.json` 原录中的倍率行速不再参加数值夹范围案，数字行速改由行程错误案验证。
+
 ## #1977 承办人声明输入
 
 `night_secret.json`、`night_tools.json`、`night_ordering.json` 的夜间声明现为基于录音的合成测试输入：仅为密令补入新契约的 `handler`（前两份王承恩，末份杨嗣昌）。它们不再是原生回复的逐字副本；场景、旨文与其他声明字段未改。原始录音仍以各文件 `source` 指针及下文归档为准。这些输入只验声明落账与取阅，不证明真实模型能识别承办人；该效果留给合并后真跑。

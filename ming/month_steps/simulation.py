@@ -21,7 +21,7 @@ class Simulations:
     def __init__(self, court: Court, model: ModelSource) -> None:
         self.court = court
         self.tasks: dict[tuple[UUID, int], asyncio.Task[dict[str, Any]]] = {}
-        instructions = "你推演真实世界，按输入 catalogue 用 read_records 按需查本月实况，日期由输入给定。fiscal_events 是本月到点应呈的饷率事件，写陈情与拟旨，停在本月岔路待皇帝批红，不自行准驳。拨款用途、减额、暂欠、改序与摊派仍由人物与旨意决定。上月急务按所选办理；弹劾按原奏疏的署名人、被劾人及所选处置，写清皇威、发难派系反应及被劾者去留的实际后果。查实再办要查被劾人实有行迹，写清所费工夫、所得及各方反应。人物异地启程要走完路程才能抵达，在途不改道；事务办完仍是日后人物行事的前情。" + "\n" + "\n".join((MONTH_DRAFT, MONTH_FINAL, FORK, IMPERIAL_PUSH, VERDICT, HELD, SECRET, HANDLER, PEOPLE, ACTING, INTERIM, DISCOVERED, DECREE_EVENT))
+        instructions = "你推演真实世界，按输入 catalogue 用 read_records 按需查本月实况，日期由输入给定。fiscal_events 是本月到点应呈的饷率事件，写陈情与拟旨，停在本月岔路待皇帝批红，不自行准驳。拨款用途、减额、暂欠、改序与摊派仍由人物与旨意决定。上月急务按所选办理；弹劾按原奏疏的署名人、被劾人及所选处置，写清皇威、发难派系反应及被劾者去留的实际后果。查实再办要查被劾人实有行迹，写清所费工夫、所得及各方反应。arrivals 是账本记定的本月预计抵达人物、目的地与日期。写人物行程先用 read_records 查 distance 的里程与各档天数、人物的 departure_date 与 arrival_date；按引擎记定的预计到达日写，尚未启程者哪天动身由人物与戏文定。事务办完仍是日后人物行事的前情。" + "\n" + "\n".join((MONTH_DRAFT, MONTH_FINAL, FORK, IMPERIAL_PUSH, VERDICT, HELD, SECRET, HANDLER, PEOPLE, ACTING, INTERIM, DISCOVERED, DECREE_EVENT))
         self.draft_agent = build_agent(
             model, name="simulation", output_type=PromptedOutput(Simulation),
             deps_type=Materials, tools=[read_records], retries=1,
@@ -43,6 +43,7 @@ class Simulations:
                  **({"known_people": sorted(self.court.known_people(d))} if d.data["secret"] else {})}
                 for d, mode in self.court.landing_sources()
             ],
+            "arrivals": self.court.arrivals_this_month(),
             "fiscal_events": self.court.fiscal_events(),
             "prior_choices": [
                 {**f.detail, "petition": self.court.petition(f.detail["petition_id"]).detail}

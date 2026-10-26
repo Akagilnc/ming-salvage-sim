@@ -126,8 +126,8 @@ def check(ledger: Ledger, out: Declaration, source: UUID) -> None:
                     "field 改成 expected 里的字段名，重交整份。",
                 )
     check_fiscal(ledger, out, names)
-    check_rules(out, set(names.get("affair", {})), names)
     check_references(ledger, out, names)
+    check_rules(ledger, out, names)
     check_decrees(ledger, out, source, names)
 
 
