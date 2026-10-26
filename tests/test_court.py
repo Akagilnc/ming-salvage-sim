@@ -190,7 +190,12 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
             assert next(e["data"]["taels"] for e in ledger["entities"] if e["kind"] == "account" and e["key"] == name) == {"节慎库": 600000, "常盈库": 1200000}[name] + amount * 10000 * 8
 
 
-@pytest.mark.parametrize("case", ["range", "purpose_region", "provincial_county", "bad_territory_retry", "acting", "acting_coexist", "acting_withdraw", "acting_invalid", "unqualified", "capital_territory", "scale_recorded", "scale_bounds", "scale_invalid", "salary_invalid", "maintenance_invalid", "fiscal_recorded"])
+@pytest.mark.usefixtures("first_night")
+@pytest.mark.parametrize("case,first_night,game_db", [
+    (case, "county" if case == "provincial_county" else None,
+     "first_night" if case == "provincial_county" else "opening_db")
+    for case in ["range", "purpose_region", "provincial_county", "bad_territory_retry", "acting", "acting_coexist", "acting_withdraw", "acting_invalid", "unqualified", "capital_territory", "scale_recorded", "scale_bounds", "scale_invalid", "salary_invalid", "maintenance_invalid", "fiscal_recorded"]
+], indirect=["first_night", "game_db"])
 def test_recorded_r2_reply_lands(game_db, steps, audit, case):
     reply = (json.loads((RECORDED / "range_v9.json").read_text())["reply"] if case != "purpose_region" else
              json.dumps(json.loads((RECORDED / "declarations_v9.json").read_text())["cases"]["purpose_region"], ensure_ascii=False))
@@ -300,6 +305,9 @@ def test_recorded_r2_reply_lands(game_db, steps, audit, case):
             actual = {f["entity_id"]: f["detail"] for f in ledger["facts"] if f["kind"] == "changed"}
             assert actual[rows[("fiscal", "宗室禄米_base")]["id"]]["nominal"]["payment_policy"] == {"factor": 1.5, "defer": -0.5}
         elif case == "provincial_county":
+            assert {f["detail"]["origin_ref"] for f in ledger["facts"] if f["kind"] == "changed"} == {
+                e["id"] for e in ledger["entities"] if e["kind"] == "decree"
+            }
             assert next(e["data"]["holders"] for e in ledger["entities"] if e["kind"] == "incumbency"
                         and e["data"]["office"] == "知县" and e["data"]["territory"] == "保定府新城县") == ["徐应秋"]
             assert not [p for m in received for p in m.parts if p.part_kind == "retry-prompt"]

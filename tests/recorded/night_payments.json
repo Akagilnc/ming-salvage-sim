@@ -1,0 +1,198 @@
+{
+  "words": [
+    "拟旨：本月由国库拨陕西赈银十万两，并拨关宁补欠饷银二十万两，两路分别立案起解，月底尚在途中。只拟这一道旨，不另立按月专款。请简短诵读正式旨文，今夜先不退朝。",
+    "准。照所拟这一道旨颁行，待本月办理，今夜到此，不另加旨。"
+  ],
+  "scene_responses": [
+    {
+      "parts": [
+        {
+          "tool_name": "get_hall",
+          "args": "{}",
+          "tool_call_id": "call_b75bbcd3c2bd4d9088bda481408390a1",
+          "tool_kind": null,
+          "id": "fc_02f4ba0d91296385016adf382e94488191837f77f68c0b9cf9",
+          "provider_name": "openai-codex",
+          "provider_details": null,
+          "part_kind": "tool-call"
+        }
+      ],
+      "usage": {
+        "input_tokens": 6883,
+        "cache_write_tokens": 0,
+        "cache_read_tokens": 0,
+        "output_tokens": 15,
+        "input_audio_tokens": 0,
+        "cache_audio_read_tokens": 0,
+        "output_audio_tokens": 0,
+        "audio_seconds": 0.0,
+        "details": {
+          "reasoning_tokens": 0
+        },
+        "cost": "0.013916",
+        "output_reasoning_tokens": 0
+      },
+      "model_name": "gpt-6.1-sol",
+      "timestamp": "2026-10-26T11:23:25.195522Z",
+      "kind": "response",
+      "provider_name": "openai-codex",
+      "provider_url": "https://chatgpt.com/backend-api/codex",
+      "provider_details": {
+        "timestamp": "2026-10-26T11:23:24Z",
+        "service_tier": "default",
+        "finish_reason": "completed"
+      },
+      "provider_response_id": "resp_02f4ba0d91296385016adf382c8c0081919c075114177d74bf",
+      "finish_reason": "stop",
+      "run_id": "01a177f3-6958-76c1-8d1c-aaa32959f693",
+      "conversation_id": "01a177f3-6958-76c1-8d1c-aaa4bce1328a",
+      "metadata": null,
+      "workspace_ref": null,
+      "failed_attempts": null,
+      "state": "complete"
+    },
+    {
+      "parts": [
+        {
+          "content": "【王承恩】躬身捧笔，拟毕，低声诵读：“**拟旨，请陛下御览。**\n\n【旨】户部于本月内，自太仓库拨银十万两，赈济陕西灾民；另拨银二十万两，补给关宁军欠饷。两项分别立案，分别起解，毋得混淆挪移。月底如尚在途，据实报明起解日期及行抵处所，不得冒报收讫。此系本月一次拨给，**不另立按月专款**。钦此。”",
+          "id": "msg_02f4ba0d91296385016adf383262c08191bc8c8cdbf54b4951",
+          "provider_name": "openai-codex",
+          "provider_details": {
+            "phase": "final_answer"
+          },
+          "part_kind": "text"
+        }
+      ],
+      "usage": {
+        "input_tokens": 6915,
+        "cache_write_tokens": 0,
+        "cache_read_tokens": 6784,
+        "output_tokens": 146,
+        "input_audio_tokens": 0,
+        "cache_audio_read_tokens": 0,
+        "output_audio_tokens": 0,
+        "audio_seconds": 0.0,
+        "details": {
+          "reasoning_tokens": 0
+        },
+        "cost": "0.0024004",
+        "output_reasoning_tokens": 0
+      },
+      "model_name": "gpt-6.1-sol",
+      "timestamp": "2026-10-26T11:23:27.903272Z",
+      "kind": "response",
+      "provider_name": "openai-codex",
+      "provider_url": "https://chatgpt.com/backend-api/codex",
+      "provider_details": {
+        "timestamp": "2026-10-26T11:23:27Z",
+        "service_tier": "default",
+        "finish_reason": "completed"
+      },
+      "provider_response_id": "resp_02f4ba0d91296385016adf382f98388191b764049acfe6c832",
+      "finish_reason": "stop",
+      "run_id": "01a177f3-6958-76c1-8d1c-aaa32959f693",
+      "conversation_id": "01a177f3-6958-76c1-8d1c-aaa4bce1328a",
+      "metadata": null,
+      "workspace_ref": null,
+      "failed_attempts": null,
+      "state": "complete"
+    },
+    {
+      "parts": [
+        {
+          "tool_name": "dismiss",
+          "args": "{}",
+          "tool_call_id": "call_229c65c928c8411aa4fdab8f0c7349e2",
+          "tool_kind": null,
+          "id": "fc_06d68011cd85a519016adf383ccf588191a263d4bd413ed952",
+          "provider_name": "openai-codex",
+          "provider_details": null,
+          "part_kind": "tool-call"
+        }
+      ],
+      "usage": {
+        "input_tokens": 7061,
+        "cache_write_tokens": 0,
+        "cache_read_tokens": 0,
+        "output_tokens": 13,
+        "input_audio_tokens": 0,
+        "cache_audio_read_tokens": 0,
+        "output_audio_tokens": 0,
+        "audio_seconds": 0.0,
+        "details": {
+          "reasoning_tokens": 0
+        },
+        "cost": "0.014252",
+        "output_reasoning_tokens": 0
+      },
+      "model_name": "gpt-6.1-sol",
+      "timestamp": "2026-10-26T11:23:40.085738Z",
+      "kind": "response",
+      "provider_name": "openai-codex",
+      "provider_url": "https://chatgpt.com/backend-api/codex",
+      "provider_details": {
+        "timestamp": "2026-10-26T11:23:38Z",
+        "service_tier": "default",
+        "finish_reason": "completed"
+      },
+      "provider_response_id": "resp_06d68011cd85a519016adf383a8da081918c53f087c80d3014",
+      "finish_reason": "stop",
+      "run_id": "01a177f3-a2b4-758b-81da-1942f825ed0a",
+      "conversation_id": "01a177f3-a2b4-758b-81da-19430b312a6a",
+      "metadata": null,
+      "workspace_ref": null,
+      "failed_attempts": null,
+      "state": "complete"
+    },
+    {
+      "parts": [
+        {
+          "content": "【王承恩】躬身领旨：“**遵旨，照所拟这一道旨颁行，本月办理，不另加旨。**”随即将旨稿恭谨收妥，退立一侧。\n\n【旁白】今夜召对至此，殿中归于肃静。",
+          "id": "msg_06d68011cd85a519016adf3840e91c8191b88a7f4307be1e55",
+          "provider_name": "openai-codex",
+          "provider_details": {
+            "phase": "final_answer"
+          },
+          "part_kind": "text"
+        }
+      ],
+      "usage": {
+        "input_tokens": 7084,
+        "cache_write_tokens": 0,
+        "cache_read_tokens": 6912,
+        "output_tokens": 74,
+        "input_audio_tokens": 0,
+        "cache_audio_read_tokens": 0,
+        "output_audio_tokens": 0,
+        "audio_seconds": 0.0,
+        "details": {
+          "reasoning_tokens": 0
+        },
+        "cost": "0.0017752",
+        "output_reasoning_tokens": 0
+      },
+      "model_name": "gpt-6.1-sol",
+      "timestamp": "2026-10-26T11:23:42.069490Z",
+      "kind": "response",
+      "provider_name": "openai-codex",
+      "provider_url": "https://chatgpt.com/backend-api/codex",
+      "provider_details": {
+        "timestamp": "2026-10-26T11:23:41Z",
+        "service_tier": "default",
+        "finish_reason": "completed"
+      },
+      "provider_response_id": "resp_06d68011cd85a519016adf383dab44819191a868a37166e7a6",
+      "finish_reason": "stop",
+      "run_id": "01a177f3-a2b4-758b-81da-1942f825ed0a",
+      "conversation_id": "01a177f3-a2b4-758b-81da-19430b312a6a",
+      "metadata": null,
+      "workspace_ref": null,
+      "failed_attempts": null,
+      "state": "complete"
+    }
+  ],
+  "replies": [
+    "{\n  \"facts\": [],\n  \"reports\": [],\n  \"decree_events\": [],\n  \"decrees\": [\n    {\n      \"text\": \"户部于本月内，自太仓库拨银十万两，赈济陕西灾民；另拨银二十万两，补给关宁军欠饷。两项分别立案，分别起解，毋得混淆挪移。月底如尚在途，据实报明起解日期及行抵处所，不得冒报收讫。此系本月一次拨给，**不另立按月专款**。钦此。\",\n      \"origin\": \"emperor\",\n      \"secret\": false,\n      \"handler\": null,\n      \"turn\": 2,\n      \"endorsements\": [],\n      \"interim\": false,\n      \"people\": [\n        \"王承恩\"\n      ]\n    }\n  ]\n}"
+  ],
+  "source": "/Users/akagilnc/.ak-roles/books/Ming_LLM/1980/runs/01a177ef-1999-710b-b57d-f621d3943cb2@fixer/evidence/declarations-payments"
+}

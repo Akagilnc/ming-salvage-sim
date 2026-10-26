@@ -140,9 +140,15 @@ def opening_db(request, tmp_path_factory, opening_template_db):
 
 
 @pytest.fixture(scope="session")
-def first_night(opening_db, tmp_path_factory):
+def first_night(opening_db, tmp_path_factory, request):
+    recording = getattr(request, "param", None)
+    actions = [{"action": "open"}]
+    if recording is not None:
+        case = json.loads((RECORDED / f"night_{recording}.json").read_text())
+        actions += [{"action": "say", "words": words} for words in case["words"]]
+        actions.append({"action": "dismiss"})
     return extend_history(
-        opening_db, tmp_path_factory.mktemp("first-night"), ({"action": "open"},)
+        opening_db, tmp_path_factory.mktemp("first-night"), actions, case=recording
     )
 
 
