@@ -23,6 +23,14 @@
 - 录制器先后在未进事件循环就建模型、把带代码围栏的旧回复当 JSON、假定中旨录件有 `words` 时失败；诊断与各版脚本留在 `review-r1/`。拨款成功后只补缺失的两份中旨录音，不覆盖已得原卷。
 - 七份已无消费者的分段/旧强颁录件移至 `review-r1/retired-recordings/`，仓内文件及现役说明随消费者一起退役。
 
+### 本轮修内司：两笔拨款与省县任命的配套输入
+
+原卷：`~/.ak-roles/books/Ming_LLM/1980/runs/01a177ef-1999-710b-b57d-f621d3943cb2@fixer/evidence/`，脚本 `record-declarations.py`。
+
+- `night_payments.json`、`night_county.json` 逐字保留 `declarations-{payments,county}/night.json`：HTTP 新局两轮拟旨、准旨、退朝，场景与夜间声明均真调 Codex `gpt-6.1-sol`。原生场景 `ModelResponse`（含工具调用）和整夜声明原话完整序列化；回放工具仍读当前账本，不回放工具返回。两夜各成一道对应旨意，没有提前落款或任命。
+- `month_two_payments_{combined,split}.txt`、`month_provincial_county.txt` 逐字取 `declarations-payments/{combined,split}/reply.txt`、`declarations-county/county/reply.txt`。用生产 `Court.translate`、当前单声明 schema，将旧声明全文作为冻结后果重新转译，输入带上述真实夜间所成旨意。事实与经办／办结事件均由模型标明旨意归属，未手补下标；原生 `messages.json`、完整输入、存档与结构化结果均留卷。
+- 这是混合边界迁移，不是重新推演：冻结后果仍含旧稿的强颁、核缺等叙述，不冒称新录夜间实际经历了这些全部情节。既有 HTTP 用例先回放配套成旨夜，再过月，保留合写／拆写、余额不足、提交中断恢复、收付金额和省县任命断言，并核对落账归属。夜间前置复用 session 级 `first_night` → `extend_history` 的真实 HTTP 链；同一配套夜只建一次，各案由 `game_db` 复制私有库，不直造旨意实体。
+
 以下旧节只记当时录制历史；上述文件的现役来源以本节为准。
 
 ## #1978 契约迁移（确定性输入，不冒充新录音）

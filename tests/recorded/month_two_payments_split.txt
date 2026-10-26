@@ -4,6 +4,7 @@
       "entity_type": "affair",
       "entity": "陕西十万两赈银起解",
       "create": true,
+      "decree": 0,
       "changes": [],
       "text": "天启七年十月，陕西赈银十万两已从太仓验银、封装、交领，调集解役起解。至十月底，银解仍在途中，尚未交收、散给饥民。陕西十万两不足原请三十万两，后续交收、散给须待实报。"
     },
@@ -11,6 +12,7 @@
       "entity_type": "affair",
       "entity": "关宁二十万两补欠饷银起解",
       "create": true,
+      "decree": 0,
       "changes": [],
       "text": "天启七年十月，关宁补欠饷银二十万两已从太仓验银、封装、交领，调集解役起解。至十月底，银解仍在途中，尚未交收、散给将士。关宁二十万两也仅为补欠的一部分；后续交收、散给须待实报，本月不据此认定兵手已领或欠饷已补。"
     },
@@ -19,6 +21,7 @@
       "entity": "国库",
       "create": false,
       "affair": "陕西十万两赈银起解",
+      "decree": 0,
       "changes": [
         {
           "field": "taels",
@@ -36,6 +39,7 @@
       "entity": "国库",
       "create": false,
       "affair": "关宁二十万两补欠饷银起解",
+      "decree": 0,
       "changes": [
         {
           "field": "taels",
@@ -52,6 +56,7 @@
       "entity_type": "person",
       "entity": "郭允厚",
       "create": false,
+      "decree": 0,
       "changes": [],
       "text": "郭允厚在发解文册上注明奉强颁之旨办理，既不敢抗命，也留下此前已陈款项相逼的凭据。他保住尚书职任，却对皇帝越过覆议、令其承担支解责任心生惴惴。内阁与户科照例登记奉行，原先关于补缺的意见并未因此消失。"
     },
@@ -59,6 +64,7 @@
       "entity_type": "world",
       "entity": "天下",
       "create": false,
+      "decree": 0,
       "changes": [
         {
           "field": "imperial_prestige",
@@ -71,6 +77,7 @@
       "entity_type": "class",
       "entity": "官僚",
       "create": false,
+      "decree": 0,
       "changes": [
         {
           "field": "satisfaction",
@@ -83,6 +90,7 @@
       "entity_type": "faction",
       "entity": "东林",
       "create": false,
+      "decree": 0,
       "changes": [
         {
           "field": "satisfaction",
@@ -95,6 +103,7 @@
       "entity_type": "faction",
       "entity": "阉党",
       "create": false,
+      "decree": 0,
       "changes": [
         {
           "field": "satisfaction",
@@ -107,6 +116,7 @@
       "entity_type": "faction",
       "entity": "军队",
       "create": false,
+      "decree": 0,
       "changes": [
         {
           "field": "satisfaction",
@@ -126,6 +136,7 @@
   ],
   "decree_events": [
     {
+      "decree": 0,
       "kind": "handled",
       "text": "户部奉强颁成命，将陕西赈银十万两、关宁补欠饷银二十万两分别立案，完成验银、封装、交领并分途起解；月底两路仍在途中，未办结交收散给。"
     }

@@ -311,9 +311,11 @@ def test_returned_urgent_waits_through_vacancy(
         assert [p["id"] for p in material["context"]["returned"]] == [original["id"]]
 
 
+@pytest.mark.usefixtures("first_night")
 @pytest.mark.parametrize(
-    ("opening_db", "case"),
-    [(None, case) for case in [
+    ("opening_db", "case", "first_night", "game_db"),
+    [(None, case, "payments" if isinstance(case[0], str) else None,
+      "first_night" if isinstance(case[0], str) else "opening_db") for case in [
         ("combined", 300000, False),
         ("split", 300000, False),
         ("combined", 300000, "commit"),
@@ -322,8 +324,8 @@ def test_returned_urgent_waits_through_vacancy(
         (5000000, 3200000, False),
         (5000000, 3200000, "write"),
         (5000000, 3200000, "commit"),
-    ]] + [("two-payments-shortage", ("combined", 250000, False))],
-    indirect=["opening_db"],
+    ]] + [("two-payments-shortage", ("combined", 250000, False), "payments", "first_night")],
+    indirect=["opening_db", "first_night", "game_db"],
 )
 def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
     game_db: Path, case, steps, audit, opening_db
@@ -406,6 +408,10 @@ def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
             ["陕西十万两赈银起解", "关宁二十万两补欠饷银起解"] if isinstance(nominal, str) else ["内库"]
         )
         if isinstance(nominal, str):
+            assert {t["origin_ref"] for t in transfers} == {
+                f["detail"]["origin_ref"] for f in ledger["facts"] if f["kind"] == "received"
+            } == {e["id"] for e in ledger["entities"] if e["kind"] == "decree"}
+            assert not [f for f in ledger["facts"] if f["kind"] == "unhandled"]
             assert next(e["data"]["imperial_prestige"] for e in ledger["entities"] if e["kind"] == "world") == 25
             assert [t["limit_reason"] for t in transfers] == [None, "balance" if actual == 250000 else None]
             assert [f["detail"]["limit_reason"] for f in ledger["facts"] if f["kind"] == "received"] == [None, "balance" if actual == 250000 else None]

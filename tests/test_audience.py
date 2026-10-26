@@ -158,8 +158,7 @@ def test_backing_follows_its_decree_and_signers(game_db, steps, audit, case, rec
     else:
         steps["NightDeclaration"] = replaying(recording["replies"])
     steps["deliberation"] = replaying(
-        [(RECORDED / ("deliberation_rejected.txt" if case == "held" else "deliberation.txt")).read_text(),
-         (RECORDED / "deliberation.txt").read_text()], received,
+        [(RECORDED / ("deliberation_rejected.txt" if case == "held" else "deliberation.txt")).read_text()], received,
     )
     with TestClient(create_app(game_db.parent)) as client:
         client.post("/actions", json={"action": "load", "save": game_db.name})
@@ -210,16 +209,13 @@ def test_backing_follows_its_decree_and_signers(game_db, steps, audit, case, rec
         for endorsement in (e for e in declared if e["endorser"] != "御笔"):
             assert [f["detail"]["decree_id"] for f in ledger["facts"]
                     if f["kind"] == "endorsed" and f["entity_id"] == next(e["id"] for e in ledger["entities"] if e["key"] == endorsement["endorser"])] == [decree["id"]]
-        if case == "held":
-            assert state["petitions"][0]["options"] == ["强颁", "收回", "留中"]
-            client.post("/actions", json={"action": "choose", "petition": state["petitions"][0]["id"], "option": 2}).raise_for_status()
-        else:
-            assert state["petitions"] == []
+        assert state["petitions"] == []
         client.post("/actions", json={"action": "month"}).raise_for_status()
         if case == "held":
-            client.post("/actions", json={"action": "load", "save": game_db.name})
-            client.post("/actions", json={"action": "month"}).raise_for_status()
-            assert json.loads(received[-1].parts[0].content)["context"]["decree"]["data"]["endorsements"] == decree["data"]["endorsements"]
+            state = client.get("/state").json()["game"]
+            assert state["petitions"][0]["options"] == ["强颁", "收回", "留中"]
+            client.post("/actions", json={"action": "choose", "petition": state["petitions"][0]["id"], "option": 2}).raise_for_status()
+            client.portal.call(client.app.state.web.game.drain)
         ledger = audit(game_db)
         assert not [f for f in ledger["facts"] if f["kind"] == "changed" and f["detail"]["origin_ref"] == decree["id"] and "imperial_prestige" in f["detail"]["actual"]]
         assert not [f for f in ledger["facts"] if f["kind"] == "interim"]
