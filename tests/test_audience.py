@@ -54,7 +54,8 @@ def test_nights_are_persistent_and_translate_only_after_dismissal(
         assert all(e["data"]["turn"] == {"approved": 4, "new_office": 2}[recording] for e in orders)
         assert all(
             set(e["data"])
-            == {"text", "origin", "people", "night_id", "secret", "turn", "endorsements", "interim"}
+            == {"text", "origin", "people", "night_id", "secret", "handler", "turn", "endorsements", "interim"}
+            and e["data"]["handler"] is None
             for e in orders
         )
         ids = {e["key"]: e["id"] for e in ledger["entities"] if e["kind"] == "person"}
