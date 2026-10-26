@@ -20,12 +20,14 @@ from ming.middle.fiscal import OUTPUT_METRICS, levers, payable_army, settling
 from ming.middle.declaration import (
     Declaration,
     DecreeEvent,
+    EntityRef,
     Fact,
     NightDeclaration,
+    MonthlyFunding,
     PaymentPolicy,
     Unhandled,
 )
-from ming.middle.queries import CATALOGUE
+from ming.middle.queries import CATALOGUE, FUNDED_AFFAIRS
 from ming.middle.night import read_night
 from ming.middle.opening import REFERENCES
 from ming.middle.appointments import ALIASES, cabinet_members, cabinet_records, incumbency_record, office_pairs, reference_key
@@ -34,6 +36,10 @@ from ming.middle.records import TranslationMaterials, read_records
 from ming.middle.invoke import ModelSource, build_agent, invoke
 
 T = TypeVar("T", bound=Declaration)
+APPOINTMENT_RULES = """任免只声明 incumbency：entity 用史书官名（京官如户部右侍郎、南京户部尚书；外官如陕西巡抚、保定府新城县知县），create=false。官职、属地由目录正名或别名精确解析，同名属地须带上级全名。holders 写正任变更后的完整人名名单，acting 写点名暂署的完整人名名单；一员最多一人，免去全体或撤署写相应空名单。外官须带属地，暂署不算正任。首次任职由引擎创建在任记录；人物不存 office、office_region、office_type 等任职字段。
+升转新实职即离原任；旨里写明兼领、仍管的才保留旧职。没有兼领、仍管时，在同份声明里从原任 holders 去掉此人；旧职本来无在任记录不必声明。新官替换同官同地原任，不动同官别地。任免不改变人物状态、所在、在场或行程。罢去全部官职时，在同份声明中把罢官原因写进此人的 identity_description 作为处境。
+尚书现任只算掌部的一员；阁臣的尚书兼衔只记身份与履历文字，不写入在任记录。内阁首辅为单员职务，须为在任阁臣；同份声明可先任大学士再任首辅。离开全部阁职时同时卸首辅，新首辅只替原首辅这一职、不免其大学士。次辅只记身份。"""
+
 INSTRUCTIONS = """你是御前召对的转译官。退朝后通读整夜已落账的全部轮次，一夜只交一次声明。
 decrees 只记成了的旨意：领旨的人已经把皇帝的话拟成正式圣旨念出，皇帝认可了那份定稿。
 认可按意思认，不限于“准”字；皇帝没表态的就是默拒，驳了的也不成旨。认可须对应当时已经拟就的具体旨稿，不预认本轮回话后续新增的拟稿，也不追认更早搁置的请示。不要把问话、大臣请示或未认可的拟稿记成旨。
@@ -42,10 +48,8 @@ text 保留皇帝认可的圣旨定稿全文，不改写、不摘要。origin �
 当场已经发生的事实用 facts：哪个实体、是否新建、字段变更列表、一段文字。不分类，不设动作枚举。
 只记今夜新发生的实况，不把邸报旧事、档案履历或大臣奏报中的说法当成今夜已经发生的事实。
 是待执行旨意还是当场实况，照整夜戏文判断；未认可的拟旨不能当成已经执行的事实。
-名字用账本正名或所列别名。任免写 entity_type=incumbency，entity 写史书官名（如户部右侍郎、南京户部尚书、陕西巡抚、西安知府），create=false。changes 的 holders 写正任变更后的完整人名名单，acting 写点名暂署的完整人名名单；一员最多一人，空名单为免职或撤署。外官须带属地，暂署不算正任。首次任职由引擎创建在任记录；人物不存任职字段。一人可兼多职，任免不改变状态、所在、在场或行程。罢去全部官职时，在同份声明中把罢官原因写进此人的 identity_description 作为处境。
-尚书现任只算掌部的一员；阁臣的尚书兼衔只记身份与履历文字，不写入在任记录。
+名字用账本正名或所列别名。
 戏文已经宣布任命生效、受命者当场领受的，记在任记录；赴任、查账、造炮等尚待办理，不等于已经生效的任命也要等到月末。尚未获准的任命不提前记。
-内阁首辅为单员职务，须为在任阁臣；同份声明可先任大学士再任首辅。离开全部阁职时同时卸首辅，新首辅只替原首辅这一职。次辅只记身份。
 人在外地也可以当场起复或任职；除首辅须在任阁臣外，不以在任与否限制任命，location 不因此改变。新建实体明确 create=true，已有实体用 false。
 无字段变化可以只记文字；对象模型之外的伤情等记入所涉实体履历，不长新字段。
 奏报与公开说法单列 reports，只交实体、文字和 audience；facts 只记物理实况。
@@ -73,7 +77,7 @@ CATALOGUES = {"historical_event", "fiscal", "account", "office", "territory", "i
 
 def allowed_fields(ledger: Ledger) -> dict[str, set[str]]:
     fields: dict[str, set[str]] = {
-        "affair": {"text"},
+        "affair": {"text", "monthly_funding", "payment_policy"},
         "decree": {"text", "origin", "people"},
     }
     keys = func.json_each(E.data).table_valued("key")
@@ -81,6 +85,7 @@ def allowed_fields(ledger: Ledger) -> dict[str, set[str]]:
         E.id.table.join(keys, true())
     ).where(E.source != "", E.kind != "calendar").distinct()):
         fields.setdefault(row["kind"], set()).add(row["field"])
+    fields["affair"].difference_update({"arrears", "month_paid"})
     fields["incumbency"] = {"holders", "acting"}
     # Fiscal settlement, arrears and the content catalogues are engine-owned;
     # translation writes only the levers the month accounts read.
@@ -185,6 +190,14 @@ def check_decrees(
     if isinstance(out, NightDeclaration) and out.decrees:
         turns = read_night(ledger, source).turns
         for i, decree in enumerate(out.decrees):
+            if decree.secret:
+                decree.handler = reference_key(ledger, "person", decree.handler) if decree.handler is not None else None
+                if decree.handler not in names.get("person", {}):
+                    fail(
+                        f"decrees[{i}].handler", decree.handler,
+                        name_expected("person", decree.handler or "", names), names,
+                        "密令须声明唯一承办人，用人物目录正名或所列别名；照整夜戏文记录领旨去办者，重交整份。",
+                    )
             if decree.turn > len(turns):
                 fail(
                     f"decrees[{i}].turn",
@@ -231,13 +244,39 @@ def check_endorsements(
                 )
 
 
+def check_funding(ledger: Ledger, out: Declaration, names: Names) -> dict[str, Item]:
+    funding = {r["key"]: r["data"]["monthly_funding"] for r in ledger.read(FUNDED_AFFAIRS)}
+    for i, fact in enumerate(out.facts):
+        if fact.entity_type != "affair":
+            continue
+        for j, change in enumerate(fact.changes):
+            if change.field != "monthly_funding":
+                continue
+            account = change.value["account"]
+            if account not in names["account"]:
+                fail(f"facts[{i}].changes[{j}].value.account", account, name_expected("account", account, names), names, "出款库用账本正名，重交整份。")
+            funding[fact.entity] = change.value
+    return funding
+
+
 def check_fiscal(ledger: Ledger, out: Declaration, names: Names) -> None:
+    schemas = {"payment_policy": PaymentPolicy, "monthly_funding": MonthlyFunding}
+    for i, j, change in (
+        (i, j, change) for i, fact in enumerate(out.facts)
+        for j, change in enumerate(fact.changes) if change.field in schemas
+    ):
+        try:
+            schemas[change.field].model_validate(change.value)
+        except ValidationError:
+            fail(f"facts[{i}].changes[{j}].value", change.value, schemas[change.field].model_json_schema(), names,
+                 f"按 expected 的 schema 修正 {change.field}，重交整份。")
     config = ledger.entities(kind="fiscal")
     expenses = {
         r["key"]: r["data"]["account"]
         for r in config
         if r["data"].get("direction") == "expense"
     }
+    funding = check_funding(ledger, out, names)
     # A fiscal lever only on an entity the month accounts read it from.
     targets = {
         ("fiscal", "value"): levers(config),
@@ -261,17 +300,6 @@ def check_fiscal(ledger: Ledger, out: Declaration, names: Names) -> None:
                     names,
                     "对象改成 expected 里的正名，重交整份。",
                 )
-            if change.field == "payment_policy":
-                try:
-                    PaymentPolicy.model_validate(change.value)
-                except ValidationError:
-                    fail(
-                        path + ".value",
-                        change.value,
-                        PaymentPolicy.model_json_schema(),
-                        names,
-                        "按 expected 的 schema 修正 payment_policy，重交整份。",
-                    )
             if (fact.entity_type, change.field) == ("building", "output_metric"):
                 if change.value not in OUTPUT_METRICS:
                     fail(
@@ -312,20 +340,22 @@ def check_fiscal(ledger: Ledger, out: Declaration, names: Names) -> None:
                         if account == fact.entity
                     ]
                     + (["军饷"] if fact.entity == "国库" else [])
+                    + [EntityRef(entity_type="affair", entity=key).model_dump()
+                       for key, grant in funding.items() if grant["account"] == fact.entity]
                 )
                 # A complete order: every choice exactly once.
                 value = change.value
                 if not (
                     isinstance(value, list)
-                    and all(isinstance(v, str) for v in cast(list[Any], value))
-                    and sorted(cast(list[str], value)) == sorted(choices)
+                    and len(cast(list[Any], value)) == len(choices)
+                    and all(cast(list[Any], value).count(choice) == 1 for choice in choices)
                 ):
                     fail(
                         path + ".value",
                         change.value,
                         choices,
                         names,
-                        "按 expected 的正名交完整顺序，每个一次，重交整份。",
+                        "按 expected 的项目引用交完整顺序，每个一次，重交整份。",
                     )
 
 
@@ -422,7 +452,7 @@ def declaration_agent(
         name=output_type.__name__,
         deps_type=TranslationMaterials,
         output_type=PromptedOutput(output_type),
-        instructions=instructions + "\n官职和属地不混在实况名册里；需要核对官名、地名、别名、所属衙门或员额时，用 read_records 带类 office、territory 或正名查询；空参不返回目录。",
+        instructions=instructions + "\n" + APPOINTMENT_RULES + "\n官职和属地不混在实况名册里；需要核对官名、地名、别名、所属衙门或员额时，用 read_records 带类 office、territory 或正名查询；空参不返回目录。",
         retries=1,
     )
 
@@ -433,7 +463,7 @@ def declaration_agent(
         return json.dumps(
             {
                 "catalogue": ctx.deps.court.record_catalogue(ctx.deps.identity),
-                "field_schemas": {"payment_policy": PaymentPolicy.model_json_schema()},
+                "field_schemas": {"payment_policy": PaymentPolicy.model_json_schema(), "monthly_funding": MonthlyFunding.model_json_schema()},
                 "allowed_fields": {
                     k: sorted(v) for k, v in allowed_fields(ledger).items()
                 },

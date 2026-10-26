@@ -4,7 +4,7 @@ Ledger executes selections; it has no night, inbox, identity or workflow modes.
 """
 
 from typing import Any
-from sqlalchemy import JSON, Select, and_, func, or_, select, true, tuple_, type_coerce
+from sqlalchemy import Select, and_, func, or_, select, true, tuple_
 from sqlalchemy.sql.base import ReadOnlyColumnCollection
 from sqlalchemy.sql.elements import ColumnElement, KeyedColumnElement
 from sqlalchemy.sql.functions import Function
@@ -145,6 +145,11 @@ def decrees_with(kind: str, date: Item) -> Select[Any]:
     )
 
 
+FUNDED_AFFAIRS = ENTITY_ROWS.where(
+    E.kind == "affair", E.data["monthly_funding"]["account"].as_string().is_not(None)
+)
+
+
 SECRET_DECREES = ENTITY_ROWS.where(
     E.kind == "decree", E.data["secret"].as_boolean().is_(True)
 )
@@ -167,36 +172,4 @@ def public_decree(entity: ReadOnlyColumnCollection[str, KeyedColumnElement[Any]]
         .where(F.entity_id == entity.id, F.kind == "landed")
         .correlate(entity.id.table)
         .exists(),
-    )
-
-
-def due_decrees(date: Item) -> Select[Any]:
-    decision = type_coerce(
-        select(F.detail)
-        .where(F.entity_id == E.id, F.kind == "choice")
-        .order_by(F.position.desc())
-        .limit(1)
-        .correlate(E.id.table)
-        .scalar_subquery(),
-        JSON,
-    )
-    return ENTITY_ROWS.where(
-        E.kind == "decree",
-        ~select(F.position)
-        .where(F.entity_id == E.id, or_(
-            F.kind == "landed",
-            and_(F.kind == "unhandled", F.detail["monthly"].as_string().is_distinct_from("attempted")),
-        ))
-        .exists(),
-        or_(
-            decision.is_(None),
-            and_(
-                decision["text"].as_string() != "收回",
-                ~and_(
-                    decision["text"].as_string() == "留中",
-                    decision["date"]["year"].as_integer() == date["year"],
-                    decision["date"]["month"].as_integer() == date["month"],
-                ),
-            ),
-        ),
     )

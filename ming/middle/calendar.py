@@ -1,7 +1,9 @@
-"""Monthly person movement and calendar advance share one ledger transaction."""
+"""Monthly person movement settles before reports; the calendar advances last."""
 
 from ming.ledger import Entity, Item, Ledger
-from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS
+from sqlalchemy import select
+
+from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS, FACT_COLUMNS as F
 
 
 CAPITAL = "北直隶 / 京师"
@@ -30,12 +32,16 @@ def petition_date(date: Item, *, ended: bool = True) -> Item:
     return opened
 
 
-def advance_month(ledger: Ledger) -> None:
+def settle_journeys(ledger: Ledger) -> None:
+    date = dict(calendar_row(ledger)["data"])
     rows = ledger.entities(
-        kind="person", query=ENTITY_ROWS.where(E.data["transit_to"].as_string() != "")
+        kind="person", query=ENTITY_ROWS.where(
+            E.data["transit_to"].as_string() != "",
+            ~select(F.position).where(
+                F.entity_id == E.id, F.kind.in_(("travelled", "arrived")), F.date == date,
+            ).exists(),
+        )
     )
-    calendar = ledger.get(calendar_row(ledger)["id"])
-    date = dict(calendar.data)
     changed: list[Entity] = []
     for row in rows:
         person = ledger.get(row["id"])
@@ -57,10 +63,16 @@ def advance_month(ledger: Ledger) -> None:
             changes,
         )
         changed.append(person)
+    ledger.commit(changed)
+
+
+def advance_month(ledger: Ledger) -> None:
+    calendar = ledger.get(calendar_row(ledger)["id"])
+    date = dict(calendar.data)
     calendar.record(
         "advanced",
         "",
         {"date": date},
         next_month(date),
     )
-    ledger.commit([*changed, calendar])
+    ledger.commit([calendar])

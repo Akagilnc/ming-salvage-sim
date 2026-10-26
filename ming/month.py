@@ -199,15 +199,13 @@ class Month:
                 return await self.night(
                     entity, [d for d in decrees if d.data["night_id"] == str(route)]
                 )
-            return await self.world(self.nights(decrees), decrees)
+            return await self.world(self.nights(decrees))
 
         return enlist(self.originals, route, produce, replace=True)
 
-    async def world(self, nights: list[EntityView], decrees: list[EntityView]) -> bool:
-        """Verdicts on held decrees, then this month's world simulation."""
+    async def world(self, nights: list[EntityView]) -> bool:
+        """This month's world simulation, after the current nights' segments."""
         calendar = self.court.calendar()
-        old = [d for d in self.court.due_decrees() if d not in decrees]
-        verdicts = await self.verdicts(old, calendar.id)
         # World simulation precedes this month's sources: returned originals are unrevised.
         returned = {str(f.detail["id"]) for f in self.court.returned_petitions()}
         return await self.simulations.run(
@@ -224,11 +222,6 @@ class Month:
                         ],
                     }
                     for n in nights
-                ],
-                "reconsidered": [
-                    {"decree": d.model_dump(mode="json"), "deliberation": v,
-                     "prior_interim": self.court.prior_interim(d.id)}
-                    for d, v in zip(old, verdicts)
                 ],
                 "prior_choices": [
                     {
@@ -271,6 +264,7 @@ class Month:
                 return pending
             await self.landing.run()
             self.court.settle_accounts()
+            self.court.settle_journeys()
             self.secrets.accumulate()
             await gather_or_raise(
                 self.gazette.run(),

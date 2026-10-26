@@ -47,6 +47,12 @@ class FiscalEnd(StrictModel):
     month: int = Field(ge=1, le=12)
 
 
+class MonthlyFunding(StrictModel):
+    amount: float = Field(strict=True, allow_inf_nan=False, description="每月专款，两数；零为停拨。")
+    account: str = Field(description="出款账户的账本正名。")
+    until: FiscalEnd | None = Field(default=None, description="止于此月（含）；过期不再应付，无止期一直付。")
+
+
 class PaymentPolicy(StrictModel):
     factor: float = Field(
         default=1,
@@ -64,7 +70,7 @@ class PaymentPolicy(StrictModel):
 
 class Change(StrictModel):
     field: str
-    value: Any
+    value: Any = Field(description="字段的新值。payment_order 交完整项目顺序：军饷与财政科目沿用账本字符串，事务用 EntityRef 形状 {entity_type: 'affair', entity: 正名}，同名不同类互不替代；army_order 仍为军队正名列表。")
     purpose: Literal["补欠", "当月饷", "犒赏", "专项"] | None = Field(
         default=None,
         description="账户付给军队或财政科目的款须写名目；value仍为带符号的两数。",
@@ -135,6 +141,10 @@ class Decree(StrictModel):
     origin: Literal["emperor", "minister"]
     secret: bool = Field(
         description="密令不明发、不经外廷。按皇帝怎么说与整夜上下文判断是否密令，不按事务类型或有没有密字判断。"
+    )
+    handler: str | None = Field(
+        default=None,
+        description="密令必须声明唯一承办人的账本正名：从整夜戏文认定实际领旨去办者；仅拟旨、宣读而不去办者不是承办人。明发旨意不填。",
     )
     turn: int = Field(
         ge=1,

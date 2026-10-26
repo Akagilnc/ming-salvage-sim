@@ -24,7 +24,7 @@ from ming.middle.appointments import office_pairs, incumbency_record, named
 from ming.ledger import Entity, Item, Ledger
 from ming.middle.dispatch import dispatch, latest_detail
 from ming.middle.fiscal import Accounts, due_levies
-from ming.middle.calendar import advance_month, calendar_row
+from ming.middle.calendar import advance_month, calendar_row, settle_journeys
 from ming.middle.declaration import (
     Declaration,
     LandingMode,
@@ -160,6 +160,9 @@ class Court:
 
     def settle_accounts(self) -> None:
         Accounts(self._ledger).run()
+
+    def settle_journeys(self) -> None:
+        settle_journeys(self._ledger)
 
     def advance_month(self) -> None:
         advance_month(self._ledger)
@@ -485,12 +488,6 @@ class Court:
             )
         ]
 
-    def due_decrees(self) -> list[EntityView]:
-        return [
-            EntityView.model_validate(e)
-            for e in self._ledger.read(queries.due_decrees(self.calendar().data))
-        ]
-
     def secret_decrees(self) -> list[EntityView]:
         return [
             EntityView.model_validate(e)
@@ -504,7 +501,7 @@ class Court:
         ]
 
     def known_people(self, decree: EntityView) -> set[str]:
-        readers = known_people(literal({k: decree.data[k] for k in ("night_id", "turn", "people")}, type_=JSON)).subquery()
+        readers = known_people(literal(decree.data, type_=JSON)).subquery()
         return {row["person"] for row in self._ledger.read(select(readers.c.person))}
 
     def consequences(self, decree: UUID) -> list[FactView]:

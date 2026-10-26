@@ -4,7 +4,8 @@ from copy import deepcopy
 
 from ming.ledger import Entity, Item, Ledger
 from ming.middle.calendar import calendar_row
-from ming.middle.declaration import PaymentPolicy
+from ming.middle.declaration import EntityRef, FiscalEnd, MonthlyFunding, PaymentPolicy
+from ming.middle.queries import FUNDED_AFFAIRS
 
 WAN = 10_000
 # Building output goes to an account or a 0-100 world scale; "" yields nothing.
@@ -55,12 +56,13 @@ def levers(config: list[Item]) -> list[str]:
     ]
 
 
+def past_end(date: Item, until: FiscalEnd | None) -> bool:
+    return until is not None and (date["year"], date["month"]) > (until.year, until.month)
+
+
 def active_policy(data: Item, date: Item) -> PaymentPolicy:
     policy = PaymentPolicy.model_validate(data.get("payment_policy", {}))
-    if policy.until and (date["year"], date["month"]) > (
-        policy.until.year,
-        policy.until.month,
-    ):
+    if past_end(date, policy.until):
         return PaymentPolicy()
     return policy
 
@@ -77,6 +79,12 @@ def obligation(pair: tuple[str, str], existing: dict[tuple[str, str], Item]) -> 
         if not payable_army(data):
             return 0
         base = data.get("manpower", 0) * data.get("salary_rate", 0) / WAN
+    elif pair[0] == "affair":
+        funding = MonthlyFunding.model_validate(data["monthly_funding"])
+        date = existing[("calendar", "world")]["data"]
+        if past_end(date, funding.until):
+            return 0
+        base = funding.amount / WAN
     elif pair[1] == "建筑维护_base":
         base = sum(
             row["data"].get("maintenance", 0)
@@ -114,7 +122,7 @@ class Accounts:
         self.ledger = ledger
         self.rows = [
             ledger.get(row["id"])
-            for row in ledger.entities(
+            for row in [*ledger.read(FUNDED_AFFAIRS), *ledger.entities(
                 kind=(
                     "calendar",
                     "account",
@@ -125,7 +133,7 @@ class Accounts:
                     "world",
                     "historical_event",
                 )
-            )
+            )]
         ]
         self.calendar = next(e for e in self.rows if e.kind == "calendar")
         self.date = self.calendar.data
@@ -272,12 +280,19 @@ class Accounts:
         armies = {
             e.key: e for e in self.rows if e.kind == "army" and payable_army(e.data)
         }
+        recipients = {(e.kind, e.key): e for e in self.rows}
         for account in self.accounts.values():
-            for category in account.data.get("payment_order", []):
-                if category == "军饷":
+            for item in account.data.get("payment_order", []):
+                if isinstance(item, dict):
+                    ref = EntityRef.model_validate(item)
+                    category = ref.entity
+                    targets = [recipients[ref.entity_type, ref.entity]]
+                elif item == "军饷":
+                    category = item
                     order = dict.fromkeys([*account.data["army_order"], *armies])
                     targets = [armies[name] for name in order if name in armies]
                 else:
+                    category = item
                     targets = [self.config[category]]
                 for target in targets:
                     self.pay(target, account, category)

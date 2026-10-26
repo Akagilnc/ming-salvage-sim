@@ -144,7 +144,10 @@ def decree_access(identity: Identity, reference: ColumnElement[Any]) -> dict[str
     handled = literal(identity == "emperor")
     if isinstance(identity, Officials):
         people = func.json_each(decree.data["people"]).table_valued("value")
-        handled = select(people.c.value).where(people.c.value.in_(identity.people)).exists()
+        handled = case(
+            (decree.data["secret"].as_boolean(), decree.data["handler"].as_string().in_(identity.people)),
+            else_=select(people.c.value).where(people.c.value.in_(identity.people)).exists(),
+        )
         known = or_(known, known_people(decree.data, identity.people).exists())
         if identity.exclude_secrets:
             known = known & decree.data["secret"].as_boolean().is_(False)
