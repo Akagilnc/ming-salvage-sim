@@ -67,7 +67,8 @@ def test_declared_journey_dates_and_month_end_arrival(game_db, steps, audit, cas
         received = []
         steps["simulation"] = replaying([
             ModelResponse(parts=[ToolCallPart("read_records", {"kind": "distance", "key": "北直隶 / 京师"}, tool_call_id="distance"),
-                                 ToolCallPart("read_records", {"kind": "person", "key": "黄立极"}, tool_call_id="person")]),
+                                 ToolCallPart("read_records", {"kind": "person", "key": "黄立极"}, tool_call_id="person"),
+                                 ToolCallPart("read_records", {"kind": "person", "key": "张瑞图"}, tool_call_id="due_person")]),
             (RECORDED / "simulation.txt").read_text(),
         ], received)
         # A second location declaration while travelling cannot change this journey.
@@ -76,6 +77,11 @@ def test_declared_journey_dates_and_month_end_arrival(game_db, steps, audit, cas
         client.post("/actions", json={"action": "month"}).raise_for_status()
         assert client.get("/state").json()["game"]["failure"] is None
         ledger = audit(game_db)
+        assert json.loads(received[0].parts[0].content)["context"]["arrivals"] == [
+            {"person": "张瑞图", "destination": "山东", "date": {"year": 1627, "month": 10, "day": 30}},
+            {"person": "王绍徽", "destination": "山东", "date": {"year": 1627, "month": 10, "day": 21}},
+            {"person": "李国普", "destination": "山东", "date": {"year": 1627, "month": 10, "day": 16}},
+        ]
         result = {p.tool_call_id: p.model_response_object() for m in received for p in m.parts if isinstance(p, ToolReturnPart)}
         assert result["distance"]["entities"][0]["data"]["山东"] == {
             "distance": 900, "days": {"常速": 20, "加急": pytest.approx(10.5882352941), "押运": 20},
@@ -83,6 +89,9 @@ def test_declared_journey_dates_and_month_end_arrival(game_db, steps, audit, cas
         }
         assert result["distance"]["entities"][0]["data"]["北直隶 / 京师"]["distance"] == 0
         assert result["person"]["entities"][0]["data"]["arrival_date"] == {"year": 1627, "month": 11, "day": 10}
+        assert result["due_person"]["entities"][0]["data"]["location"] == "北直隶 / 京师"
+        assert result["due_person"]["entities"][0]["data"]["transit_to"] == "山东"
+        assert result["due_person"]["entities"][0]["data"]["arrival_date"] == {"year": 1627, "month": 10, "day": 30}
         result = {e["key"]: e["data"] for e in ledger["entities"] if e["kind"] == "person"}
         assert result["黄立极"] == data["黄立极"]
         for name, destination, _, _, _, expected in cases:

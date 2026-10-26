@@ -23,17 +23,21 @@ def calendar_if_any(ledger: Ledger) -> Item | None:
     return next(iter(ledger.entities(kind="calendar")), None)
 
 
-def settle_journeys(ledger: Ledger) -> None:
-    date = dict(calendar_row(ledger)["data"])
-    rows = ledger.entities(
+def journeys_due(ledger: Ledger) -> list[Item]:
+    """Stored journeys due this month, shared by the draft read and settlement."""
+    date = calendar_row(ledger)["data"]
+    return ledger.entities(
         kind="person", query=ENTITY_ROWS.where(
             E.data["transit_to"].as_string() != "",
             E.data["arrival_date"]["year"].as_integer() == date["year"],
             E.data["arrival_date"]["month"].as_integer() == date["month"],
         )
     )
+
+
+def settle_journeys(ledger: Ledger) -> None:
     changed: list[Entity] = []
-    for row in rows:
+    for row in journeys_due(ledger):
         person = ledger.get(row["id"])
         destination = person.data["transit_to"]
         changes: Item = {

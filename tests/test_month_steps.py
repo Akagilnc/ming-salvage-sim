@@ -189,6 +189,10 @@ def test_two_nights_feed_world_and_arrivals_wait_for_audience(tmp_path, game_db,
                 client.post("/actions", json={"action": "retry"})
             state = client.get("/state").json()["game"]
             assert (state["date"]["month"], state["failure"]) == (month, None)
+            assert json.loads(received[-1].parts[0].content)["context"]["arrivals"] == (
+                [] if month == 11 else [{"person": "徐光启", "destination": "北直隶 / 京师",
+                                         "date": {"year": 1627, "month": 11, "day": 16}}]
+            )
             ledger = audit(tmp_path / save)
             if month == 11:
                 decrees = {e["id"] for e in ledger["entities"] if e["kind"] == "decree"}
