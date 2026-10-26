@@ -4,8 +4,6 @@ import json
 from collections.abc import Callable, Iterator, Sequence
 from uuid import UUID
 
-from sqlalchemy import or_
-
 from ming.ledger import Entity, Item, Ledger
 from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS, FACT_COLUMNS as F, FACT_ROWS
 from ming.middle.declaration import (
@@ -19,7 +17,7 @@ from ming.middle.declaration import (
 from ming.middle.rules import field_values, money_amounts
 from ming.middle.fiscal import WAN, current_paid, has_obligation
 from ming.middle.appointments import cabinet_members, cabinet_records, incumbency_record
-from ming.middle.travel import arrival_date
+from ming.middle.travel import CLEARED_JOURNEY, arrival_date, journey_route
 
 def landing_entities(
     ledger: Ledger, result: Declaration | Unhandled, owner: Entity
@@ -64,16 +62,8 @@ def landing_entities(
             ((e["kind"], e["key"]), e)
             for e in ledger.entities(kind=("fiscal", "building"))
         )
-    origins = {
-        found.get(("person", f.entity), {"data": {}})["data"].get("location") or str(c.value)
-        for f in result.facts if f.entity_type == "person"
-        for c in f.changes if c.field == "location"
-    }
     incumbents = {name for (kind, _), row in found.items() if kind == "incumbency" for field in ("holders", "acting") for name in row["data"][field]}
-    for e in ledger.read(ENTITY_ROWS.where(or_(
-        (E.kind == "distance") & E.key.in_(origins),
-        (E.kind == "person") & E.key.in_(incumbents),
-    ))):
+    for e in ledger.entities(kind="person", query=ENTITY_ROWS.where(E.key.in_(incumbents))):
         found.setdefault((e["kind"], e["key"]), e)
     return found
 
@@ -145,7 +135,7 @@ def dispatch(
                 fact_origin["origin_ref"] = str(decrees[fact.decree].id)
             changes = detail["changes"]
             if entity.kind == "person":
-                move_person(entity, changes, existing, record, date)
+                move_person(entity, changes, ledger, record, date)
             if entity.kind == "incumbency":
                 displace(entity, changes, known, record, {**association, "text": fact.text})
             record(entity, "changed", detail, changes)
@@ -292,15 +282,6 @@ def record_receipts(
             )
 
 
-CLEARED_JOURNEY = {
-    "transit_to": "",
-    "departure_date": None,
-    "arrival_date": None,
-    "travel_speed": None,
-    "waiting_audience": False,
-}
-
-
 def latest_detail(events: Sequence[tuple[str, Item]], kind: str) -> Item | None:
     """Latest deliberation or choice of this month, the row both landing and interim use."""
     return next(
@@ -335,23 +316,22 @@ def interim_mark(ledger: Ledger, decree: Entity, date: Item) -> str | None:
 def move_person(
     person: Entity,
     changes: dict[str, object],
-    existing: dict[tuple[str, str], Item],
+    ledger: Ledger,
     record: Callable[[Entity, str, Item, Item], None],
     date: Item,
 ) -> None:
+    route = journey_route(ledger, person.data, changes)
     day = changes.pop("departure_day", None)
     pace = changes.pop("travel_speed", "常速")
     # A first location is a fact, not a journey from an invented origin.
     if not person.data.get("location"):
         return
-    destination = changes.pop("location", person.data["location"])
+    changes.pop("location", None)
     if changes.get("status") not in (None, "active"):
         # Leaving active (卒/下狱/罢黜/归场) clears the journey like offstage does.
         changes.update(CLEARED_JOURNEY)
-    elif destination != person.data.get("location") and not person.data.get(
-        "transit_to"
-    ):
-        distance = existing[("distance", person.data["location"])]["data"][destination]
+    elif route is not None:
+        destination, distance = route
         departure = {"year": date["year"], "month": date["month"], "day": day}
         journey = {
             "transit_to": destination,

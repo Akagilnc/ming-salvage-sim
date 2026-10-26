@@ -2,6 +2,7 @@
 
 from ming.ledger import Entity, Item, Ledger
 from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS
+from ming.middle.travel import CLEARED_JOURNEY
 
 
 CAPITAL = "北直隶 / 京师"
@@ -44,8 +45,8 @@ def settle_journeys(ledger: Ledger) -> None:
         person = ledger.get(row["id"])
         destination = person.data["transit_to"]
         changes: Item = {
+            **CLEARED_JOURNEY,
             "location": destination,
-            "transit_to": "",
             "waiting_audience": destination == CAPITAL,
         }
         person.record("arrived", "", {"date": person.data["arrival_date"], **changes}, changes)

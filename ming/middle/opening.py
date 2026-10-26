@@ -5,8 +5,6 @@ import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-import networkx as nx
-
 from ming.ledger import Entity, Item, Ledger
 from ming.middle.appointments import incumbency_record
 
@@ -66,6 +64,8 @@ REFERENCES = {
 
 
 def import_opening(ledger: Ledger, content: Path) -> None:
+    import networkx as nx
+
     entities: list[Entity] = []
     appointments: dict[tuple[str, str], list[str]] = {}
     names = {

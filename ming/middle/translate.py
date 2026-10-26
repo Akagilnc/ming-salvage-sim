@@ -36,6 +36,7 @@ from ming.middle.rules import Names, check_rules, fail, name_expected
 from ming.middle.records import TranslationMaterials, read_records
 from ming.middle.invoke import ModelSource, build_agent, invoke
 from ming.middle.fields import FIELDS_BY_KIND
+from ming.middle.travel import journey_route
 
 T = TypeVar("T", bound=Declaration)
 APPOINTMENT_RULES = """任免只声明 incumbency：entity 用史书官名（京官如户部右侍郎、南京户部尚书；外官如陕西巡抚、保定府新城县知县），create=false。官职、属地由目录正名或别名精确解析，同名属地须带上级全名。holders、acting 按字段表填写。外官须带属地。首次任职由引擎创建在任记录；人物不存 office、office_region、office_type 等任职字段。
@@ -365,22 +366,19 @@ def check_appointment(ledger: Ledger, fact: Fact, path: str, names: Names, cabin
 
 
 def check_journey(ledger: Ledger, fact: Fact, path: str, names: Names) -> None:
-    if fact.entity_type != "person" or not any(c.field == "location" for c in fact.changes):
+    if fact.entity_type != "person":
         return
     changes = {c.field: c.value for c in fact.changes}
     rows = ledger.entities(kind="person", key=fact.entity)
     person: dict[str, Any] = rows[0]["data"] if rows else {}
-    destination = changes.get("location", person.get("location"))
-    if (not person.get("location") or person.get("transit_to")
-            or changes.get("status") not in (None, "active") or destination == person["location"]):
-        return
-    if "departure_day" not in changes:
+    try:
+        route = journey_route(ledger, person, changes)
+    except KeyError as exc:
+        fail(path + ".location", exc.args[0], {"origin": person["location"], "distance": "required"}, names,
+             "账本缺本程里程，无法计算到达日，重交整份。")
+    if route is not None and "departure_day" not in changes:
         fail(path + ".departure_day", None, {"field": "departure_day", "type": "integer"}, names,
              "本条启程缺启程日；按戏文补交 departure_day 字段，重交整份。")
-    routes = ledger.entities(kind="distance", key=person["location"])
-    if not routes or destination not in routes[0]["data"]:
-        fail(path + ".location", destination, {"origin": person["location"], "distance": "required"}, names,
-             "账本缺本程里程，无法计算到达日，重交整份。")
 
 
 def check_references(ledger: Ledger, out: Declaration, names: Names) -> None:
