@@ -1,7 +1,6 @@
 """Per-decree verdict products; month drafts publish the initial forks together."""
 
 from typing import Any
-from uuid import UUID, uuid4
 
 from pydantic_ai import PromptedOutput
 
@@ -27,7 +26,7 @@ class Deliberations:
         )
 
     async def run(
-        self, decree: EntityView, route: UUID, decision: dict[str, Any] | None = None
+        self, decree: EntityView, decision: dict[str, Any] | None = None
     ) -> dict[str, Any]:
         """Initial verdict or next-month reconsideration of one selected push."""
         done = self.court.deliberation(decree.id, decision)
@@ -50,11 +49,8 @@ class Deliberations:
         )
         self.court.log.info("model output: %s", result.output.model_dump_json())
         date = self.court.calendar().data
-        segment = uuid4()
         verdict: dict[str, Any] = {
             **result.output.model_dump(),
-            "id": str(segment),
-            "route_id": str(route),
             "decision_key": decision,
         }
         self.court.record_product(decree.id, "deliberation", verdict)

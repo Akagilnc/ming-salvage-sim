@@ -31,7 +31,7 @@ export interface Snapshot {
     running: boolean;
     failure: Interaction | null;
     pending: Interaction | null;
-    unhandled_monthly: { entity_id: string; kind: 'decree' | 'world'; text: string | null }[];
+    unhandled_monthly: { entity_id: string }[];
     petitions: Petition[];
     returned_petitions: { petition: Petition; awaiting_drafter: boolean }[];
   };

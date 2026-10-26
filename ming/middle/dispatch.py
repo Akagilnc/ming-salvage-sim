@@ -189,7 +189,7 @@ def dispatch(
                 report.model_dump(),
             )
         for event in result.decree_events:
-            target = decrees[event.decree] if event.decree is not None else known(owner.kind, owner.key)
+            target = decrees[cast(int, event.decree)]
             fact_origin = {"origin_ref": str(target.id)}
             record(target, event.kind, {"text": event.text})
         fact_origin = {}

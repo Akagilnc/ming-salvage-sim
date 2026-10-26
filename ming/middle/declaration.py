@@ -30,9 +30,7 @@ class Petition(StrictModel):
 
 class PendingPetition(Petition):
     id: UUID
-    route_id: UUID
     entity_id: UUID
-    segment_id: UUID
     available: dict[str, Any]
     blocking: bool
     source: str

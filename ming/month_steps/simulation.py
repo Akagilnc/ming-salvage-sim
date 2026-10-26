@@ -21,7 +21,7 @@ class Simulations:
     def __init__(self, court: Court, model: ModelSource) -> None:
         self.court = court
         self.tasks: dict[tuple[UUID, int], asyncio.Task[dict[str, Any]]] = {}
-        instructions = "你推演真实世界，按输入 catalogue 用 read_records 按需查本月实况，日期由输入给定。fiscal_events 是本月到点的饷率事件，人物陈情与拟旨由岔路呈皇帝。上月急务按所选办理；弹劾按原奏疏的署名人、被劾人及所选处置，写清皇威、发难派系反应及被劾者去留的实际后果。查实再办要查被劾人实有行迹，写清所费工夫、所得及各方反应。人物异地启程要走完路程才能抵达，在途不改道；事务办完仍是日后人物行事的前情。" + "\n" + "\n".join((MONTH_DRAFT, MONTH_FINAL, FORK, IMPERIAL_PUSH, VERDICT, HELD, SECRET, HANDLER, PEOPLE, ACTING, INTERIM, DISCOVERED, DECREE_EVENT))
+        instructions = "你推演真实世界，按输入 catalogue 用 read_records 按需查本月实况，日期由输入给定。fiscal_events 是本月到点应呈的饷率事件，写陈情与拟旨，停在本月岔路待皇帝批红，不自行准驳。拨款用途、减额、暂欠、改序与摊派仍由人物与旨意决定。上月急务按所选办理；弹劾按原奏疏的署名人、被劾人及所选处置，写清皇威、发难派系反应及被劾者去留的实际后果。查实再办要查被劾人实有行迹，写清所费工夫、所得及各方反应。人物异地启程要走完路程才能抵达，在途不改道；事务办完仍是日后人物行事的前情。" + "\n" + "\n".join((MONTH_DRAFT, MONTH_FINAL, FORK, IMPERIAL_PUSH, VERDICT, HELD, SECRET, HANDLER, PEOPLE, ACTING, INTERIM, DISCOVERED, DECREE_EVENT))
         self.draft_agent = build_agent(
             model, name="simulation", output_type=PromptedOutput(Simulation),
             deps_type=Materials, tools=[read_records], retries=1,
@@ -58,7 +58,7 @@ class Simulations:
             prompt(self.court, "world", context), deps=Materials(self.court, "world"),
         )
         self.court.log.info("model output: %s", result.output.model_dump_json())
-        return {"id": str(uuid4()), "output": result.output.model_dump()}
+        return {"output": result.output.model_dump()}
 
     async def draft(self) -> None:
         calendar = self.court.calendar()
@@ -67,8 +67,7 @@ class Simulations:
         product = await self.call(self.context())
         petitions = [
             PendingPetition(
-                **item, id=uuid4(), route_id=calendar.id, entity_id=calendar.id,
-                segment_id=UUID(product["id"]), available=calendar.data,
+                **item, id=uuid4(), entity_id=calendar.id, available=calendar.data,
                 blocking=True, source="simulation",
             ) for item in product["output"]["petitions"]
         ]
@@ -83,14 +82,13 @@ class Simulations:
                 options=(["强颁"] if verdict["verdict"] == "驳" else [])
                 + ["收回", "留中"]
                 + (["御笔强推"] if verdict["verdict"] == "驳" and not decree.data.get("endorsements") else []),
-                id=uuid4(), route_id=calendar.id, entity_id=decree.id,
-                segment_id=UUID(product["id"]), available=calendar.data,
+                id=uuid4(), entity_id=decree.id, available=calendar.data,
                 blocking=True, source="deliberation",
             ))
         self.court.record_product(calendar.id, "month_draft", product, petitions=petitions)
 
     def choices(self) -> list[dict[str, Any]]:
-        petitions = self.court.route_petitions(self.court.calendar().id)
+        petitions = self.court.month_petitions()
         return [
             {**f.detail, "petition": self.court.petition(f.detail["petition_id"]).detail}
             for f in self.court.petition_products([str(p.detail["id"]) for p in petitions], "choice")
@@ -102,14 +100,14 @@ class Simulations:
         ) if f.detail["option"] == option), None)
         if existing is not None:
             return existing
-        draft = self.court.products(petition.route_id, kind="month_draft")[0].detail
+        draft = self.court.products(self.court.calendar().id, kind="month_draft")[0].detail
         result = await self.call({
             **self.context(), "draft": draft["output"],
             "choices": [{"petition": petition.model_dump(mode="json"),
                          "option": option, "text": petition.options[option]}],
         }, final=True)
         result.update(petition_id=str(petition.id), option=option)
-        self.court.record(petition.route_id, [("forecast", {**result, "date": petition.available})])
+        self.court.record(self.court.calendar().id, [("forecast", {**result, "date": petition.available})])
         return result
 
     def log_failure(self, task: asyncio.Task[Any]) -> None:
@@ -117,8 +115,10 @@ class Simulations:
             self.court.log.error("month candidate failed", exc_info=error)
 
     def speculate(self) -> None:
-        petitions = self.court.route_petitions(self.court.calendar().id)
-        if len(petitions) != 1:
+        if self.court.products(self.court.calendar().id, kind="month_final"):
+            return
+        petitions = self.court.month_petitions()
+        if len(petitions) != 1 or self.court.petition_products([str(petitions[0].detail["id"])], "choice"):
             return
         petition = self.court.as_petition(petitions[0])
         for option in range(len(petition.options)):
@@ -129,7 +129,7 @@ class Simulations:
         if self.court.products(calendar.id, kind="month_final"):
             return
         draft = self.court.products(calendar.id, kind="month_draft")[0].detail
-        petitions = self.court.route_petitions(calendar.id)
+        petitions = self.court.month_petitions()
         choices = self.choices()
         result: dict[str, Any]
         if not petitions:

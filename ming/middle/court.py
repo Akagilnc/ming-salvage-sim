@@ -143,17 +143,12 @@ class Court:
             "year": current["year"] - (current["month"] == 1),
             "month": (current["month"] - 2) % 12 + 1,
         }
-        result: list[Item] = []
-        for fact in self._ledger.facts(kind="unhandled", date=date, query=FACT_ROWS.where(
-            F.detail["monthly"].as_string().is_not(None),
-        )):
-            source = self._ledger.get(fact["entity_id"])
-            result.append({
-                "entity_id": str(source.id),
-                "kind": "decree" if source.kind == "decree" else "world",
-                "text": source.data["text"] if source.kind == "decree" else None,
-            })
-        return result
+        return [
+            {"entity_id": str(fact["entity_id"])}
+            for fact in self._ledger.facts(kind="unhandled", date=date, query=FACT_ROWS.where(
+                F.detail["monthly"].as_string().is_not(None),
+            ))
+        ]
 
     def fiscal_events(self) -> list[Item]:
         return due_levies(self._ledger)
@@ -471,14 +466,13 @@ class Court:
             )
         ]
 
-    def route_petitions(self, route: UUID) -> list[FactView]:
+    def month_petitions(self) -> list[FactView]:
         return [
             FactView(**f)
             for f in self._ledger.facts(
                 kind="petition",
                 date=self.calendar().data,
                 query=FACT_ROWS.where(
-                    F.detail["route_id"].as_string() == str(route),
                     F.detail["blocking"].as_boolean().is_(True),
                 ),
             )

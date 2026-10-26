@@ -907,7 +907,6 @@ def test_exhausted_month_declaration_is_unhandled_not_a_stopped_month(
             False,
             None,
         )
-        assert [(item["kind"], item["text"]) for item in state["unhandled_monthly"]] == [("world", None)]
         facts = client.get("/records").json()["facts"]
         assert {f["kind"] for f in facts if f["kind"] != "interaction"} == {
             "unhandled",
@@ -915,6 +914,7 @@ def test_exhausted_month_declaration_is_unhandled_not_a_stopped_month(
         }
         assert all(not f["detail"] for f in facts if f["kind"] == "unhandled")
         ledger = audit(tmp_path / save)
+        assert state["unhandled_monthly"] == [{"entity_id": next(e["id"] for e in ledger["entities"] if e["kind"] == "calendar")}]
         assert {
             e["key"]: e["data"]["taels"]
             for e in ledger["entities"]

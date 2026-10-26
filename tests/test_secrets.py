@@ -213,7 +213,7 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
             court = client.app.state.web.game.court
             assert client.get("/state").json()["game"]["failure"] is None
             assert client.get("/state").json()["game"]["unhandled_monthly"] == (
-                [{"entity_id": str(court.calendar().id), "kind": "world", "text": None}]
+                [{"entity_id": str(court.calendar().id)}]
                 if failure == "declaration" else []
             )
             if failure is None and month < 2:

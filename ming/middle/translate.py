@@ -138,30 +138,13 @@ def check_decrees(
     names: dict[str, dict[str, list[str]]],
 ) -> None:
     # Both declarations index their input's decree list, never free-text names.
-    monthly = landing_sources(ledger, calendar_row(ledger)["data"]) if not isinstance(out, NightDeclaration) else []
+    decrees = out.decrees if isinstance(out, NightDeclaration) else landing_sources(ledger, calendar_row(ledger)["data"])
     labeled = (("facts", out.facts), ("decree_events", out.decree_events))
     for label, items in labeled:
         for i, item in enumerate(items):
             ref = item.decree
             path = f"{label}[{i}].decree"
-            if isinstance(out, NightDeclaration):
-                if ref is not None and (type(ref) is not int or not 0 <= ref < len(out.decrees)):
-                    fail(
-                        path,
-                        ref,
-                        "本份 decrees 的零基下标",
-                        names,
-                        "decree 改成 expected，重交整份。",
-                    )
-                elif ref is None and (isinstance(item, DecreeEvent) or item.discovered):
-                    fail(
-                        path,
-                        ref,
-                        "指定所属旨意的下标",
-                        names,
-                        "补上所属旨意的下标，重交整份。",
-                    )
-            elif (ref is None and (isinstance(item, DecreeEvent) or item.discovered)) or (ref is not None and not 0 <= ref < len(monthly)):
+            if (ref is None and (isinstance(item, DecreeEvent) or item.discovered)) or (ref is not None and not 0 <= ref < len(decrees)):
                 fail(path, ref, "输入 decrees 的零基下标", names, "使用输入旨意的下标，重交整份。")
     if isinstance(out, NightDeclaration) and out.decrees:
         turns = read_night(ledger, source).turns

@@ -262,7 +262,7 @@ def test_menu_creates_distinct_games_and_opens_only_existing_saves(
 def test_http_month_dispatches_choices_and_retries_missing_step(
     game_db: Path, path: str, steps, audit, clock
 ) -> None:
-    money = json.loads((RECORDED / "month_money_once_300000.json").read_text())["reply"]
+    money = (RECORDED / "month_decree_money.txt").read_text()
     received = {name: [] for name in ("deliberation", "simulation", "gazette")}
     if path in {"multiple-petitions", "choice-error"}:
         case = (RECORDED / "month_multiple_petitions.txt").read_text()
@@ -456,7 +456,7 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
             assert [
                 f
                 for f in ledger["facts"]
-                if f["kind"] == "changed" and "taels" in f["detail"]["actual"]
+                if f["kind"] == "changed" and f["detail"].get("origin_ref") == decree["id"] and "taels" in f["detail"]["actual"]
             ]
             materials = {
                 name: [

@@ -138,7 +138,6 @@ class Sources:
         date = self.court.calendar().data
         available = {**date, **next_month(date)}
         people = {e.key: e.id for e in self.court.entities("audit", kind="person")}
-        batch_id = uuid4()
         petitions = [
             PendingPetition(
                 **item.model_dump(exclude={"options"}),
@@ -146,9 +145,7 @@ class Sources:
                 if kind == "urgent"
                 else item.options,
                 id=uuid4(),
-                route_id=self.court.calendar().id,
                 entity_id=people[item.signer],
-                segment_id=batch_id,
                 available=available,
                 blocking=False,
                 source=kind,

@@ -56,7 +56,7 @@ class Audience:
             name="scene",
             output_type=str,
             deps_type=Audience,
-            instructions="\n".join(((CONTENT / "prompts/scene_agent.md").read_text(), DECREE, SECRET, HANDLER, PEOPLE, ACTING, INTERIM, HELD)),
+            instructions="\n".join(((CONTENT / "prompts/scene_agent.md").read_text(), DECREE, SECRET, HANDLER, PEOPLE, ACTING, INTERIM)),
             tools=[read_records, get_hall, set_hall, dismiss],
         )
 

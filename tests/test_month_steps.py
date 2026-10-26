@@ -20,8 +20,10 @@ RECORDED = Path(__file__).parent / "recorded"
 @pytest.mark.parametrize("game_db", ["rejected_night"], indirect=True)
 @pytest.mark.parametrize("option,forecast_failure", [(0, False), (1, False), (2, False), (0, True)])
 def test_rejected_decree_is_forced_withdrawn_or_held(game_db, steps, audit, option, forecast_failure):
+    received = []
     if forecast_failure:
-        steps["month_final"] = replaying([RuntimeError("candidate unavailable"), *[(RECORDED / "simulation.txt").read_text()] * 4])
+        steps["month_final"] = replaying([RuntimeError("candidate unavailable")] * 5 + [(RECORDED / "simulation.txt").read_text()] * 4, received)
+        steps["gazette"] = replaying([RuntimeError("gazette unavailable"), *[(RECORDED / "gazette.txt").read_text()] * 2])
     with TestClient(create_app(game_db.parent)) as client:
         client.post("/actions", json={"action": "load", "save": game_db.name})
         before = audit(game_db)
@@ -36,10 +38,18 @@ def test_rejected_decree_is_forced_withdrawn_or_held(game_db, steps, audit, opti
         petition = state["petitions"][0]
         assert petition["options"] == ["强颁", "收回", "留中", "御笔强推"]
         ledger = audit(game_db)
-        assert len([f for f in ledger["facts"] if f["kind"] == "forecast"]) == (3 if forecast_failure else 4)
+        assert len([f for f in ledger["facts"] if f["kind"] == "forecast"]) == (0 if forecast_failure else 4)
         assert not [f for f in ledger["facts"] if f["kind"] in {"endorsed", "month_final"}]
         client.post("/actions", json={"action": "choose", "petition": petition["id"], "option": option}).raise_for_status()
         client.portal.call(client.app.state.web.game.drain)
+        if forecast_failure:
+            assert client.get("/state").json()["game"]["failure"]["payload"]["type"] == "RuntimeError"
+            for final_exists in (False, True):
+                assert bool([f for f in audit(game_db)["facts"] if f["kind"] == "month_final"]) == final_exists
+                client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
+                client.post("/actions", json={"action": "retry"}).raise_for_status()
+                client.portal.call(client.app.state.web.game.drain)
+                assert len(received) == 6
         state = client.get("/state").json()["game"]
         assert (state["date"]["month"], state["failure"], state["petitions"]) == (11, None, [])
         assert client.post("/actions", json={"action": "choose", "petition": petition["id"], "option": option}).status_code == 400
@@ -135,7 +145,7 @@ def test_interim_costs_follow_promulgation_not_backing(game_db, steps, audit, ca
         assert len([f for f in ledger["facts"] if f["kind"] == "interim" and f["entity_id"] == decree["id"]]) == 1
         assert len([f for f in ledger["facts"] if f["kind"] == "landed" and f["entity_id"] == decree["id"]]) == int(not rejected)
         assert len([f for f in ledger["facts"] if f["kind"] == "attempted" and f["entity_id"] == decree["id"]]) == int(rejected)
-        effects = [f for f in ledger["facts"] if f["kind"] == "changed"]
+        effects = [f for f in ledger["facts"] if f["kind"] == "changed" and f["detail"].get("origin_ref") == decree["id"]]
         assert len([f for f in effects if "imperial_prestige" in f["detail"]["actual"]]) == int(not rejected)
         assert any("satisfaction" in f["detail"]["actual"] for f in effects)
         assert len({f["entity_id"] for f in effects if "satisfaction" in f["detail"]["actual"]}) == len([f for f in effects if "satisfaction" in f["detail"]["actual"]])
