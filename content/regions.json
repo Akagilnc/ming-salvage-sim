@@ -1,9 +1,6 @@
 {
   "meta": {
-    "population_unit": "人",
-    "land_unit": "万亩",
-    "tax_unit": "万两/月",
-    "score_unit": "0-100",
+    "field_definitions": "ming/middle/fields.py 的 region 行",
     "note": "世界盘面：大明省份、边镇、外域、草原与藩属使用同一 regions 结构；controlled_by 表示当前控制势力。",
     "fiscal_schema": "fiscal JSON列：huang_tian=皇庄万亩(仅北直隶)→内库, wang_tian=藩王庄田万亩(免税), guan_min_tian=官民田万亩→国库田赋, liao_xiang=辽饷月摊万两, salt_tax=盐税月基数万两, commerce_tax=商税月基数万两, corruption=腐败度0-100"
   },
