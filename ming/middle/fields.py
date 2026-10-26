@@ -28,7 +28,7 @@ FIELDS: dict[tuple[str, str], FieldRule] = {
     ("army", "payment_policy"): FieldRule("军饷付款政策，见 PaymentPolicy；欠饷与当月已付由引擎写。"),
     ("fiscal", "payment_policy"): FieldRule("财政科目付款政策，见 PaymentPolicy；欠额与当月已付由引擎写。"),
     ("fiscal", "value"): FieldRule("财政科目的新值，不累加；具体科目按账本目录。", "_base：万两/月；_rate：百分数（3.5 表示 3.5%）", numeric=True),
-    ("historical_event", "terminal_reason"): FieldRule("饷率亲裁结局，只取该事件 terminal_reason_labels；留中不声明结局。"),
+    ("historical_event", "terminal_reason"): FieldRule("饷率亲裁结局，只取该事件 terminal_reason_labels；留中的办理见留中。"),
     ("incumbency", "holders"): FieldRule("正任变更后的完整人名名单；一员最多一人，免全体写空名单。任免规则见 APPOINTMENT_RULES。"),
     ("incumbency", "acting"): FieldRule("暂署完整人名名单；按戏文声明撤署时写空名单，含义见暂署。"),
     ("world", "imperial_prestige"): FieldRule("皇威；交带正负号的增减，加到现值后夹范围。", "量表点", "delta", (0, 100), True),

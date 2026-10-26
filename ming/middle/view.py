@@ -393,8 +393,6 @@ def project(
                 for k, v in fact.detail.items()
                 if k not in HIDDEN_JOURNEY | {"distance"}
             }
-        if identity == "world" and fact.kind == "simulation":
-            fact.detail = {k: v for k, v in fact.detail.items() if k != "messages"}
         if identity not in ("audit", "world"):
             if item["exposure"] in ("text", "dated"):
                 fact.detail = {

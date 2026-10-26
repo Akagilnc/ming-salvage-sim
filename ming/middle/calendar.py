@@ -24,14 +24,6 @@ def calendar_if_any(ledger: Ledger) -> Item | None:
     return next(iter(ledger.entities(kind="calendar")), None)
 
 
-def petition_date(date: Item, *, ended: bool = True) -> Item:
-    """When a petition can be chosen: this month, or next month once the segment ended."""
-    opened = dict(date)
-    if ended:
-        opened.update(next_month(date))
-    return opened
-
-
 def settle_journeys(ledger: Ledger) -> None:
     date = dict(calendar_row(ledger)["data"])
     rows = ledger.entities(

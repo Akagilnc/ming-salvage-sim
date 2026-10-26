@@ -16,7 +16,7 @@ export type TextUpdate = string | { replace: string };
 export interface Turn { id: string; emperor_words: string; scene: string }
 export interface Night { id: string; closed: boolean; hall: string[]; turns: Turn[]; result: 'translated' | 'unhandled' | null }
 export interface Interaction { action: string; status: string; payload: { words?: string; log?: string; type?: string } }
-export interface Petition { id: string; text: string; options: string[]; signer?: string | null; target?: string | null; revision_of?: string | null }
+export interface Petition { id: string; text: string; options: string[]; blocking: boolean; signer?: string | null; target?: string | null; revision_of?: string | null }
 export interface Settings { backend: '' | 'api' | 'claude-cli' | 'codex' | 'grok' | 'pi'; model: string; base_url: string; api_key: string; effort: string }
 export interface Configuration extends Settings { month_model: Settings | null }
 export interface Snapshot {
@@ -31,7 +31,7 @@ export interface Snapshot {
     running: boolean;
     failure: Interaction | null;
     pending: Interaction | null;
-    unhandled_monthly: { entity_id: string; kind: 'decree' | 'world'; text: string | null }[];
+    unhandled_monthly: { entity_id: string }[];
     petitions: Petition[];
     returned_petitions: { petition: Petition; awaiting_drafter: boolean }[];
   };

@@ -149,7 +149,7 @@ export function App() {
       </aside>}
       <section className="paper">
         {game.face === 'desk' && game.unhandled_monthly.map(item => <div key={item.entity_id} className="unhandled" role="status">
-          {item.kind === 'decree' ? <>本月这道旨意接不住：<MarkdownText>{item.text ?? ''}</MarkdownText></> : '本月世界段接不住'}
+          本月接不住
         </div>)}
         <div className="scroll" ref={scroll} onScroll={() => {
           const element = scroll.current;
@@ -161,8 +161,9 @@ export function App() {
             {live && <Scene text={live} />}
             {failure}
           </> : <>
-            <h2>{game.face === 'month' ? '核账期' : '案头'}</h2>
+            <h2>{game.face === 'month' && !game.petitions.some(p => p.blocking) ? '核账期' : '案头'}</h2>
             {failure}
+            {game.face === 'month' && game.running && !game.petitions.length && !monthGazette && !failure && <p role="status">正在过月，请稍候。</p>}
           </>}
           {game.face === 'month' && monthGazette && <article className="gazette">
             <h2>邸报</h2><MarkdownText>{monthGazette}</MarkdownText>

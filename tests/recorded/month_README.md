@@ -1,10 +1,35 @@
 # 月推进边界录音
 
+## #1980 月时间线开发录音（2026-10-26）
+
+原卷：`~/.ak-roles/books/Ming_LLM/1980/runs/01a1771d-0f8f-7f31-95e9-05f19f7253bf@coder/evidence/`。
+`1980-record.py` 从 HTTP 新开局、过月、逐份选择进入；只有月草稿、月定稿走真实 `openai-codex/gpt-6.1-sol`，其他模型边界用已有录件，不冒称完整北极星验收。
+
+- `month_multiple_petitions.txt`：`month_draft-messages.json` 最终 `ModelResponse` 的原样文本，包含六处岔路。
+- `simulation.txt`：`month_final-messages.json` 最终 `ModelResponse` 的原样文本，只有正文；既用于月定稿，也用于允许省略空 `petitions` 的零岔路草稿输入。不改字、不手补字段，不约束正文措辞。
+- 该局进到 1627 年十一月、无失败；仅证明新推演契约能真调、批齐后能写整月定稿，不证明被替换的转译、邸报和具体历史后果正确。
+- 首次开发调用把 SQLAlchemy 列集合当成表，失败后修正；另一次 `gpt-5.4` 调用被账户拒绝（`model_not_found`），之后逐次改用现役 `PI_MODEL`，没有改宿主或席位配置。失败日志与成功存档都保留在 `record-run/`。
+
+补充转译录音也在该根：`declarations-v2/{completed,combined}/reply.txt` 分别原样用于 `month_secret_completed.txt`、`month_ordering.txt`；`declarations-v3/appointment/reply.txt` 用于 `month_secret_appointment.json`。它们用生产 `Court.translate` 转译冻结旧实况，补录一份声明里的旨意下标；任免、启程、内部发现是明确写在输入里的合成边界场景，不冒称新一场完整推演。v1 曾按旨文补演额外后果，修正转译输入要求只摘月定稿后重新录 v2；appointment v2 未把两条任免归到密令，v3 在合成实况输入明确全部属于第0道密令后重录，未手改回复。v2 的 travel 输出与现有 `month_travel.txt` 在声明 schema 下相同，消费者复用既有录件，重复新增的 `month_secret_travel.txt` 已退役，原生 v2 回话仍留卷。
+
+`timelines/<原文件名>-<index>/messages.json` 是三份 `month_fiscal_*.json` 的 `simulation` 现役来源；`timelines/single/messages.json` 是 `month_petition.txt` 的来源。录制用生产推演 Agent 收到完整旧稿，明确仅迁移输出契约、不另推世界；草稿交正文与原有岔路，定稿只交正文，原生回复逐份原样取出，没有人工删除 `month_end` 或拼接正文。这些迁移录音只用于确定性契约，不证明新模型能自主找到岔路或办完赈济。首批中一份服务器 overloaded 失败，已完成的13份保留，显式只补缺失的1640选项1；失败日志与重试日志都留卷。
+
+### 御史台重交：单旨归属
+
+`review-r1/recordings/{money,interim_approved,interim_rejected}/` 保存 HTTP 建夜后的存档、输入、生产 `Court.translate` 的原生 `messages.json`、最终 `reply.txt` 和结构化结果。逐次 `codex/gpt-6.1-sol`，未改宿主配置。输入将整份旧声明原话作为冻结实况，并明确后果出自第0道旨意；只迁移单声明归属契约，不另推世界、不冒充完整玩法验收。
+
+- `month_decree_money.txt` 逐字复制 `money/reply.txt`；1条事实带下标0，供 HTTP、CLI 的单旨归属断言。`month_money_once_*.json` 仍供无旨的世界拨款测试，不再用于这两个有旨入口。
+- `month_interim_{approved,rejected}.json` 的 `replies` 原样取自相应原生 `ModelResponse` 文本；18/11条事实均带下标0，恢复中旨后果的旨意归属断言，未手补字段或改正文。
+- 录制器先后在未进事件循环就建模型、把带代码围栏的旧回复当 JSON、假定中旨录件有 `words` 时失败；诊断与各版脚本留在 `review-r1/`。拨款成功后只补缺失的两份中旨录音，不覆盖已得原卷。
+- 七份已无消费者的分段/旧强颁录件移至 `review-r1/retired-recordings/`，仓内文件及现役说明随消费者一起退役。
+
+以下旧节只记当时录制历史；上述文件的现役来源以本节为准。
+
 ## #1978 契约迁移（确定性输入，不冒充新录音）
 
 场景录件中的 `read_person(name)` 调用改为 `read_records(kind=person, key=...)`；工具返回仍由当前生产链现场取得。`account_dossiers.json` 的专用人物账户包退役，账户权限由 `test_web.assert_record_queries` 的统一工具案覆盖。
 
-`month_force.txt`、`month_provincial_county.txt`、`month_two_payments_{combined,split}.txt`、`month_interim_{approved,rejected}.json` 的量表输入改为增减，原稿最终值减去开局量表值；这是人工迁移的结构化测试输入，不再声称这些量表字段是原生模型输出。其余文字保留，原生卷仍以以下归档为真源。`month_secret_appointment.json` 是本票的确定性密令任命输入，不是录音。
+`month_provincial_county.txt`、`month_two_payments_{combined,split}.txt`、`month_interim_{approved,rejected}.json` 的量表输入改为增减，原稿最终值减去开局量表值；这是人工迁移的结构化测试输入，不再声称这些量表字段是原生模型输出。其余文字保留，原生卷仍以以下归档为真源。`month_secret_appointment.json` 是本票的确定性密令任命输入，不是录音。
 
 这些变更不作为真实宿主效果证据；合并后的北极星由调用者另验。
 
@@ -67,7 +92,7 @@
 | `night_ordering.json` | `ming-1965-ordering-now-live/`、`ming-1965-ordering-now-translations/` | 公旨先于密旨，本月生效的两次任命 |
 | `sources_vacancy.json`、`sources_appointment.json` | `officials-current-live/`、`import-current-officials.py` | 按含李国普的现开局重新真跑全阁免职、曹化淳补任；没有手补免职项 |
 | `month_fiscal_1631.json`、`month_fiscal_1640.json`、`month_fiscal_reject.txt` | `ming-1965-fiscal-v9/` | 冻结推演重新转译，不把 source 元数据登记成模型步骤 |
-| `month_force.txt`、`month_travel.txt` | `remaining-consumers/*.input.json`、`*.native.json` | 旧实况原文按新契约重译，非新一次完整推演；导入结构与原生 structured_output 一致 |
+| `month_travel.txt` | `remaining-consumers/*.input.json`、`*.native.json` | 旧实况原文按新契约重译，非新一次完整推演；导入结构与原生 structured_output 一致 |
 | `night_interim.json` 的 `replies` | `interim-v2/`、`interim-v3/` | 原四轮整夜重新转译；首次把御笔写为皇帝，HTTP 原生校验反馈后重交，两份回话都保留 |
 
 原生 MCP 工具仅去 `mcp__court__` 前缀，参数、ID、文字原样入 Pydantic 消息信封。
@@ -99,21 +124,17 @@ F1 单人/双人背书档案、F2 任职后过月沿用 HTTP 行为测试，只�
 | `simulation.txt` | `1951-world/003-simulation-messages.json` | 月底、零奏疏 |
 | `month_petition.txt` | `1951-transfer-3200000/006-simulation-messages.json` | 一道月中岔路 |
 | `month_multiple_petitions.txt` | `1951-world/001-simulation-messages.json` | 同段多道独立岔路 |
-| `month_deferred.txt` | `1951-world/002-simulation-messages.json` | 月底奏疏留到下月，不预推 |
-| `month_force.txt` | `1951-B-full/052-Declaration-messages.json` | 强颁后皇威、满意度及赈银字段 |
 | `month_travel.txt` | `1951-B-sonnet/014-Declaration-messages.json` | 毕自严、徐光启启程 |
 | `night_travel.json` | `1951-B-sonnet/001`–`006` 的原生 messages；`1951-B-words.json` | 五轮原话与整夜声明；用原生 adapter 序列化，无改写 |
 | `night_empty.txt` | `1951-transfer-300000/004-NightDeclaration-messages.json` | 无成旨的一夜 |
 | `travel_admission.json` | `1951-admit2/set_hall-inputs.json`、`1-scene-messages.json` | 真实 MCP 调用的原参数和场景回复 |
-| `month_zero.txt` | `1951-extra/zero-messages.json` | 补充真实模型调用：月初零奏疏、尚未月底，验证自动续写 |
 | `month_money_*.txt` | `1951-translations/*-messages.json` | 补充转译边界录音：30万、320万、500万及官员奏报 |
 
 MCP 调用不在 CLI 的 Pydantic 消息文本中。`travel_admission.json` 的工具参数
 在真实 `Court.set_hall` 调用时观察记录，按 `ToolCallPart` 契约装入重放信封；
 信封的 call id/时间不是原 MCP 元数据。参数及最终模型回复均未改，测试仍调用真实工具。
 
-补充录音不是另一次完整北极星：零奏疏例通过生产推演 Agent 发出月初场景输入；
-金额例通过生产 `Court.translate` 转译同额拨款，输入原文也在归档。
+补充录音不是另一次完整北极星：金额例通过生产 `Court.translate` 转译同额拨款，输入原文也在归档。
 HTTP 新开局真跑见 `1951-A`、`1951-B-full`；两者均推进至 1627 年十二月。
 A 沿原主线、末尾显式加“准。”，未调用原 runner 的逐步准旨判断，不冒称逐步一致验收；
 `1951-A-full`、B-full 均从原 driver 取输入、用真实模型逐轮判断是否补“准。”。
@@ -182,7 +203,7 @@ A-full 也推进至十二月，但原场景仍停在询问，整夜译出零道�
 
 ## #1977 承办人声明输入
 
-`night_secret.json`、`night_tools.json`、`night_allocation.json`、`night_ordering.json` 的夜间声明现为基于录音的合成测试输入：仅为密令补入新契约的 `handler`（前三份王承恩，末份杨嗣昌）。它们不再是原生回复的逐字副本；场景、旨文与其他声明字段未改。原始录音仍以各文件 `source` 指针及下文归档为准。这些输入只验声明落账与取阅，不证明真实模型能识别承办人；该效果留给合并后真跑。
+`night_secret.json`、`night_tools.json`、`night_ordering.json` 的夜间声明现为基于录音的合成测试输入：仅为密令补入新契约的 `handler`（前两份王承恩，末份杨嗣昌）。它们不再是原生回复的逐字副本；场景、旨文与其他声明字段未改。原始录音仍以各文件 `source` 指针及下文归档为准。这些输入只验声明落账与取阅，不证明真实模型能识别承办人；该效果留给合并后真跑。
 
 ## #1952 密令边界录音
 
@@ -237,23 +258,3 @@ HTTP 验收从共享夜前缀复制私有库，CLI audit 验背书来源、担�
 `1953-strong-2.log` 留有本次真实强推重议失败：Claude CLI exit 1、provider `refusal`
 （request `req_011CgHMizepEMT2QkhxPXsyn`）。未伪称成功、未改宿主或模型配置绕过；
 确定性强推准／驳／传输重试案沿用既有真实判词，真实重议成功验收尚缺。
-
-## 月末声明的其余旨意（#1971）
-
-录件根：`~/WorkSpace/vault/ak-cc-wiki/raw/ming-llm-runner/2026-10-24/1967-acceptance/`。
-`night_allocation.json` 的皇帝原话取 `pi-004526/actions.jsonl`，五轮场景取
-`001-scene`–`005-scene/stdout.jsonl` 的完整 assistant 消息；工具调用仅去掉
-`mcp__court__` transport 前缀后装入原生 Pydantic AI 消息，参数、调用 ID、回话不改。
-消息信封时间是导入时间，不冒称原模型时间；整夜声明为 `texts/006-NightDeclaration.txt`。
-
-| 夹具 | 原卷 | 用途 |
-| --- | --- | --- |
-| `month_allocation_night.txt` | `texts/008-simulation.txt` | 同夜明发拨款与查库密令 |
-| `month_allocation_world.txt` | `texts/009-simulation.txt` | 含赈银起解及巡抚续奏的完整世界推演 |
-| `month_allocation.txt` | `texts/013-Declaration.txt` | 010 结构重交后的本旨声明，十万与二十万分别起解 |
-
-三份文本逐字复制，不手补字段。复用 `steps`、`game_db` 与现有月推进测试，
-从 HTTP `/actions` 进入，检查世界份 `others` 的旨意 ID、议处结构及 CLI audit 落账。
-世界声明重放既有 `month_empty.txt`，不是修复后的模型回话；确定性案只证明输入完整、
-原样声明落账，不证明模型自主避重。两路拨款不重复及 #1954 奏疏后果的真模型复验，
-按票面由 runner 在并入家族分支前执行。
