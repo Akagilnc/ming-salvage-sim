@@ -7,6 +7,10 @@ from uuid import UUID, uuid4
 from pydantic_ai import PromptedOutput
 
 from ming.middle.court import Court
+from ming.middle.concepts import (
+    ACTING, DECREE_EVENT, DISCOVERED, FORK, HANDLER, HELD, IMPERIAL_PUSH,
+    INTERIM, MONTH_DRAFT, MONTH_FINAL, PEOPLE, PREVIEW, SECRET, VERDICT,
+)
 from ming.middle.declaration import PendingPetition
 from ming.middle.invoke import ModelSource, build_agent, enlist, invoke
 from ming.middle.month_work import MonthText, Simulation, prompt
@@ -17,7 +21,7 @@ class Simulations:
     def __init__(self, court: Court, model: ModelSource) -> None:
         self.court = court
         self.tasks: dict[tuple[UUID, int], asyncio.Task[dict[str, Any]]] = {}
-        instructions = "你推演真实世界，按输入 catalogue 用 read_records 按需查本月实况。日期由输入给定，只写本月，写完整月到月底。先使本月旨意在时间线里落地，世界在此基础上发展。月草稿一次列齐须皇帝拍板的全部岔路，外廷被驳旨由引擎按判词生成奏疏，不另代写。月定稿按全部批红决定完整月走向，只交正文，不再请旨。强推的当月只写皇帝担名与当月反应，不写该旨执行结果，待下月外廷复议；复议准则本月执行，复议驳即抗旨不颁，两者都不再请旨。下月开局奏疏由首辅、掌印择奏与各派弹劾另交，本调用不交。fiscal_events 是本月到点的饷率事件，人物陈情与拟旨由岔路呈皇帝；上月已批急务、弹劾按所选办理，写清实际后果。人物异地启程要走完路程才能抵达，在途不改道；事务办完仍是日后人物行事的前情。"
+        instructions = "你推演真实世界，按输入 catalogue 用 read_records 按需查本月实况，日期由输入给定。fiscal_events 是本月到点的饷率事件，人物陈情与拟旨由岔路呈皇帝。上月急务按所选办理；弹劾按原奏疏的署名人、被劾人及所选处置，写清皇威、发难派系反应及被劾者去留的实际后果。查实再办要查被劾人实有行迹，写清所费工夫、所得及各方反应。人物异地启程要走完路程才能抵达，在途不改道；事务办完仍是日后人物行事的前情。" + "\n" + "\n".join((MONTH_DRAFT, MONTH_FINAL, FORK, IMPERIAL_PUSH, VERDICT, HELD, SECRET, HANDLER, PEOPLE, ACTING, INTERIM, DISCOVERED, DECREE_EVENT))
         self.draft_agent = build_agent(
             model, name="simulation", output_type=PromptedOutput(Simulation),
             deps_type=Materials, tools=[read_records], retries=1,
@@ -26,7 +30,7 @@ class Simulations:
         self.final_agent = build_agent(
             model, name="month_final", output_type=PromptedOutput(MonthText),
             deps_type=Materials, tools=[read_records], retries=1,
-            instructions=instructions,
+            instructions=instructions + "\n" + PREVIEW,
         )
 
     def context(self) -> dict[str, Any]:
