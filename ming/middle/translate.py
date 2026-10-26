@@ -417,7 +417,7 @@ def declaration_agent(
     model: ModelSource,
     ledger: Ledger,
     output_type: type[T],
-    instructions: str = INSTRUCTIONS,
+    instructions: str,
 ) -> Agent[TranslationMaterials, T]:
     agent = build_agent(
         model,

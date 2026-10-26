@@ -37,7 +37,7 @@ from ming.middle.rules import matching_names
 from ming.middle.opening import opening_template
 from ming.middle.night import NightView, dismiss, known_people, open_night, read_night
 from ming.middle.scene import HallResult, set_hall
-from ming.middle.translate import INSTRUCTIONS, declaration_agent, translate
+from ming.middle.translate import declaration_agent, translate
 from ming.middle.translate import catalogue as names_and_aliases
 from ming.middle.view import (
     EntityView,
@@ -246,7 +246,7 @@ class Court:
         self._ledger.commit(list(targets.values()))
 
     def translation_agent(
-        self, output_type: type[T], instructions: str = INSTRUCTIONS,
+        self, output_type: type[T], instructions: str,
         *, model: ModelSource | None = None,
     ) -> Agent[TranslationMaterials, T]:
         return declaration_agent(
