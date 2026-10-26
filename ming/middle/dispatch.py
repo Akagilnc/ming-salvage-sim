@@ -18,7 +18,7 @@ from ming.middle.declaration import (
 )
 from ming.middle.rules import field_values, money_amounts
 from ming.middle.fiscal import WAN, current_paid, has_obligation
-from ming.middle.appointments import cabinet_members, cabinet_records, incumbency_record
+from ming.middle.appointments import APPOINTMENT_ROLES, cabinet_members, cabinet_records, incumbency_record
 
 def landing_entities(
     ledger: Ledger, result: Declaration | Unhandled, owner: Entity
@@ -229,8 +229,6 @@ def record_decrees(
     if isinstance(result, NightDeclaration):
         for decree in result.decrees:
             data = {**decree.model_dump(), "night_id": str(owner.id)}
-            if decree.secret:
-                data["exposure"] = {"score": 0, "stage": "密"}
             entity = Entity("decree", "", "", data)
             record(entity, "decreed", data)
             decrees.append(entity)
@@ -374,13 +372,15 @@ def retire_chief(
     association: Item,
 ) -> None:
     chief = existing.get(("incumbency", incumbency_record(("内阁首辅", ""), [])[0]))
-    if not chief or not chief["data"]["holders"]:
+    if not chief:
         return
-    if chief["data"]["holders"][0] in cabinet_members(existing):
-        return
-    appointment = known("incumbency", chief["key"])
-    displace(appointment, {"holders": []}, known, record, association)
-    record(appointment, "changed", {**association, "changes": {"holders": []}}, {"holders": []})
+    eligible = cabinet_members(existing)
+    changes: Item = {role: [] for role in APPOINTMENT_ROLES
+               if chief["data"][role] and chief["data"][role][0] not in eligible}
+    if changes:
+        appointment = known("incumbency", chief["key"])
+        displace(appointment, changes, known, record, association)
+        record(appointment, "changed", {**association, "changes": changes}, changes)
 
 
 # This rule is shared by immediate and monthly landing, not a second dispatch path.

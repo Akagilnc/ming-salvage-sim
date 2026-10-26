@@ -1,4 +1,4 @@
-"""Monthly exposure from recorded counts, and each unfinished errand's own report."""
+"""Each unfinished secret errand's own report."""
 
 from ming.middle.court import Court
 from ming.middle.invoke import ModelSource, build_agent, invoke
@@ -19,30 +19,6 @@ class Secrets:
             instructions="按本月实况与风声，用本旨承办人复命的口吻给皇帝写这一道密令的密报。按 catalogue 用 read_records 查本人所知材料，按本人的立场与利害复命；查得什么、听得什么、尚有何难处，由承办人据其所知复命。人物的打算与文字由你发挥。",
         )
 
-    def accumulate(self) -> None:
-        for decree in self.court.secret_decrees():
-            if self.court.products(decree.id, kind="exposure"):
-                continue
-            # First-playtest weights: one per knower and per recorded handling;
-            # twelve reaches partial disclosure, thirty-six widespread rumour.
-            score = (
-                decree.data["exposure"]["score"]
-                + len(self.court.known_people(decree))
-                + len(self.court.products(decree.id, kind="handled", current=False))
-            )
-            exposure = {
-                "score": score,
-                "stage": "满朝风闻"
-                if score >= 36
-                else "半公开"
-                if score >= 12
-                else "密",
-                "date": self.court.calendar().data,
-            }
-            self.court.record(
-                decree.id, [("exposure", exposure)], {"exposure": exposure}
-            )
-
     async def report(self, decree: EntityView) -> None:
         if self.court.products(decree.id, kind="secret_report"):
             return
@@ -61,7 +37,7 @@ class Secrets:
                     "products": [
                         f.model_dump(mode="json", exclude={"emperor_words"})
                         for f in self.court.products(
-                            decree.id, kind=("exposure", "completed", "handled")
+                            decree.id, kind=("completed", "handled")
                         )
                     ],
                 },

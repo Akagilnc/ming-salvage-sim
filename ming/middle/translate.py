@@ -380,15 +380,15 @@ def check_appointment(ledger: Ledger, fact: Fact, path: str, names: Names, cabin
         for k, person in enumerate(holders):
             if person not in names.get("person", {}):
                 fail(f"{field}[{k}]", person, name_expected("person", person, names), names, "在任者用 expected 指向的输入人物目录中的正名，重交整份。")
-        if office["key"] == "内阁首辅" and change.field == "holders":
+        if office["key"] == "内阁首辅":
             eligible = sorted(cabinet_members(cabinet))
             for k, person in enumerate(holders):
                 if person not in eligible:
                     fail(f"{field}[{k}]", person, eligible, names, "首辅须为在任阁臣；可在同份声明中先任大学士，再任首辅。重交整份。")
-        if change.field == "holders":
-            cabinet[("incumbency", fact.entity)] = {
-                "kind": "incumbency", "data": incumbency_record(pairs[0], holders)[1],
-            }
+        appointment = cabinet.setdefault(("incumbency", fact.entity), {
+            "kind": "incumbency", "data": incumbency_record(pairs[0], [])[1],
+        })
+        appointment["data"][change.field] = holders
 
 
 def check_references(ledger: Ledger, out: Declaration, names: Names) -> None:

@@ -265,7 +265,6 @@ class Month:
             await self.landing.run()
             self.court.settle_accounts()
             self.court.settle_journeys()
-            self.secrets.accumulate()
             await gather_or_raise(
                 self.gazette.run(),
                 self.sources.urgent(),

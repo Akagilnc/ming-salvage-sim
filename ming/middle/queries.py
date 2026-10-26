@@ -16,6 +16,7 @@ from ming.ledger import (
     ENTITY_ROWS,
     FACT_ROWS,
 )
+from ming.middle.appointments import APPOINTMENT_ROLES
 
 NIGHT_RESULT = (
     select(F.kind)
@@ -38,10 +39,12 @@ CATALOGUE = ENTITY_ROWS.where(
 )
 
 APPOINTMENT = E.id.table.alias("appointment").c
-HOLDERS = func.json_each(APPOINTMENT.data["holders"]).table_valued("value")
 CURRENT_APPOINTMENT = select(APPOINTMENT.id).where(
     APPOINTMENT.kind == "incumbency",
-    select(HOLDERS.c.value).where(HOLDERS.c.value == E.key).correlate(E.id.table, APPOINTMENT.id.table).exists(),
+    or_(*(select(members.c.value).where(members.c.value == E.key)
+          .correlate(E.id.table, APPOINTMENT.id.table).exists()
+          for role in APPOINTMENT_ROLES
+          for members in [func.json_each(APPOINTMENT.data[role]).table_valued("value")])),
 ).correlate(E.id.table)
 IN_OFFICE = CURRENT_APPOINTMENT.exists()
 

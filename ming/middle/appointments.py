@@ -8,6 +8,7 @@ from sqlalchemy import JSON, case, func, literal, or_, select, type_coerce
 from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS, Item, Ledger
 
 CATALOGUE_KINDS = ("office", "territory")
+APPOINTMENT_ROLES = ("holders", "acting")
 
 DISPLAY_NAME = E.data["name"].as_string()
 DECLARED_ALIASES = func.coalesce(E.data["aliases"].as_string(), "[]")
@@ -96,13 +97,13 @@ def cabinet_members(records: dict[tuple[str, str], Item]) -> set[str]:
                if kind == "office" and row["data"].get("department") == "内阁"
                and key != "内阁首辅"}
     return {person for (kind, _), row in records.items() if kind == "incumbency"
-            and row["data"]["office"] in offices for person in row["data"]["holders"]}
+            and row["data"]["office"] in offices
+            for role in APPOINTMENT_ROLES for person in row["data"][role]}
 
 
 def held_by(ledger: Ledger, people: list[str]) -> list[Item]:
-    holders = func.json_each(E.data["holders"]).table_valued("value")
-    acting = func.json_each(E.data["acting"]).table_valued("value")
-    return ledger.entities(kind="incumbency", query=ENTITY_ROWS.where(or_(
-        select(holders.c.value).where(holders.c.value.in_(people)).exists(),
-        select(acting.c.value).where(acting.c.value.in_(people)).exists(),
-    )))
+    return ledger.entities(kind="incumbency", query=ENTITY_ROWS.where(or_(*(
+        select(members.c.value).where(members.c.value.in_(people)).exists()
+        for role in APPOINTMENT_ROLES
+        for members in [func.json_each(E.data[role]).table_valued("value")]
+    ))))
