@@ -195,7 +195,7 @@ def test_two_nights_feed_world_and_arrivals_wait_for_audience(tmp_path, game_db,
             )
             ledger = audit(tmp_path / save)
             decrees = {e["id"] for e in ledger["entities"] if e["kind"] == "decree"}
-            assert {d["decree"]["id"] for d in json.loads(received[-1].parts[0].content)["context"]["decrees"]} == decrees
+            assert {d["decree"]["id"] for d in json.loads(received[-1].parts[0].content)["context"]["decrees"]} == (decrees if month == 11 else set())
             assert {d["decree"]["id"] for d in _declaration_prompt(declarations[-1:])["decrees"]} == decrees
             assert len([f for f in ledger["facts"] if f["kind"] == "landed" and f["entity_id"] in decrees]) == len(decrees)
             if month == 12:

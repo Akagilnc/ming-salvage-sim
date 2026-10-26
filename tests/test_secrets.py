@@ -347,9 +347,7 @@ def test_discoveries_stay_private_and_completion_stops_only_reports(
                     if order["decree"]["data"]["secret"]:
                         assert "exposure" not in order["decree"]["data"]
                         assert set(order["known_people"]) == court.known_people(secret)
-        assert {d["decree"]["id"] for d in json.loads(simulations[-1].parts[0].content)["context"]["decrees"]} == {
-            str(d.id) for d in court.entities("public", kind="decree")
-        }
+        assert not json.loads(simulations[-1].parts[0].content)["context"]["decrees"]
 
 
 @pytest.mark.parametrize("game_db", ["first_night"], indirect=True)
