@@ -5,7 +5,7 @@ from uuid import UUID, uuid4
 from pydantic import Field
 from pydantic_ai import PromptedOutput, RunContext
 
-from ming.middle.calendar import petition_date
+from ming.middle.calendar import next_month
 from ming.middle.court import Court
 from ming.middle.concepts import ACTING
 from ming.middle.declaration import Petition, PendingPetition, StrictModel
@@ -136,9 +136,8 @@ class Sources:
         )
         self.court.log.info("%s output: %s", kind, result.output.model_dump_json())
         date = self.court.calendar().data
-        available = petition_date(date)
+        available = {**date, **next_month(date)}
         people = {e.key: e.id for e in self.court.entities("audit", kind="person")}
-        batch_id = uuid4()
         petitions = [
             PendingPetition(
                 **item.model_dump(exclude={"options"}),
@@ -146,9 +145,7 @@ class Sources:
                 if kind == "urgent"
                 else item.options,
                 id=uuid4(),
-                route_id=self.court.calendar().id,
                 entity_id=people[item.signer],
-                segment_id=batch_id,
                 available=available,
                 blocking=False,
                 source=kind,

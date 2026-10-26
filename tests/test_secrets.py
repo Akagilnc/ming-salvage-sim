@@ -22,21 +22,11 @@ def _declaration_prompt(messages):
     return json.loads(messages[0].parts[0].content.split("\n", 1)[1])
 
 
-def declaration_reply(messages, response_file, quiet_month=None, stage="landing", extra_facts=()):
-    prompt = _declaration_prompt(messages) if stage == "landing" else json.loads(messages[0].parts[0].content)
-    source = prompt["source"] if stage == "landing" else next(iter(prompt["context"].get("decrees", [])), None)
-    if response_file == "night_ordering.json":
-        if source is None or source["kind"] != "decree":
-            return (RECORDED / ("month_empty.txt" if stage == "landing" else "simulation.txt")).read_text()
-        name = "secret" if source["data"].get("secret") else "public"
-        return json.loads((RECORDED / response_file).read_text())[name][stage]
-    name = response_file if source["data"].get("secret") and prompt["date"]["month"] != quiet_month else "month_empty.txt"
-    reply = (RECORDED / name).read_text()
-    if name == response_file and extra_facts:
-        declaration = json.loads(reply)
-        declaration["facts"].extend(extra_facts)
-        return json.dumps(declaration, ensure_ascii=False)
-    return reply
+def declaration_reply(messages, response_file, quiet_month=None):
+    prompt = _declaration_prompt(messages)
+    secret = any(item["decree"]["data"]["secret"] for item in prompt["decrees"])
+    name = response_file if secret and prompt["date"]["month"] != quiet_month else "month_empty.txt"
+    return (RECORDED / name).read_text()
 
 
 @pytest.mark.parametrize("game_db", ["secret_night"], indirect=True)
@@ -135,11 +125,6 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
         partial(
             declaration_reply,
             response_file="month_invalid.txt" if failure == "declaration" else "month_secret_appointment.json" if failure is None else "month_journey_dates.json",
-            extra_facts=[*json.loads((RECORDED / "month_journey_dates.json").read_text())["facts"], {
-                "entity_type": "person", "entity": "韩爌", "create": False,
-                "changes": [{"field": "intrigue", "value": 75}], "text": "",
-                "discovered": True,
-            }] if failure is None else (),
         ),
         declarations,
     )
@@ -150,7 +135,7 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
             [
                 ModelResponse(parts=[ToolCallPart("read_records", {"kind": "person", "key": ["毕自严", "徐光启"]})]),
                 (RECORDED / "secret_report.txt").read_text(),
-            ] * 4, material
+            ] * 2, material
         )
     with TestClient(create_app(game_db.parent)) as client:
         client.post(
@@ -169,7 +154,7 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
         assert public.data.get("handler") is None
         assert not court.facts("audit", kind="unhandled")
         assert court.known_people(secret) == {handler, "王承恩", "杨嗣昌"}
-        assert secret.data["exposure"] == {"score": 0, "stage": "密"}
+        assert "exposure" not in secret.data
         for person, expected in (
             (handler, {secret.id}),
             ("王承恩", {secret.id, public.id}),
@@ -208,7 +193,7 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
             client.portal.call(client.app.state.web.game.drain)
             assert audit(game_db) == before
             steps["secret_report"] = replaying(
-                [(RECORDED / "secret_report.txt").read_text()] * 4, material
+                [(RECORDED / "secret_report.txt").read_text()] * 2, material
             )
             client.post("/actions", json={"action": "retry"}).raise_for_status()
             client.portal.call(client.app.state.web.game.drain)
@@ -223,38 +208,37 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
             }
             assert any(f["kind"] == "arrived" for f in returned["facts"])
             assert returned == character_input(client.portal.call(court.read_records, Officials(people=[handler]), "person", ["毕自严", "徐光启"]))
-        # Four months reach partial disclosure with three knowers.
-        for month in range(4):
+        # Repeated months keep recorded knowledge without an exposure accumulator.
+        for month in range(2):
             court = client.app.state.web.game.court
             assert client.get("/state").json()["game"]["failure"] is None
             assert client.get("/state").json()["game"]["unhandled_monthly"] == (
-                [{"entity_id": str(secret.id), "kind": "decree", "text": secret.data["text"]}]
+                [{"entity_id": str(court.calendar().id)}]
                 if failure == "declaration" else []
             )
-            if failure is None and month < 2:
+            if failure is None:
                 asyncio.run(assert_record_queries(court, secret_appointment=True))
                 private = {f.entity_id for f in court.facts("audit", kind="changed") if f.detail.get("discovered")}
                 assert private
                 for person in ("emperor", handler, "王承恩", "杨嗣昌", "韩爌"):
                     assert private & {f.entity_id for f in court.facts("emperor" if person == "emperor" else Officials(people=[person]), kind="changed")} == (private if person in ("emperor", handler) else set())
-            assert {d.id for d in court.entities("public", kind="decree")} == {
-                public.id
-            }
-            exposure = court.products(secret.id, kind="exposure", current=False)
-            assert [f.detail["score"] for f in exposure] == [3, 6, 9, 12][: month + 1]
-            assert exposure[-1].detail["stage"] == ("半公开" if month >= 3 else "密")
+            assert {d.id for d in court.entities("public", kind="decree")} == (
+                set() if failure == "declaration" else {public.id}
+            )
+            assert not court.products(secret.id, kind="exposure", current=False)
+            assert "exposure" not in court.entity(secret.id).data
             assert {f.entity_id for f in court.facts("audit", kind="unhandled")} == (
-                {secret.id} if failure == "declaration" else set()
+                {court.calendar().id} if failure == "declaration" else set()
             )
             world = next(
                 prompt for r in declarations
                 if r.kind == "request" and r.parts[0].part_kind == "user-prompt"
-                and (prompt := _declaration_prompt([r]))["scope"] == "world"
-                and prompt["date"] == exposure[-1].detail["date"]
+                and (prompt := _declaration_prompt([r]))["scope"] == "month"
+                and prompt["date"] == court.facts("emperor", kind="secret_report")[-1].detail["date"]
             )
-            assert [o["decree"]["id"] for o in world["others"]] == [
+            assert {o["decree"]["id"] for o in world["decrees"]} == {
                 str(d.id) for d in orders if month == 0 or d.id == secret.id
-            ]
+            }
             for person, count in (
                 (handler, month + 1),
                 ("王承恩", 0),
@@ -268,9 +252,10 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
                 )
             assert [
                 f.detail["date"] for f in court.facts("emperor", kind="secret_report")
-            ] == [f.detail["date"] for f in exposure]
+            ] == [{"id": "world", "year": year, "month": number}
+                  for year, number in [(1627, 10), (1627, 11)][:month + 1]]
             assert not court.facts("public", kind="secret_report")
-            if month < 3:
+            if month < 1:
                 client.post(
                     "/actions", json={"action": "load", "save": game_db.name}
                 ).raise_for_status()
@@ -279,29 +264,15 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
         for prompt in [json.loads(part.content) for message in material for part in message.parts if part.part_kind == "user-prompt"]:
             assert prompt["context"]["decree"]["id"] == str(secret.id)
             assert all("emperor_words" not in f for f in prompt["context"]["facts"] + prompt["context"]["products"])
-        assert (
-            prompt["context"]["decree"]["data"]["exposure"][
-                "stage"
-            ]
-            == "半公开"
-        )
+            assert "exposure" not in prompt["context"]["decree"]["data"]
+            assert all(f["kind"] != "exposure" for f in prompt["context"]["products"])
 
 
 @pytest.mark.parametrize("game_db", ["secret_night"], indirect=True)
-@pytest.mark.parametrize(
-    "scenario",
-    [
-        # Done in its decree month: the first accumulation already crosses.
-        (None, [13, 26, 39, 52], ("半公开", "半公开", "满朝风闻", "满朝风闻")),
-        # Quiet through its decree month, done the next from its own share.
-        (10, [2, 15, 28, 41], ("密", "半公开", "半公开", "满朝风闻")),
-    ],
-    ids=["done-in-decree-month", "done-next-month"],
-)
+@pytest.mark.parametrize("quiet_month", [None, 10], ids=["done-in-decree-month", "done-next-month"])
 def test_discoveries_stay_private_and_completion_stops_only_reports(
-    tmp_path: Path, game_db: Path, steps, scenario
+    tmp_path: Path, game_db: Path, steps, quiet_month
 ) -> None:
-    quiet_month, scores, stages = scenario
     steps["Declaration"] = replaying(
         partial(
             declaration_reply,
@@ -311,7 +282,7 @@ def test_discoveries_stay_private_and_completion_stops_only_reports(
     )
     simulations = []
     steps["simulation"] = replaying(
-        [(RECORDED / "simulation.txt").read_text()] * 4, simulations
+        [(RECORDED / "simulation.txt").read_text()] * 3, simulations
     )
     with TestClient(create_app(tmp_path)) as client:
         client.post(
@@ -321,7 +292,7 @@ def test_discoveries_stay_private_and_completion_stops_only_reports(
         secret = next(
             d for d in court.entities("audit", kind="decree") if d.data["secret"]
         )
-        for month in range(4):
+        for month in range(3):
             client.post("/actions", json={"action": "month"}).raise_for_status()
             client.portal.call(client.app.state.web.game.drain)
             assert client.get("/state").json()["game"]["failure"] is None
@@ -334,9 +305,8 @@ def test_discoveries_stay_private_and_completion_stops_only_reports(
                 assert len(court.facts(identity, kind="secret_report")) == min(
                     month + 1, 1 + (quiet_month is not None)
                 )
-            exposure = court.products(secret.id, kind="exposure", current=False)
-            assert [f.detail["score"] for f in exposure] == scores[: month + 1]
-            assert exposure[-1].detail["stage"] == stages[month]
+            assert not court.products(secret.id, kind="exposure", current=False)
+            assert "exposure" not in court.entity(secret.id).data
             changed = [
                 f
                 for f in court.facts("audit", kind="changed")
@@ -371,25 +341,22 @@ def test_discoveries_stay_private_and_completion_stops_only_reports(
             client.post(
                 "/actions", json={"action": "load", "save": game_db.name}
             ).raise_for_status()
-        assert (
-            json.loads(simulations[-1].parts[0].content)["context"]["secret_orders"][0][
-                "decree"
-            ]["data"]["exposure"]["stage"]
-            == stages[2]
-        )
+        for message in simulations:
+            if message.parts[0].part_kind == "user-prompt":
+                for order in json.loads(message.parts[0].content)["context"]["decrees"]:
+                    if order["decree"]["data"]["secret"]:
+                        assert "exposure" not in order["decree"]["data"]
+                        assert set(order["known_people"]) == court.known_people(secret)
+        assert not json.loads(simulations[-1].parts[0].content)["context"]["decrees"]
 
 
 @pytest.mark.parametrize("game_db", ["first_night"], indirect=True)
 def test_month_lands_an_earlier_public_decree_before_a_later_secret(
     tmp_path: Path, game_db: Path, steps, audit
 ) -> None:
-    """A public decree completed before a secret errand must land first.
-
-    night_secret.json creates the secret first, so it cannot show the inversion.
-    """
+    """Both decrees share one monthly declaration, without per-decree landing."""
     cases = json.loads((RECORDED / "night_ordering.json").read_text())
-    steps["Declaration"] = replaying(partial(declaration_reply, response_file="night_ordering.json"))
-    steps["simulation"] = replaying(partial(declaration_reply, response_file="night_ordering.json", stage="simulation"))
+    steps["Declaration"] = replaying([(RECORDED / "month_ordering.txt").read_text()])
     with TestClient(create_app(tmp_path)) as client:
         save = client.post(
             "/actions", json={"action": "load", "save": game_db.name}
@@ -413,3 +380,4 @@ def test_month_lands_an_earlier_public_decree_before_a_later_secret(
         assert not [f for f in ledger["facts"] if f["kind"] == "unhandled"]
         assert appointment["data"]["holders"] == ["杨嗣昌"]
         assert [f["detail"]["actual"]["holders"] for f in ledger["facts"] if f["entity_id"] == appointment["id"] and f["kind"] == "changed"] == [["洪承畴"], ["杨嗣昌"]]
+        assert [f["detail"]["origin_ref"] for f in ledger["facts"] if f["entity_id"] == appointment["id"] and f["kind"] == "changed"] == [d["id"] for d in decrees]

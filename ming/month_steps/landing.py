@@ -1,15 +1,13 @@
-"""Parallel translation, then ordered per-decree landing and world last."""
+"""Translate the final monthly timeline once and land the complete declaration."""
 
 import json
-from uuid import UUID
 
 from ming.middle.court import Court
-from ming.middle.concepts import ACTING, AUDIENCE, DECREE_EVENT, DISCOVERED, HANDLER, INTERIM, SECRET
-from ming.middle.invoke import ModelSource, gather_or_raise
+from ming.middle.concepts import ACTING, AUDIENCE, DECREE_EVENT, DISCOVERED, HANDLER, HELD, IMPERIAL_PUSH, INTERIM, MONTH_FINAL, SECRET
+from ming.middle.invoke import ModelSource
 from ming.middle.declaration import Declaration, Unhandled
 from ming.middle.opening import CONTENT
 from ming.middle.month_work import COST_RULES
-from ming.middle.view import EntityView
 
 
 class Landing:
@@ -17,83 +15,36 @@ class Landing:
         self.court = court
         self.agent = court.translation_agent(
             Declaration,
-            "\n".join(((CONTENT / "prompts/month_translate.md").read_text(), COST_RULES, SECRET, HANDLER, ACTING, INTERIM, DISCOVERED, AUDIENCE, DECREE_EVENT)),
+            "\n".join(((CONTENT / "prompts/month_translate.md").read_text(), COST_RULES, SECRET, HANDLER, ACTING, INTERIM, DISCOVERED, AUDIENCE, DECREE_EVENT, HELD, MONTH_FINAL, IMPERIAL_PUSH)),
             model=model,
         )
 
-    async def translate(
-        self, source: EntityView, route: UUID, others: list[EntityView]
-    ) -> None:
-        if self.court.products(source.id, kind=("declaration", "landed", "attempted", "unhandled")):
-            return
-        result = await self.court.translate(
-            self.agent,
-            json.dumps(
-                {
-                    "date": self.court.calendar().data,
-                    "source": source.model_dump(mode="json"),
-                    "scope": "decree" if source.kind == "decree" else "world",
-                    "prior_interim": self.court.prior_interim(source.id),
-                    "deliberation": [
-                        f.model_dump(mode="json")
-                        for f in self.court.products(
-                            source.id, kind=("deliberation", "choice")
-                        )
-                    ],
-                    "others": [
-                        {
-                            "decree": other.model_dump(mode="json"),
-                            "deliberation": [
-                                f.model_dump(mode="json")
-                                for f in self.court.products(
-                                    other.id, kind=("deliberation", "choice")
-                                )
-                            ],
-                        }
-                        for other in others
-                    ],
-                    "simulation": [
-                        f.detail["output"]
-                        for f in self.court.products(route, kind="simulation")
-                    ],
-                },
-                ensure_ascii=False,
-            ),
-            source.id,
-        )
-        self.court.record_product(
-            source.id,
-            "declaration",
-            {
-                "result": result.model_dump(),
-                "unhandled": isinstance(result, Unhandled),
-            },
-        )
-
     async def run(self) -> None:
-        sources = self.court.landing_sources()
-        await gather_or_raise(
-            *(
-                self.translate(
-                    source,
-                    route,
-                    [
-                        other
-                        for other, _other_route, _mode in sources
-                        if other.kind == "decree" and other.id != source.id
+        calendar = self.court.calendar()
+        if self.court.products(calendar.id, kind=("landed", "unhandled")):
+            return
+        declarations = self.court.products(calendar.id, kind="declaration")
+        if not declarations:
+            result = await self.court.translate(
+                self.agent,
+                json.dumps({
+                    "date": calendar.data, "scope": "month",
+                    "month_final": self.court.products(calendar.id, kind="month_final")[0].detail["output"],
+                    "decrees": [
+                        {"decree": d.model_dump(mode="json"), "mode": mode,
+                         "prior_interim": self.court.prior_interim(d.id),
+                         "deliberations": [f.model_dump(mode="json") for f in self.court.products(d.id, kind=("deliberation", "choice"))]}
+                        for d, mode in self.court.landing_sources()
                     ],
-                )
-                for source, route, _mode in sources
+                }, ensure_ascii=False),
+                calendar.id,
             )
+            self.court.record_product(calendar.id, "declaration", {
+                "result": result.model_dump(mode="json"), "unhandled": isinstance(result, Unhandled),
+            })
+            declarations = self.court.products(calendar.id, kind="declaration")
+        product = declarations[0].detail
+        self.court.land(
+            (Unhandled if product["unhandled"] else Declaration).model_validate(product["result"]),
+            calendar.id, monthly="landed",
         )
-        for source, _route, mode in sources:
-            if self.court.products(source.id, kind=("landed", "attempted", "unhandled")):
-                continue
-            declaration = self.court.products(source.id, kind="declaration")[0].detail
-            self.court.land(
-                (Unhandled if declaration["unhandled"] else Declaration).model_validate(
-                    declaration["result"]
-                ),
-                source.id,
-                monthly=mode,
-            )

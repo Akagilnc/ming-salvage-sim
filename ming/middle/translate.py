@@ -31,7 +31,9 @@ from ming.middle.declaration import (
 from ming.middle.queries import CATALOGUE, FUNDED_AFFAIRS
 from ming.middle.night import read_night
 from ming.middle.opening import REFERENCES
-from ming.middle.appointments import ALIASES, cabinet_members, cabinet_records, incumbency_record, office_pairs, reference_key
+from ming.middle.appointments import ALIASES, APPOINTMENT_ROLES, cabinet_members, cabinet_records, incumbency_record, office_pairs, reference_key
+from ming.middle.calendar import calendar_row
+from ming.middle.dispatch import landing_sources
 from ming.middle.rules import Names, check_rules, fail, name_expected
 from ming.middle.records import TranslationMaterials, read_records
 from ming.middle.invoke import ModelSource, build_agent, invoke
@@ -136,31 +138,15 @@ def check_decrees(
     source: UUID,
     names: dict[str, dict[str, list[str]]],
 ) -> None:
-    # Only a night has a decrees list to index. Month shares omit the source.
+    # Both declarations index a decree list, never free-text names.
+    decrees = out.decrees if isinstance(out, NightDeclaration) else landing_sources(ledger, calendar_row(ledger)["data"])
     labeled = (("facts", out.facts), ("decree_events", out.decree_events))
     for label, items in labeled:
         for i, item in enumerate(items):
             ref = item.decree
             path = f"{label}[{i}].decree"
-            if isinstance(out, NightDeclaration):
-                if ref is not None and not 0 <= ref < len(out.decrees):
-                    fail(
-                        path,
-                        ref,
-                        "本份 decrees 的零基下标",
-                        names,
-                        "decree 改成 expected，重交整份。",
-                    )
-                elif ref is None and (isinstance(item, DecreeEvent) or item.discovered):
-                    fail(
-                        path,
-                        ref,
-                        "指定所属旨意；只有月末本旨声明可省略来源",
-                        names,
-                        "补上所属旨意的下标，重交整份。只有月末本旨可省略。",
-                    )
-            elif ref is not None:
-                fail(path, ref, "省略 decree", names, "省略 decree，重交整份。")
+            if (ref is None and (isinstance(item, DecreeEvent) or item.discovered)) or (ref is not None and not 0 <= ref < len(decrees)):
+                fail(path, ref, "decrees 的零基下标", names, "使用所属旨意在 decrees 中的下标，重交整份。")
     if isinstance(out, NightDeclaration) and out.decrees:
         turns = read_night(ledger, source).turns
         for i, decree in enumerate(out.decrees):
@@ -341,7 +327,7 @@ def check_appointment(ledger: Ledger, fact: Fact, path: str, names: Names, cabin
     office = ledger.entities(kind="office", key=pairs[0][0])[0]
     fact.entity = incumbency_record(pairs[0], [])[0]
     for j, change in enumerate(fact.changes):
-        if change.field not in {"holders", "acting"}:
+        if change.field not in APPOINTMENT_ROLES:
             continue
         field = f"{path}.changes[{j}].value"
         value: Any = change.value
@@ -354,15 +340,15 @@ def check_appointment(ledger: Ledger, fact: Fact, path: str, names: Names, cabin
         for k, person in enumerate(holders):
             if person not in names.get("person", {}):
                 fail(f"{field}[{k}]", person, name_expected("person", person, names), names, "在任者用 expected 指向的输入人物目录中的正名，重交整份。")
-        if office["key"] == "内阁首辅" and change.field == "holders":
+        if office["key"] == "内阁首辅":
             eligible = sorted(cabinet_members(cabinet))
             for k, person in enumerate(holders):
                 if person not in eligible:
                     fail(f"{field}[{k}]", person, eligible, names, "首辅须为在任阁臣；可在同份声明中先任大学士，再任首辅。重交整份。")
-        if change.field == "holders":
-            cabinet[("incumbency", fact.entity)] = {
-                "kind": "incumbency", "data": incumbency_record(pairs[0], holders)[1],
-            }
+        appointment = cabinet.setdefault(("incumbency", fact.entity), {
+            "kind": "incumbency", "data": incumbency_record(pairs[0], [])[1],
+        })
+        appointment["data"][change.field] = holders
 
 
 def check_journey(ledger: Ledger, fact: Fact, path: str, names: Names) -> None:

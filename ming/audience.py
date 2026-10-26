@@ -16,7 +16,7 @@ from pydantic_ai.messages import (
 )
 
 from ming.middle.court import Court
-from ming.middle.concepts import ACTING, AUDIENCE, DECREE, DECREE_EVENT, DISCOVERED, HANDLER, INTERIM, PEOPLE, SECRET
+from ming.middle.concepts import ACTING, AUDIENCE, DECREE, DECREE_EVENT, DISCOVERED, HANDLER, HELD, INTERIM, PEOPLE, SECRET
 from ming.middle.translate import INSTRUCTIONS
 from ming.middle.declaration import NightDeclaration
 from ming.middle.invoke import ModelSource, TextUpdate, build_agent, invoke, stream_text
@@ -34,7 +34,7 @@ class Audience:
         self._dismiss_requested: UUID | None = None
         self.translation = court.translation_agent(
             NightDeclaration,
-            "\n".join((INSTRUCTIONS, DECREE, SECRET, HANDLER, PEOPLE, ACTING, INTERIM, DISCOVERED, AUDIENCE, DECREE_EVENT)),
+            "\n".join((INSTRUCTIONS, DECREE, SECRET, HANDLER, PEOPLE, ACTING, INTERIM, DISCOVERED, AUDIENCE, DECREE_EVENT, HELD)),
         )
 
         async def get_hall(ctx: RunContext[Audience]) -> list[str]:

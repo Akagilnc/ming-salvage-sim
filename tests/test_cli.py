@@ -19,14 +19,13 @@ def test_cli_preserves_jsonl_and_resumes_failed_month(
     game_db: Path, steps, monkeypatch, capsys, opening_db
 ) -> None:
     case = json.loads((RECORDED / "night_approved.json").read_text())
-    steps["Declaration"] = TestModel(
-        call_tools=[],
-        custom_output_text=json.loads((RECORDED / "month_money_once_300000.json").read_text())["reply"],
-    )
+    steps["Declaration"] = replaying([
+        (RECORDED / "month_decree_money.txt").read_text(),
+        (RECORDED / "month_empty.txt").read_text(),
+    ])
     steps["simulation"] = replaying(
         [
             (RECORDED / "month_petition.txt").read_text(),
-            *[(RECORDED / "simulation.txt").read_text()] * 4,
         ]
     )
     db = str(game_db)
@@ -73,7 +72,6 @@ def test_cli_preserves_jsonl_and_resumes_failed_month(
             steps["simulation"] = replaying(
                 [
                     (RECORDED / "month_petition.txt").read_text(),
-                    *[(RECORDED / "simulation.txt").read_text()] * 3,
                 ]
             )
             main(["month", "--db", db, "--backend", "claude-cli"])
@@ -99,13 +97,12 @@ def test_cli_preserves_jsonl_and_resumes_failed_month(
     decree = next(e for e in ledger["entities"] if e["kind"] == "decree")
     assert {f["kind"] for f in ledger["facts"] if f["entity_id"] == decree["id"]} >= {
         "deliberation",
-        "declaration",
         "landed",
     }
     assert [
         f
         for f in ledger["facts"]
-        if f["kind"] == "changed" and f["detail"]["origin_ref"] == decree["id"]
+        if f["kind"] == "changed" and f["detail"].get("origin_ref") == decree["id"] and "taels" in f["detail"]["actual"]
     ]
     steps["NightDeclaration"] = TestModel(
         call_tools=[],
@@ -169,7 +166,6 @@ def test_cli_preserves_jsonl_and_resumes_failed_month(
     steps["simulation"] = replaying(
         [
             (RECORDED / "month_petition.txt").read_text(),
-            *[(RECORDED / "simulation.txt").read_text()] * 3,
         ]
     )
     main(["month", "--db", db, "--backend", "claude-cli"])

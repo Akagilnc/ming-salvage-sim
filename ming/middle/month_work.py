@@ -3,6 +3,8 @@
 import json
 from typing import Any, Literal
 
+from pydantic import Field
+
 from ming.middle.court import Court
 from ming.middle.declaration import Petition, StrictModel
 from ming.middle.view import Identity, Officials, character_input
@@ -16,14 +18,16 @@ COST_RULES = """背书（含御笔手敕、御笔强推）本身不走代价轨�
 
 
 class Deliberation(StrictModel):
-    text: str
-    verdict: Literal["准", "驳", "中旨亦不可颁"]
+    text: str = Field(description="外廷议处原文。")
+    verdict: Literal["准", "驳", "中旨亦不可颁"] = Field(description="议处结局，含义见外廷判词。")
 
 
-class Simulation(StrictModel):
-    text: str
-    petitions: list[Petition]
-    month_end: bool
+class MonthText(StrictModel):
+    text: str = Field(description="本月推演正文，含义见月草稿、月定稿。")
+
+
+class Simulation(MonthText):
+    petitions: list[Petition] = Field(default_factory=list[Petition], description="本月岔路口奏疏列表，无岔路可省略；含义见岔路口。")
 
 
 def prompt(court: Court, identity: Identity, context: Any) -> str:
