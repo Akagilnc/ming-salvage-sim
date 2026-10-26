@@ -31,7 +31,7 @@ from ming.middle.declaration import (
 from ming.middle.queries import CATALOGUE, FUNDED_AFFAIRS
 from ming.middle.night import read_night
 from ming.middle.opening import REFERENCES
-from ming.middle.appointments import ALIASES, cabinet_members, cabinet_records, incumbency_record, office_pairs, reference_key
+from ming.middle.appointments import ALIASES, APPOINTMENT_ROLES, cabinet_members, cabinet_records, incumbency_record, office_pairs, reference_key
 from ming.middle.rules import Names, check_rules, fail, name_expected
 from ming.middle.records import TranslationMaterials, read_records
 from ming.middle.invoke import ModelSource, build_agent, invoke
@@ -340,7 +340,7 @@ def check_appointment(ledger: Ledger, fact: Fact, path: str, names: Names, cabin
     office = ledger.entities(kind="office", key=pairs[0][0])[0]
     fact.entity = incumbency_record(pairs[0], [])[0]
     for j, change in enumerate(fact.changes):
-        if change.field not in {"holders", "acting"}:
+        if change.field not in APPOINTMENT_ROLES:
             continue
         field = f"{path}.changes[{j}].value"
         value: Any = change.value
@@ -353,15 +353,15 @@ def check_appointment(ledger: Ledger, fact: Fact, path: str, names: Names, cabin
         for k, person in enumerate(holders):
             if person not in names.get("person", {}):
                 fail(f"{field}[{k}]", person, name_expected("person", person, names), names, "在任者用 expected 指向的输入人物目录中的正名，重交整份。")
-        if office["key"] == "内阁首辅" and change.field == "holders":
+        if office["key"] == "内阁首辅":
             eligible = sorted(cabinet_members(cabinet))
             for k, person in enumerate(holders):
                 if person not in eligible:
                     fail(f"{field}[{k}]", person, eligible, names, "首辅须为在任阁臣；可在同份声明中先任大学士，再任首辅。重交整份。")
-        if change.field == "holders":
-            cabinet[("incumbency", fact.entity)] = {
-                "kind": "incumbency", "data": incumbency_record(pairs[0], holders)[1],
-            }
+        appointment = cabinet.setdefault(("incumbency", fact.entity), {
+            "kind": "incumbency", "data": incumbency_record(pairs[0], [])[1],
+        })
+        appointment["data"][change.field] = holders
 
 
 def check_references(ledger: Ledger, out: Declaration, names: Names) -> None:
