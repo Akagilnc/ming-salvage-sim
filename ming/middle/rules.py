@@ -146,7 +146,6 @@ def field_values(
         actual["payment_policy"] = {key: min(1, max(0, value)) if key in {"factor", "defer"} else value
                                     for key, value in actual["payment_policy"].items()}
     changes = dict(actual)
-    for field in changes:
-        if FIELDS[fact.entity_type, field].mode == "delta" and (fact.entity_type, field) == ("account", "taels"):
-            changes[field] += data.get(field, 0)
+    if fact.entity_type == "account" and "taels" in changes:
+        changes["taels"] += data.get("taels", 0)
     return {"text": fact.text, "changes": changes, "nominal": nominal, "actual": actual, "audience": "world"}

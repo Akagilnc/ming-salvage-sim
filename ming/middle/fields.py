@@ -17,7 +17,7 @@ class FieldRule:
 # same table. Unbounded state fields retain the existing pass-through behavior.
 FIELDS: dict[tuple[str, str], FieldRule] = {
     ("account", "taels"): FieldRule("账户银两；交带正负号的增减，不交余额。有出处的款只在付方声明负数及 counterpart；按出处实有封顶，收方由引擎同数记账。正数且不带 counterpart 只限抄没、捐输等没有出处存量的一次性进项；例行税银等月收支由引擎核算，不申报。", "两", "delta", numeric=True),
-    ("account", "payment_order"): FieldRule("交完整付款项目列表，每项一次；第一项先付，余额不足后项记欠。军饷与财政科目沿用账本字符串，事务用 EntityRef {entity_type: 'affair', entity: 正名}，同名不同类互不替代；新立按月专款由引擎排到末尾。"),
+    ("account", "payment_order"): FieldRule("交完整付款项目列表，每项一次；第一项先付，余额不足后项记欠。军饷与财政科目沿用账本字符串，事务用 EntityRef {entity_type: 'affair', entity: 正名}，同名不同类互不替代；本份未排定的新立按月专款由引擎追加到出款库末尾；同份改序须列入新专款，引擎保留显式所排位置。"),
     ("account", "army_order"): FieldRule("交完整可付军队正名列表，每军一次；军饷按第一军起先付，余额不足后军记欠。"),
     ("affair", "text"): FieldRule("事务来龙去脉的原文；办完记往事，不设了结字段。"),
     ("affair", "monthly_funding"): FieldRule("按月专款，形状与含义见 MonthlyFunding；自声明当月起由引擎每月付款，首月不再另记一次性 taels；改 amount 减额，零为停拨。"),
@@ -27,7 +27,7 @@ FIELDS: dict[tuple[str, str], FieldRule] = {
     ("fiscal", "value"): FieldRule("财政科目的新值，不累加；具体科目按账本目录。", "_base：万两/月；_rate：百分数（3.5 表示 3.5%）", numeric=True),
     ("historical_event", "terminal_reason"): FieldRule("饷率亲裁结局，只取该事件 terminal_reason_labels；留中不声明结局。"),
     ("incumbency", "holders"): FieldRule("正任变更后的完整人名名单；一员最多一人，免全体写空名单。任免规则见 APPOINTMENT_RULES。"),
-    ("incumbency", "acting"): FieldRule("暂署完整人名名单，撤署写空名单；含义见暂署。"),
+    ("incumbency", "acting"): FieldRule("暂署完整人名名单；按戏文声明撤署时写空名单，含义见暂署。"),
     ("world", "imperial_prestige"): FieldRule("皇威；交带正负号的增减，加到现值后夹范围。", "量表点", "delta", (0, 100), True),
     ("world", "public_support"): FieldRule("天下民心；交带正负号的增减，加到现值后夹范围。", "量表点", "delta", (0, 100), True),
     ("faction", "satisfaction"): FieldRule("派系满意度；交带正负号的增减，加到现值后夹范围。", "量表点", "delta", (0, 100), True),
@@ -35,15 +35,15 @@ FIELDS: dict[tuple[str, str], FieldRule] = {
     ("region", "public_support"): FieldRule("省份民心；交带正负号的增减，加到现值后夹范围。", "量表点", "delta", (0, 100), True),
     ("power", "satisfaction"): FieldRule("势力满意度；交带正负号的增减，加到现值后夹范围。", "量表点", "delta", (0, 100), True),
     ("army", "manpower"): FieldRule("现有兵数。", "人", numeric=True),
-    ("army", "salary_rate"): FieldRule("每兵月饷，不是整军总额；整军月应付为兵数×饷率÷10000 万两。", "两/人/月", numeric=True),
+    ("army", "salary_rate"): FieldRule("每兵月饷，不是整军总额；大明所属且有饷率的军队，整军月基准应付为兵数×饷率÷10000 万两，再应用付款政策。", "两/人/月", numeric=True),
     ("army", "firearm_equipment"): FieldRule("火器饱和度，鸟铳、三眼铳、佛郎机归此轴。", "量表点", bounds=(0, 100), numeric=True),
     ("army", "cannon_equipment"): FieldRule("随军红夷级重炮，不含城防炮。", "门", bounds=(0, 12), numeric=True),
-    ("building", "maintenance"): FieldRule("建筑月维护支出，月结汇总到建筑维护_base；零为不计维护费。", "万两/月", numeric=True),
+    ("building", "maintenance"): FieldRule("建筑月维护支出，月结汇总为建筑维护_base 的基准应付，再应用付款政策；零为不计维护费。", "万两/月", numeric=True),
     ("building", "condition"): FieldRule("建筑状况；月产乘以此值/100。", "百分数", numeric=True),
     ("building", "output_amount"): FieldRule("建筑每月满状况产出，实际乘以 condition/100。", "随 output_metric：银两为万两/月，皇威/民心为点/月", numeric=True),
     ("building", "output_metric"): FieldRule("产出计入国库、内库、皇威、民心或空字符串（无产出）。"),
     ("region", "fiscal_surcharge"): FieldRule("省加派月额目标值，不逐月累加，不写进三饷应征。", "万两/月", numeric=True),
-    ("person", "location"): FieldRule("人物启程声明 location 目的地，引擎据距离矩阵记在途、月末倒数，抵达才改所在，在途不改道。"),
+    ("person", "location"): FieldRule("人物启程声明 location 目的地，引擎据距离矩阵记在途、月末倒数，抵达才改所在，在途不改道。原本无所在地时直接记首次所在；已有所在地且本份声明非 active 状态时不启程、不改所在，并清行程。"),
     ("person", "travel_speed"): FieldRule("启程的行速用 travel_speed 声明：常速为1，旨意要求加急时据行速语意交1.5到2；不声明则本程常速。", "常速倍数", bounds=(1, 2), numeric=True),
     ("person", "name"): FieldRule("人物姓名；账本实体键不随字段更名。"),
     ("person", "aliases"): FieldRule("人物别名列表。"),
@@ -68,7 +68,7 @@ FIELDS: dict[tuple[str, str], FieldRule] = {
     ("person", "reason_code"): FieldRule("人物当前处境原因代码，原样记录。"),
     ("person", "seed_guilt"): FieldRule("开局罪责与把柄资料。"),
     ("person", "source"): FieldRule("人物资料出处。"),
-    ("person", "status"): FieldRule("人物当前状态；active 为活动状态，离开 active 引擎终止行程、清候见。"),
+    ("person", "status"): FieldRule("人物当前状态；active 为活动状态。已有所在地的人，本份声明非 active 时引擎终止行程、清候见；无所在地时只记状态。"),
     ("person", "status_reason"): FieldRule("人物状态缘由文字。"),
     ("person", "style"): FieldRule("人物行事说话风格。"),
     ("person", "summary"): FieldRule("人物概况。"),
@@ -133,9 +133,9 @@ FIELDS: dict[tuple[str, str], FieldRule] = {
     ("region", "tax_per_turn"): FieldRule("地区旧税额资料；实际财政由月结 fiscal 核算。", "万两/月"),
     ("region", "unrest"): FieldRule("动乱程度。", "量表点，原样记新值"),
     ("world", "name"): FieldRule("天下名称资料，不改实体键。"),
-    ("decree", "text"): FieldRule("成旨定稿全文，含义见成旨。"),
+    ("decree", "text"): FieldRule("旨文定稿全文。"),
     ("decree", "origin"): FieldRule("来历：emperor 为皇帝所下，minister 为大臣所请。"),
-    ("decree", "people"): FieldRule("人物正名列表，含义见知情。"),
+    ("decree", "people"): FieldRule("旨意涉及的人物正名列表。"),
     ("dossier", "burden"): FieldRule("人物所负责任与牵累材料。"),
     ("dossier", "episode"): FieldRule("人物经历材料。"),
     ("dossier", "identity"): FieldRule("人物身份材料。"),
@@ -168,3 +168,7 @@ FIELDS: dict[tuple[str, str], FieldRule] = {
         "东江 / 皮岛", "乌思藏 / 青海诸部", "云南", "北直隶 / 京师", "南直隶 / 南京", "台湾", "四川", "奴儿干 / 黑龙江诸部", "安南 / 越南", "察哈尔 / 漠南草原", "山东", "山西", "广东", "广西", "建州 / 赫图阿拉", "日本", "朝鲜", "江西", "沈阳 / 辽阳", "河南", "浙江", "湖广", "漠北诸部", "福建", "西域诸部", "贵州", "辽东 / 宁锦", "陕西", "黑龙江北境",
     )},
 }
+
+FIELDS_BY_KIND: dict[str, dict[str, FieldRule]] = {}
+for (kind, field), rule in FIELDS.items():
+    FIELDS_BY_KIND.setdefault(kind, {})[field] = rule

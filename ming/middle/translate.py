@@ -35,8 +35,7 @@ from ming.middle.appointments import ALIASES, cabinet_members, cabinet_records, 
 from ming.middle.rules import Names, check_rules, fail, name_expected
 from ming.middle.records import TranslationMaterials, read_records
 from ming.middle.invoke import ModelSource, build_agent, invoke
-from ming.middle.fields import FIELDS
-from ming.middle.concepts import ACTING, AUDIENCE, DECREE, DECREE_EVENT, DISCOVERED, HANDLER, INTERIM, PEOPLE, SECRET
+from ming.middle.fields import FIELDS_BY_KIND
 
 T = TypeVar("T", bound=Declaration)
 APPOINTMENT_RULES = """任免只声明 incumbency：entity 用史书官名（京官如户部右侍郎、南京户部尚书；外官如陕西巡抚、保定府新城县知县），create=false。官职、属地由目录正名或别名精确解析，同名属地须带上级全名。holders、acting 按字段表填写。外官须带属地。首次任职由引擎创建在任记录；人物不存 office、office_region、office_type 等任职字段。
@@ -78,9 +77,7 @@ CATALOGUES = {"historical_event", "fiscal", "account", "office", "territory", "i
 
 def check(ledger: Ledger, out: Declaration, source: UUID) -> None:
     names = catalogue(ledger)
-    fields: dict[str, set[str]] = {}
-    for kind, field in FIELDS:
-        fields.setdefault(kind, set()).add(field)
+    fields = FIELDS_BY_KIND
     cabinet = cabinet_records(ledger)
     for i, fact in enumerate(out.facts):
         path = f"facts[{i}]"
@@ -428,7 +425,7 @@ def declaration_agent(
         name=output_type.__name__,
         deps_type=TranslationMaterials,
         output_type=PromptedOutput(output_type),
-        instructions="\n".join((instructions, DECREE, SECRET, HANDLER, PEOPLE, ACTING, INTERIM, DISCOVERED, AUDIENCE, DECREE_EVENT, APPOINTMENT_RULES)) + "\n官职和属地不混在实况名册里；需要核对官名、地名、别名、所属衙门或员额时，用 read_records 带类 office、territory 或正名查询；空参不返回目录。",
+        instructions=instructions + "\n" + APPOINTMENT_RULES + "\n官职和属地不混在实况名册里；需要核对官名、地名、别名、所属衙门或员额时，用 read_records 带类 office、territory 或正名查询；空参不返回目录。",
         retries=1,
     )
 
@@ -441,8 +438,8 @@ def declaration_agent(
                 "catalogue": ctx.deps.court.record_catalogue(ctx.deps.identity),
                 "field_schemas": {"payment_policy": PaymentPolicy.model_json_schema(), "monthly_funding": MonthlyFunding.model_json_schema()},
                 "allowed_fields": {
-                    kind: {field: asdict(rule) for (owner, field), rule in FIELDS.items() if owner == kind}
-                    for kind in dict.fromkeys(owner for owner, _ in FIELDS)
+                    kind: {field: asdict(rule) for field, rule in rules.items()}
+                    for kind, rules in FIELDS_BY_KIND.items()
                 },
             },
             ensure_ascii=False,

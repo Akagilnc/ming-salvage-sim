@@ -160,18 +160,21 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
             assert next(e["data"]["taels"] for e in ledger["entities"] if e["kind"] == "account" and e["key"] == name) == {"节慎库": 600000, "常盈库": 1200000}[name] + amount * 10000 * 8
 
 
-@pytest.mark.parametrize("case", ["range", "purpose_region", "provincial_county", "bad_territory_retry", "acting", "unqualified", "capital_territory", "scale_recorded", "scale_delta", "scale_upper", "scale_lower", "scale_invalid", "power_invalid", "salary_invalid", "maintenance_invalid"])
+@pytest.mark.parametrize("case", ["range", "purpose_region", "provincial_county", "bad_territory_retry", "acting", "unqualified", "capital_territory", "scale_recorded", "scale_bounds", "scale_invalid", "salary_invalid", "maintenance_invalid"])
 def test_recorded_r2_reply_lands(game_db, steps, audit, case):
     reply = (json.loads((RECORDED / "range_v9.json").read_text())["reply"] if case != "purpose_region" else
              json.dumps(json.loads((RECORDED / "declarations_v9.json").read_text())["cases"]["purpose_region"], ensure_ascii=False))
     received = []
     numeric_cases = {
         "scale_recorded": (("region", "陕西", "public_support", -2, 30),),
-        "scale_delta": (("region", "河南", "public_support", -5, 35), ("power", "蒙古", "satisfaction", -5, 35)),
-        "scale_upper": (("region", "河南", "public_support", 80, 100), ("power", "蒙古", "satisfaction", 80, 100)),
-        "scale_lower": (("region", "河南", "public_support", -50, 0), ("power", "蒙古", "satisfaction", -50, 0)),
+        "scale_bounds": (
+            ("region", "河南", "public_support", 80, 100),
+            ("region", "山东", "public_support", -80, 0),
+            ("power", "蒙古", "satisfaction", -5, 35),
+            ("power", "大明", "satisfaction", 80, 100),
+            ("power", "后金", "satisfaction", -50, 0),
+        ),
         "scale_invalid": (("region", "河南", "public_support", "bad", 40),),
-        "power_invalid": (("power", "蒙古", "satisfaction", "bad", 40),),
         "salary_invalid": (("army", "京营", "salary_rate", "bad", 1.0),),
         "maintenance_invalid": (("building", "京营火器局", "maintenance", "bad", 1),),
     }
@@ -199,7 +202,7 @@ def test_recorded_r2_reply_lands(game_db, steps, audit, case):
         material = json.loads(received[0].parts[0].content.split("\n", 1)[1])
         assert "entities" not in material
         ledger = audit(game_db)
-        assert bool([f for f in ledger["facts"] if f["kind"] == "unhandled"]) == (case in {"unqualified", "capital_territory", "scale_invalid", "power_invalid", "salary_invalid", "maintenance_invalid"})
+        assert bool([f for f in ledger["facts"] if f["kind"] == "unhandled"]) == (case in {"unqualified", "capital_territory", "scale_invalid", "salary_invalid", "maintenance_invalid"})
         rows = {(e["kind"], e["key"]): e for e in ledger["entities"]}
         if case in numeric_cases:
             for kind, name, field, _, expected in numeric_cases[case]:

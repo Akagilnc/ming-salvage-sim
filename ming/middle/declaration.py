@@ -143,7 +143,7 @@ class Decree(StrictModel):
     )
     handler: str | None = Field(
         default=None,
-        description="人物账本正名或 null，含义见承办人。",
+        description="密令承办人的人物账本正名，明发旨意为 null；含义见承办人。",
     )
     turn: int = Field(
         ge=1,
