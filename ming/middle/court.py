@@ -392,14 +392,14 @@ class Court:
         entity_id: UUID | list[UUID] | None = None,
         kind: str | tuple[str, ...] | None = None,
         date: Item | None = None,
-    ) -> list[FactView]:
+    ) -> tuple[FactView, ...]:
         selection = {
             k: v
             for k, v in {"entity_id": entity_id, "kind": kind, "date": date}.items()
             if v is not None
         }
         with self._ledger.reading(replay) as ledger:
-            return list(project(ledger, identity, selection))
+            return project(ledger, identity, selection)
 
     def entities(
         self,
@@ -409,7 +409,7 @@ class Court:
         kind: str | None = None,
         key: str | list[str] | None = None,
         sourced: bool = False,
-    ) -> list[EntityView]:
+    ) -> tuple[EntityView, ...]:
         selection: Item = {
             k: v for k, v in {"kind": kind, "key": key}.items() if v is not None
         }
@@ -418,7 +418,7 @@ class Court:
         if sourced:
             selection["sourced"] = True
         with self._ledger.reading(replay) as ledger:
-            return list(entities(ledger, identity, selection))
+            return entities(ledger, identity, selection)
 
     @read_once
     def entity(self, entity_id: UUID) -> EntityView:
