@@ -76,7 +76,7 @@ class Web:
             "settings": self.settings().model_dump(),
             "required_settings": REQUIRED_SETTINGS,
             "save": self.game.court.db_path.name if self.game else None,
-            "game": self.game.presentation() if self.game else None,
+            "game": self.game.court.presentation() if self.game else None,
         }
 
     def emit(self, event: dict[str, Any]) -> None:

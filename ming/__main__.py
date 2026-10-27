@@ -61,11 +61,11 @@ async def conversation(court: Court, settings: Configuration) -> None:
     game = Game(court, settings, month_model=settings.month_model)
     game.resume()
     await game.drain()
-    state = game.presentation()
+    state = court.presentation()
     if state["face"] != "month" and not state["failure"]:
         game.start("open")
     try:
-        night = game.presentation()["night"]
+        night = court.presentation()["night"]
         print(json.dumps({"night": night["id"] if night else None}), flush=True)
         while line := await asyncio.to_thread(sys.stdin.readline):
             request = json.loads(line)
@@ -77,7 +77,7 @@ async def conversation(court: Court, settings: Configuration) -> None:
                 task = game.start(action, request, repeat=True)
                 if task is not None and action != "month":
                     scene = await asyncio.shield(task)
-            state = game.presentation()
+            state = court.presentation()
             failure = state["failure"]
             print(
                 json.dumps(
@@ -111,7 +111,7 @@ async def month_action(court: Court, args: argparse.Namespace) -> None:
         if args.command == "choose"
         else {},
     )
-    state = game.presentation()
+    state = court.presentation()
     print(
         json.dumps(
             {"date": state["date"], "petitions": state["petitions"]}, ensure_ascii=False

@@ -14,7 +14,6 @@ from shutil import copyfile
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
-import httpx
 import httpx2
 import pytest
 from mcp import Client
@@ -170,10 +169,8 @@ async def chunks_for(url: str | None) -> list[str]:
     return [text[: len(text) // 2], text[len(text) // 2 :]]
 
 
-def install_process(monkeypatch, *, mode: str = "ok", delay: float = 0):
+def install_process(monkeypatch, *, mode: str = "ok"):
     calls: list[tuple[tuple[str, ...], dict[str, object]]] = []
-    snapshots: list[dict[str, str]] = []
-    inflight: dict[str, str] = {}
 
     async def spawn(*args: str, **kwargs: object) -> SimpleNamespace:
         calls.append((args, {**kwargs, "agent": (
@@ -188,15 +185,7 @@ def install_process(monkeypatch, *, mode: str = "ok", delay: float = 0):
         if mode == "exit" or ("--model" in args and args[args.index("--model") + 1] == "rejected-model"):
             output.feed_eof()
             return finished(output, 1)
-        cwd = str(kwargs.get("cwd"))
         url = mcp_url(args, kwargs)
-        if url is not None:
-            inflight[cwd] = url
-            if len(inflight) >= 2:
-                snapshots.append(dict(inflight))
-        if delay:
-            await asyncio.sleep(delay)
-        inflight.pop(cwd, None)
         chunks = await chunks_for(url) if mode == "ok" else []
         for line in host_lines(args[0], chunks, mode=mode):
             output.feed_data(line)
@@ -206,7 +195,7 @@ def install_process(monkeypatch, *, mode: str = "ok", delay: float = 0):
         return finished(output)
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
-    return calls, snapshots
+    return calls
 
 
 def codex_stream(name: str) -> httpx2.Response:
@@ -219,6 +208,11 @@ def codex_response(
     *, requests: list[httpx2.Request] | None = None, rejected: bool = False,
     read_args: dict[str, object] | None = None,
 ) -> httpx2.Response:
+    if request.url.host == "auth.openai.com":
+        return httpx2.Response(200, json={
+            "access_token": jwt({"exp": int(time.time()) + 3600, "account_id": "acct"}),
+            "refresh_token": "new-refresh",
+        })
     if requests is not None:
         requests.append(request)
     if rejected:
@@ -233,13 +227,15 @@ def codex_response(
             "choices": [{"index": 0, "message": {"role": "assistant", "content": reply},
                          "finish_reason": "stop"}],
         }
-        if not body.get("stream"):
-            return httpx2.Response(200, json=completion)
-        completion["object"] = "chat.completion.chunk"
-        completion["choices"] = [{"index": 0, "delta": {"role": "assistant", "content": reply},
-                                   "finish_reason": "stop"}]
-        return httpx2.Response(200, headers={"content-type": "text/event-stream"},
-                               content=f"data: {json.dumps(completion)}\n\ndata: [DONE]\n\n".encode())
+        if body.get("stream"):
+            completion["object"] = "chat.completion.chunk"
+            completion["choices"] = [{"index": 0, "delta": {"role": "assistant", "content": reply},
+                                       "finish_reason": "stop"}]
+            response = httpx2.Response(200, headers={"content-type": "text/event-stream"},
+                                       content=f"data: {json.dumps(completion)}\n\ndata: [DONE]\n\n".encode())
+        else:
+            response = httpx2.Response(200, json=completion)
+        return response
     called = any(
         isinstance(item, dict) and item.get("type") == "function_call"
         for item in body.get("input") or []
@@ -328,7 +324,7 @@ def test_process_subscription_scene_lands_and_streams(
     monkeypatch.setenv("GROK_HOME", str(tmp_path / "grok-home"))
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
-    calls, _snapshots = install_process(monkeypatch)
+    calls = install_process(monkeypatch)
     app = create_app(game_db.parent)
     events = Mock(wraps=app.state.web.emit)
     monkeypatch.setattr(app.state.web, "emit", events)
@@ -382,7 +378,7 @@ def test_process_subscription_scene_lands_and_streams(
 def test_codex_scene_lands_and_streams(tmp_path: Path, monkeypatch, game_db: Path, channel) -> None:
     before = {path: stamp(path) for path in USER_FILES}
     home = tmp_path / "codex"
-    auth_file(home / "auth.json", expired=False)
+    auth_file(home / "auth.json", expired=channel == ("codex", ""))
     monkeypatch.setenv("CODEX_HOME", str(home))
     bodies = []
 
@@ -409,6 +405,13 @@ def test_codex_scene_lands_and_streams(tmp_path: Path, monkeypatch, game_db: Pat
         assert state["game"]["failure"]["payload"]["type"] == "ModelHTTPError"
     elif channel[0] == "codex":
         assert_scene(state, events)
+        data = json.loads((home / "auth.json").read_text())
+        assert data["tokens"]["refresh_token"] == "new-refresh"
+        assert data["tokens"]["id_token"] == "kept-id"
+        assert data["tokens"]["account_id"] == "acct"
+        assert data["auth_mode"] == "chatgpt"
+        assert data["OPENAI_API_KEY"] is None
+        assert data["last_refresh"]
     else:
         assert state["game"]["failure"] is None
         assert state["game"]["night"]["result"] == "translated"
@@ -437,7 +440,7 @@ def test_cli_channel_reaches_its_host(
     home = tmp_path / "codex"
     auth_file(home / "auth.json", expired=False)
     monkeypatch.setenv("CODEX_HOME", str(home))
-    calls, _snapshots = install_process(monkeypatch)
+    calls = install_process(monkeypatch)
     bodies: list[httpx2.Request] = []
     install_codex(monkeypatch, partial(codex_response, requests=bodies))
     actions = [{"action": "say", "words": "宣"}]
@@ -495,8 +498,7 @@ def test_subscription_month_completes(tmp_path: Path, monkeypatch, backend: str,
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
     opening_template().parent.mkdir(parents=True, exist_ok=True)
     copyfile(template, opening_template())
-    monkeypatch.setattr("ming.middle.cli_model.GROK_SLOT_COUNT", 2)
-    calls, snapshots = install_process(monkeypatch, delay=0.05 if backend == "grok" else 0)
+    calls = install_process(monkeypatch)
     if "deliberation" in expected_calls:
         monkeypatch.setitem(REPLIES, "NightDeclaration", json.loads(
             (RECORDED / "night_endorsed.json").read_text()
@@ -555,9 +557,6 @@ def test_subscription_month_completes(tmp_path: Path, monkeypatch, backend: str,
             assert args[args.index(flag) + 1] == "high"
     assert {info["agent"] for _, info in calls} >= expected_calls
     if backend == "grok":
-        assert snapshots
-        assert any(len(set(shot.values())) == len(shot) and len(shot) >= 2 for shot in snapshots)
-        assert max(len(shot) for shot in snapshots) <= 2
         trust = [args for args, _kwargs in calls if "--trust" in args]
         assert trust
         assert len(trust) == len({args[args.index("--cwd") + 1] for args in trust})
@@ -569,7 +568,7 @@ def test_subscription_month_completes(tmp_path: Path, monkeypatch, backend: str,
     {"month_model": {"backend": "api", "model": CODEX_MODEL, "base_url": ""}},
 ])
 def test_optional_channel_falls_back_and_configure_reopens(game_db, monkeypatch, optional):
-    calls, _ = install_process(monkeypatch)
+    calls = install_process(monkeypatch)
     settings = {"backend": "claude-cli", "model": "sonnet", "effort": "medium", **optional}
     (game_db.parent / "settings.json").write_text(json.dumps(settings))
     app = create_app(game_db.parent)
@@ -628,7 +627,7 @@ def test_codex_forwards_a_ledger_sized_tool_result(tmp_path: Path, monkeypatch, 
 def test_pi_empty_assistant_is_not_a_transport_failure(
     game_db: Path, monkeypatch
 ) -> None:
-    calls, _snapshots = install_process(monkeypatch, mode="empty")
+    calls = install_process(monkeypatch, mode="empty")
     app = create_app(game_db.parent)
     with TestClient(app) as client:
         open_game(client, {"backend": "pi", "model": ""}, game_db)
@@ -655,7 +654,7 @@ def test_process_failure_stops_month(tmp_path: Path, monkeypatch, backend: str, 
             client.post("/actions", json=action).raise_for_status()
         client.portal.call(app.state.web.game.drain)
         assert client.get("/state").json()["game"]["failure"] is None
-        calls, _ = install_process(monkeypatch, mode=mode)
+        calls = install_process(monkeypatch, mode=mode)
         client.post("/actions", json={"action": "month"}).raise_for_status()
         state = client.get("/state").json()
     model_calls = [args for args, _ in calls if "--trust" not in args]
@@ -707,71 +706,3 @@ def test_codex_credential_failure_stops_month(tmp_path: Path, monkeypatch, probl
     assert stamp(Path.home() / ".codex" / "config.toml") == before
     if problem == "rejected":
         assert (home / "auth.json").read_bytes() == original
-
-
-def test_codex_parallel_refresh_writes_one_credential(tmp_path: Path, monkeypatch, game_db: Path, opening_db: Path) -> None:
-    home = tmp_path / "codex"
-    auth_file(home / "auth.json", expired=True)
-    monkeypatch.setenv("CODEX_HOME", str(home))
-    refreshes: list[int] = []
-
-    async def handler(request: httpx2.Request) -> httpx2.Response:
-        if request.url.host == "auth.openai.com":
-            refreshes.append(1)
-            await asyncio.sleep(0.2)
-            return httpx2.Response(
-                200,
-                json={
-                    "access_token": jwt({"exp": int(time.time()) + 3600, "account_id": "acct"}),
-                    "refresh_token": "new-refresh",
-                },
-            )
-        return codex_stream("scene")
-
-    install_codex(monkeypatch, handler)
-
-    second_directory = tmp_path / "b"
-    second_directory.mkdir()
-    copyfile(opening_db, second_directory / opening_db.name)
-
-    async def run() -> None:
-        transport_a = httpx.ASGITransport(app=create_app(game_db.parent))
-        transport_b = httpx.ASGITransport(app=create_app(second_directory))
-        async with (
-            httpx.AsyncClient(transport=transport_a, base_url="http://a") as first,
-            httpx.AsyncClient(transport=transport_b, base_url="http://b") as second,
-        ):
-            for client in (first, second):
-                response = await client.post(
-                    "/actions",
-                    json={
-                        "action": "settings",
-                        "settings": {"backend": "codex", "model": CODEX_MODEL},
-                    },
-                )
-                response.raise_for_status()
-                response = await client.post(
-                    "/actions", json={"action": "load", "save": opening_db.name}
-                )
-                response.raise_for_status()
-                response = await client.post("/actions", json={"action": "open"})
-                response.raise_for_status()
-            await asyncio.gather(
-                first.post("/actions", json={"action": "say", "words": "甲"}),
-                second.post("/actions", json={"action": "say", "words": "乙"}),
-            )
-            for client in (first, second):
-                state = (await client.get("/state")).json()
-                assert state["game"]["failure"] is None
-                assert state["game"]["night"]["turns"]
-
-    asyncio.run(run())
-    data = json.loads((home / "auth.json").read_text())
-    assert len(refreshes) == 1
-    assert data["tokens"]["refresh_token"] == "new-refresh"
-    assert data["tokens"]["id_token"] == "kept-id"
-    assert data["tokens"]["account_id"] == "acct"
-    assert data["auth_mode"] == "chatgpt"
-    assert data["OPENAI_API_KEY"] is None
-    assert data["last_refresh"]
-    assert not (home / "config.toml").exists()

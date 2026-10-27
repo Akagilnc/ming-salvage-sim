@@ -221,6 +221,7 @@ class Court:
     def prior_interim(self, entity_id: UUID) -> tuple[Item, ...]:
         return tuple(f.detail for f in self.products(entity_id, current=False, kind="interim"))
 
+    @read_once
     def as_petition(self, fact: FactView) -> PendingPetition:
         return PendingPetition.model_validate(
             {k: v for k, v in fact.detail.items() if k != "date"}
@@ -425,9 +426,9 @@ class Court:
         return EntityView.model_validate(self._ledger.entities(entity_id=entity_id)[0])
 
     @read_once
-    def pending_petitions(self) -> tuple[FactView, ...]:
+    def pending_petitions(self) -> tuple[PendingPetition, ...]:
         return tuple(
-            FactView(**f)
+            self.as_petition(FactView(**f))
             for f in self._ledger.read(queries.pending_petitions(self.calendar().data))
         )
 
@@ -601,6 +602,70 @@ class Court:
                 **({"known_people": sorted(self.known_people(decree))} if decree.data["secret"] else {}),
             })
         return deepfreeze(materials)
+
+    @read_once
+    def failures(self) -> tuple[Item, ...]:
+        nights = self.nights()
+        night = nights[-1] if nights else None
+        return tuple(
+            i
+            for i in self.interactions().values()
+            if i["status"] == "failed"
+            and not (
+                i["action"] == "say"
+                and (
+                    night is None
+                    or night.closed
+                    or i["payload"]["night_id"] != str(night.id)
+                )
+            )
+        )
+
+    @read_once
+    def running(self) -> tuple[Item, ...]:
+        return tuple(
+            i
+            for i in self.interactions().values()
+            if i["status"] == "running" and i["action"] != "translation"
+        )
+
+    @read_once
+    def presentation(self) -> Item:
+        pending = next(iter(self.running()), None)
+        month = self.interactions().get("month")
+        if month and month["status"] == "running":
+            pending = month
+        nights = self.nights()
+        night = nights[-1].model_dump(mode="json") if nights else None
+        failures = self.failures()
+        returned = self.returned_petitions(visible=True)
+        awaiting_drafter = bool(returned) and not self.petition_officials()
+        # The translation-to-month exception must not bypass another failed action.
+        failure = next(
+            (i for i in failures if i["action"] != "translation"),
+            next(iter(failures), None),
+        )
+        return deepfreeze({
+            "face": "audience"
+            if night and not night["closed"]
+            else (
+                "month"
+                if self.products(self.calendar().id, kind="month_open")
+                or (month and month["status"] != "done")
+                else "desk"
+            ),
+            "night": night,
+            "date": self.calendar().data,
+            "running": pending is not None and failure is None,
+            "failure": failure,
+            "pending": pending,
+            "unhandled_monthly": self.unhandled_monthly(),
+            "petitions": [p.model_dump(mode="json") for p in self.pending_petitions()],
+            "returned_petitions": [
+                {"petition": f.detail, "awaiting_drafter": awaiting_drafter}
+                for f in returned
+            ],
+        })
 
     def observe(self, on_change: Callable[[], None]) -> None:
         self._ledger.on_commit = on_change
