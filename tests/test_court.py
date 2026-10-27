@@ -10,6 +10,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel, DeltaToolCall
 from starlette.testclient import TestClient
 
 from ming.web import create_app
+from ming.middle.view import Officials
 
 RECORDED = Path(__file__).parent / "recorded"
 
@@ -118,6 +119,13 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
         assert {e["key"]: e["data"] for e in after["entities"] if e["kind"] == "person"} == {k: e["data"] for k, e in before.items()}
         client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
         assert audit(game_db) == after
+        returned = client.portal.call(
+            client.app.state.web.game.court.read_records, Officials(people=["毕自严"]), None, ["国库", "郭允厚"],
+        )
+        assert next(e["data"]["taels"] for e in returned["entities"] if e["key"] == "国库") == 3200000
+        assert not {"dossier", "seed_guilt", "loyalty"}.intersection(
+            next(e["data"] for e in returned["entities"] if e["key"] == "郭允厚")
+        )
         client.post("/actions", json={"action": "month"}).raise_for_status()
         assert client.get("/state").json()["game"]["failure"] is None
         assert client.get("/state").json()["game"]["date"]["month"] == 11

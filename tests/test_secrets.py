@@ -1,6 +1,5 @@
 """Medium: one recorded mixed night through HTTP actions and identity read doors."""
 
-import asyncio
 import json
 from functools import partial
 from pathlib import Path
@@ -13,7 +12,6 @@ from starlette.testclient import TestClient
 from ming.middle.view import Officials, character_input
 from ming.web import create_app
 from tests.test_court import replaying
-from tests.test_web import assert_record_queries
 
 RECORDED = Path(__file__).parent / "recorded"
 
@@ -50,7 +48,9 @@ def test_every_model_call_reads_identity_scoped_records(game_db, steps, model_in
         steps[name] = replaying(
             lambda messages, name=name: outputs[name] if any(isinstance(p, ToolReturnPart) for m in messages for p in m.parts)
             else ModelResponse(parts=[ToolCallPart("read_records", {"kind": "person", "key": "王体乾"}, tool_call_id="person"),
-                                      ToolCallPart("read_records", {"kind": "incumbency", "key": "户部尚书"}, tool_call_id="office")]),
+                                      ToolCallPart("read_records", {"kind": "incumbency", "key": "户部尚书"}, tool_call_id="office"),
+                                      ToolCallPart("read_records", {"kind": "account", "key": "国库"}, tool_call_id="treasury"),
+                                      ToolCallPart("read_records", {"kind": "faction", "key": ["阉党", "东林"]}, tool_call_id="factions")]),
             received[name], tools[name],
         )
     with TestClient(create_app(game_db.parent)) as client:
@@ -91,6 +91,20 @@ def test_every_model_call_reads_identity_scoped_records(game_db, steps, model_in
             returns = [p.model_response_object() for m in received[name] for p in m.parts
                        if isinstance(p, ToolReturnPart) and p.tool_call_id == "office"]
             assert returns and all(r["appointments"][0]["holders"] == ["郭允厚"] for r in returns)
+            identity = model_invocations[name][0]
+            responses = {p.tool_call_id: p.model_response_object() for m in received[name] for p in m.parts
+                         if isinstance(p, ToolReturnPart)}
+            if name != "impeachment":
+                assert ("dossier" in responses["person"]["entities"][0]["data"]) == (
+                    isinstance(identity, Officials) and "王体乾" in identity.people
+                )
+                assert ("taels" in next(iter(responses["treasury"].get("entities", [])), {"data": {}})["data"]) == (
+                    name in {"NightDeclaration", "Declaration", "simulation", "deliberation", "urgent"}
+                )
+            if isinstance(identity, Officials) and name != "impeachment":
+                factions = {e["key"]: e["data"] for e in responses["factions"]["entities"]}
+                assert ("satisfaction" in factions["阉党"]) == (name in {"deliberation", "urgent"})
+                assert factions["东林"] == {"name": "东林"}
             for message in received[name]:
                 if message.kind != "request" or message.parts[0].part_kind != "user-prompt":
                     continue
@@ -149,6 +163,11 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
         orders = court.entities("audit", kind="decree")
         secret = next(d for d in orders if d.data["secret"])
         public = next(d for d in orders if not d.data["secret"])
+        gazettes = []
+        steps["gazette"] = replaying([
+            ModelResponse(parts=[ToolCallPart("read_records", {"kind": "decree", "key": secret.key}, tool_call_id="secret")]),
+            (RECORDED / "gazette.txt").read_text(),
+        ] * 2, gazettes)
         assert (secret.data["turn"], public.data["turn"]) == (3, 6)
         assert secret.data["handler"] == handler
         assert public.data.get("handler") is None
@@ -217,7 +236,13 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
                 if failure == "declaration" else []
             )
             if failure is None:
-                asyncio.run(assert_record_queries(court, secret_appointment=True))
+                assert [(
+                    court.office_record(identity, "陕西巡抚")["status"],
+                    any(a["office"] == "巡抚" and a["territory"] == "陕西"
+                        for a in court.entities(identity, kind="person", key="洪承畴")[0].data["appointments"]),
+                ) for identity in ("world", "emperor", "public", Officials(people=[handler]), Officials(people=["王体乾"]))] == [
+                    ("occupied", True), ("occupied", True), ("not_found", False), ("occupied", True), ("not_found", False),
+                ]
                 private = {f.entity_id for f in court.facts("audit", kind="changed") if f.detail.get("discovered")}
                 assert private
                 for person in ("emperor", handler, "王承恩", "杨嗣昌", "韩爌"):
@@ -261,6 +286,10 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
                 ).raise_for_status()
                 client.post("/actions", json={"action": "month"}).raise_for_status()
                 client.portal.call(client.app.state.web.game.drain)
+        assert {p.model_response_object()["status"] for m in gazettes for p in m.parts
+                if isinstance(p, ToolReturnPart) and p.tool_call_id == "secret"} == {"not_found"}
+        assert all(not {"entities", "facts", "names_and_aliases"}.intersection(p.model_response_object())
+                   for m in gazettes for p in m.parts if isinstance(p, ToolReturnPart) and p.tool_call_id == "secret")
         for prompt in [json.loads(part.content) for message in material for part in message.parts if part.part_kind == "user-prompt"]:
             assert prompt["context"]["decree"]["id"] == str(secret.id)
             assert all("emperor_words" not in f for f in prompt["context"]["facts"] + prompt["context"]["products"])

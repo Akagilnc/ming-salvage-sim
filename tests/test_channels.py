@@ -526,6 +526,9 @@ def test_subscription_month_completes(tmp_path: Path, monkeypatch, backend: str,
             client.portal.call(app.state.web.game.drain)
         client.post("/actions", json={"action": "month"}).raise_for_status()
         state = client.get("/state").json()
+        if backend == "grok":
+            client.post("/actions", json={"action": "month"}).raise_for_status()
+            assert client.get("/state").json()["game"]["failure"] is None
     assert state["game"]["failure"] is None
     assert state["game"]["date"]["month"] == 11
     assert state["settings"]["month_model"] == settings["month_model"]
@@ -535,9 +538,10 @@ def test_subscription_month_completes(tmp_path: Path, monkeypatch, backend: str,
             body = json.loads(request.content)
             assert body["model"] == CODEX_MODEL
             assert (body["reasoning"]["effort"] if backend == "codex" else body["reasoning_effort"]) == "high"
-            if backend == "api":
-                assert request.url.host == "month.example.test"
-                assert request.headers["authorization"] == "Bearer month-key"
+            assert backend != "api" or (
+                request.url.host == "month.example.test"
+                and request.headers["authorization"] == "Bearer month-key"
+            )
     for args, info in calls:
         if "--trust" in args:
             continue
@@ -593,21 +597,6 @@ def test_optional_channel_falls_back_and_configure_reopens(game_db, monkeypatch,
             assert calls
             for args, _ in calls:
                 assert args[args.index("--thinking") + 1] == "high"
-
-
-def test_grok_second_month_does_not_trust_again(tmp_path: Path, monkeypatch, game_db: Path) -> None:
-    monkeypatch.setenv("GROK_HOME", str(tmp_path / "grok-home"))
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("USERPROFILE", str(tmp_path))
-    calls, _snapshots = install_process(monkeypatch)
-    with TestClient(create_app(game_db.parent)) as client:
-        open_game(client, {"backend": "grok", "model": ""}, game_db)
-        client.post("/actions", json={"action": "month"}).raise_for_status()
-        trusted = sum("--trust" in args for args, _kwargs in calls)
-        client.post("/actions", json={"action": "month"}).raise_for_status()
-        state = client.get("/state").json()
-    assert state["game"]["failure"] is None
-    assert sum("--trust" in args for args, _kwargs in calls) == trusted
 
 
 def test_codex_forwards_a_ledger_sized_tool_result(tmp_path: Path, monkeypatch, game_db: Path) -> None:
