@@ -4,30 +4,30 @@ from operator import itemgetter
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field
 from sqlalchemy import JSON, CompoundSelect, Select, func, literal, or_, select, true, union_all
-from sqlalchemy.sql.elements import ColumnElement
+from sqlalchemy.sql.elements import BindParameter, ColumnElement
 
-from ming.ledger import ENTITY_COLUMNS as E, FACT_COLUMNS as F, FACT_ROWS, Entity, Ledger
+from ming.ledger import ENTITY_COLUMNS as E, FACT_COLUMNS as F, FACT_ROWS, Entity, Ledger, read_once
+from ming.middle import ReadData, ReadView
 from ming.middle.calendar import calendar_row
 from ming.middle.queries import LATEST_NIGHT, NIGHT_ROWS
 
 INITIAL_HALL = ("王承恩",)
 
 
-class TurnView(BaseModel):
+class TurnView(ReadView):
     id: str
     emperor_words: str
     scene: str
-    hall: list[str]
+    hall: tuple[str, ...]
 
 
-class NightView(BaseModel):
+class NightView(ReadView):
     id: UUID
     closed: bool
-    hall: list[str]
-    date: dict[str, int]
-    turns: list[TurnView] = Field(default_factory=list[TurnView])
+    hall: tuple[str, ...]
+    date: ReadData[int]
+    turns: tuple[TurnView, ...] = ()
     result: Literal["translated", "unhandled"] | None = None
 
 
@@ -69,16 +69,20 @@ def hall_history(night_id: ColumnElement[Any], turn_position: ColumnElement[Any]
     return select(ranked.c.person, ranked.c.position, ranked.c.ordinal).where(ranked.c.entry == 1).correlate_except(ranked)
 
 
+TURN_MEMBERS = hall_history(F.entity_id, F.position).subquery()
+TURN_HALL = select(func.json_group_array(func.json_object(
+    "person", TURN_MEMBERS.c.person, "position", TURN_MEMBERS.c.position, "ordinal", TURN_MEMBERS.c.ordinal,
+), type_=JSON)).scalar_subquery()
+TURN_ROWS = FACT_ROWS.add_columns(TURN_HALL.label("hall"))
+
+
+@read_once
 def read_night(ledger: Ledger, night_id: UUID) -> NightView:
     night = ledger.entities(entity_id=night_id, query=NIGHT_ROWS)[0]
-    members = hall_history(F.entity_id, F.position).subquery()
-    hall = select(func.json_group_array(func.json_object(
-        "person", members.c.person, "position", members.c.position, "ordinal", members.c.ordinal,
-    ), type_=JSON)).scalar_subquery()
-    turns = [TurnView(
+    turns = tuple(TurnView(
         **item["detail"], emperor_words=item["emperor_words"],
-        hall=[member["person"] for member in sorted(item["hall"], key=itemgetter("position", "ordinal"))],
-    ) for item in ledger.facts(entity_id=night_id, kind="turn", query=FACT_ROWS.add_columns(hall.label("hall")))]
+        hall=tuple(member["person"] for member in sorted(item["hall"], key=itemgetter("position", "ordinal"))),
+    ) for item in ledger.facts(entity_id=night_id, kind="turn", query=TURN_ROWS))
     return NightView(
         id=night_id,
         **night["data"],
@@ -87,11 +91,11 @@ def read_night(ledger: Ledger, night_id: UUID) -> NightView:
     )
 
 
-def witnessed_nights(people: list[str], query: Select[Any]) -> Select[Any]:
+def witnessed_nights(people: list[str] | BindParameter[str], query: Select[Any]) -> Select[Any]:
     added = func.json_each(F.detail["add"]).table_valued("value")
     removed = func.json_each(F.detail["remove"]).table_valued("value")
     return query.where(E.kind == "night", or_(
-        literal(bool(set(INITIAL_HALL).intersection(people))),
+        or_(*(literal(person).in_(people) for person in INITIAL_HALL)),
         select(F.position).where(
             F.entity_id == E.id, F.kind == "hall",
             select(added.c.value).where(
@@ -102,7 +106,9 @@ def witnessed_nights(people: list[str], query: Select[Any]) -> Select[Any]:
     ))
 
 
-def known_people(data: ColumnElement[Any], people: list[str] | None = None) -> CompoundSelect[Any]:
+def known_people(
+    data: ColumnElement[Any], people: list[str] | BindParameter[str] | None = None,
+) -> CompoundSelect[Any]:
     """Involved people, the handler, and the hall at the approval turn."""
     night_id = func.replace(data["night_id"].as_string(), "-", "")
     turn = F.position.table.alias().c

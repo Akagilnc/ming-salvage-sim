@@ -14,6 +14,7 @@ from ming.middle.concepts import (
 from ming.middle.declaration import PendingPetition
 from ming.middle.invoke import ModelSource, build_agent, enlist, invoke
 from ming.middle.month_work import MonthText, Simulation, prompt
+from ming.middle.view import EntityView
 from ming.middle.records import Materials, read_records
 
 
@@ -40,10 +41,10 @@ class Simulations:
             "arrivals": self.court.arrivals_this_month(),
             "fiscal_events": self.court.fiscal_events(),
             "prior_choices": [
-                {**f.detail, "petition": self.court.petition(f.detail["petition_id"]).detail}
+                {**f.detail, "petition": petition.detail}
                 for f in self.court.facts("audit", kind="choice", date=self.court.calendar().data)
                 if f.detail["petition_id"] not in returned
-                and self.court.petition(f.detail["petition_id"]).detail["source"] in {"urgent", "impeachment"}
+                and (petition := self.court.petition(f.detail["petition_id"])).detail["source"] in {"urgent", "impeachment"}
             ],
         }
 
@@ -55,10 +56,8 @@ class Simulations:
         self.court.log.info("model output: %s", result.output.model_dump_json())
         return {"output": result.output.model_dump()}
 
-    async def draft(self) -> None:
+    async def draft(self, verdicts: list[tuple[EntityView, dict[str, Any]]]) -> None:
         calendar = self.court.calendar()
-        if self.court.products(calendar.id, kind="month_draft"):
-            return
         product = await self.call(self.context())
         petitions = [
             PendingPetition(
@@ -66,11 +65,8 @@ class Simulations:
                 blocking=True, source="simulation",
             ) for item in product["output"]["petitions"]
         ]
-        for decree in self.court.current_decrees():
-            if decree.data["secret"]:
-                continue
-            verdict = self.court.deliberation(decree.id, None)
-            if verdict is None or verdict["verdict"] == "准":
+        for decree, verdict in verdicts:
+            if verdict["verdict"] == "准":
                 continue
             petitions.append(PendingPetition(
                 text=verdict["text"],
@@ -95,14 +91,15 @@ class Simulations:
         ) if f.detail["option"] == option), None)
         if existing is not None:
             return existing
-        draft = self.court.products(self.court.calendar().id, kind="month_draft")[0].detail
+        calendar = self.court.calendar()
+        draft = self.court.products(calendar.id, kind="month_draft")[0].detail
         result = await self.call({
             **self.context(), "draft": draft["output"],
             "choices": [{"petition": petition.model_dump(mode="json"),
                          "option": option, "text": petition.options[option]}],
         }, final=True)
         result.update(petition_id=str(petition.id), option=option)
-        self.court.record(self.court.calendar().id, [("forecast", {**result, "date": petition.available})])
+        self.court.record(calendar.id, [("forecast", {**result, "date": petition.available})])
         return result
 
     def log_failure(self, task: asyncio.Task[Any]) -> None:
@@ -110,8 +107,6 @@ class Simulations:
             self.court.log.error("month candidate failed", exc_info=error)
 
     def speculate(self) -> None:
-        if self.court.products(self.court.calendar().id, kind="month_final"):
-            return
         petitions = self.court.month_petitions()
         if len(petitions) != 1 or self.court.petition_products([str(petitions[0].detail["id"])], "choice"):
             return
@@ -121,8 +116,6 @@ class Simulations:
 
     async def final(self) -> None:
         calendar = self.court.calendar()
-        if self.court.products(calendar.id, kind="month_final"):
-            return
         draft = self.court.products(calendar.id, kind="month_draft")[0].detail
         petitions = self.court.month_petitions()
         choices = self.choices()

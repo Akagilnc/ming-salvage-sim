@@ -14,11 +14,17 @@ from tests.test_month import GUOKU_ORDER
 from tests.test_secrets import _declaration_prompt
 
 RECORDED = Path(__file__).parent / "recorded"
+FUNDED_AFFAIRS = (
+    ("陕西专款", "国库", "funded_affair"), ("军饷", "国库", "funded_army"),
+    ("官俸_base", "国库", "funded_salary"), ("官俸_base", "内库", "funded_private_salary"),
+)
 
 
 @pytest.mark.parametrize("steps", ["approved"], indirect=True)
-@pytest.mark.parametrize("game_db", ["rejected_night"], indirect=True)
-@pytest.mark.parametrize("option,forecast_failure", [(0, False), (1, False), (2, False), (0, True)])
+@pytest.mark.parametrize("option,forecast_failure,game_db", [
+    (0, False, "rejected_night"), (1, False, "rejected_month"),
+    (2, False, "rejected_month"), (0, True, "rejected_night"),
+], indirect=["game_db"])
 def test_rejected_decree_is_forced_withdrawn_or_held(game_db, steps, audit, option, forecast_failure):
     received = []
     if forecast_failure:
@@ -27,10 +33,11 @@ def test_rejected_decree_is_forced_withdrawn_or_held(game_db, steps, audit, opti
     with TestClient(create_app(game_db.parent)) as client:
         client.post("/actions", json={"action": "load", "save": game_db.name})
         before = audit(game_db)
-        assert client.get("/state").json()["game"]["petitions"] == []
-        assert not [f for f in before["facts"] if f["kind"] in {"month_draft", "month_final", "simulation"}]
-        client.post("/actions", json={"action": "month"}).raise_for_status()
-        client.portal.call(client.app.state.web.game.drain)
+        if option == 0:
+            assert client.get("/state").json()["game"]["petitions"] == []
+            assert not [f for f in before["facts"] if f["kind"] in {"month_draft", "month_final", "simulation"}]
+            client.post("/actions", json={"action": "month"}).raise_for_status()
+            client.portal.call(client.app.state.web.game.drain)
         state = client.get("/state").json()["game"]
         assert state["failure"] is None
         assert state["date"]["month"] == 10
@@ -64,7 +71,7 @@ def test_rejected_decree_is_forced_withdrawn_or_held(game_db, steps, audit, opti
 
 
 @pytest.mark.parametrize("steps", ["approved"], indirect=True)
-@pytest.mark.parametrize("game_db", ["rejected_night"], indirect=True)
+@pytest.mark.parametrize("game_db", ["endorsed_month"], indirect=True)
 @pytest.mark.parametrize("case", ["approved", "rejected", "retry", "reopen"])
 def test_imperial_backing_reconsiders_the_original_decree(game_db, steps, audit, clock, case):
     received = []
@@ -75,12 +82,8 @@ def test_imperial_backing_reconsiders_the_original_decree(game_db, steps, audit,
     )
     with TestClient(create_app(game_db.parent)) as client:
         client.post("/actions", json={"action": "load", "save": game_db.name})
-        client.post("/actions", json={"action": "month"}).raise_for_status()
-        client.portal.call(client.app.state.web.game.drain)
-        petition = client.get("/state").json()["game"]["petitions"][0]
-        client.post("/actions", json={"action": "choose", "petition": petition["id"], "option": 3}).raise_for_status()
-        client.portal.call(client.app.state.web.game.drain)
         ledger = audit(game_db)
+        petition = {"id": next(f["detail"]["decision_key"]["petition_id"] for f in ledger["facts"] if f["kind"] == "endorsed")}
         decree = next(e for e in ledger["entities"] if e["kind"] == "decree")
         assert len([f for f in ledger["facts"] if f["kind"] == "deliberation"]) == 1
         assert len([f for f in ledger["facts"] if f["kind"] == "endorsed"]) == 1
@@ -117,9 +120,7 @@ def test_imperial_backing_reconsiders_the_original_decree(game_db, steps, audit,
         assert len([f for f in audit(game_db)["facts"] if f["kind"] == "deliberation"]) == 2
 
 
-@pytest.mark.usefixtures("backed_night")
-@pytest.mark.parametrize("backed_night", ["interim"], indirect=True)
-@pytest.mark.parametrize("game_db", ["backed_night"], indirect=True)
+@pytest.mark.parametrize("game_db", ["interim_backed_night"], indirect=True)
 @pytest.mark.parametrize("case", ["approved", "withdrawn", "held", "vital"])
 def test_interim_costs_follow_promulgation_not_backing(game_db, steps, audit, case):
     rejected = case != "approved"
@@ -157,6 +158,7 @@ def test_interim_costs_follow_promulgation_not_backing(game_db, steps, audit, ca
 
 
 @pytest.mark.usefixtures("clock")
+@pytest.mark.parametrize("game_db", ["two_nights"], indirect=True)
 @pytest.mark.parametrize("interrupt", [False, True])
 def test_two_nights_feed_world_and_arrivals_wait_for_audience(tmp_path, game_db, steps, audit, interrupt):
     received = []
@@ -165,15 +167,6 @@ def test_two_nights_feed_world_and_arrivals_wait_for_audience(tmp_path, game_db,
     steps["Declaration"] = replaying([(RECORDED / "month_journey_dates.json").read_text(), (RECORDED / "month_decree_money.txt").read_text()], declarations)
     with TestClient(create_app(tmp_path)) as client:
         save = client.post("/actions", json={"action": "load", "save": game_db.name}).json()["save"]
-        for case in ("travel", "approved"):
-            case = json.loads((RECORDED / f"night_{case}.json").read_text())
-            steps["scene"] = replaying([m for m in ModelMessagesTypeAdapter.validate_python(case["scene_responses"]) if isinstance(m, ModelResponse)])
-            steps["NightDeclaration"] = replaying(case["replies"])
-            client.post("/actions", json={"action": "open"})
-            for words in case["words"]:
-                client.post("/actions", json={"action": "say", "words": words})
-            client.post("/actions", json={"action": "dismiss"})
-            client.post("/actions", json={"action": "load", "save": save})
         ledger = audit(tmp_path / save)
         nights = {e["id"] for e in ledger["entities"] if e["kind"] == "night"}
         assert not [f for f in ledger["facts"] if f["kind"] in {"simulation", "month_draft", "month_final"}]
@@ -248,18 +241,18 @@ def test_two_nights_feed_world_and_arrivals_wait_for_audience(tmp_path, game_db,
         assert not any(e["data"]["waiting_audience"] for e in audit(tmp_path / save)["entities"] if e["kind"] == "person" and e["key"] in {"毕自严", "徐光启"})
 
 
-@pytest.mark.parametrize("case", [
-    pytest.param((case, "陕西专款", "国库"), id=case) for case in ("regular", "until", "factor", "defer", "reduce", "stop", "reorder", "shortage", "resume", "invalid_account")
-] + [pytest.param(("reorder", name, account), id=f"reorder-{name}-{account}") for name, account in (
-    ("军饷", "国库"), ("官俸_base", "国库"), ("官俸_base", "内库"),
-)] + [pytest.param(("switch", "官俸_base", "国库"), id="switch-官俸_base")])
+@pytest.mark.parametrize("case,game_db", [
+    pytest.param((case, *FUNDED_AFFAIRS[0][:2]), FUNDED_AFFAIRS[0][2] if case in {"regular", "reduce", "stop", "reorder"} else "opening_db", id=case)
+    for case in ("regular", "until", "factor", "defer", "reduce", "stop", "reorder", "shortage", "resume", "invalid_account")
+] + [pytest.param(("reorder", *source[:2]), source[2], id=f"reorder-{source[0]}-{source[1]}") for source in FUNDED_AFFAIRS[1:]]
+  + [pytest.param(("switch", *FUNDED_AFFAIRS[2][:2]), FUNDED_AFFAIRS[2][2], id="switch-官俸_base")], indirect=["game_db"])
 def test_month_pays_affair_from_declaration_month(game_db, steps, audit, clock, case):
     case, name, account = case
     funding = {"amount": 500000, "account": account, **({"until": {"year": 1627, "month": 11}} if case == "until" else {})}
-    changes = [{"field": "monthly_funding", "value": funding}]
+    shared = case in {"regular", "reduce", "stop", "reorder", "switch"}
+    declaration = {"facts": [] if shared else [{"entity_type": "affair", "entity": name, "create": True, "changes": [{"field": "monthly_funding", "value": funding}], "text": "每月拨五十万两"}]}
     if case in {"factor", "defer"}:
-        changes.append({"field": "payment_policy", "value": {case: 0.5, "until": {"year": 1627, "month": 11}}})
-    declaration = {"facts": [{"entity_type": "affair", "entity": name, "create": True, "changes": changes, "text": "每月拨五十万两"}]}
+        declaration["facts"][0]["changes"].append({"field": "payment_policy", "value": {case: 0.5, "until": {"year": 1627, "month": 11}}})
     if case == "shortage":
         declaration["facts"].append({"entity_type": "account", "entity": "国库", "create": False, "changes": [{"field": "taels", "value": -3100000, "counterpart": {"entity_type": "account", "entity": "内库"}}], "text": "移库"})
         funding["amount"] = 100000000
@@ -275,7 +268,10 @@ def test_month_pays_affair_from_declaration_month(game_db, steps, audit, clock, 
     with TestClient(create_app(game_db.parent)) as client:
         client.post("/actions", json={"action": "load", "save": game_db.name})
         for index in range(1 if case == "invalid_account" else 2 if name != "陕西专款" else 3):
-            client.post("/actions", json={"action": "month"})
+            # Session nodes run the first month from the opening through HTTP;
+            # every branch asserts that same immutable result.
+            if index != 0 or not shared:
+                client.post("/actions", json={"action": "month"})
             if case == "resume" and index == 0:
                 state = client.get("/state").json()["game"]
                 assert state["failure"] is not None and state["date"]["month"] == 10
@@ -308,8 +304,7 @@ def test_month_pays_affair_from_declaration_month(game_db, steps, audit, clock, 
             recipient = {"entity_type": "affair", "entity": name}
             original = list(reversed(GUOKU_ORDER)) if case == "shortage" else GUOKU_ORDER if account == "国库" else ["内廷俸_base", "妃嫔_base", "宫廷_base"]
             assert rows[("account", account)]["payment_order"] == ([recipient, *original] if case == "reorder" and index else [*original, recipient])
-            if account == "内库":
-                assert rows[("account", "国库")]["payment_order"] == GUOKU_ORDER
+            assert account != "内库" or rows[("account", "国库")]["payment_order"] == GUOKU_ORDER
             declaration = {"facts": []}
             if index == 0 and case in {"stop", "reduce", "switch"}:
                 account = "内库" if case == "switch" else account

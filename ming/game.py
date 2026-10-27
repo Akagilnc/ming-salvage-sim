@@ -71,10 +71,13 @@ class Game:
         if self.emit:
             self.emit({"event": event, "data": data})
 
-    def interaction(self, action: str, status: str, payload: dict[str, Any]) -> None:
+    def interaction(
+        self, action: str, status: str, payload: dict[str, Any],
+    ) -> None:
         key = f"choose:{payload['petition']}" if action == "choose" else action
+        calendar = self.court.calendar()
         self.court.record(
-            self.court.calendar().id,
+            calendar.id,
             [
                 (
                     "interaction",
@@ -83,73 +86,11 @@ class Game:
                         "action": action,
                         "status": status,
                         "payload": payload,
-                        "date": self.court.calendar().data,
+                        "date": calendar.data,
                     },
                 )
             ],
         )
-
-    def failures(self) -> list[dict[str, Any]]:
-        nights = self.court.nights()
-        night = nights[-1] if nights else None
-        return [
-            i
-            for i in self.court.interactions().values()
-            if i["status"] == "failed"
-            and not (
-                i["action"] == "say"
-                and (
-                    night is None
-                    or night.closed
-                    or i["payload"]["night_id"] != str(night.id)
-                )
-            )
-        ]
-
-    def running(self) -> list[dict[str, Any]]:
-        return [
-            i
-            for i in self.court.interactions().values()
-            if i["status"] == "running" and i["action"] != "translation"
-        ]
-
-    def presentation(self) -> dict[str, Any]:
-        pending = next(iter(self.running()), None)
-        month = self.court.interactions().get("month")
-        if month and month["status"] == "running":
-            pending = month
-        nights = self.court.nights()
-        night = nights[-1].model_dump(mode="json") if nights else None
-        failures = self.failures()
-        # The translation-to-month exception must not bypass another failed action.
-        failure = next(
-            (i for i in failures if i["action"] != "translation"),
-            next(iter(failures), None),
-        )
-        return {
-            "live": dict(self.live),
-            "face": "audience"
-            if night and not night["closed"]
-            else (
-                "month"
-                if self.month.opened() or (month and month["status"] != "done")
-                else "desk"
-            ),
-            "night": night,
-            "date": self.court.calendar().data,
-            "running": pending is not None and failure is None,
-            "failure": failure,
-            "pending": pending,
-            "unhandled_monthly": self.court.unhandled_monthly(),
-            "petitions": [p.model_dump(mode="json") for p in self.month.petitions()],
-            "returned_petitions": [
-                {
-                    "petition": f.detail,
-                    "awaiting_drafter": not self.court.petition_officials(),
-                }
-                for f in self.court.returned_petitions(visible=True)
-            ],
-        }
 
     def settle_month(self, date: dict[str, Any] | None = None) -> None:
         # A completed advance settles all failed callers of that work. On reopen,
@@ -158,24 +99,18 @@ class Game:
             if (
                 item["action"] in {"month", "choose"}
                 and item["status"] == "failed"
-                and (
-                    item["payload"]["date"] == date
-                    if date is not None
-                    else item["payload"]["date"] != self.court.calendar().data
-                )
+                and (item["payload"]["date"] == date if date is not None
+                     else item["payload"]["date"] != self.court.calendar().data)
             ):
                 self.interaction(item["action"], "done", item["payload"])
 
     def resume(self) -> None:
         self.settle_month()
-        pending = [
-            i
-            for i in self.running()
-            if not self.failures() or i["action"] == "choose"
-        ]
+        failures = self.court.failures()
+        pending = [i for i in self.court.running() if not failures or i["action"] == "choose"]
         if pending:
             self.active = asyncio.create_task(self._resume(pending))
-        elif self.presentation()["failure"]:
+        elif failures:
             return
         elif self.month.opened():
             # Missing products are decided by the ledger, not the showing face:
@@ -184,7 +119,7 @@ class Game:
             self.recover_month()
         elif self.court.pending_nights():
             self.start_background()
-        elif self.month.petitions():
+        elif self.court.pending_petitions():
             self.start_background()
 
     def recover_month(self) -> None:
@@ -193,8 +128,8 @@ class Game:
         keeps it from starting, so it never runs twice or silently retries."""
         if (
             not self.month.opened()
-            or self.failures()
-            or self.running()
+            or self.court.failures()
+            or self.court.running()
         ):
             return
         payload = {"date": self.court.calendar().data}
@@ -209,7 +144,7 @@ class Game:
             for item in pending:
                 if item["action"] not in {"month", "choose"}:
                     await self.execute(item["action"], item["payload"])
-                    if self.presentation()["failure"]:
+                    if self.court.presentation()["failure"]:
                         return
             for item in pending:
                 if item["action"] == "month":
@@ -225,7 +160,7 @@ class Game:
                 if item["action"] == "choose"
             ),
         )
-        if self.presentation()["failure"]:
+        if self.court.presentation()["failure"]:
             return
         if not self.month.opened():
             self.start_background()
@@ -249,7 +184,7 @@ class Game:
             await self.drain()
             return
         await self.drain()
-        if not self.presentation()["failure"] and (
+        if not self.court.presentation()["failure"] and (
             accepted or (action == "month" and self.court.calendar().data != date)
         ):
             return
@@ -267,12 +202,13 @@ class Game:
         repeat: bool = False,
     ) -> asyncio.Task[Any] | None:
         payload = dict(payload or {})
-        failure = self.presentation()["failure"]
+        state = self.court.presentation()
+        failure = state["failure"]
         if repeat and (
             repeated := next(
                 (
                     item
-                    for item in self.failures()
+                    for item in self.court.failures()
                     if same_call(item, action, payload)
                 ),
                 None,
@@ -283,7 +219,7 @@ class Game:
             if not failure:
                 raise InvalidAction("没有待重试的动作")
             action, payload = failure["action"], dict(failure["payload"])
-            pending = self.presentation()["pending"]
+            pending = state["pending"]
             if action == "translation" and pending and pending["action"] == "month":
                 action, payload = "month", dict(pending["payload"])
             # A retry redoes its own failed call; per-question work keeps the
@@ -316,7 +252,7 @@ class Game:
         return task
 
     def accept(self, action: str, payload: dict[str, Any]) -> dict[str, Any]:
-        state = self.presentation()
+        state = self.court.presentation()
         if (
             state["failure"]
             and action != "choose"
@@ -336,7 +272,7 @@ class Game:
                 raise InvalidAction("无效的批红选项", 400) from error
         elif action != "month":
             raise InvalidAction("无效的动作", 400)
-        payload["date"] = self.court.calendar().data
+        payload["date"] = state["date"]
         self.interaction(action, "running", payload)
         return payload
 
@@ -351,9 +287,10 @@ class Game:
         if self.translation is not None and not self.translation.done():
             await asyncio.shield(self.translation)
             return
-        if not self.court.pending_nights():
+        pending = self.court.pending_nights()
+        if not pending:
             return
-        payload = {"nights": [str(n) for n in self.court.pending_nights()]}
+        payload = {"nights": [str(n) for n in pending]}
         self.interaction("translation", "running", payload)
         self.translation = asyncio.create_task(self.execute("translation", payload))
         await asyncio.shield(self.translation)
@@ -362,7 +299,7 @@ class Game:
         # Dismissal may be requested while the last accepted scene is still live.
         if self.active is not None and not self.active.done():
             await asyncio.shield(self.active)
-        failure = self.presentation()["failure"]
+        failure = self.court.presentation()["failure"]
         if failure:
             return
         await self.translate()
@@ -382,7 +319,7 @@ class Game:
             self.interaction(action, "done", payload)
             # The choice is complete before shared month work resumes. Reuse the
             # normal month action so its waiting and failures cannot belong to it.
-            if action == "choose" and not self.month.petitions():
+            if action == "choose" and not self.court.pending_petitions():
                 self.recover_month()
             return output
         except Exception as error:

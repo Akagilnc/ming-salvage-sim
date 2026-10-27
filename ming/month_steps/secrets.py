@@ -27,8 +27,7 @@ class Secrets:
         result = await invoke(
             self.agent,
             prompt(
-                self.court,
-                identity,
+                self.court, identity,
                 {
                     "decree": decree.model_dump(mode="json"),
                     "facts": [

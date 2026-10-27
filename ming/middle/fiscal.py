@@ -1,6 +1,7 @@
 """Deterministic monthly obligations and cash flows, in the ledger transaction."""
 
 from copy import deepcopy
+from collections.abc import Sequence
 from typing import cast
 
 from ming.ledger import Entity, Item, Ledger
@@ -44,7 +45,7 @@ def has_obligation(purpose: str, kind: str, data: Item) -> bool:
     return purpose == "当月饷" and kind == "fiscal" and data.get("direction") == "expense"
 
 
-def levers(config: list[Item]) -> list[str]:
+def levers(config: Sequence[Item]) -> list[str]:
     """Fiscal values the month accounts read; no other value is a decree lever."""
     return [
         *(row["key"] for row in config if row["data"]["budget_role"] == "fixed"),

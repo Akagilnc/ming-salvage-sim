@@ -6,6 +6,8 @@ from pathlib import Path
 import pytest
 from pydantic_ai.messages import (
     ModelMessagesTypeAdapter,
+    ModelResponse,
+    ToolCallPart,
     RetryPromptPart,
     ToolReturnPart,
 )
@@ -91,7 +93,13 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
     case = json.loads((RECORDED / "night_tools.json").read_text())
     received = []
     steps["scene"] = replaying(
-        ModelMessagesTypeAdapter.validate_python(case["scene_responses"]), received
+        [
+            ModelResponse(parts=[ToolCallPart("read_records", {"kind": "person", "key": "王体乾"}, tool_call_id="before")]),
+            ModelResponse(parts=[ToolCallPart("set_hall", {"add": ["王体乾"], "remove": []})]),
+            ModelResponse(parts=[ToolCallPart("read_records", {"kind": "person", "key": "王体乾"}, tool_call_id="after")]),
+            ModelResponse(parts=[ToolCallPart("set_hall", {"add": [], "remove": ["王体乾"]})]),
+            *ModelMessagesTypeAdapter.validate_python(case["scene_responses"]),
+        ], received,
     )
     steps["NightDeclaration"] = replaying(case["replies"])
     with TestClient(create_app(tmp_path)) as client:
@@ -127,6 +135,12 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
         for part in message.parts
         if isinstance(part, ToolReturnPart)
     }
+    before, after = (returned[key][1]["entities"][0] for key in ("before", "after"))
+    assert before["key"] == after["key"] == "王体乾"
+    for field in ("name", "location", "appointments"):
+        assert before["data"][field] == after["data"][field]
+    assert not {"dossier", "seed_guilt"}.intersection(before["data"])
+    assert {"dossier", "seed_guilt"} <= after["data"].keys()
     absent = next(value for name, value in returned.values() if name == "set_hall" and not value["ok"])
     assert {(f["name"], f["found"]) for f in absent["failures"]} == {("徐光启", True), ("张三", False)}
     assert set(absent["hall"]) == {"王承恩", "杨嗣昌", "王绍徽"}
@@ -137,11 +151,9 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
     assert not {"loyalty", "ability", "integrity", "courage", "intrigue"}.intersection(dossier)
 
 
-@pytest.mark.usefixtures("backed_night")
-@pytest.mark.parametrize("game_db", ["backed_night"], indirect=True)
-@pytest.mark.parametrize("backed_night,recording,case", [
-    ("endorsed", "endorsed", case) for case in ["approved", "held", "form", "source", "name", "person"]
-] + [("double", "double", "approved")], indirect=["backed_night"])
+@pytest.mark.parametrize("recording,case,game_db", [
+    ("endorsed", case, "backed_night") for case in ["approved", "held", "form", "source", "name", "person"]
+] + [("double", "approved", "double_backed_night")], indirect=["game_db"])
 def test_backing_follows_its_decree_and_signers(game_db, steps, audit, case, recording):
     recording = json.loads((RECORDED / f"night_{recording}.json").read_text())
     reply = json.loads(recording["replies"][-1])

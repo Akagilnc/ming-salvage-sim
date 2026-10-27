@@ -80,7 +80,8 @@ class Web:
             "settings": self.settings().model_dump(),
             "required_settings": REQUIRED_SETTINGS,
             "save": self.game.court.db_path.name if self.game else None,
-            "game": self.game.presentation() if self.game else None,
+            "game": {**self.game.court.presentation(), "live": dict(self.game.live)}
+            if self.game else None,
         }
 
     def emit(
@@ -95,9 +96,9 @@ class Web:
                 **event,
                 "data": {
                     "text": event["data"],
-                    "hall": self.game.court.entity(self.game.audience.night_id).data[
-                        "hall"
-                    ],
+                    "hall": list(
+                        self.game.court.entity(self.game.audience.night_id).data["hall"]
+                    ),
                 },
             }
         elif event["event"] in {"state", "done"}:
