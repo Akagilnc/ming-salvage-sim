@@ -116,12 +116,7 @@ class Web:
 
     async def retire(self, game: Game) -> None:
         try:
-            # Reentry may have accepted foreground or background work while this
-            # drain was awaiting the prior work's simulation candidates.
-            while True:
-                await game.drain()
-                if not game.busy() and not game.background:
-                    break
+            await game.drain()
         finally:
             del self.retiring[game]
             save = game.court.db_path.name

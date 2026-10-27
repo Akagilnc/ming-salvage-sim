@@ -408,19 +408,26 @@ class Game:
         return None
 
     async def drain(self) -> None:
-        if self.active is not None:
-            await asyncio.shield(self.active)
-        while self.background:
-            tasks = list(self.background)
-            try:
-                await asyncio.gather(*tasks)
-            finally:
-                # Drain itself retires what it awaited: gather over finished tasks
-                # returns without yielding, so a done callback could never run.
-                self.background.difference_update(t for t in tasks if t.done())
-        if self.translation is not None:
-            await asyncio.shield(self.translation)
-        await self.month.simulations.drain()
+        while True:
+            if self.active is not None:
+                await asyncio.shield(self.active)
+            while self.background:
+                tasks = list(self.background)
+                try:
+                    await asyncio.gather(*tasks)
+                finally:
+                    # Drain itself retires what it awaited: gather over finished tasks
+                    # returns without yielding, so a done callback could never run.
+                    self.background.difference_update(t for t in tasks if t.done())
+            if self.translation is not None:
+                await asyncio.shield(self.translation)
+            await self.month.simulations.drain()
+            # Reentry can accept work in an earlier lane while a later one waits.
+            # No await separates this completion check from the caller's close.
+            if not self.busy() and not self.background and (
+                self.translation is None or self.translation.done()
+            ):
+                return
 
     async def close(self) -> None:
         try:

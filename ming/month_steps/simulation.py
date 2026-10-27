@@ -146,6 +146,6 @@ class Simulations:
         self.court.record_product(calendar.id, "month_final", result)
 
     async def drain(self) -> None:
-        if self.tasks:
+        while tasks := [task for task in self.tasks.values() if not task.done()]:
             # Candidate failures are logged, not promoted to failed emperor actions.
-            await asyncio.gather(*self.tasks.values(), return_exceptions=True)
+            await asyncio.gather(*tasks, return_exceptions=True)
