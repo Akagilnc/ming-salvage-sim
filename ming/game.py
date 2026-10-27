@@ -75,6 +75,8 @@ class Game:
         self, action: str, status: str, payload: dict[str, Any],
     ) -> None:
         key = f"choose:{payload['petition']}" if action == "choose" else action
+        if status != "running" and action in {"say", "month"}:
+            self.live.pop("delta" if action == "say" else "gazette", None)
         calendar = self.court.calendar()
         self.court.record(
             calendar.id,
@@ -335,10 +337,6 @@ class Game:
                 },
             )
             return None
-        finally:
-            if action in {"say", "month"}:
-                self.live.pop("delta" if action == "say" else "gazette", None)
-            self.notify("done", None)
 
     async def work(self, action: str, payload: dict[str, Any]) -> str | None:
         if action == "say":

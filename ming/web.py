@@ -74,9 +74,9 @@ class Web:
             )
         ]
 
-    def snapshot(self) -> dict[str, Any]:
+    def snapshot(self, saves: list[str] | None = None) -> dict[str, Any]:
         return {
-            "saves": self.saves(),
+            "saves": self.saves() if saves is None else saves,
             "settings": self.settings().model_dump(),
             "required_settings": REQUIRED_SETTINGS,
             "save": self.game.court.db_path.name if self.game else None,
@@ -85,7 +85,8 @@ class Web:
         }
 
     def emit(
-        self, event: dict[str, Any] | None = None, *, source: Game | None = None
+        self, event: dict[str, Any] | None = None, *, source: Game | None = None,
+        saves: list[str] | None = None,
     ) -> None:
         if source is not None and source is not self.game:
             return
@@ -102,7 +103,7 @@ class Web:
                 },
             }
         elif event["event"] in {"state", "done"}:
-            event = {**event, "data": self.snapshot()}
+            event = {**event, "data": self.snapshot(saves)}
         for queue in self.listeners:
             queue.put_nowait(event)
 
@@ -113,7 +114,6 @@ class Web:
             self.departed[save] = game
             if game not in self.retiring:
                 self.retiring[game] = asyncio.create_task(self.retire(game))
-        self.emit()
 
     async def retire(self, game: Game) -> None:
         try:
@@ -132,8 +132,8 @@ class Web:
             await asyncio.gather(*self.retiring.values())
 
     async def select(self, action: str, save: str = "") -> dict[str, Any]:
+        saves = self.saves() if action == "continue" else None
         if action == "continue":
-            saves = self.saves()
             if not saves:
                 raise HTTPException(404, "没有存档")
             save = saves[0]
@@ -143,33 +143,30 @@ class Web:
             if not (self.directory / save).is_file():
                 raise HTTPException(404, "存档不存在")
         if self.game is not None and self.game.court.db_path.name == save:
-            game = self.game
-            await game.drain()
-            if self.game is not game:
-                return {"save": save}
-            game.court.close()
-            self.game = None
-        else:
-            self.menu()
-        model = self.settings()
-        if save in self.departed:
-            self.game = self.departed.pop(save)
-            self.game.configure(model, month_model=model.month_model)
-            self.emit()
+            await self.game.drain()
             return {"save": save}
-        if action == "new":
-            try:
-                court = Court.new_game(self.directory, model)
-            except FileNotFoundError as error:
-                raise HTTPException(503, str(error)) from error
+        model = self.settings()
+        game = self.departed.pop(save, None)
+        opening = game is None
+        if game is not None:
+            game.configure(model, month_model=model.month_model)
         else:
-            court = Court(self.directory / save, model)
-        self.game = Game(court, model, month_model=model.month_model)
-        self.game.emit = partial(self.emit, source=self.game)
-        court.observe(partial(self.emit, source=self.game))
-        self.game.resume()
-        self.emit()
-        return {"save": court.db_path.name}
+            if action == "new":
+                try:
+                    court = Court.new_game(self.directory, model)
+                except FileNotFoundError as error:
+                    raise HTTPException(503, str(error)) from error
+            else:
+                court = Court(self.directory / save, model)
+            game = Game(court, model, month_model=model.month_model)
+            game.emit = partial(self.emit, source=game)
+            court.observe(partial(self.emit, source=game))
+        self.menu()
+        self.game = game
+        self.emit(saves=saves)
+        if opening:
+            game.resume()
+        return {"save": game.court.db_path.name}
 
     async def state(self, request: Request) -> JSONResponse:
         return JSONResponse(self.snapshot())
@@ -209,9 +206,10 @@ class Web:
             return JSONResponse(await self.select(action.action, action.save))
         if action.action == "menu":
             self.menu()
+            self.emit()
             return Response(status_code=204)
         if action.action == "settings":
-            return await self.configure(action)
+            return self.configure(action)
         if self.game is None:
             raise HTTPException(409, "请先打开一局")
         try:
@@ -221,12 +219,11 @@ class Web:
             )
         except InvalidAction as error:
             raise HTTPException(error.status, str(error)) from error
-        if task is None:
-            return Response(status_code=204)
-        await asyncio.shield(task)
+        if task is not None:
+            await asyncio.shield(task)
         return Response(status_code=204)
 
-    async def configure(self, action: Action) -> Response:
+    def configure(self, action: Action) -> Response:
         if action.settings is None:
             raise HTTPException(400, "缺少设置")
         if self.game is not None and self.game.busy():
@@ -236,9 +233,8 @@ class Web:
         path.touch(mode=0o600, exist_ok=True)
         path.write_text(action.settings.model_dump_json())
         if self.game is not None:
-            await self.select("load", self.game.court.db_path.name)
-        else:
-            self.emit()
+            self.game.configure(action.settings, month_model=action.settings.month_model)
+        self.emit()
         return Response(status_code=204)
 
 
