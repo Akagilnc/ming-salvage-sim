@@ -17,6 +17,8 @@ export function App() {
   const [reading, setReading] = React.useState<number | 'latest' | null>(null);
   const previous = React.useRef<Snapshot | null>(null);
   const refreshing = React.useRef(0);
+  // A later navigation supersedes action effects even when it selects the same save.
+  const navigation = React.useRef(0);
   const choosingNow = React.useRef(new Set<string>());
   const [choosing, setChoosing] = React.useState<Set<string>>(new Set());
   const [pendingWords, setPendingWords] = React.useState('');
@@ -86,6 +88,9 @@ export function App() {
 
   async function action(value: Action) {
     const save = previous.current?.save;
+    const navigating = ['new', 'continue', 'load', 'menu'].includes(value.action);
+    const owner = navigating ? ++navigation.current : navigation.current;
+    let destination = save;
     setError('');
     if (value.action === 'choose' && value.petition) {
       if (choosingNow.current.has(value.petition)) return;
@@ -95,12 +100,17 @@ export function App() {
     else if (value.action !== 'dismiss' && value.action !== 'menu') setBusy(true);
     if (value.action === 'say') { setPendingWords(value.words ?? ''); setLive(''); follow.current = true; }
     try {
-      if (await act(value) === 200 || value.action === 'choose') await refresh();
+      const result = await act(value);
+      if (navigating) destination = value.action === 'menu' ? null : result.save;
+      if (owner !== navigation.current || (previous.current?.save !== save && previous.current?.save !== destination)) return;
+      if (result.status === 200 || value.action === 'choose') await refresh();
+      if (owner !== navigation.current || previous.current?.save !== destination) return;
       if (value.action === 'open') follow.current = true;
+      if (value.action === 'settings') setPanel(null);
       if (value.action === 'new' || value.action === 'continue' || value.action === 'load') { setPanel(null); setReading(value.action === 'new' ? 'latest' : null); }
-    } catch (reason) { if (previous.current?.save === save) setError(String(reason)); }
+    } catch (reason) { if (owner === navigation.current && previous.current?.save === save) setError(String(reason)); }
     finally {
-      if (previous.current?.save !== save) return;
+      if (owner !== navigation.current || previous.current?.save !== destination) return;
       if (value.action === 'choose') {
         choosingNow.current.delete(value.petition!);
         setChoosing(new Set(choosingNow.current));
@@ -210,7 +220,7 @@ export function App() {
       </section>
       {panel && <aside className="drawer">
         <button className="close" onClick={() => setPanel(null)}>合上</button>
-        {panel === 'settings' ? <SettingsForm initial={snapshot.settings} requiredSettings={snapshot.required_settings} onSave={settings => { void action({ action: 'settings', settings }).then(() => setPanel(null)); }} /> :
+        {panel === 'settings' ? <SettingsForm initial={snapshot.settings} requiredSettings={snapshot.required_settings} onSave={settings => { void action({ action: 'settings', settings }); }} /> :
           panel === 'roster' ? <><h2>名册</h2>{people.map(person => <article key={person.id}>
             <header><MarkdownText>{person.key}</MarkdownText></header><MarkdownText>{`${((person.data.appointments ?? []) as { office: string; territory: string; role: string }[]).map(a => `${a.role === 'acting' ? '署' : ''}${a.territory}${a.office}`).join('、') || String(person.data.identity_description ?? '')} · ${String(person.data.location ?? '')} · ${String(person.data.status ?? '')}`}</MarkdownText>
             {audience && <button disabled={busy || game.running} onClick={() => void action({ action: 'say', words: `宣${person.key}。` })}>宣召</button>}

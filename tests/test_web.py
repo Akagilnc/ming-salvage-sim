@@ -219,11 +219,11 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
 
                 steps["NightDeclaration"] = FunctionModel(retry_translation)
                 assert (
-                    client.post("/actions", json={"action": "retry"}).status_code == 200
+                    client.post("/actions", json={"action": "retry"}).status_code == 204
                 )
                 assert client.portal is not None
                 client.portal.call(app.state.web.game.drain)
-                assert received.pop("retry") == [(False, None, 200)]
+                assert received.pop("retry") == [(False, None, 204)]
                 steps["NightDeclaration"] = replaying([(RECORDED / "night_empty.txt").read_text()])
                 client.post("/actions", json={"action": "dismiss"}).raise_for_status()
                 client.portal.call(app.state.web.game.drain)

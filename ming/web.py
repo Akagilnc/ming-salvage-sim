@@ -133,9 +133,10 @@ class Web:
 
     async def select(self, action: str, save: str = "") -> dict[str, Any]:
         if action == "continue":
-            if not self.saves():
+            saves = self.saves()
+            if not saves:
                 raise HTTPException(404, "没有存档")
-            save = self.saves()[0]
+            save = saves[0]
         if action != "new":
             if Path(save).name != save or not save.endswith(".sqlite"):
                 raise HTTPException(400, "无效的存档名")
@@ -208,7 +209,7 @@ class Web:
             return JSONResponse(await self.select(action.action, action.save))
         if action.action == "menu":
             self.menu()
-            return JSONResponse(self.snapshot())
+            return Response(status_code=204)
         if action.action == "settings":
             return await self.configure(action)
         if self.game is None:
@@ -221,11 +222,11 @@ class Web:
         except InvalidAction as error:
             raise HTTPException(error.status, str(error)) from error
         if task is None:
-            return JSONResponse(self.snapshot())
+            return Response(status_code=204)
         await asyncio.shield(task)
         return Response(status_code=204)
 
-    async def configure(self, action: Action) -> JSONResponse:
+    async def configure(self, action: Action) -> Response:
         if action.settings is None:
             raise HTTPException(400, "缺少设置")
         if self.game is not None and self.game.busy():
@@ -236,7 +237,9 @@ class Web:
         path.write_text(action.settings.model_dump_json())
         if self.game is not None:
             await self.select("load", self.game.court.db_path.name)
-        return JSONResponse(self.snapshot())
+        else:
+            self.emit()
+        return Response(status_code=204)
 
 
 def create_app(
