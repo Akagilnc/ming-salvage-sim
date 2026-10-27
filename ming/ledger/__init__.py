@@ -6,15 +6,18 @@ matching rows/facts. No caller refreshes tables or carries a parallel event list
 
 from collections.abc import Callable, Generator
 from contextlib import contextmanager, suppress
-from copy import deepcopy
+from functools import wraps
+from inspect import signature
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, ParamSpec, TypeVar, cast
 from uuid import UUID, uuid4
 
 from eventsourcing.system import SingleThreadedRunner, System
 from eventsourcing_sqlalchemy.recorders import SQLAlchemyApplicationRecorder
 from sqlalchemy import Engine, Select
 from sqlalchemy.sql.cache_key import CacheKey
+from frozendict import deepfreeze, frozendict
+from pydantic import BaseModel
 
 from ming.ledger.domain import Entity as Entity, Item as Item
 from ming.ledger.projection import Events, ReadModel
@@ -29,6 +32,38 @@ from ming.ledger.tables import (
 # Native SQLAlchemy columns for read expressions, not ORM constructors/sessions.
 ENTITY_COLUMNS = EntityRow.__table__.c
 FACT_COLUMNS = FactRow.__table__.c
+
+
+P = ParamSpec("P")
+R = TypeVar("R")
+
+
+def read_key(value: Any) -> Any:
+    """Keep immutable inputs; use native SQL identity and freeze only mutable keys."""
+    if isinstance(value, Select):
+        key = cast(CacheKey | None, cast(Any, value)._generate_cache_key())
+        return (key.key, deepfreeze(tuple(p.value for p in key.bindparams))) if key is not None else cast(Any, value)
+    try:
+        hash(value)
+    except TypeError:
+        return deepfreeze(value.model_dump() if isinstance(value, BaseModel) else value)
+    return value
+
+
+def read_once(reader: Callable[P, R]) -> Callable[P, R]:
+    """Reuse immutable reads in the ledger's single commit-invalidated result map."""
+    parameters = signature(reader)
+
+    @wraps(reader)
+    def reuse(owner: Any, *args: Any, **kwargs: Any) -> R:
+        ledger: Ledger = getattr(owner, "_ledger", owner)
+        bound = parameters.bind(owner, *args, **kwargs)
+        bound.apply_defaults()
+        key = (reader, tuple(read_key(value) for value in tuple(bound.arguments.values())[1:]))
+        if key not in ledger.read_results:
+            ledger.read_results[key] = cast(Any, reader)(owner, *args, **kwargs)
+        return cast(R, ledger.read_results[key])
+    return cast(Callable[P, R], reuse)
 
 
 class Ledger:
@@ -47,8 +82,7 @@ class Ledger:
         self.sql = cast(SQLAlchemyApplicationRecorder, self.events.recorder)
         Base.metadata.create_all(cast(Engine, self.sql.datastore.engine))
         self.on_commit: Callable[[], None] | None = None
-        self._read_results: dict[str, list[Item]] = {}
-        self._read_statements: dict[Any, str] = {}
+        self.read_results: dict[Any, Any] = {}
         self.runner.start()
         # Follower uses tracking to catch up; row writes and tracking share this
         # outer transaction, including when opening an existing save.
@@ -86,7 +120,7 @@ class Ledger:
         if recordings:
             # An empty save does not change the read state. Invalidate after
             # commit, before callbacks; a rollback leaves prior reads valid.
-            self._read_results.clear()
+            self.read_results.clear()
         if self.on_commit is not None:
             self.on_commit()
 
@@ -106,20 +140,15 @@ class Ledger:
         finally:
             rebuilt.close()
 
-    def read(self, query: Select[Any], parameters: Item | None = None) -> list[Item]:
-        """Execute a read-only SQLAlchemy selection; policy remains the writer."""
-        parameters = parameters or {}
-        # SQLAlchemy's native key, as used by its dogpile caching recipe.
-        cache_key = cast(CacheKey | None, cast(Any, query)._generate_cache_key())
-        key = cache_key.to_offline_string(self._read_statements, query, parameters) if cache_key is not None else None
-        if key is not None and key in self._read_results:
-            return deepcopy(self._read_results[key])
-        with self.sql.transaction(commit=False) as session:
-            rows = [dict(row) for row in session.execute(query, parameters).mappings()]
-        if key is not None:
-            self._read_results[key] = deepcopy(rows)
-        return rows
+    def read(self, query: Select[Any], parameters: Item | None = None) -> tuple[Item, ...]:
+        """Rows are deeply immutable; consumers project without editing the source."""
+        key = (Ledger.read, read_key(query), read_key(parameters or frozendict()))
+        if key not in self.read_results:
+            with self.sql.transaction(commit=False) as session:
+                self.read_results[key] = deepfreeze([dict(row) for row in session.execute(query, parameters or {}).mappings()])
+        return self.read_results[key]
 
+    @read_once
     def entities(
         self,
         *,
@@ -128,7 +157,7 @@ class Ledger:
         entity_id: UUID | list[UUID] | None = None,
         query: Select[Any] = ENTITY_ROWS,
         parameters: Item | None = None,
-    ) -> list[Item]:
+    ) -> tuple[Item, ...]:
         if kind is not None:
             query = query.where(
                 EntityRow.kind.in_(kind)
@@ -145,6 +174,7 @@ class Ledger:
             )
         return self.read(query, parameters)
 
+    @read_once
     def facts(
         self,
         *,
@@ -153,7 +183,7 @@ class Ledger:
         date: Item | None = None,
         query: Select[Any] = FACT_ROWS,
         parameters: Item | None = None,
-    ) -> list[Item]:
+    ) -> tuple[Item, ...]:
         if entity_id is not None:
             query = query.where(
                 FactRow.entity_id.in_(entity_id)

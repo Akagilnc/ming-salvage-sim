@@ -6,7 +6,7 @@ from collections.abc import Callable, Sequence
 from sqlalchemy import JSON, case, func, literal, or_, select, type_coerce
 from sqlalchemy.sql.elements import BindParameter, ColumnElement
 
-from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS, Item, Ledger
+from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS, Item, Ledger, read_once
 
 CATALOGUE_KINDS = ("office", "territory")
 APPOINTMENT_ROLES = ("holders", "acting")
@@ -26,7 +26,8 @@ def incumbency_record(pair: Sequence[str], holders: list[str]) -> tuple[str, Ite
     }
 
 
-def named(ledger: Ledger, kind: str | None, value: str | list[str]) -> list[Item]:
+@read_once
+def named(ledger: Ledger, kind: str | None, value: str | list[str]) -> tuple[Item, ...]:
     values = [value] if isinstance(value, str) else value
     aliases = func.json_each(ALIASES).table_valued("value")
     return ledger.entities(kind=kind, query=ENTITY_ROWS.where(or_(
@@ -37,7 +38,7 @@ def named(ledger: Ledger, kind: str | None, value: str | list[str]) -> list[Item
 
 def office_pairs(
     ledger: Ledger, value: str,
-    visible: Callable[[list[Item]], list[Item]] | None = None,
+    visible: Callable[[Sequence[Item]], Sequence[Item]] | None = None,
 ) -> tuple[list[tuple[str, str]], Item]:
     """Resolve once for both queries and landing; candidates are caller-visible rows."""
     exact = named(ledger, "office", value)
@@ -72,6 +73,7 @@ def office_pairs(
     }
 
 
+@read_once
 def reference_key(ledger: Ledger, kind: str, value: str) -> str:
     if kind == "incumbency":
         pairs, resolution = office_pairs(ledger, value)

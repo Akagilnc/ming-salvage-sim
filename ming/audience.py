@@ -37,7 +37,7 @@ class Audience:
             "\n".join((INSTRUCTIONS, DECREE, SECRET, HANDLER, PEOPLE, ACTING, INTERIM, DISCOVERED, AUDIENCE, DECREE_EVENT, HELD)),
         )
 
-        async def get_hall(ctx: RunContext[Audience]) -> list[str]:
+        async def get_hall(ctx: RunContext[Audience]) -> tuple[str, ...]:
             """看今夜殿上名单。"""
             return ctx.deps.court.night(ctx.deps.night_id).hall
 
@@ -62,7 +62,7 @@ class Audience:
 
     @property
     def identity(self) -> Officials:
-        return Officials(people=self.court.night(self.night_id).hall)
+        return Officials(people=list(self.court.night(self.night_id).hall))
 
     @property
     def night_id(self) -> UUID:

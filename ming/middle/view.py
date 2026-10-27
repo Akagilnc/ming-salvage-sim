@@ -1,5 +1,6 @@
 """Identity-specific structured read boundary; no summaries of model prose."""
 
+from collections.abc import Sequence
 from typing import Any, Literal, cast
 from uuid import UUID
 
@@ -7,7 +8,8 @@ from pydantic import BaseModel
 from sqlalchemy import Select, bindparam, case, func, literal, or_, select
 from sqlalchemy.sql.elements import BindParameter, ColumnElement
 
-from ming.ledger import Item, Ledger
+from ming.ledger import Item, Ledger, read_once
+from ming.middle import ReadData, ReadView
 from ming.ledger import ENTITY_COLUMNS as E, FACT_COLUMNS as F, ENTITY_ROWS, FACT_ROWS, ENTITY_ORDER
 from ming.middle.queries import CALENDAR, CURRENT_FACTS, available_on, public_decree
 from ming.middle.appointments import APPOINTMENT_ROLES, CATALOGUE_KINDS, held_by
@@ -53,7 +55,7 @@ def character_input(value: Any) -> Any:
     Used only by mixed/player-facing calls; the ledger and pure-machine reads
     retain their numerical inputs, including world facts such as money and arms.
     """
-    if isinstance(value, list):
+    if isinstance(value, (list, tuple)):
         return [character_input(item) for item in cast(list[Any], value)]
     if not isinstance(value, dict):
         return value
@@ -72,19 +74,19 @@ def character_input(value: Any) -> Any:
     return result
 
 
-class EntityView(BaseModel):
+class EntityView(ReadView):
     id: UUID
     kind: str
     key: str
     source: str
-    data: dict[str, Any]
+    data: ReadData[Any]
 
 
-class FactView(BaseModel):
+class FactView(ReadView):
     entity_id: UUID
     kind: str
     emperor_words: str
-    detail: dict[str, Any]
+    detail: ReadData[Any]
 
 
 def view_parameters(identity: Identity, kind: str | None = None) -> Item:
@@ -129,7 +131,7 @@ def decree_access(identity: Identity, reference: ColumnElement[Any]) -> dict[str
     }
 
 
-def visible_appointments(ledger: Ledger, identity: Identity, rows: list[Item]) -> list[Item]:
+def visible_appointments(ledger: Ledger, identity: Identity, rows: Sequence[Item]) -> Sequence[Item]:
     """Both office queries and person projections use the same appointment access."""
     if identity in ("audit", "world"):
         return rows
@@ -142,7 +144,7 @@ def visible_appointments(ledger: Ledger, identity: Identity, rows: list[Item]) -
     return [r for r in rows if r["id"] in visible]
 
 
-def person_projection(dossiers: Item, row: Item, identity: Identity, appointments: list[Item]) -> Item:
+def person_projection(dossiers: Item, row: Item, identity: Identity, appointments: Sequence[Item]) -> Item:
     """One current-office and character-material projection for UI and every model."""
     data = dict(row["data"])
     if identity == "audit":
@@ -165,19 +167,20 @@ def person_projection(dossiers: Item, row: Item, identity: Identity, appointment
     return data
 
 
+@read_once
 def entities(
     ledger: Ledger, identity: Identity, selection: Item | None = None,
-) -> list[EntityView]:
+) -> tuple[EntityView, ...]:
     selection = dict(selection or {})
     sourced = selection.pop("sourced", False)
     keys = selection.pop("keys", None)
     catalogue = selection.pop("catalogue", False)
     if identity == "emperor" and (opening := month_open(ledger)):
-        return [
+        return tuple(
             EntityView.model_validate(e)
             for e in opening["detail"]["entities"]
             if all(e[k] == v for k, v in (selection or {}).items()) and (keys is None or e["key"] in keys)
-        ]
+        )
     query = ENTITY_SOURCES[identity_key(identity)]
     query = query.where(E.kind == selection["kind"]) if selection.get("kind") is not None else query
     query = query.where(E.key == selection["key"]) if selection.get("key") is not None else query
@@ -186,8 +189,8 @@ def entities(
     query = query.with_only_columns(E.id, E.kind, E.key, E.source) if catalogue else query
     rows = ledger.read(query, view_parameters(identity, selection.get("kind")))
     if catalogue:
-        return [EntityView.model_validate({**row, "data": {}}) for row in rows]
-    appointments = ledger.entities(
+        return tuple(EntityView.model_validate({**row, "data": {}}) for row in rows)
+    appointments: Sequence[Item] = ledger.entities(
         kind="incumbency", query=ENTITY_ROWS.where(HELD_BY, APPOINTMENT_ACCESS[identity_key(identity)]),
         parameters={**view_parameters(identity), "appointed_people": people},
     ) if (people := [row["key"] for row in rows if row["kind"] == "person" and identity != "audit"]) else []
@@ -199,7 +202,8 @@ def entities(
         kind="person", query=ENTITY_ROWS.where(E.key.in_(own)),
     )} if any(row["exposure"] == "faction" for row in rows) else set()
     result: list[EntityView] = []
-    for row in rows:
+    for source in rows:
+        row = dict(source)
         if row["kind"] == "person":
             row["data"] = person_projection(dossiers, row, identity, appointments)
         row["data"] = ({destination: travel_days(distance) for destination, distance in row["data"].items()}
@@ -219,7 +223,7 @@ def entities(
                     if k in {"text", "origin", "people", "night_id", "secret", "turn", "endorsements", "interim"}
                 }
         result.append(EntityView.model_validate(row))
-    return result
+    return tuple(result)
 
 
 def appointment_access(identity: Identity) -> ColumnElement[bool]:
@@ -371,34 +375,35 @@ def fact_sources(identity: Identity) -> Select[Any]:
     return query
 
 
+@read_once
 def project(
     ledger: Ledger, identity: Identity, selection: Item | None = None,
     query: Select[Any] | None = None,
-) -> list[FactView]:
+) -> tuple[FactView, ...]:
     selection = selection or {}
     query = FACT_SOURCES[identity_key(identity)] if query is None else query
     result: list[FactView] = []
     for item in ledger.facts(**selection, query=query, parameters=view_parameters(identity)):
-        fact = FactView(**item)
+        detail = item["detail"]
         if identity not in ("audit", "world"):
             if item["exposure"] in ("text", "dated"):
-                fact.detail = {
-                    "text": fact.detail.get("text", ""),
+                detail = {
+                    "text": detail.get("text", ""),
                     **{
                         k: v
-                        for k, v in fact.detail.items()
+                        for k, v in detail.items()
                         if item["exposure"] == "dated"
                         and k in (
                             {"date", "office", "territory", "holders", "acting", "role"}
-                            | ({"decree_id", "endorser", "form"} if fact.kind == "endorsed" else set())
+                            | ({"decree_id", "endorser", "form"} if item["kind"] == "endorsed" else set())
                         )
                     },
                 }
             elif item["exposure"] == "empty":
-                fact.detail = {}
-            fact.emperor_words = ""
-        result.append(fact)
-    return result
+                detail = {}
+        result.append(FactView.model_validate({**item, "detail": detail,
+                                              "emperor_words": item["emperor_words"] if identity in ("audit", "world") else ""}))
+    return tuple(result)
 
 
 # Construct permission expressions once. Only parameter values vary at execution;

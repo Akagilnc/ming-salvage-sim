@@ -353,7 +353,9 @@ def check_appointment(ledger: Ledger, fact: Fact, path: str, names: Names, cabin
         appointment = cabinet.setdefault(("incumbency", fact.entity), {
             "kind": "incumbency", "data": incumbency_record(pairs[0], [])[1],
         })
-        appointment["data"][change.field] = holders
+        cabinet[("incumbency", fact.entity)] = {
+            **appointment, "data": {**appointment["data"], change.field: holders},
+        }
 
 
 def check_references(ledger: Ledger, out: Declaration, names: Names) -> None:
