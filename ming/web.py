@@ -122,10 +122,9 @@ class Web:
                 raise HTTPException(503, str(error)) from error
         else:
             court = Court(self.directory / save, model)
-        nights = court.nights()
-        self.game = Game(court, model, self.emit, month_model=model.month_model, nights=nights)
+        self.game = Game(court, model, self.emit, month_model=model.month_model)
         court.observe(lambda: self.emit({"event": "state", "data": self.snapshot()}))
-        self.game.resume(nights)
+        self.game.resume()
         return {"save": court.db_path.name}
 
     async def state(self, request: Request) -> JSONResponse:

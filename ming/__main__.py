@@ -58,9 +58,8 @@ def parser() -> argparse.ArgumentParser:
 
 
 async def conversation(court: Court, settings: Configuration) -> None:
-    nights = court.nights()
-    game = Game(court, settings, month_model=settings.month_model, nights=nights)
-    game.resume(nights)
+    game = Game(court, settings, month_model=settings.month_model)
+    game.resume()
     await game.drain()
     state = game.presentation()
     if state["face"] != "month" and not state["failure"]:
@@ -105,14 +104,12 @@ async def conversation(court: Court, settings: Configuration) -> None:
 
 
 async def month_action(court: Court, args: argparse.Namespace) -> None:
-    nights = court.nights()
-    game = Game(court, court.model, month_model=args.settings.month_model, nights=nights)
+    game = Game(court, court.model, month_model=args.settings.month_model)
     await game.command(
         args.command,
         {"petition": str(args.petition), "option": args.option}
         if args.command == "choose"
         else {},
-        nights,
     )
     state = game.presentation()
     print(

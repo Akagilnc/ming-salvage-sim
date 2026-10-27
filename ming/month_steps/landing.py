@@ -8,7 +8,6 @@ from ming.middle.invoke import ModelSource
 from ming.middle.declaration import Declaration, Unhandled
 from ming.middle.opening import CONTENT
 from ming.middle.month_work import COST_RULES
-from ming.middle.view import EntityView
 
 
 class Landing:
@@ -20,7 +19,8 @@ class Landing:
             model=model,
         )
 
-    async def run(self, calendar: EntityView) -> None:
+    async def run(self) -> None:
+        calendar = self.court.calendar()
         if self.court.products(calendar.id, kind=("landed", "unhandled")):
             return
         declarations = self.court.products(calendar.id, kind="declaration")
@@ -30,16 +30,15 @@ class Landing:
                 json.dumps({
                     "date": calendar.data, "scope": "month",
                     "month_final": self.court.products(calendar.id, kind="month_final")[0].detail["output"],
-                    "decrees": self.court.landing_materials(calendar.data),
+                    "decrees": self.court.landing_materials(),
                 }, ensure_ascii=False),
                 calendar.id,
             )
             product: dict[str, object] = {"result": result.model_dump(mode="json"), "unhandled": isinstance(result, Unhandled)}
-            self.court.record_product(calendar.id, "declaration", product, date=calendar.data)
+            self.court.record_product(calendar.id, "declaration", product)
         else:
             product = declarations[0].detail
         self.court.land(
             (Unhandled if product["unhandled"] else Declaration).model_validate(product["result"]),
             calendar.id, monthly="landed",
-            sources=[(d.id, mode) for d, mode in self.court.landing_sources(calendar.data)],
         )

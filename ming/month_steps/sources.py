@@ -1,7 +1,6 @@
 """Month-end urgent drafting and faction petitions; choices act next month."""
 
 from uuid import UUID, uuid4
-from typing import cast
 from collections.abc import Awaitable
 
 from pydantic import Field
@@ -12,7 +11,7 @@ from ming.middle.court import Court
 from ming.middle.concepts import ACTING
 from ming.middle.declaration import Petition, PendingPetition, StrictModel
 from ming.middle.invoke import ModelSource, build_agent, gather_or_raise, invoke
-from ming.middle.month_work import MonthMaterials, prompt
+from ming.middle.month_work import prompt
 from ming.middle.records import Materials, read_records
 from ming.middle.view import EntityView, Officials
 from ming.middle.rules import fail, name_expected
@@ -46,8 +45,9 @@ class Sources:
         self.court = court
         self.model = model
 
-    async def run(self, calendar: EntityView) -> None:
-        groups: dict[tuple[str, ...], list[tuple[EntityView, str, dict[str, object]]]] = {}
+    async def run(self) -> None:
+        calendar = self.court.calendar()
+        calls: list[Awaitable[None]] = []
         for source, kind, faction in [
             (calendar, "urgent", None),
             *((f, "impeachment", f.key) for f in self.court.entities("audit", kind="faction")),
@@ -56,7 +56,7 @@ class Sources:
                 continue
             people = [e.key for e in self.court.petition_officials(faction)]
             if kind == "urgent" and not people:
-                self.court.record_product(source.id, kind, {"petitions": []}, date=calendar.data)
+                self.court.record_product(source.id, kind, {"petitions": []})
                 continue
             context: dict[str, object] = {
                 "returned": [f.detail for f in self.court.returned_petitions()],
@@ -66,22 +66,16 @@ class Sources:
                 "people": people,
                 "instruction": "以本派在朝人物的身份看本月见闻和本派、对手势力，自行决定劾不劾、劾谁、如何归因，可以交空。灾难真而归因可夹私货。署名人及被劾人用账本正名。每折三项：顺水推舟办人、压下、查实再办，措辞自拟。",
             }
-            groups.setdefault(tuple(people), []).append((source, kind, context))
-        calls: list[Awaitable[None]] = []
-        for people, requests in groups.items():
-            identity = Officials(people=list(people))
-            materials = MonthMaterials(self.court, identity, calendar)
-            calls.extend(self.call(source, kind, materials, context) for source, kind, context in requests)
+            calls.append(self.call(source, kind, Officials(people=people), context))
         await gather_or_raise(*calls)
 
     async def call(
         self,
         source: EntityView,
         kind: str,
-        materials: MonthMaterials,
+        identity: Officials,
         context: dict[str, object],
     ) -> None:
-        identity = cast(Officials, materials.identity)
         agent = build_agent(
             self.model,
             name=kind,
@@ -131,11 +125,11 @@ class Sources:
 
         result = await invoke(
             agent,
-            prompt(materials, context),
-            deps=materials,
+            prompt(self.court, identity, context),
+            deps=Materials(self.court, identity),
         )
         self.court.log.info("%s output: %s", kind, result.output.model_dump_json())
-        date = materials.calendar.data
+        date = self.court.calendar().data
         available = {**date, **next_month(date)}
         people = {e.key: e.id for e in self.court.entities(
             "audit", kind="person", key=[p.signer for p in result.output.petitions],
@@ -159,5 +153,5 @@ class Sources:
             source.id,
             kind,
             {"petitions": [str(p.id) for p in petitions]},
-            date=date, petitions=petitions,
+            petitions=petitions,
         )
