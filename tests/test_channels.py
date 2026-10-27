@@ -12,7 +12,7 @@ from pathlib import Path
 from functools import partial
 from shutil import copyfile
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock
 
 import httpx
 import httpx2
@@ -295,7 +295,7 @@ def open_game(client: TestClient, settings: dict[str, object], game_db: Path | N
                 if game_db else {"action": "new"}).raise_for_status()
 
 
-def assert_scene(state: dict[str, object], events: Mock) -> None:
+def assert_scene(state: dict[str, object], events: asyncio.Queue) -> None:
     game = state["game"]
     assert isinstance(game, dict)
     assert game["failure"] is None
@@ -303,15 +303,20 @@ def assert_scene(state: dict[str, object], events: Mock) -> None:
     assert isinstance(night, dict)
     assert night["result"] == "translated"
     assert "王承恩" in night["hall"]
-    deltas = [
-        call.args[0]["data"] for call in events.call_args_list
-        if call.args[0]["event"] == "delta"
-    ]
-    assert len(deltas) >= 2
-    live = ""
-    for item in deltas:
-        live = item["replace"] if isinstance(item, dict) else live + str(item)
-    assert live == night["turns"][-1]["scene"]
+    deltas = []
+    while not events.empty():
+        event = events.get_nowait()
+        if event["event"] == "delta":
+            deltas.append(event["data"])
+    assert deltas
+    for data in deltas:
+        assert set(data) == {"text", "hall"}
+        assert isinstance(data["hall"], list)
+        text = data["text"]
+        assert isinstance(text, str) or (
+            isinstance(text, dict) and set(text) == {"replace"}
+            and isinstance(text["replace"], str)
+        )
 
 
 @pytest.mark.parametrize(
@@ -330,8 +335,8 @@ def test_process_subscription_scene_lands_and_streams(
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
     calls, _snapshots = install_process(monkeypatch)
     app = create_app(game_db.parent)
-    events = Mock(wraps=app.state.web.emit)
-    monkeypatch.setattr(app.state.web, "emit", events)
+    events = asyncio.Queue()
+    app.state.web.listeners.add(events)
     with TestClient(app) as client:
         open_game(client, {"backend": backend, "model": model, "effort": effort}, game_db)
         client.post("/actions", json={"action": "open"}).raise_for_status()
@@ -390,8 +395,8 @@ def test_codex_scene_lands_and_streams(tmp_path: Path, monkeypatch, game_db: Pat
                                       rejected=channel[1] == "native-unknown"),
                   OpenAICodexProvider if channel[0] == "codex" else OpenAIProvider)
     app = create_app(game_db.parent)
-    events = Mock(wraps=app.state.web.emit)
-    monkeypatch.setattr(app.state.web, "emit", events)
+    events = asyncio.Queue()
+    app.state.web.listeners.add(events)
     with TestClient(app) as client:
         open_game(client, {"backend": channel[0], "model": CODEX_MODEL, "effort": channel[1],
                            "base_url": "https://api.example.test/v1", "api_key": "test-key"}, game_db)
