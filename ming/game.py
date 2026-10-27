@@ -29,12 +29,11 @@ class Game:
         self,
         court: Court,
         model: ModelSource,
-        emit: Callable[[dict[str, Any]], None] | None = None,
         *,
         month_model: ModelSource | None = None,
     ) -> None:
         self.court = court
-        self.emit = emit
+        self.emit: Callable[[dict[str, Any]], None] | None = None
         self.audience = Audience(court, model)
         self.month = Month(
             court, month_model if month_model is not None else model,

@@ -116,11 +116,11 @@ class Web:
 
     async def retire(self, game: Game) -> None:
         try:
-            # Reentry may have accepted a new foreground action while this drain
-            # was awaiting the prior work's background continuations.
+            # Reentry may have accepted foreground or background work while this
+            # drain was awaiting the prior work's simulation candidates.
             while True:
                 await game.drain()
-                if not game.busy():
+                if not game.busy() and not game.background:
                     break
         finally:
             del self.retiring[game]
