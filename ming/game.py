@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 
 from ming.audience import Audience
 from ming.middle.court import Court
+from ming.middle.night import NightView
 from ming.middle.invoke import ModelSource
 from ming.month import Month
 
@@ -53,8 +54,9 @@ class Game:
 
     def interaction(self, action: str, status: str, payload: dict[str, Any]) -> None:
         key = f"choose:{payload['petition']}" if action == "choose" else action
+        calendar = self.court.calendar()
         self.court.record(
-            self.court.calendar().id,
+            calendar.id,
             [
                 (
                     "interaction",
@@ -63,18 +65,21 @@ class Game:
                         "action": action,
                         "status": status,
                         "payload": payload,
-                        "date": self.court.calendar().data,
+                        "date": calendar.data,
                     },
                 )
             ],
         )
 
-    def failures(self) -> list[dict[str, Any]]:
-        nights = self.court.nights()
+    def failures(
+        self, interactions: dict[str, Any] | None = None, nights: list[NightView] | None = None,
+    ) -> list[dict[str, Any]]:
+        interactions = self.court.interactions() if interactions is None else interactions
+        nights = self.court.nights() if nights is None else nights
         night = nights[-1] if nights else None
         return [
             i
-            for i in self.court.interactions().values()
+            for i in interactions.values()
             if i["status"] == "failed"
             and not (
                 i["action"] == "say"
@@ -86,21 +91,26 @@ class Game:
             )
         ]
 
-    def running(self) -> list[dict[str, Any]]:
+    def running(self, interactions: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        interactions = self.court.interactions() if interactions is None else interactions
         return [
             i
-            for i in self.court.interactions().values()
+            for i in interactions.values()
             if i["status"] == "running" and i["action"] != "translation"
         ]
 
     def presentation(self) -> dict[str, Any]:
-        pending = next(iter(self.running()), None)
-        month = self.court.interactions().get("month")
+        interactions = self.court.interactions()
+        pending = next(iter(self.running(interactions)), None)
+        month = interactions.get("month")
         if month and month["status"] == "running":
             pending = month
         nights = self.court.nights()
         night = nights[-1].model_dump(mode="json") if nights else None
-        failures = self.failures()
+        failures = self.failures(interactions, nights)
+        calendar = self.court.calendar()
+        returned = self.court.returned_petitions(visible=True, date=calendar.data)
+        awaiting_drafter = bool(returned) and not self.court.petition_officials()
         # The translation-to-month exception must not bypass another failed action.
         failure = next(
             (i for i in failures if i["action"] != "translation"),
@@ -111,22 +121,22 @@ class Game:
             if night and not night["closed"]
             else (
                 "month"
-                if self.month.opened() or (month and month["status"] != "done")
+                if self.month.opened(calendar) or (month and month["status"] != "done")
                 else "desk"
             ),
             "night": night,
-            "date": self.court.calendar().data,
+            "date": calendar.data,
             "running": pending is not None and failure is None,
             "failure": failure,
             "pending": pending,
-            "unhandled_monthly": self.court.unhandled_monthly(),
-            "petitions": [p.model_dump(mode="json") for p in self.month.petitions()],
+            "unhandled_monthly": self.court.unhandled_monthly(calendar.data),
+            "petitions": [p.model_dump(mode="json") for p in self.month.petitions(calendar.data)],
             "returned_petitions": [
                 {
                     "petition": f.detail,
-                    "awaiting_drafter": not self.court.petition_officials(),
+                    "awaiting_drafter": awaiting_drafter,
                 }
-                for f in self.court.returned_petitions(visible=True)
+                for f in returned
             ],
         }
 
@@ -330,9 +340,10 @@ class Game:
         if self.translation is not None and not self.translation.done():
             await asyncio.shield(self.translation)
             return
-        if not self.court.pending_nights():
+        pending = self.court.pending_nights()
+        if not pending:
             return
-        payload = {"nights": [str(n) for n in self.court.pending_nights()]}
+        payload = {"nights": [str(n) for n in pending]}
         self.interaction("translation", "running", payload)
         self.translation = asyncio.create_task(self.execute("translation", payload))
         await asyncio.shield(self.translation)

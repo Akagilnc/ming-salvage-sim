@@ -3,8 +3,10 @@
 import asyncio
 from collections.abc import Callable
 from uuid import UUID
+from typing import Any
 
 from ming.middle.court import Court
+from ming.middle.view import EntityView
 from ming.middle.declaration import PendingPetition
 from ming.middle.invoke import ModelSource, TextUpdate, gather_or_raise
 from ming.month_steps.deliberation import Deliberations
@@ -31,17 +33,19 @@ class Month:
         self.secrets = Secrets(court, model)
         self.lock = asyncio.Lock()
 
-    def opened(self) -> bool:
-        return bool(self.court.products(self.court.calendar().id, kind="month_open"))
+    def opened(self, calendar: EntityView | None = None) -> bool:
+        calendar = self.court.calendar() if calendar is None else calendar
+        return bool(self.court.products(calendar.id, kind="month_open", date=calendar.data))
 
     def open(self) -> None:
-        if not self.opened():
-            self.court.record_product(self.court.calendar().id, "month_open", {
+        calendar = self.court.calendar()
+        if not self.opened(calendar):
+            self.court.record_product(calendar.id, "month_open", {
                 "entities": [e.model_dump(mode="json") for e in self.court.entities("emperor")],
             })
 
-    def petitions(self) -> list[PendingPetition]:
-        return self.inbox.petitions()
+    def petitions(self, date: dict[str, Any] | None = None) -> list[PendingPetition]:
+        return self.inbox.petitions(date)
 
     def choose(self, petition_id: UUID, option: int) -> None:
         self.inbox.choose(petition_id, option)
@@ -55,9 +59,9 @@ class Month:
             return self.petitions()
         date = self.court.calendar().data
         async with self.lock:
-            if date != self.court.calendar().data:
-                return self.petitions()
             calendar = self.court.calendar()
+            if date != calendar.data:
+                return self.petitions()
             public = [d for d in self.court.current_decrees() if not d.data["secret"]]
             pushes = self.court.pending_pushes()
             await gather_or_raise(
@@ -68,12 +72,14 @@ class Month:
                 return self.petitions()
             # Opening urgent petitions must be answered before drafting, since
             # their choices are inputs to this month's single timeline.
-            if self.petitions() and not self.court.products(calendar.id, kind="month_draft"):
-                return self.petitions()
+            petitions = self.petitions()
+            if petitions and not self.court.products(calendar.id, kind="month_draft"):
+                return petitions
             await self.simulations.draft()
             self.simulations.speculate()
-            if self.petitions():
-                return self.petitions()
+            petitions = self.petitions()
+            if petitions:
+                return petitions
             await self.simulations.final()
             await self.landing.run()
             self.court.settle_accounts()
