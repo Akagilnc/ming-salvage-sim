@@ -4,6 +4,7 @@ import json
 from collections.abc import Callable, Sequence
 
 from sqlalchemy import JSON, case, func, literal, or_, select, type_coerce
+from sqlalchemy.sql.elements import BindParameter, ColumnElement
 
 from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS, Item, Ledger
 
@@ -101,9 +102,9 @@ def cabinet_members(records: dict[tuple[str, str], Item]) -> set[str]:
             for role in APPOINTMENT_ROLES for person in row["data"][role]}
 
 
-def held_by(ledger: Ledger, people: list[str]) -> list[Item]:
-    return ledger.entities(kind="incumbency", query=ENTITY_ROWS.where(or_(*(
+def held_by(people: BindParameter[str]) -> ColumnElement[bool]:
+    return or_(*(
         select(members.c.value).where(members.c.value.in_(people)).exists()
         for role in APPOINTMENT_ROLES
         for members in [func.json_each(E.data[role]).table_valued("value")]
-    ))))
+    ))

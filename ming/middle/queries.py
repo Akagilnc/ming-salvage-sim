@@ -18,6 +18,12 @@ from ming.ledger import (
 )
 from ming.middle.appointments import APPOINTMENT_ROLES
 
+CALENDAR = select(E.data).where(E.kind == "calendar").correlate(None).scalar_subquery()
+CURRENT_FACTS = FACT_ROWS.where(
+    F.date["year"].as_integer() == CALENDAR["year"].as_integer(),
+    F.date["month"].as_integer() == CALENDAR["month"].as_integer(),
+)
+
 NIGHT_RESULT = (
     select(F.kind)
     .where(F.entity_id == E.id, F.kind.in_(("translated", "unhandled")))
@@ -59,7 +65,7 @@ def available_on(date: Item) -> ColumnElement[bool]:
             func.coalesce(F.detail["available"]["year"].as_integer(), date["year"]),
             func.coalesce(F.detail["available"]["month"].as_integer(), date["month"]),
         )
-        <= (date["year"], date["month"]),
+        <= tuple_(date["year"], date["month"]),
     )
 
 

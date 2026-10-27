@@ -45,9 +45,11 @@ from ming.middle.view import (
     Identity,
     character_input,
     entities,
-    fact_sources,
+    FACT_SOURCES,
+    identity_key,
     project,
     visible_appointments,
+    view_parameters,
 )
 
 T = TypeVar("T", bound=Declaration)
@@ -117,14 +119,15 @@ class Court:
             query=ENTITY_ROWS.where(E.data["waiting_audience"].as_boolean().is_(True)),
         )
         gazette = self.entities("audit", kind="gazette")[0].data["text"]
+        calendar = self.calendar()
         for fact in self._ledger.facts(
-            entity_id=self.calendar().id,
+            entity_id=calendar.id,
             kind="gazette",
             query=FACT_ROWS.order_by(None).order_by(F.position.desc()).limit(1),
         ):
             gazette = fact["detail"]["text"]
         return {
-            "date": self.calendar().data,
+            "date": calendar.data,
             "imperial_prestige": character_input(
                 self.entities("audit", kind="world")[0].data
             )["imperial_prestige"],
@@ -136,9 +139,9 @@ class Court:
             ],
         }
 
-    def unhandled_monthly(self) -> list[Item]:
+    def unhandled_monthly(self, current: Item | None = None) -> list[Item]:
         """Last completed month's terminal failures, including the emperor's secrets."""
-        current = self.calendar().data
+        current = self.calendar().data if current is None else current
         date = {
             "year": current["year"] - (current["month"] == 1),
             "month": (current["month"] - 2) % 12 + 1,
@@ -197,12 +200,13 @@ class Court:
         *,
         current: bool = True,
         kind: str | tuple[str, ...] | None = None,
+        date: Item | None = None,
     ) -> list[FactView]:
-        date = self.calendar().data
+        query = queries.CURRENT_FACTS if current and date is None else FACT_ROWS
         return [
             FactView(**event)
             for event in self._ledger.facts(
-                entity_id=entity_id, kind=kind, date=date if current else None
+                entity_id=entity_id, kind=kind, date=date if current else None, query=query,
             )
         ]
 
@@ -284,17 +288,21 @@ class Court:
         selection: Item = {"catalogue": True, **({"kind": kind} if kind is not None else {}),
                      **({"keys": [r["key"] for r in matches]} if matches is not None else {})}
         facts: Item = {"entity_id": [r["id"] for r in matches]} if matches is not None else {}
-        source = FACT_ROWS.where(E.kind == kind) if kind is not None else FACT_ROWS
-        query = fact_sources(self._ledger, identity, source)
+        source = FACT_SOURCES[identity_key(identity)]
+        source = source.where(E.kind == kind) if kind is not None else source
+        query = source
         visible: set[UUID] = {r["entity_id"] for r in self._ledger.facts(
             **facts, query=query.with_only_columns(F.entity_id).order_by(None).distinct(),
+            parameters=view_parameters(identity),
         )} if date is not None and keys is not None else set()
         if date is not None:
             facts["date"] = date
         query = query.with_only_columns(
             F.entity_id, func.count().label("event_count"), maintain_column_froms=True,
         ).order_by(None).group_by(F.entity_id)
-        counts = Counter({r["entity_id"]: r["event_count"] for r in self._ledger.facts(**facts, query=query)})
+        counts = Counter({r["entity_id"]: r["event_count"] for r in self._ledger.facts(
+            **facts, query=query, parameters=view_parameters(identity),
+        )})
         visible |= counts.keys()
         if date is None or keys is not None:
             visible |= {e.id for e in entities(self._ledger, identity, selection)}
@@ -303,9 +311,8 @@ class Court:
         if date is not None and keys is None and kind is not None and not rows:
             visible = {e.id for e in entities(self._ledger, identity, selection, exists_only=True)}
             if not visible:
-                query = fact_sources(self._ledger, identity, source)
                 visible = {r["entity_id"] for r in self._ledger.read(
-                    query.with_only_columns(F.entity_id).order_by(None).limit(1)
+                    source.with_only_columns(F.entity_id).order_by(None).limit(1), view_parameters(identity),
                 )}
             rows = self._ledger.entities(kind=kind, entity_id=list(visible), query=names)
         return [{"kind": row["kind"], "key": row["key"], "event_count": counts[row["id"]]} for row in rows]
@@ -349,18 +356,14 @@ class Court:
         keys = list(dict.fromkeys(key)) if isinstance(key, list) else [key] if key is not None else None
         selection = {k: v for k, v in {"kind": kind, "keys": keys}.items() if v is not None}
         rows = entities(self._ledger, identity, selection)
-        ids = [e["id"] for e in self._ledger.entities(
-            kind=kind, query=ENTITY_ROWS.where(E.key.in_(keys)) if keys is not None else ENTITY_ROWS
-        )] if kind is not None or key is not None else []
+        query = FACT_SOURCES[identity_key(identity)]
+        query = query.where(E.kind == kind) if kind is not None else query
+        query = query.where(E.key.in_(keys)) if keys is not None else query
         return {
             "entities": [e.model_dump(mode="json") for e in rows],
             "facts": [
                 f.model_dump(mode="json")
-                for f in (
-                    self.facts(identity, date=date)
-                    if kind is None and key is None
-                    else self.facts(identity, entity_id=ids, date=date)
-                )
+                for f in project(self._ledger, identity, {"date": date} if date is not None else {}, query)
             ],
         }
 
@@ -387,12 +390,14 @@ class Court:
         replay: bool = False,
         *,
         kind: str | None = None,
-        key: str | None = None,
+        key: str | list[str] | None = None,
         sourced: bool = False,
     ) -> list[EntityView]:
         selection: Item = {
             k: v for k, v in {"kind": kind, "key": key}.items() if v is not None
         }
+        if isinstance(key, list):
+            selection["keys"] = selection.pop("key")
         if sourced:
             selection["sourced"] = True
         with self._ledger.reading(replay) as ledger:
@@ -401,10 +406,10 @@ class Court:
     def entity(self, entity_id: UUID) -> EntityView:
         return EntityView.model_validate(self._ledger.entities(entity_id=entity_id)[0])
 
-    def pending_petitions(self) -> list[FactView]:
+    def pending_petitions(self, date: Item | None = None) -> list[FactView]:
         return [
             FactView(**f)
-            for f in self._ledger.read(queries.pending_petitions(self.calendar().data))
+            for f in self._ledger.read(queries.pending_petitions(self.calendar().data if date is None else date))
         ]
 
     def petition_officials(self, faction: str | None = None) -> list[EntityView]:
@@ -433,11 +438,11 @@ class Court:
             ),
         )
 
-    def returned_petitions(self, *, visible: bool = False) -> list[FactView]:
+    def returned_petitions(self, *, visible: bool = False, date: Item | None = None) -> list[FactView]:
         return [
             FactView(**f)
             for f in self._ledger.read(
-                queries.returned_petitions(self.calendar().data if visible else None)
+                queries.returned_petitions((self.calendar().data if date is None else date) if visible else None)
             )
         ]
 
@@ -525,13 +530,14 @@ class Court:
         """Prior-month backing without its corresponding durable reconsideration."""
         endorsement = F.position.table.alias("backing").c
         verdict = F.position.table.alias("reconsideration").c
+        date = self.calendar().data
         rows = ENTITY_ROWS.add_columns(endorsement.detail.label("backing")).join(
             endorsement.position.table, endorsement.entity_id == E.id,
         ).where(
             E.kind == "decree", endorsement.kind == "endorsed",
             endorsement.detail["decision_key"]["petition_id"].as_string().is_not(None),
             tuple_(endorsement.date["year"].as_integer(), endorsement.date["month"].as_integer())
-            < (self.calendar().data["year"], self.calendar().data["month"]),
+            < (date["year"], date["month"]),
             ~select(verdict.position).where(
                 verdict.entity_id == E.id, verdict.kind == "deliberation",
                 verdict.detail["decision_key"] == endorsement.detail["decision_key"],

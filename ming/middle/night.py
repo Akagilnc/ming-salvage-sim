@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
 from sqlalchemy import JSON, CompoundSelect, Select, func, literal, or_, select, true, union_all
-from sqlalchemy.sql.elements import ColumnElement
+from sqlalchemy.sql.elements import BindParameter, ColumnElement
 
 from ming.ledger import ENTITY_COLUMNS as E, FACT_COLUMNS as F, FACT_ROWS, Entity, Ledger
 from ming.middle.calendar import calendar_row
@@ -87,11 +87,11 @@ def read_night(ledger: Ledger, night_id: UUID) -> NightView:
     )
 
 
-def witnessed_nights(people: list[str], query: Select[Any]) -> Select[Any]:
+def witnessed_nights(people: list[str] | BindParameter[str], query: Select[Any]) -> Select[Any]:
     added = func.json_each(F.detail["add"]).table_valued("value")
     removed = func.json_each(F.detail["remove"]).table_valued("value")
     return query.where(E.kind == "night", or_(
-        literal(bool(set(INITIAL_HALL).intersection(people))),
+        or_(*(literal(person).in_(people) for person in INITIAL_HALL)),
         select(F.position).where(
             F.entity_id == E.id, F.kind == "hall",
             select(added.c.value).where(
@@ -102,7 +102,9 @@ def witnessed_nights(people: list[str], query: Select[Any]) -> Select[Any]:
     ))
 
 
-def known_people(data: ColumnElement[Any], people: list[str] | None = None) -> CompoundSelect[Any]:
+def known_people(
+    data: ColumnElement[Any], people: list[str] | BindParameter[str] | None = None,
+) -> CompoundSelect[Any]:
     """Involved people, the handler, and the hall at the approval turn."""
     night_id = func.replace(data["night_id"].as_string(), "-", "")
     turn = F.position.table.alias().c

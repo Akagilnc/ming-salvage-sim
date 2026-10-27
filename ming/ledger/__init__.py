@@ -97,10 +97,10 @@ class Ledger:
         finally:
             rebuilt.close()
 
-    def read(self, query: Select[Any]) -> list[Item]:
+    def read(self, query: Select[Any], parameters: Item | None = None) -> list[Item]:
         """Execute a read-only SQLAlchemy selection; policy remains the writer."""
         with self.sql.transaction(commit=False) as session:
-            return [dict(row) for row in session.execute(query).mappings()]
+            return [dict(row) for row in session.execute(query, parameters or {}).mappings()]
 
     def entities(
         self,
@@ -109,6 +109,7 @@ class Ledger:
         key: str | None = None,
         entity_id: UUID | list[UUID] | None = None,
         query: Select[Any] = ENTITY_ROWS,
+        parameters: Item | None = None,
     ) -> list[Item]:
         if kind is not None:
             query = query.where(
@@ -124,7 +125,7 @@ class Ledger:
                 if isinstance(entity_id, list)
                 else EntityRow.id == entity_id
             )
-        return self.read(query)
+        return self.read(query, parameters)
 
     def facts(
         self,
@@ -133,6 +134,7 @@ class Ledger:
         kind: str | tuple[str, ...] | None = None,
         date: Item | None = None,
         query: Select[Any] = FACT_ROWS,
+        parameters: Item | None = None,
     ) -> list[Item]:
         if entity_id is not None:
             query = query.where(
@@ -151,7 +153,7 @@ class Ledger:
                 FactRow.date["year"].as_integer() == date["year"],
                 FactRow.date["month"].as_integer() == date["month"],
             )
-        return self.read(query)
+        return self.read(query, parameters)
 
     def get(self, entity_id: UUID) -> Entity:
         return self.events.repository.get(entity_id)

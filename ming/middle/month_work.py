@@ -31,14 +31,16 @@ class Simulation(MonthText):
 
 
 def prompt(court: Court, identity: Identity, context: Any) -> str:
+    speakers = {e.key: e.model_dump(mode="json") for e in court.entities(
+        identity, kind="person", key=identity.people,
+    )} if isinstance(identity, Officials) else {}
     return json.dumps(
         character_input(
             {
                 "date": court.calendar().data,
                 "context": context,
                 "catalogue": court.record_catalogue(identity),
-                **({"speakers": [e.model_dump(mode="json") for name in identity.people
-                                   for e in court.entities(identity, kind="person", key=name)]}
+                **({"speakers": [speakers[name] for name in identity.people if name in speakers]}
                    if isinstance(identity, Officials) else {}),
             }
         ),

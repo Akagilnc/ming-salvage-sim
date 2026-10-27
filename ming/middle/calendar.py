@@ -19,10 +19,6 @@ def calendar_row(ledger: Ledger) -> Item:
     return ledger.entities(kind="calendar")[0]
 
 
-def calendar_if_any(ledger: Ledger) -> Item | None:
-    return next(iter(ledger.entities(kind="calendar")), None)
-
-
 def journeys_due(ledger: Ledger) -> list[Item]:
     """Stored journeys due this month, shared by the draft read and settlement."""
     date = calendar_row(ledger)["data"]
