@@ -25,6 +25,7 @@ export interface Snapshot {
   settings: Configuration;
   required_settings: Partial<Record<Settings['backend'], (keyof Settings)[]>>;
   game: null | {
+    live: Partial<Record<'delta' | 'gazette', string>>;
     face: 'desk' | 'audience' | 'month';
     date: { year: number; month: number };
     night: Night | null;

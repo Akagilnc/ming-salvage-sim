@@ -29,7 +29,6 @@ export function App() {
   const refresh = React.useCallback(async (next?: Snapshot) => {
     const request = ++refreshing.current;
     const value = next ?? await state();
-    const contents = value.save ? await records() : { entities: [], facts: [] };
     if (request !== refreshing.current) return;
     const before = previous.current;
     if (before?.save === value.save && before?.game && value.game
@@ -37,12 +36,16 @@ export function App() {
       setReading('latest'); setPanel(null);
     }
     if (before?.save !== value.save) {
-      setLive(''); setLiveGazette(''); setPendingWords(''); setBusy(false);
+      setSnapshot(value); setBook({ entities: [], facts: [] });
+      setLive(value.game?.live.delta ?? ''); setLiveGazette(value.game?.live.gazette ?? '');
+      setPendingWords(''); setBusy(false);
       setPanel(null); setReading(null); setInput(''); setError('');
-      gazetteStreaming.current = false;
+      gazetteStreaming.current = Boolean(value.game?.live.gazette);
       choosingNow.current.clear(); setChoosing(new Set());
     }
     previous.current = value;
+    const contents = value.save ? await records() : { entities: [], facts: [] };
+    if (request !== refreshing.current) return;
     setBook(contents);
     setSnapshot(value);
     if (!value.game?.running) { setLive(''); setPendingWords(''); setLiveGazette(''); }

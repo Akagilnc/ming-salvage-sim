@@ -149,11 +149,12 @@ class Web:
             self.game = None
         else:
             self.menu()
+        model = self.settings()
         if save in self.departed:
             self.game = self.departed.pop(save)
+            self.game.configure(model, month_model=model.month_model)
             self.emit()
             return {"save": save}
-        model = self.settings()
         if action == "new":
             try:
                 court = Court.new_game(self.directory, model)
