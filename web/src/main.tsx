@@ -27,33 +27,38 @@ export function App() {
 
   const refresh = React.useCallback(async (next?: Snapshot) => {
     const request = ++refreshing.current;
-    const value = next ?? await state();
-    if (request !== refreshing.current) return;
-    const before = previous.current;
-    if (before?.save === value.save && before?.game && value.game
-      && (before.game.date.year !== value.game.date.year || before.game.date.month !== value.game.date.month)) {
-      setReading('latest'); setPanel(null);
+    try {
+      const value = next ?? await state();
+      if (request !== refreshing.current) return;
+      const before = previous.current;
+      if (before?.save === value.save && before?.game && value.game
+        && (before.game.date.year !== value.game.date.year || before.game.date.month !== value.game.date.month)) {
+        setReading('latest'); setPanel(null);
+      }
+      // SSE snapshots are ordered with deltas; same-save HTTP responses are not.
+      if (next || before?.save !== value.save) {
+        setLive(value.game?.live.delta ?? ''); setLiveGazette(value.game?.live.gazette ?? '');
+      }
+      if (before?.save !== value.save) {
+        setSnapshot(value); setBook({ entities: [], facts: [] });
+        setPendingWords(''); setBusy(false);
+        setPanel(null); setReading(null); setInput(''); setError('');
+        choosingNow.current.clear(); setChoosing(new Set());
+      }
+      previous.current = value;
+      const contents = value.save ? await records() : { entities: [], facts: [] };
+      if (request !== refreshing.current) return;
+      setBook(contents);
+      setSnapshot(value);
+      if (!value.game?.running) { setLive(''); setPendingWords(''); setLiveGazette(''); }
+    } catch (reason) {
+      // Only the current refresh owns either results or errors on this page.
+      if (request === refreshing.current) setError(String(reason));
     }
-    // SSE snapshots are ordered with deltas; same-save HTTP responses are not.
-    if (next || before?.save !== value.save) {
-      setLive(value.game?.live.delta ?? ''); setLiveGazette(value.game?.live.gazette ?? '');
-    }
-    if (before?.save !== value.save) {
-      setSnapshot(value); setBook({ entities: [], facts: [] });
-      setPendingWords(''); setBusy(false);
-      setPanel(null); setReading(null); setInput(''); setError('');
-      choosingNow.current.clear(); setChoosing(new Set());
-    }
-    previous.current = value;
-    const contents = value.save ? await records() : { entities: [], facts: [] };
-    if (request !== refreshing.current) return;
-    setBook(contents);
-    setSnapshot(value);
-    if (!value.game?.running) { setLive(''); setPendingWords(''); setLiveGazette(''); }
   }, []);
 
   React.useEffect(() => {
-    void refresh().catch(reason => setError(String(reason)));
+    void refresh();
     const events = new EventSource('/stream');
     events.addEventListener('delta', event => {
       const chunk = JSON.parse((event as MessageEvent).data) as { text: TextUpdate; hall: string[] };
@@ -68,7 +73,7 @@ export function App() {
     });
     const receive = (event: Event) => {
       const next = JSON.parse((event as MessageEvent).data) as Snapshot;
-      void refresh(next).catch(reason => setError(String(reason)));
+      void refresh(next);
     };
     events.addEventListener('state', receive);
     events.addEventListener('done', receive);
