@@ -72,7 +72,6 @@ export function App() {
       void refresh(next);
     };
     events.addEventListener('state', receive);
-    events.addEventListener('done', receive);
     return () => events.close();
   }, [refresh]);
 

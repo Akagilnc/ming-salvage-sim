@@ -63,11 +63,10 @@ class Game:
         self.month.sources.model = month_model
 
     def notify(self, event: str, data: Any) -> None:
-        if event in {"delta", "gazette"}:
-            self.live[event] = (
-                data["replace"] if isinstance(data, dict)
-                else self.live.get(event, "") + data
-            )
+        self.live[event] = (
+            data["replace"] if isinstance(data, dict)
+            else self.live.get(event, "") + data
+        )
         if self.emit:
             self.emit({"event": event, "data": data})
 

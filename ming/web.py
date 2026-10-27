@@ -102,7 +102,7 @@ class Web:
                     ),
                 },
             }
-        elif event["event"] in {"state", "done"}:
+        elif event["event"] == "state":
             event = {**event, "data": self.snapshot(saves)}
         for queue in self.listeners:
             queue.put_nowait(event)
