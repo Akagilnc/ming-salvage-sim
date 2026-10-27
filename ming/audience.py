@@ -37,7 +37,7 @@ class Audience:
             "\n".join((INSTRUCTIONS, DECREE, SECRET, HANDLER, PEOPLE, ACTING, INTERIM, DISCOVERED, AUDIENCE, DECREE_EVENT, HELD)),
         )
 
-        async def get_hall(ctx: RunContext[Audience]) -> list[str]:
+        async def get_hall(ctx: RunContext[Audience]) -> tuple[str, ...]:
             """看今夜殿上名单。"""
             return ctx.deps.court.night(ctx.deps.night_id).hall
 
@@ -62,7 +62,7 @@ class Audience:
 
     @property
     def identity(self) -> Officials:
-        return Officials(people=self.court.night(self.night_id).hall)
+        return Officials(people=list(self.court.night(self.night_id).hall))
 
     @property
     def night_id(self) -> UUID:
@@ -71,8 +71,9 @@ class Audience:
         return self._night_id
 
     def open(self, night_id: UUID | None = None) -> UUID:
-        self._night_id = night_id or self.court.open_night()
-        if not self.court.night(self.night_id).closed and self.court.facts(
+        night = self.court.night(night_id or self.court.open_night())
+        self._night_id = night.id
+        if not night.closed and self.court.facts(
             "audit", entity_id=self.night_id, kind="dismiss_requested"
         ):
             self._dismiss_requested = self.night_id

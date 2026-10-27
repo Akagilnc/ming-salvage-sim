@@ -4,15 +4,21 @@ Calendar/night callers demonstrate the pattern: commit aggregates, then read onl
 matching rows/facts. No caller refreshes tables or carries a parallel event list.
 """
 
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Mapping
 from contextlib import contextmanager, suppress
+from functools import wraps
+from inspect import signature
 from pathlib import Path
-from typing import Any, cast
+from threading import RLock
+from typing import Any, ParamSpec, TypeVar, cast
 from uuid import UUID, uuid4
 
 from eventsourcing.system import SingleThreadedRunner, System
 from eventsourcing_sqlalchemy.recorders import SQLAlchemyApplicationRecorder
 from sqlalchemy import Engine, Select
+from sqlalchemy.sql.cache_key import CacheKey
+from frozendict import deepfreeze, frozendict
+from pydantic import BaseModel
 
 from ming.ledger.domain import Entity as Entity, Item as Item
 from ming.ledger.projection import Events, ReadModel
@@ -21,11 +27,46 @@ from ming.ledger.tables import (
     ENTITY_ROWS as ENTITY_ROWS,
     FACT_ROWS as FACT_ROWS,
     ENTITY_ORDER as ENTITY_ORDER,
+    facts_in_month as facts_in_month,
 )
 
 # Native SQLAlchemy columns for read expressions, not ORM constructors/sessions.
 ENTITY_COLUMNS = EntityRow.__table__.c
 FACT_COLUMNS = FactRow.__table__.c
+EMPTY_PARAMETERS = frozendict[str, Any]()
+
+
+P = ParamSpec("P")
+R = TypeVar("R")
+
+
+def read_key(value: Any) -> Any:
+    """Keep immutable inputs; use native SQL identity and freeze only mutable keys."""
+    if isinstance(value, Select):
+        key = cast(CacheKey, cast(Any, value)._generate_cache_key())
+        return key.key, deepfreeze(tuple(p.value for p in key.bindparams))
+    try:
+        hash(value)
+    except TypeError:
+        return deepfreeze(value.model_dump() if isinstance(value, BaseModel) else value)
+    return value
+
+
+def read_once(reader: Callable[P, R]) -> Callable[P, R]:
+    """Reuse immutable reads in the ledger's single commit-invalidated result map."""
+    parameters = signature(reader)
+
+    @wraps(reader)
+    def reuse(owner: Any, *args: Any, **kwargs: Any) -> R:
+        ledger: Ledger = getattr(owner, "_ledger", owner)
+        bound = parameters.bind(owner, *args, **kwargs)
+        bound.apply_defaults()
+        key = (reader, tuple(read_key(value) for value in tuple(bound.arguments.values())[1:]))
+        with ledger.read_lock:
+            if key not in ledger.read_results:
+                ledger.read_results[key] = cast(Any, reader)(owner, *args, **kwargs)
+            return cast(R, ledger.read_results[key])
+    return cast(Callable[P, R], reuse)
 
 
 class Ledger:
@@ -44,6 +85,8 @@ class Ledger:
         self.sql = cast(SQLAlchemyApplicationRecorder, self.events.recorder)
         Base.metadata.create_all(cast(Engine, self.sql.datastore.engine))
         self.on_commit: Callable[[], None] | None = None
+        self.read_results: dict[Any, Any] = {}
+        self.read_lock = RLock()
         self.runner.start()
         # Follower uses tracking to catch up; row writes and tracking share this
         # outer transaction, including when opening an existing save.
@@ -63,21 +106,27 @@ class Ledger:
             engine.dispose()
 
     def commit(self, entities: list[Entity]) -> None:
-        try:
-            # eventsourcing-sqlalchemy's module ContextVar reuses this session in
-            # the Leader, Follower policy, and ProcessRecorder tracking insert.
-            with self.sql.transaction():
-                self.events.save(*entities)
-        except Exception:
-            # A rollback must not leave uncommitted aggregate state in the cache:
-            # the policy cached each saved aggregate at its uncommitted version.
-            # LRUCache.clear() resets only its recency list, so evict each one.
-            cache = self.events.repository.cache
-            if cache is not None:
-                for entity in entities:
-                    with suppress(KeyError):
-                        cache.get(entity.id, evict=True)
-            raise
+        # Readers include worker-thread validators. Keep SQL, derived results
+        # and invalidation in one state; nested read_once calls reenter this lock.
+        with self.read_lock:
+            try:
+                # eventsourcing-sqlalchemy's module ContextVar reuses this session
+                # in the Leader, Follower policy, and tracking insert.
+                with self.sql.transaction():
+                    recordings = self.events.save(*entities)
+            except Exception:
+                # A rollback must not leave uncommitted aggregate state in the cache:
+                # the policy cached each saved aggregate at its uncommitted version.
+                # LRUCache.clear() resets only its recency list, so evict each one.
+                cache = self.events.repository.cache
+                if cache is not None:
+                    for entity in entities:
+                        with suppress(KeyError):
+                            cache.get(entity.id, evict=True)
+                raise
+            if recordings:
+                # Empty saves and rollbacks leave prior reads valid.
+                self.read_results.clear()
         if self.on_commit is not None:
             self.on_commit()
 
@@ -97,11 +146,13 @@ class Ledger:
         finally:
             rebuilt.close()
 
-    def read(self, query: Select[Any]) -> list[Item]:
-        """Execute a read-only SQLAlchemy selection; policy remains the writer."""
+    @read_once
+    def read(self, query: Select[Any], parameters: Mapping[str, Any] = EMPTY_PARAMETERS) -> tuple[Item, ...]:
+        """Rows are deeply immutable; consumers project without editing the source."""
         with self.sql.transaction(commit=False) as session:
-            return [dict(row) for row in session.execute(query).mappings()]
+            return deepfreeze([dict(row) for row in session.execute(query, parameters).mappings()])
 
+    @read_once
     def entities(
         self,
         *,
@@ -109,7 +160,8 @@ class Ledger:
         key: str | None = None,
         entity_id: UUID | list[UUID] | None = None,
         query: Select[Any] = ENTITY_ROWS,
-    ) -> list[Item]:
+        parameters: Item | None = None,
+    ) -> tuple[Item, ...]:
         if kind is not None:
             query = query.where(
                 EntityRow.kind.in_(kind)
@@ -124,8 +176,9 @@ class Ledger:
                 if isinstance(entity_id, list)
                 else EntityRow.id == entity_id
             )
-        return self.read(query)
+        return self.read(query, parameters or EMPTY_PARAMETERS)
 
+    @read_once
     def facts(
         self,
         *,
@@ -133,7 +186,8 @@ class Ledger:
         kind: str | tuple[str, ...] | None = None,
         date: Item | None = None,
         query: Select[Any] = FACT_ROWS,
-    ) -> list[Item]:
+        parameters: Item | None = None,
+    ) -> tuple[Item, ...]:
         if entity_id is not None:
             query = query.where(
                 FactRow.entity_id.in_(entity_id)
@@ -147,11 +201,8 @@ class Ledger:
                 else FactRow.kind == kind
             )
         if date is not None:
-            query = query.where(
-                FactRow.date["year"].as_integer() == date["year"],
-                FactRow.date["month"].as_integer() == date["month"],
-            )
-        return self.read(query)
+            query = query.where(facts_in_month(date))
+        return self.read(query, parameters or EMPTY_PARAMETERS)
 
     def get(self, entity_id: UUID) -> Entity:
         return self.events.repository.get(entity_id)

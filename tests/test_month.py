@@ -311,11 +311,9 @@ def test_returned_urgent_waits_through_vacancy(
         assert [p["id"] for p in material["context"]["returned"]] == [original["id"]]
 
 
-@pytest.mark.usefixtures("first_night")
 @pytest.mark.parametrize(
-    ("opening_db", "case", "first_night", "game_db"),
-    [(None, case, "payments" if isinstance(case[0], str) else None,
-      "first_night" if isinstance(case[0], str) else "opening_db") for case in [
+    ("opening_db", "case", "game_db"),
+    [(None, case, "payment_night" if isinstance(case[0], str) else "opening_db") for case in [
         ("combined", 300000, False),
         ("split", 300000, False),
         ("combined", 300000, "commit"),
@@ -324,8 +322,8 @@ def test_returned_urgent_waits_through_vacancy(
         (5000000, 3200000, False),
         (5000000, 3200000, "write"),
         (5000000, 3200000, "commit"),
-    ]] + [("two-payments-shortage", ("combined", 250000, False), "payments", "first_night")],
-    indirect=["opening_db", "first_night", "game_db"],
+    ]] + [("two-payments-shortage", ("combined", 250000, False), "shortage_payment_night")],
+    indirect=["opening_db", "game_db"],
 )
 def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
     game_db: Path, case, steps, audit, opening_db

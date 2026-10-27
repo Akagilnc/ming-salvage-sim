@@ -127,7 +127,7 @@ def test_new_game_imports_complete_world_records_and_separates_identities(
     assert shown["卢象升"]["appointments"] == [{"office": "知府", "territory": "北直隶大名府", "holders": ["卢象升"], "acting": [], "role": "holders"}]
     assert not any({"office", "office_type", "office_region", "appointments"} & e["data"].keys() for e in entities if e["kind"] == "person")
     court = Court(path, TestModel())
-    assert court.facts("audit") == []
+    assert court.facts("audit") == ()
     assert court.entities("audit", replay=True) == court.entities("audit")
     assert court.night(court.open_night()).closed is False
     court.close()

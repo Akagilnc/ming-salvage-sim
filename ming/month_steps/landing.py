@@ -34,11 +34,10 @@ class Landing:
                 }, ensure_ascii=False),
                 calendar.id,
             )
-            self.court.record_product(calendar.id, "declaration", {
-                "result": result.model_dump(mode="json"), "unhandled": isinstance(result, Unhandled),
-            })
-            declarations = self.court.products(calendar.id, kind="declaration")
-        product = declarations[0].detail
+            product: dict[str, object] = {"result": result.model_dump(mode="json"), "unhandled": isinstance(result, Unhandled)}
+            self.court.record_product(calendar.id, "declaration", product)
+        else:
+            product = declarations[0].detail
         self.court.land(
             (Unhandled if product["unhandled"] else Declaration).model_validate(product["result"]),
             calendar.id, monthly="landed",

@@ -10,6 +10,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel, DeltaToolCall
 from starlette.testclient import TestClient
 
 from ming.web import create_app
+from ming.middle.view import Officials
 
 RECORDED = Path(__file__).parent / "recorded"
 
@@ -118,6 +119,13 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
         assert {e["key"]: e["data"] for e in after["entities"] if e["kind"] == "person"} == {k: e["data"] for k, e in before.items()}
         client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
         assert audit(game_db) == after
+        returned = client.portal.call(
+            client.app.state.web.game.court.read_records, Officials(people=["毕自严"]), None, ["国库", "郭允厚"],
+        )
+        assert next(e["data"]["taels"] for e in returned["entities"] if e["key"] == "国库") == 3200000
+        assert not {"dossier", "seed_guilt", "loyalty"}.intersection(
+            next(e["data"] for e in returned["entities"] if e["key"] == "郭允厚")
+        )
         client.post("/actions", json={"action": "month"}).raise_for_status()
         assert client.get("/state").json()["game"]["failure"] is None
         assert client.get("/state").json()["game"]["date"]["month"] == 11
@@ -190,12 +198,10 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
             assert next(e["data"]["taels"] for e in ledger["entities"] if e["kind"] == "account" and e["key"] == name) == {"节慎库": 600000, "常盈库": 1200000}[name] + amount * 10000 * 8
 
 
-@pytest.mark.usefixtures("first_night")
-@pytest.mark.parametrize("case,first_night,game_db", [
-    (case, "county" if case == "provincial_county" else None,
-     "first_night" if case == "provincial_county" else "opening_db")
+@pytest.mark.parametrize("case,game_db", [
+    (case, "county_night" if case == "provincial_county" else "opening_db")
     for case in ["range", "purpose_region", "provincial_county", "bad_territory_retry", "acting", "acting_coexist", "acting_withdraw", "acting_invalid", "unqualified", "capital_territory", "scale_recorded", "scale_bounds", "scale_invalid", "salary_invalid", "maintenance_invalid", "fiscal_recorded"]
-], indirect=["first_night", "game_db"])
+], indirect=["game_db"])
 def test_recorded_r2_reply_lands(game_db, steps, audit, case):
     reply = (json.dumps({"facts": [f for f in json.loads(json.loads((RECORDED / "range_v9.json").read_text())["reply"])["facts"]
                                   if f["entity_type"] != "person"]}) if case != "purpose_region" else

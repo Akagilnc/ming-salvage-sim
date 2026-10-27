@@ -1,7 +1,7 @@
 """Derived query schema. Only the projection policy writes these rows."""
 
 from uuid import UUID
-from sqlalchemy import JSON, Index, Integer, Uuid, literal_column, select
+from sqlalchemy import JSON, ColumnElement, Index, Integer, Uuid, literal_column, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from ming.ledger.domain import Item
 
@@ -29,6 +29,11 @@ class FactRow(Base):
     date: Mapped[Item | None] = mapped_column(JSON)
     emperor_words: Mapped[str]
     detail: Mapped[Item] = mapped_column(JSON)
+
+
+def facts_in_month(date: Item) -> ColumnElement[bool]:
+    return ((FactRow.date["year"].as_integer() == date["year"])
+            & (FactRow.date["month"].as_integer() == date["month"]))
 
 
 ENTITY_ORDER = literal_column("entities.rowid", type_=Integer())
