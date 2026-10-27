@@ -15,7 +15,6 @@ export function App() {
   const [live, setLive] = React.useState('');
   const [liveGazette, setLiveGazette] = React.useState('');
   const [reading, setReading] = React.useState<number | 'latest' | null>(null);
-  const gazetteStreaming = React.useRef(false);
   const previous = React.useRef<Snapshot | null>(null);
   const refreshing = React.useRef(0);
   const choosingNow = React.useRef(new Set<string>());
@@ -38,7 +37,6 @@ export function App() {
     // SSE snapshots are ordered with deltas; same-save HTTP responses are not.
     if (next || before?.save !== value.save) {
       setLive(value.game?.live.delta ?? ''); setLiveGazette(value.game?.live.gazette ?? '');
-      gazetteStreaming.current = Boolean(value.game?.live.gazette);
     }
     if (before?.save !== value.save) {
       setSnapshot(value); setBook({ entities: [], facts: [] });
@@ -65,8 +63,6 @@ export function App() {
       } : value);
     });
     events.addEventListener('gazette', event => {
-      if (!gazetteStreaming.current) setLiveGazette('');
-      gazetteStreaming.current = true;
       const chunk = JSON.parse((event as MessageEvent).data) as TextUpdate;
       setLiveGazette(text => typeof chunk === 'string' ? text + chunk : chunk.replace);
     });
