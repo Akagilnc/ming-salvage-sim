@@ -98,13 +98,12 @@ def opening_template_db(tmp_path_factory):
         yield build_opening()
 
 
-@pytest.fixture(scope="session")
-def opening_db(request, tmp_path_factory, opening_template_db):
+def opening_node(tmp_path_factory, variant=None):
     directory = tmp_path_factory.mktemp("opening")
-    if getattr(request, "param", None) is not None:
+    if variant is not None:
         content = copytree(CONTENT, directory / "content")
         opening = json.loads((content / "opening.json").read_text())
-        if request.param == "shortage":
+        if variant == "shortage":
             for account in opening["accounts"]:
                 account["taels"] = 0
             config = json.loads((content / "fiscal_config.json").read_text())
@@ -112,14 +111,14 @@ def opening_db(request, tmp_path_factory, opening_template_db):
                 if item["key"] in {"官俸_base", "宫廷_base"}:
                     item["value"] = {"官俸_base": 2000, "宫廷_base": 1000}[item["key"]]
             (content / "fiscal_config.json").write_text(json.dumps(config))
-        elif request.param == "two-payments-shortage":
+        elif variant == "two-payments-shortage":
             next(a for a in opening["accounts"] if a["name"] == "国库")["taels"] = 250000
-        elif request.param == "prestige":
+        elif variant == "prestige":
             opening["world"][0]["imperial_prestige"] = 100
         else:
-            opening["calendar"][0].update(year=request.param, month=1)
+            opening["calendar"][0].update(year=variant, month=1)
         (content / "opening.json").write_text(json.dumps(opening))
-        if request.param == 1640:
+        if variant == 1640:
             events = json.loads((content / "events.json").read_text())
             next(e for e in events if e["id"] == "jiao_levy_start_1637")[
                 "terminal_reason"
@@ -140,15 +139,57 @@ def opening_db(request, tmp_path_factory, opening_template_db):
 
 
 @pytest.fixture(scope="session")
-def first_night(opening_db, tmp_path_factory, request):
-    recording = getattr(request, "param", None)
-    actions = [{"action": "open"}]
-    if recording is not None:
-        case = json.loads((RECORDED / f"night_{recording}.json").read_text())
-        actions += [{"action": "say", "words": words} for words in case["words"]]
-        actions.append({"action": "dismiss"})
+def opening_default(tmp_path_factory, opening_template_db):
+    return opening_node(tmp_path_factory)
+
+
+@pytest.fixture(scope="session")
+def opening_shortage(tmp_path_factory, opening_template_db):
+    return opening_node(tmp_path_factory, "shortage")
+
+
+@pytest.fixture(scope="session")
+def opening_two_payments_shortage(tmp_path_factory, opening_template_db):
+    return opening_node(tmp_path_factory, "two-payments-shortage")
+
+
+@pytest.fixture(scope="session")
+def opening_prestige(tmp_path_factory, opening_template_db):
+    return opening_node(tmp_path_factory, "prestige")
+
+
+@pytest.fixture(scope="session")
+def opening_1631(tmp_path_factory, opening_template_db):
+    return opening_node(tmp_path_factory, 1631)
+
+
+@pytest.fixture(scope="session")
+def opening_1640(tmp_path_factory, opening_template_db):
+    return opening_node(tmp_path_factory, 1640)
+
+
+@pytest.fixture
+def opening_db(request):
+    # Only selection is parameterized. Immutable resource nodes never lose their
+    # session lifetime when pytest switches away from, then back to an input.
+    return request.getfixturevalue({
+        None: "opening_default", "shortage": "opening_shortage",
+        "two-payments-shortage": "opening_two_payments_shortage",
+        "prestige": "opening_prestige", 1631: "opening_1631", 1640: "opening_1640",
+    }[getattr(request, "param", None)])
+
+
+@pytest.fixture(scope="session")
+def first_night(opening_default, tmp_path_factory):
     return extend_history(
-        opening_db, tmp_path_factory.mktemp("first-night"), actions, case=recording
+        opening_default, tmp_path_factory.mktemp("first-night"), ({"action": "open"},),
+    )
+
+
+@pytest.fixture(scope="session")
+def shortage_first_night(opening_two_payments_shortage, tmp_path_factory):
+    return extend_history(
+        opening_two_payments_shortage, tmp_path_factory.mktemp("shortage-first-night"), ({"action": "open"},),
     )
 
 
@@ -187,6 +228,67 @@ def rejected_night(first_night, tmp_path_factory):
 
 
 @pytest.fixture(scope="session")
+def rejected_month(rejected_night, tmp_path_factory):
+    return extend_history(
+        rejected_night, tmp_path_factory.mktemp("rejected-month"),
+        ({"action": "month"},), case="approved",
+    )
+
+
+@pytest.fixture(scope="session")
+def endorsed_month(rejected_month, tmp_path_factory):
+    path = tmp_path_factory.mktemp("endorsed-month") / rejected_month.name
+    copyfile(rejected_month, path)
+    with recorded_steps("approved"), TestClient(create_app(path.parent)) as client:
+        client.post("/actions", json={"action": "load", "save": path.name}).raise_for_status()
+        petition = client.get("/state").json()["game"]["petitions"][0]
+        client.post("/actions", json={"action": "choose", "petition": petition["id"], "option": 3}).raise_for_status()
+        client.portal.call(client.app.state.web.game.drain)
+        state = client.get("/state").json()["game"]
+        assert (state["date"]["month"], state["failure"], state["petitions"]) == (11, None, [])
+    return path
+
+
+def declared_night(source, tmp_path_factory, recording):
+    case = json.loads((RECORDED / f"night_{recording}.json").read_text())
+    return extend_history(
+        source, tmp_path_factory.mktemp("declared-night"),
+        [*({"action": "say", "words": words} for words in case["words"]), {"action": "dismiss"}],
+        case=recording,
+    )
+
+
+@pytest.fixture(scope="session")
+def payment_night(first_night, tmp_path_factory):
+    return declared_night(first_night, tmp_path_factory, "payments")
+
+
+@pytest.fixture(scope="session")
+def county_night(first_night, tmp_path_factory):
+    return declared_night(first_night, tmp_path_factory, "county")
+
+
+@pytest.fixture(scope="session")
+def travel_night(first_night, tmp_path_factory):
+    return declared_night(first_night, tmp_path_factory, "travel")
+
+
+@pytest.fixture(scope="session")
+def shortage_payment_night(shortage_first_night, tmp_path_factory):
+    return declared_night(shortage_first_night, tmp_path_factory, "payments")
+
+
+@pytest.fixture(scope="session")
+def two_nights(travel_night, tmp_path_factory):
+    case = json.loads((RECORDED / "night_approved.json").read_text())
+    return extend_history(
+        travel_night, tmp_path_factory.mktemp("two-nights"),
+        [{"action": "open"}, *({"action": "say", "words": words} for words in case["words"]), {"action": "dismiss"}],
+        case="approved",
+    )
+
+
+@pytest.fixture(scope="session")
 def secret_night(first_night, tmp_path_factory):
     case = json.loads((RECORDED / "night_secret.json").read_text())
     return extend_history(
@@ -207,15 +309,28 @@ def backing_offer(first_night, tmp_path_factory):
     )
 
 
-@pytest.fixture(scope="session")
-def backed_night(backing_offer, tmp_path_factory, request):
-    case = getattr(request, "param", "endorsed")
+def finish_backing(backing_offer, tmp_path_factory, case):
     recording = json.loads((RECORDED / f"night_{case}.json").read_text())
     return extend_history(
         backing_offer, tmp_path_factory.mktemp(f"{case}-night"),
         [{"action": "say", "words": turn["emperor_words"]} for turn in recording["turns"][2:]],
         case=case, start=2,
     )
+
+
+@pytest.fixture(scope="session")
+def backed_night(backing_offer, tmp_path_factory):
+    return finish_backing(backing_offer, tmp_path_factory, "endorsed")
+
+
+@pytest.fixture(scope="session")
+def double_backed_night(backing_offer, tmp_path_factory):
+    return finish_backing(backing_offer, tmp_path_factory, "double")
+
+
+@pytest.fixture(scope="session")
+def interim_backed_night(backing_offer, tmp_path_factory):
+    return finish_backing(backing_offer, tmp_path_factory, "interim")
 
 
 def extend_history(source, directory, actions, case=None, start=0):
@@ -235,12 +350,50 @@ def extend_history(source, directory, actions, case=None, start=0):
     return path
 
 
+def funded_month(opening_db, tmp_path_factory, name, account):
+    path = tmp_path_factory.mktemp("funded-month") / opening_db.name
+    copyfile(opening_db, path)
+    declaration = {"facts": [{
+        "entity_type": "affair", "entity": name, "create": True,
+        "changes": [{"field": "monthly_funding", "value": {"amount": 500000, "account": account}}],
+        "text": "每月拨五十万两",
+    }]}
+    with recorded_steps() as replies, TestClient(create_app(path.parent)) as client:
+        replies["Declaration"] = TestModel(call_tools=[], custom_output_text=json.dumps(declaration, ensure_ascii=False))
+        client.post("/actions", json={"action": "load", "save": path.name}).raise_for_status()
+        client.post("/actions", json={"action": "month"}).raise_for_status()
+        client.portal.call(client.app.state.web.game.drain)
+        state = client.get("/state").json()["game"]
+        assert (state["date"]["month"], state["failure"]) == (11, None)
+    return path
+
+
+@pytest.fixture(scope="session")
+def funded_affair(opening_default, tmp_path_factory):
+    return funded_month(opening_default, tmp_path_factory, "陕西专款", "国库")
+
+
+@pytest.fixture(scope="session")
+def funded_army(opening_default, tmp_path_factory):
+    return funded_month(opening_default, tmp_path_factory, "军饷", "国库")
+
+
+@pytest.fixture(scope="session")
+def funded_salary(opening_default, tmp_path_factory):
+    return funded_month(opening_default, tmp_path_factory, "官俸_base", "国库")
+
+
+@pytest.fixture(scope="session")
+def funded_private_salary(opening_default, tmp_path_factory):
+    return funded_month(opening_default, tmp_path_factory, "官俸_base", "内库")
+
+
 @pytest.fixture(scope="session")
 def pending_histories(request, tmp_path_factory):
     history = request.param
     actions = HISTORY_ACTIONS[history]
     node = request.getfixturevalue(
-        "opening_db" if history == "month" else "first_night"
+        "opening_default" if history == "month" else "first_night"
     )
     paths = {}
     for size, added in ((1, actions[-1:]), (2, actions), (4, actions * 2)):

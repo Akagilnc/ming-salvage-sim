@@ -151,11 +151,9 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
     assert not {"loyalty", "ability", "integrity", "courage", "intrigue"}.intersection(dossier)
 
 
-@pytest.mark.usefixtures("backed_night")
-@pytest.mark.parametrize("game_db", ["backed_night"], indirect=True)
-@pytest.mark.parametrize("backed_night,recording,case", [
-    ("endorsed", "endorsed", case) for case in ["approved", "held", "form", "source", "name", "person"]
-] + [("double", "double", "approved")], indirect=["backed_night"])
+@pytest.mark.parametrize("recording,case,game_db", [
+    ("endorsed", case, "backed_night") for case in ["approved", "held", "form", "source", "name", "person"]
+] + [("double", "approved", "double_backed_night")], indirect=["game_db"])
 def test_backing_follows_its_decree_and_signers(game_db, steps, audit, case, recording):
     recording = json.loads((RECORDED / f"night_{recording}.json").read_text())
     reply = json.loads(recording["replies"][-1])

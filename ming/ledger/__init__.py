@@ -6,6 +6,7 @@ matching rows/facts. No caller refreshes tables or carries a parallel event list
 
 from collections.abc import Callable, Generator
 from contextlib import contextmanager, suppress
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, cast
 from uuid import UUID, uuid4
@@ -13,6 +14,7 @@ from uuid import UUID, uuid4
 from eventsourcing.system import SingleThreadedRunner, System
 from eventsourcing_sqlalchemy.recorders import SQLAlchemyApplicationRecorder
 from sqlalchemy import Engine, Select
+from sqlalchemy.sql.cache_key import CacheKey
 
 from ming.ledger.domain import Entity as Entity, Item as Item
 from ming.ledger.projection import Events, ReadModel
@@ -45,6 +47,8 @@ class Ledger:
         self.sql = cast(SQLAlchemyApplicationRecorder, self.events.recorder)
         Base.metadata.create_all(cast(Engine, self.sql.datastore.engine))
         self.on_commit: Callable[[], None] | None = None
+        self._read_results: dict[str, list[Item]] = {}
+        self._read_statements: dict[Any, str] = {}
         self.runner.start()
         # Follower uses tracking to catch up; row writes and tracking share this
         # outer transaction, including when opening an existing save.
@@ -68,7 +72,7 @@ class Ledger:
             # eventsourcing-sqlalchemy's module ContextVar reuses this session in
             # the Leader, Follower policy, and ProcessRecorder tracking insert.
             with self.sql.transaction():
-                self.events.save(*entities)
+                recordings = self.events.save(*entities)
         except Exception:
             # A rollback must not leave uncommitted aggregate state in the cache:
             # the policy cached each saved aggregate at its uncommitted version.
@@ -79,6 +83,10 @@ class Ledger:
                     with suppress(KeyError):
                         cache.get(entity.id, evict=True)
             raise
+        if recordings:
+            # An empty save does not change the read state. Invalidate after
+            # commit, before callbacks; a rollback leaves prior reads valid.
+            self._read_results.clear()
         if self.on_commit is not None:
             self.on_commit()
 
@@ -100,8 +108,17 @@ class Ledger:
 
     def read(self, query: Select[Any], parameters: Item | None = None) -> list[Item]:
         """Execute a read-only SQLAlchemy selection; policy remains the writer."""
+        parameters = parameters or {}
+        # SQLAlchemy's native key, as used by its dogpile caching recipe.
+        cache_key = cast(CacheKey | None, cast(Any, query)._generate_cache_key())
+        key = cache_key.to_offline_string(self._read_statements, query, parameters) if cache_key is not None else None
+        if key is not None and key in self._read_results:
+            return deepcopy(self._read_results[key])
         with self.sql.transaction(commit=False) as session:
-            return [dict(row) for row in session.execute(query, parameters or {}).mappings()]
+            rows = [dict(row) for row in session.execute(query, parameters).mappings()]
+        if key is not None:
+            self._read_results[key] = deepcopy(rows)
+        return rows
 
     def entities(
         self,
