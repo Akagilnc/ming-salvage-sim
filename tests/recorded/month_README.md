@@ -35,7 +35,7 @@
 
 ## #1978 契约迁移（确定性输入，不冒充新录音）
 
-场景录件中的 `read_person(name)` 调用改为 `read_records(kind=person, key=...)`；工具返回仍由当前生产链现场取得。`account_dossiers.json` 的专用人物账户包退役，账户权限由 `test_web.assert_record_queries` 的统一工具案覆盖。
+场景录件中的 `read_person(name)` 调用改为 `read_records(kind=person, key=...)`；工具返回仍由当前生产链现场取得。`account_dossiers.json` 的专用人物账户包退役，账户及派系权限由 `test_secrets.test_every_model_call_reads_identity_scoped_records` 的统一工具案覆盖。
 
 `month_provincial_county.txt`、`month_two_payments_{combined,split}.txt`、`month_interim_{approved,rejected}.json` 的量表输入改为增减，原稿最终值减去开局量表值；这是人工迁移的结构化测试输入，不再声称这些量表字段是原生模型输出。其余文字保留，原生卷仍以以下归档为真源。`month_secret_appointment.json` 是本票的确定性密令任命输入，不是录音。
 

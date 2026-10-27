@@ -1,7 +1,6 @@
 """The ledger's door: identity reads, event recording, translation and landing."""
 
 import logging
-from collections import Counter
 from difflib import get_close_matches
 from functools import partial
 from collections.abc import Callable, Sequence
@@ -11,12 +10,14 @@ from typing import Any, TypeVar
 from uuid import UUID, uuid4
 
 from pydantic_ai import Agent
-from sqlalchemy import JSON, func, literal, select, tuple_
+from sqlalchemy import JSON, func, literal, or_, select, tuple_
 from ming.ledger import (
     ENTITY_COLUMNS as E,
     FACT_COLUMNS as F,
     ENTITY_ROWS,
+    ENTITY_ORDER,
     FACT_ROWS,
+    facts_in_month,
 )
 from ming.middle import queries
 from ming.middle.appointments import office_pairs, incumbency_record, named
@@ -46,6 +47,7 @@ from ming.middle.view import (
     character_input,
     entities,
     FACT_SOURCES,
+    ENTITY_SOURCES,
     identity_key,
     project,
     visible_appointments,
@@ -139,9 +141,8 @@ class Court:
             ],
         }
 
-    def unhandled_monthly(self, current: Item | None = None) -> list[Item]:
+    def unhandled_monthly(self, current: Item) -> list[Item]:
         """Last completed month's terminal failures, including the emperor's secrets."""
-        current = self.calendar().data if current is None else current
         date = {
             "year": current["year"] - (current["month"] == 1),
             "month": (current["month"] - 2) % 12 + 1,
@@ -153,24 +154,24 @@ class Court:
             ))
         ]
 
-    def fiscal_events(self) -> list[Item]:
-        return due_levies(self._ledger)
+    def fiscal_events(self, date: Item) -> list[Item]:
+        return due_levies(self._ledger, date)
 
     def settle_accounts(self) -> None:
         Accounts(self._ledger).run()
 
-    def arrivals_this_month(self) -> list[Item]:
+    def arrivals_this_month(self, date: Item) -> list[Item]:
         """Read the already determined arrival dates without landing them early."""
         return [
             {"person": row["key"], "destination": row["data"]["transit_to"], "date": row["data"]["arrival_date"]}
-            for row in journeys_due(self._ledger)
+            for row in journeys_due(self._ledger, date)
         ]
 
     def settle_journeys(self) -> None:
         settle_journeys(self._ledger)
 
-    def advance_month(self) -> None:
-        advance_month(self._ledger)
+    def advance_month(self) -> EntityView:
+        return EntityView.model_validate(advance_month(self._ledger), from_attributes=True)
 
     def calendar(self) -> EntityView:
         return EntityView.model_validate(calendar_row(self._ledger))
@@ -200,13 +201,12 @@ class Court:
         *,
         current: bool = True,
         kind: str | tuple[str, ...] | None = None,
-        date: Item | None = None,
     ) -> list[FactView]:
-        query = queries.CURRENT_FACTS if current and date is None else FACT_ROWS
+        query = queries.CURRENT_FACTS if current else FACT_ROWS
         return [
             FactView(**event)
             for event in self._ledger.facts(
-                entity_id=entity_id, kind=kind, date=date if current else None, query=query,
+                entity_id=entity_id, kind=kind, query=query,
             )
         ]
 
@@ -236,10 +236,10 @@ class Court:
         kind: str,
         detail: dict[str, object],
         *,
+        date: Item,
         petitions: Sequence[PendingPetition] = (),
     ) -> None:
         """Commit a complete product and its petitions in the same transaction."""
-        date = self.calendar().data
         targets = {
             key: self._ledger.get(key)
             for key in {entity_id, *(p.entity_id for p in petitions)}
@@ -272,11 +272,11 @@ class Court:
         source: UUID,
         *,
         monthly: LandingMode | None = None,
+        sources: Sequence[tuple[UUID, LandingMode | None]] = (),
     ) -> None:
         dispatch(
             self._ledger, result, source, monthly,
-            sources=[(d.id, mode) for d, mode in self.landing_sources()]
-            if monthly and source == self.calendar().id else (),
+            sources=sources,
         )
 
     def record_catalogue(
@@ -286,36 +286,43 @@ class Court:
         """Names and counts from the existing entity/fact projections, never prose."""
         matches = named(self._ledger, kind, keys) if keys is not None else None
         selection: Item = {"catalogue": True, **({"kind": kind} if kind is not None else {}),
-                     **({"keys": [r["key"] for r in matches]} if matches is not None else {})}
-        facts: Item = {"entity_id": [r["id"] for r in matches]} if matches is not None else {}
+                           **({"keys": [r["key"] for r in matches]} if matches is not None else {})}
         source = FACT_SOURCES[identity_key(identity)]
-        source = source.where(E.kind == kind) if kind is not None else source
+        visible = ENTITY_SOURCES[identity_key(identity)].with_only_columns(E.id).order_by(None)
+        if kind is not None:
+            source, visible = source.where(E.kind == kind), visible.where(E.kind == kind)
+        if matches is not None:
+            source = source.where(F.entity_id.in_([r["id"] for r in matches]))
+            visible = visible.where(E.id.in_([r["id"] for r in matches]))
+        if identity == "emperor":
+            visible = select(E.id).where(E.id.in_([e.id for e in entities(self._ledger, identity, selection)]))
         query = source
-        visible: set[UUID] = {r["entity_id"] for r in self._ledger.facts(
-            **facts, query=query.with_only_columns(F.entity_id).order_by(None).distinct(),
-            parameters=view_parameters(identity),
-        )} if date is not None and keys is not None else set()
         if date is not None:
-            facts["date"] = date
-        query = query.with_only_columns(
+            query = query.where(facts_in_month(date))
+        counts = query.with_only_columns(
             F.entity_id, func.count().label("event_count"), maintain_column_froms=True,
-        ).order_by(None).group_by(F.entity_id)
-        counts = Counter({r["entity_id"]: r["event_count"] for r in self._ledger.facts(
-            **facts, query=query, parameters=view_parameters(identity),
-        )})
-        visible |= counts.keys()
-        if date is None or keys is not None:
-            visible |= {e.id for e in entities(self._ledger, identity, selection)}
-        names = ENTITY_ROWS.with_only_columns(E.id, E.kind, E.key)
-        rows = self._ledger.entities(kind=kind, entity_id=list(visible), query=names)
-        if date is not None and keys is None and kind is not None and not rows:
-            visible = {e.id for e in entities(self._ledger, identity, selection, exists_only=True)}
-            if not visible:
-                visible = {r["entity_id"] for r in self._ledger.read(
-                    source.with_only_columns(F.entity_id).order_by(None).limit(1), view_parameters(identity),
-                )}
-            rows = self._ledger.entities(kind=kind, entity_id=list(visible), query=names)
-        return [{"kind": row["kind"], "key": row["key"], "event_count": counts[row["id"]]} for row in rows]
+        ).order_by(None).group_by(F.entity_id).subquery()
+        visible_entities = visible.order_by(None).distinct().subquery()
+        eligible = or_(visible_entities.c.id.is_not(None), (
+            counts.c.entity_id.is_not(None) if date is None else E.id.in_(
+                source.with_only_columns(F.entity_id).order_by(None).limit(None if keys is not None else 1).correlate(None),
+            )
+        ))
+        names = ENTITY_ROWS.outerjoin(counts, counts.c.entity_id == E.id).outerjoin(
+            visible_entities, visible_entities.c.id == E.id,
+        ).with_only_columns(
+            E.kind, E.key, func.coalesce(counts.c.event_count, 0).label("event_count"),
+        )
+        result = self._ledger.read(
+            names.where(eligible if date is None or keys is not None else counts.c.entity_id.is_not(None)),
+            view_parameters(identity, kind),
+        )
+        if date is not None and keys is None and kind is not None and not result:
+            result = self._ledger.read(
+                names.where(eligible).order_by(None).order_by(visible_entities.c.id.is_(None), ENTITY_ORDER).limit(1),
+                view_parameters(identity, kind),
+            )
+        return result
 
     def office_record(self, identity: Identity, key: str, date: Item | None = None) -> Item:
         pairs, resolution = office_pairs(self._ledger, key, partial(visible_appointments, self._ledger, identity))
@@ -490,11 +497,11 @@ class Court:
             )
         ]
 
-    def current_decrees(self, date: Item | None = None) -> list[EntityView]:
+    def current_decrees(self, date: Item) -> list[EntityView]:
         return [
             EntityView.model_validate(e)
             for e in self._ledger.read(
-                queries.decrees_with("decreed", self.calendar().data if date is None else date)
+                queries.decrees_with("decreed", date)
             )
         ]
 
@@ -504,17 +511,17 @@ class Court:
             for e in self._ledger.read(queries.SECRET_DECREES)
         ]
 
-    def errands(self) -> list[EntityView]:
+    def errands(self, date: Item) -> list[EntityView]:
         return [
             EntityView.model_validate(e)
-            for e in self._ledger.read(queries.errands(self.calendar().data))
+            for e in self._ledger.read(queries.errands(date))
         ]
 
     def known_people(self, decree: EntityView) -> set[str]:
         readers = known_people(literal(decree.data, type_=JSON)).subquery()
         return {row["person"] for row in self._ledger.read(select(readers.c.person))}
 
-    def consequences(self, decree: UUID) -> list[FactView]:
+    def consequences(self, decree: UUID, date: Item) -> list[FactView]:
         return [
             FactView(**f)
             for f in self._ledger.facts(
@@ -522,15 +529,14 @@ class Court:
                     F.detail["origin_ref"].as_string() == str(decree)
                 ),
                 kind=("changed", "received", "reported", "unhandled"),
-                date=self.calendar().data,
+                date=date,
             )
         ]
 
-    def pending_pushes(self, date: Item | None = None) -> list[tuple[EntityView, Item]]:
+    def pending_pushes(self, date: Item) -> list[tuple[EntityView, Item]]:
         """Prior-month backing without its corresponding durable reconsideration."""
         endorsement = F.position.table.alias("backing").c
         verdict = F.position.table.alias("reconsideration").c
-        date = self.calendar().data if date is None else date
         rows = ENTITY_ROWS.add_columns(endorsement.detail.label("backing")).join(
             endorsement.position.table, endorsement.entity_id == E.id,
         ).where(
@@ -546,14 +552,14 @@ class Court:
         return [(EntityView.model_validate(row), row["backing"]["decision_key"])
                 for row in self._ledger.read(rows)]
 
-    def landing_sources(self, *, include_history: bool = True) -> list[tuple[EntityView, LandingMode | None]]:
+    def landing_sources(self, date: Item, *, include_history: bool = True) -> list[tuple[EntityView, LandingMode | None]]:
         return [(EntityView.model_validate(row), mode)
-                for row, mode in landing_sources(self._ledger, self.calendar().data, include_history=include_history)]
+                for row, mode in landing_sources(self._ledger, date, include_history=include_history)]
 
-    def landing_materials(self, *, include_history: bool = True) -> list[Item]:
+    def landing_materials(self, date: Item, *, include_history: bool = True) -> list[Item]:
         """Monthly materials; translation also needs historical decree pointers."""
         materials: list[Item] = []
-        for decree, mode in self.landing_sources(include_history=include_history):
+        for decree, mode in self.landing_sources(date, include_history=include_history):
             deliberations = self.products(decree.id, kind=("deliberation", "choice"))
             current = mode is not None or bool(deliberations)
             materials.append({

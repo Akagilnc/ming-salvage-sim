@@ -7,7 +7,7 @@ from pydantic_ai import PromptedOutput
 from ming.middle.court import Court
 from ming.middle.concepts import ACTING, IMPERIAL_PUSH, INTERIM, VERDICT
 from ming.middle.invoke import ModelSource, build_agent, invoke
-from ming.middle.month_work import Deliberation, prompt
+from ming.middle.month_work import Deliberation, MonthMaterials, prompt
 from ming.middle.records import Materials, read_records
 from ming.middle.view import EntityView, Officials
 
@@ -26,7 +26,8 @@ class Deliberations:
         )
 
     async def run(
-        self, decree: EntityView, decision: dict[str, Any] | None = None
+        self, decree: EntityView, calendar: EntityView, world: EntityView,
+        decision: dict[str, Any] | None = None
     ) -> dict[str, Any]:
         """Initial verdict or next-month reconsideration of one selected push."""
         done = self.court.deliberation(decree.id, decision)
@@ -34,24 +35,23 @@ class Deliberations:
             return done
         decree = self.court.entity(decree.id)
         identity = Officials(people=decree.data["people"], exclude_secrets=True)
-        world = self.court.entities("audit", kind="world")[0]
+        materials = MonthMaterials(self.court, identity, calendar)
         result = await invoke(
             self.agent,
             prompt(
-                self.court,
-                identity,
+                materials,
                 {
                     "decree": decree.model_dump(mode="json"),
                     "imperial_prestige": world.data["imperial_prestige"],
                 },
             ),
-            deps=Materials(self.court, identity),
+            deps=materials,
         )
         self.court.log.info("model output: %s", result.output.model_dump_json())
-        date = self.court.calendar().data
+        date = calendar.data
         verdict: dict[str, Any] = {
             **result.output.model_dump(),
             "decision_key": decision,
         }
-        self.court.record_product(decree.id, "deliberation", verdict)
+        self.court.record_product(decree.id, "deliberation", verdict, date=date)
         return {**verdict, "date": date}

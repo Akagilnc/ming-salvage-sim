@@ -35,14 +35,13 @@ class Month:
 
     def opened(self, calendar: EntityView | None = None) -> bool:
         calendar = self.court.calendar() if calendar is None else calendar
-        return bool(self.court.products(calendar.id, kind="month_open", date=calendar.data))
+        return bool(self.court.products(calendar.id, kind="month_open"))
 
-    def open(self) -> None:
-        calendar = self.court.calendar()
+    def open(self, calendar: EntityView) -> None:
         if not self.opened(calendar):
             self.court.record_product(calendar.id, "month_open", {
                 "entities": [e.model_dump(mode="json") for e in self.court.entities("emperor")],
-            })
+            }, date=calendar.data)
 
     def petitions(self, date: dict[str, Any] | None = None) -> list[PendingPetition]:
         return self.inbox.petitions(date)
@@ -52,46 +51,52 @@ class Month:
 
     async def resume(
         self, *, speculative: bool = False, petition_id: str | None = None,
-    ) -> list[PendingPetition]:
+        calendar: EntityView,
+    ) -> list[PendingPetition] | EntityView:
         # A click records its choice immediately. Shared finalization belongs to
         # the month action, never to one question or a second round of choices.
         if petition_id is not None:
-            return self.petitions()
-        date = self.court.calendar().data
+            return self.petitions(calendar.data)
+        date = calendar.data
+        waited = self.lock.locked()
         async with self.lock:
-            calendar = self.court.calendar()
+            calendar = self.court.calendar() if waited else calendar
             if date != calendar.data:
-                return self.petitions()
+                return self.petitions(calendar.data)
             public = [d for d in self.court.current_decrees(calendar.data) if not d.data["secret"]]
             pushes = self.court.pending_pushes(calendar.data)
-            await gather_or_raise(
-                *(self.deliberations.run(d) for d in public),
-                *(self.deliberations.run(d, decision) for d, decision in pushes),
-            )
-            if speculative or not self.opened():
+            verdicts: list[dict[str, Any]] = []
+            if public or pushes:
+                world = self.court.entities("audit", kind="world")[0]
+                verdicts = await gather_or_raise(
+                    *(self.deliberations.run(d, calendar, world) for d in public),
+                    *(self.deliberations.run(d, calendar, world, decision) for d, decision in pushes),
+                )
+            if speculative or not self.opened(calendar):
                 return self.petitions()
             # Opening urgent petitions must be answered before drafting, since
             # their choices are inputs to this month's single timeline.
-            petitions = self.petitions()
-            if petitions and not self.court.products(calendar.id, kind="month_draft"):
+            petitions = self.petitions(calendar.data)
+            draft = self.court.products(calendar.id, kind="month_draft")
+            if petitions and not draft:
                 return petitions
-            await self.simulations.draft()
-            self.simulations.speculate()
-            petitions = self.petitions()
-            if petitions:
-                return petitions
-            await self.simulations.final()
-            await self.landing.run()
+            if not draft:
+                await self.simulations.draft(calendar, list(zip(public, verdicts[:len(public)], strict=True)))
+            if not self.court.products(calendar.id, kind="month_final"):
+                month_petitions = self.simulations.speculate(calendar)
+                petitions = self.petitions(calendar.data)
+                if petitions:
+                    return petitions
+                await self.simulations.final(calendar, month_petitions)
+            await self.landing.run(calendar)
             self.court.settle_accounts()
             self.court.settle_journeys()
             await gather_or_raise(
-                self.gazette.run(), self.sources.urgent(),
-                *(self.sources.impeach(f) for f in self.court.entities("audit", kind="faction")),
-                *(self.secrets.report(d) for d in self.court.errands()),
+                self.gazette.run(calendar), self.sources.run(calendar),
+                *(self.secrets.report(d, calendar) for d in self.court.errands(calendar.data)),
             )
-            self.court.advance_month()
-            return self.petitions()
+            return self.court.advance_month()
 
-    async def advance(self) -> list[PendingPetition]:
-        self.open()
-        return await self.resume()
+    async def advance(self, calendar: EntityView) -> list[PendingPetition] | EntityView:
+        self.open(calendar)
+        return await self.resume(calendar=calendar)

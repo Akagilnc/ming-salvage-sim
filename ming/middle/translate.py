@@ -78,9 +78,11 @@ CATALOGUES = {"historical_event", "fiscal", "account", "office", "territory", "i
 
 
 def check(ledger: Ledger, out: Declaration, source: UUID) -> None:
+    if not (out.facts or out.reports or out.decree_events or isinstance(out, NightDeclaration) and out.decrees):
+        return
     names = catalogue(ledger)
     fields = FIELDS_BY_KIND
-    cabinet = cabinet_records(ledger)
+    cabinet = cabinet_records(ledger) if any(f.entity_type == "incumbency" for f in out.facts) else {}
     for i, fact in enumerate(out.facts):
         path = f"facts[{i}]"
         if fact.entity_type != "incumbency":
@@ -138,6 +140,10 @@ def check_decrees(
     names: dict[str, dict[str, list[str]]],
 ) -> None:
     # Both declarations index a decree list, never free-text names.
+    if not isinstance(out, NightDeclaration) and not (
+        out.decree_events or any(f.decree is not None or f.discovered for f in out.facts)
+    ):
+        return
     decrees = out.decrees if isinstance(out, NightDeclaration) else landing_sources(ledger, calendar_row(ledger)["data"])
     labeled = (("facts", out.facts), ("decree_events", out.decree_events))
     for label, items in labeled:

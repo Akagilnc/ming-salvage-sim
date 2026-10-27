@@ -19,9 +19,8 @@ def calendar_row(ledger: Ledger) -> Item:
     return ledger.entities(kind="calendar")[0]
 
 
-def journeys_due(ledger: Ledger) -> list[Item]:
+def journeys_due(ledger: Ledger, date: Item) -> list[Item]:
     """Stored journeys due this month, shared by the draft read and settlement."""
-    date = calendar_row(ledger)["data"]
     return ledger.entities(
         kind="person", query=ENTITY_ROWS.where(
             E.data["transit_to"].as_string() != "",
@@ -33,7 +32,7 @@ def journeys_due(ledger: Ledger) -> list[Item]:
 
 def settle_journeys(ledger: Ledger) -> None:
     changed: list[Entity] = []
-    for row in journeys_due(ledger):
+    for row in journeys_due(ledger, calendar_row(ledger)["data"]):
         person = ledger.get(row["id"])
         destination = person.data["transit_to"]
         changes: Item = {
@@ -46,7 +45,7 @@ def settle_journeys(ledger: Ledger) -> None:
     ledger.commit(changed)
 
 
-def advance_month(ledger: Ledger) -> None:
+def advance_month(ledger: Ledger) -> Entity:
     calendar = ledger.get(calendar_row(ledger)["id"])
     date = dict(calendar.data)
     calendar.record(
@@ -56,3 +55,4 @@ def advance_month(ledger: Ledger) -> None:
         next_month(date),
     )
     ledger.commit([calendar])
+    return calendar

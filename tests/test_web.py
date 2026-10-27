@@ -26,11 +26,17 @@ from tests.test_court import replaying
 RECORDED = Path(__file__).parent / "recorded"
 
 
-def record_queries(catalogue, date):
+def record_queries(catalogue, date, *, dated_facts: bool):
     return {
         "empty": {},
         "class": {"kind": "person"},
         "date": {"date": date},
+        **({
+            "class-date": {"kind": "person", "date": date},
+            "dated": {"kind": "person", "key": "王承恩", "date": date},
+            "prior": {"kind": "person", "key": "王承恩", "date": {"year": 1627, "month": 9}},
+            "prior-class": {"kind": "person", "date": {"year": 1627, "month": 9}},
+        } if dated_facts else {}),
         "date-original": {"date": {"id": "world", **date}},
         "date-reordered": {"date": {"month": date["month"], "year": date["year"], "id": "world"}},
         "pair": {"kind": "person", "key": ["温体仁", "杨嗣昌"]},
@@ -142,7 +148,7 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
             for name in received:
                 text = (RECORDED / f"{name}.txt").read_text()
                 steps[name] = replaying(
-                    lambda messages, text=text: (
+                    lambda messages, text=text, dated_facts=path == "decree" and name == "simulation": (
                         ModelResponse(parts=[TextPart(text)])
                         if any(
                             isinstance(part, ToolReturnPart)
@@ -153,7 +159,7 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
                             ToolCallPart("read_records", args, tool_call_id=label)
                             for label, args in record_queries(
                                 json.loads(messages[0].parts[0].content)["catalogue"],
-                                {"year": 1627, "month": 10},
+                                {"year": 1627, "month": 10}, dated_facts=dated_facts,
                             ).items()
                         ])
                     ),
@@ -334,6 +340,11 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
             assert all({e["kind"] for e in data["class"]["catalogue"]} == {"person"} for data in case)
             assert all(set(e) == {"kind", "key", "event_count"} for data in case for e in data["class"]["catalogue"])
             assert all(data["date"] == data["date-original"] == data["date-reordered"] for data in case)
+            assert {tuple(f["detail"]["date"][k] for k in ("year", "month"))
+                    for f in case[1]["dated"]["facts"]} == {(1627, 10)}
+            assert next(e["event_count"] for e in case[1]["class-date"]["catalogue"] if e["key"] == "王承恩") == len(case[1]["dated"]["facts"])
+            assert case[1]["prior"]["facts"] == []
+            assert case[1]["prior-class"]["catalogue"] == []
             assert not [f for f in materials["gazette"][0]["facts"] if f["kind"] == "reported"]
             assert all(
                 {e["key"]: e["data"] for e in data["entities"] if e["kind"] == "account"}

@@ -23,6 +23,7 @@ from ming.middle.invoke import ModelSource, TextUpdate, build_agent, invoke, str
 from ming.middle.opening import CONTENT
 from ming.middle.scene import HallResult
 from ming.middle.records import read_records
+from ming.middle.night import NightView
 from ming.middle.view import Officials
 
 
@@ -70,9 +71,10 @@ class Audience:
             raise ValueError("open an audience night first")
         return self._night_id
 
-    def open(self, night_id: UUID | None = None) -> UUID:
-        self._night_id = night_id or self.court.open_night()
-        if not self.court.night(self.night_id).closed and self.court.facts(
+    def open(self, night_id: UUID | NightView | None = None) -> UUID:
+        night = night_id if isinstance(night_id, NightView) else self.court.night(night_id or self.court.open_night())
+        self._night_id = night.id
+        if not night.closed and self.court.facts(
             "audit", entity_id=self.night_id, kind="dismiss_requested"
         ):
             self._dismiss_requested = self.night_id

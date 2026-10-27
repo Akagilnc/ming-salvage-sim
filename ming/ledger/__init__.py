@@ -21,6 +21,7 @@ from ming.ledger.tables import (
     ENTITY_ROWS as ENTITY_ROWS,
     FACT_ROWS as FACT_ROWS,
     ENTITY_ORDER as ENTITY_ORDER,
+    facts_in_month as facts_in_month,
 )
 
 # Native SQLAlchemy columns for read expressions, not ORM constructors/sessions.
@@ -149,10 +150,7 @@ class Ledger:
                 else FactRow.kind == kind
             )
         if date is not None:
-            query = query.where(
-                FactRow.date["year"].as_integer() == date["year"],
-                FactRow.date["month"].as_integer() == date["month"],
-            )
+            query = query.where(facts_in_month(date))
         return self.read(query, parameters)
 
     def get(self, entity_id: UUID) -> Entity:

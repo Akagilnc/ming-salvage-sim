@@ -1,13 +1,14 @@
 """Shared model input and persisted product types, not a second month driver."""
 
 import json
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from pydantic import Field
 
-from ming.middle.court import Court
 from ming.middle.declaration import Petition, StrictModel
-from ming.middle.view import Identity, Officials, character_input
+from ming.middle.view import EntityView, Officials, character_input
+from ming.middle.records import Materials
 
 
 COST_RULES = """背书（含御笔手敕、御笔强推）本身不走代价轨。
@@ -30,18 +31,29 @@ class Simulation(MonthText):
     petitions: list[Petition] = Field(default_factory=list[Petition], description="本月岔路口奏疏列表，无岔路可省略；含义见岔路口。")
 
 
-def prompt(court: Court, identity: Identity, context: Any) -> str:
-    speakers = {e.key: e.model_dump(mode="json") for e in court.entities(
-        identity, kind="person", key=identity.people,
-    )} if isinstance(identity, Officials) else {}
+@dataclass
+class MonthMaterials(Materials):
+    calendar: EntityView
+    catalogue: list[dict[str, Any]] = field(init=False)
+    speakers: list[dict[str, Any]] = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.catalogue = self.court.record_catalogue(self.identity)
+        speakers = {e.key: e.model_dump(mode="json") for e in self.court.entities(
+            self.identity, kind="person", key=self.identity.people,
+        )} if isinstance(self.identity, Officials) and self.identity.people else {}
+        self.speakers = [speakers[name] for name in self.identity.people if name in speakers
+                         ] if isinstance(self.identity, Officials) else []
+
+
+def prompt(materials: MonthMaterials, context: Any) -> str:
     return json.dumps(
         character_input(
             {
-                "date": court.calendar().data,
+                "date": materials.calendar.data,
                 "context": context,
-                "catalogue": court.record_catalogue(identity),
-                **({"speakers": [speakers[name] for name in identity.people if name in speakers]}
-                   if isinstance(identity, Officials) else {}),
+                "catalogue": materials.catalogue,
+                **({"speakers": materials.speakers} if isinstance(materials.identity, Officials) else {}),
             }
         ),
         ensure_ascii=False,

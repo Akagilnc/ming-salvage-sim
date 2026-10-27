@@ -4,7 +4,6 @@ from copy import deepcopy
 from typing import cast
 
 from ming.ledger import Entity, Item, Ledger
-from ming.middle.calendar import calendar_row
 from ming.middle.declaration import EntityRef, FiscalEnd, MonthlyFunding, PaymentPolicy
 from ming.middle.queries import FUNDED_AFFAIRS
 from ming.middle.fields import FIELDS
@@ -97,8 +96,7 @@ def obligation(pair: tuple[str, str], existing: dict[tuple[str, str], Item]) -> 
     return base * active_policy(data, existing[("calendar", "world")]["data"]).factor
 
 
-def due_levies(ledger: Ledger) -> list[Item]:
-    date = calendar_row(ledger)["data"]
+def due_levies(ledger: Ledger, date: Item) -> list[Item]:
     events = {row["data"]["id"]: row for row in ledger.entities(kind="historical_event")}
     return [
         {"entity": row["key"], "data": row["data"]}

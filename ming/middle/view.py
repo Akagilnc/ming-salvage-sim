@@ -9,7 +9,7 @@ from sqlalchemy.sql.elements import BindParameter, ColumnElement
 
 from ming.ledger import Item, Ledger
 from ming.ledger import ENTITY_COLUMNS as E, FACT_COLUMNS as F, ENTITY_ROWS, FACT_ROWS, ENTITY_ORDER
-from ming.middle.queries import CALENDAR, available_on, public_decree
+from ming.middle.queries import CALENDAR, CURRENT_FACTS, available_on, public_decree
 from ming.middle.appointments import APPOINTMENT_ROLES, CATALOGUE_KINDS, held_by
 from ming.middle.night import known_people, read_night, witnessed_nights
 from ming.middle.travel import travel_days
@@ -21,11 +21,9 @@ APPOINTED_PEOPLE: BindParameter[str] = bindparam("appointed_people", expanding=T
 HELD_BY = held_by(APPOINTED_PEOPLE)
 EXCLUDE_SECRETS: BindParameter[bool] = bindparam("exclude_secrets", False)
 READ_KIND: BindParameter[str] = bindparam("read_kind")
-MONTH_OPEN = select(F.position).where(
-    E.kind == "calendar", F.entity_id == E.id, F.kind == "month_open",
-    F.date["year"].as_integer() == CALENDAR["year"].as_integer(),
-    F.date["month"].as_integer() == CALENDAR["month"].as_integer(),
-).order_by(F.position.desc()).limit(1).correlate(None).scalar_subquery()
+MONTH_OPEN = CURRENT_FACTS.with_only_columns(F.position).where(
+    E.kind == "calendar", F.kind == "month_open",
+).order_by(None).order_by(F.position.desc()).limit(1).correlate(None).scalar_subquery()
 
 PublicIdentity = Literal["emperor", "audit", "world", "public"]
 
@@ -169,7 +167,6 @@ def person_projection(dossiers: Item, row: Item, identity: Identity, appointment
 
 def entities(
     ledger: Ledger, identity: Identity, selection: Item | None = None,
-    *, exists_only: bool = False,
 ) -> list[EntityView]:
     selection = dict(selection or {})
     sourced = selection.pop("sourced", False)
@@ -180,21 +177,20 @@ def entities(
             EntityView.model_validate(e)
             for e in opening["detail"]["entities"]
             if all(e[k] == v for k, v in (selection or {}).items()) and (keys is None or e["key"] in keys)
-        ][:1 if exists_only else None]
+        ]
     query = ENTITY_SOURCES[identity_key(identity)]
     query = query.where(E.kind == selection["kind"]) if selection.get("kind") is not None else query
     query = query.where(E.key == selection["key"]) if selection.get("key") is not None else query
     query = query.where(E.key.in_(keys)) if keys is not None else query
     query = query.where(E.source != "") if sourced else query
-    query = query.where(E.kind.not_in(CATALOGUE_KINDS)) if identity == "world" and selection.get("kind") is None else query
     query = query.with_only_columns(E.id, E.kind, E.key, E.source) if catalogue else query
-    rows = ledger.read(query.limit(1 if exists_only else None), view_parameters(identity, selection.get("kind")))
+    rows = ledger.read(query, view_parameters(identity, selection.get("kind")))
     if catalogue:
         return [EntityView.model_validate({**row, "data": {}}) for row in rows]
     appointments = ledger.entities(
         kind="incumbency", query=ENTITY_ROWS.where(HELD_BY, APPOINTMENT_ACCESS[identity_key(identity)]),
         parameters={**view_parameters(identity), "appointed_people": people},
-    ) if (people := [row["key"] for row in rows if row["kind"] == "person"]) else []
+    ) if (people := [row["key"] for row in rows if row["kind"] == "person" and identity != "audit"]) else []
     own: set[str] = set(identity.people) if isinstance(identity, Officials) else set()
     dossiers = {r["key"]: r["data"] for r in ledger.entities(
         kind="dossier", query=ENTITY_ROWS.where(E.key.in_(own.intersection(people))),
@@ -266,8 +262,10 @@ def owned_accounts(identity: Identity) -> Select[Any]:
 def entity_exposure(
     identity: Identity, accounts: Select[Any],
 ) -> ColumnElement[str]:
-    if identity in ("audit", "world"):
+    if identity == "audit":
         return literal("full")
+    if identity == "world":
+        return case((READ_KIND.is_not(None) | E.kind.not_in(CATALOGUE_KINDS), "full"))
     rules = [
         (E.id.in_(accounts), "full"),
         (E.kind == "person", "person"),
