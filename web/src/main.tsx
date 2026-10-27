@@ -14,7 +14,7 @@ export function App() {
   const [busy, setBusy] = React.useState(false);
   const [live, setLive] = React.useState('');
   const [liveGazette, setLiveGazette] = React.useState('');
-  const [reading, setReading] = React.useState<{ save: string | null; page: number | 'latest' } | null>(null);
+  const [reading, setReading] = React.useState<{ navigation: number; page: number | 'latest' } | null>(null);
   const previous = React.useRef<Snapshot | null>(null);
   const refreshing = React.useRef(0);
   // A later navigation supersedes action effects even when it selects the same save.
@@ -31,15 +31,15 @@ export function App() {
     const request = ++refreshing.current;
     try {
       const before = previous.current;
-      if (before?.save === value.save && before?.game && value.game
+      if (before?.navigation === value.navigation && before?.game && value.game
         && (before.game.date.year !== value.game.date.year || before.game.date.month !== value.game.date.month)) {
-        setReading({ save: value.save, page: 'latest' }); setPanel(null);
+        setReading({ navigation: value.navigation, page: 'latest' }); setPanel(null);
       }
       setLive(value.game?.live.delta ?? ''); setLiveGazette(value.game?.live.gazette ?? '');
-      if (before?.save !== value.save) {
+      if (before?.navigation !== value.navigation) {
         setSnapshot(value); setBook({ entities: [], facts: [] });
         setPendingWords(''); setBusy(false);
-        setPanel(null); setReading(current => current?.save === value.save ? current : null); setInput(''); setError('');
+        setPanel(null); setReading(current => current?.navigation === value.navigation ? current : null); setInput(''); setError('');
         choosingNow.current.clear(); setChoosing(new Set());
       }
       previous.current = value;
@@ -80,10 +80,9 @@ export function App() {
   }, [live, snapshot?.game?.night?.turns.length]);
 
   async function action(value: Action) {
-    const save = previous.current?.save;
     const navigating = ['new', 'continue', 'load', 'menu'].includes(value.action);
     const owner = navigating ? ++navigation.current : navigation.current;
-    let destination = save;
+    let shared = previous.current?.navigation ?? 0;
     setError('');
     if (value.action === 'choose' && value.petition) {
       if (choosingNow.current.has(value.petition)) return;
@@ -94,14 +93,14 @@ export function App() {
     if (value.action === 'say') { setPendingWords(value.words ?? ''); setLive(''); follow.current = true; }
     try {
       const result = await act(value);
-      if (navigating) destination = value.action === 'menu' ? null : result.save;
-      if (owner !== navigation.current || (previous.current?.save !== save && previous.current?.save !== destination)) return;
+      if (navigating) shared = result.navigation ?? shared;
+      if (owner !== navigation.current || (previous.current?.navigation ?? 0) > shared) return;
       if (value.action === 'open') follow.current = true;
       if (value.action === 'settings') setPanel(null);
-      if (value.action === 'new' || value.action === 'continue' || value.action === 'load') { setPanel(null); setReading(value.action === 'new' ? { save: destination ?? null, page: 'latest' } : null); }
-    } catch (reason) { if (owner === navigation.current && previous.current?.save === save) setError(String(reason)); }
+      if (value.action === 'new' || value.action === 'continue' || value.action === 'load') { setPanel(null); setReading(value.action === 'new' ? { navigation: shared, page: 'latest' } : null); }
+    } catch (reason) { if (owner === navigation.current && previous.current?.navigation === shared) setError(String(reason)); }
     finally {
-      if (owner !== navigation.current || previous.current?.save !== destination) return;
+      if (owner !== navigation.current || previous.current?.navigation !== shared) return;
       if (value.action === 'choose') {
         choosingNow.current.delete(value.petition!);
         setChoosing(new Set(choosingNow.current));
@@ -128,7 +127,7 @@ export function App() {
     const date = record.date as typeof game.date | undefined;
     return date?.year === game.date.year && date.month === game.date.month;
   })?.text ?? liveGazette);
-  const readingPage = reading?.save === snapshot.save ? reading.page : null;
+  const readingPage = reading?.navigation === snapshot.navigation ? reading.page : null;
   const gazette = readingPage === 'latest' ? (liveGazette || gazettes.at(-1))
     : readingPage === null ? null : gazettes[readingPage];
   const pending = game.pending?.payload.words || pendingWords || game.failure?.payload.words;
@@ -225,7 +224,7 @@ export function App() {
           </article>)}</> : <><h2>起居录</h2>{book.entities.filter(entity => entity.kind === 'night').map(entity => <details key={entity.id}>
             <summary><MarkdownText>{entity.key}</MarkdownText></summary><ScrollMessages turns={(entity.data as unknown as NonNullable<typeof night>).turns} />
             {entity.data.result === 'unhandled' && <p className="unhandled">接不住</p>}
-          </details>)}<h2>历期邸报</h2>{gazettes.map((_text, index) => <button key={index} onClick={() => { setReading({ save: snapshot.save, page: index }); setPanel(null); }}>第 {index + 1} 期</button>)}</>}
+          </details>)}<h2>历期邸报</h2>{gazettes.map((_text, index) => <button key={index} onClick={() => { setReading({ navigation: snapshot.navigation, page: index }); setPanel(null); }}>第 {index + 1} 期</button>)}</>}
       </aside>}
     </div>
   </main>;

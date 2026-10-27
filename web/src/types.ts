@@ -20,6 +20,7 @@ export interface Petition { id: string; text: string; options: string[]; blockin
 export interface Settings { backend: '' | 'api' | 'claude-cli' | 'codex' | 'grok' | 'pi'; model: string; base_url: string; api_key: string; effort: string }
 export interface Configuration extends Settings { month_model: Settings | null }
 export interface Snapshot {
+  navigation: number;
   saves: string[];
   save: string | null;
   settings: Configuration;

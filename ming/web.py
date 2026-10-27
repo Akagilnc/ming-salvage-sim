@@ -4,6 +4,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from functools import partial
 from pathlib import Path
 from typing import Any, Literal
@@ -21,6 +22,11 @@ from starlette.staticfiles import StaticFiles
 from ming.game import Game, InvalidAction
 from ming.middle.court import Court
 from ming.middle.invoke import Configuration, REQUIRED_SETTINGS
+
+
+_action_settings: ContextVar[dict[int, Configuration] | None] = ContextVar(
+    "action_settings", default=None,
+)
 
 
 class Action(BaseModel):
@@ -48,17 +54,27 @@ class Web:
     def __init__(self, directory: Path) -> None:
         self.directory = directory
         self.game: Game | None = None
+        self.navigation = 0
+        self.settings_revision = 0
         self.departed: dict[str, Game] = {}
         self.retiring: dict[Game, asyncio.Task[None]] = {}
         self.listeners: set[asyncio.Queue[dict[str, Any]]] = set()
 
-    def settings(self) -> Configuration:
-        path = self.directory / "settings.json"
-        return (
-            Configuration.model_validate_json(path.read_text())
-            if path.exists()
-            else Configuration()
-        )
+    def settings(self, value: Configuration | None = None) -> Configuration:
+        scope = _action_settings.get()
+        if value is None:
+            if scope is not None and self.settings_revision in scope:
+                return scope[self.settings_revision]
+            path = self.directory / "settings.json"
+            value = (
+                Configuration.model_validate_json(path.read_text())
+                if path.exists()
+                else Configuration()
+            )
+        if scope is not None:
+            scope.clear()
+            scope[self.settings_revision] = value
+        return value
 
     def saves(self) -> list[str]:
         return [
@@ -76,6 +92,7 @@ class Web:
 
     def snapshot(self, saves: list[str] | None = None) -> dict[str, Any]:
         return {
+            "navigation": self.navigation,
             "saves": self.saves() if saves is None else saves,
             "settings": self.settings().model_dump(),
             "required_settings": REQUIRED_SETTINGS,
@@ -110,6 +127,7 @@ class Web:
     def menu(self) -> None:
         game, self.game = self.game, None
         if game is not None:
+            self.navigation += 1
             save = game.court.db_path.name
             self.departed[save] = game
             if game not in self.retiring:
@@ -143,8 +161,9 @@ class Web:
             if not (self.directory / save).is_file():
                 raise HTTPException(404, "存档不存在")
         if self.game is not None and self.game.court.db_path.name == save:
+            navigation = self.navigation
             await self.game.drain()
-            return {"save": save}
+            return {"save": save, "navigation": navigation}
         model = self.settings()
         game = self.departed.pop(save, None)
         opening = game is None
@@ -163,10 +182,11 @@ class Web:
             court.observe(partial(self.emit, source=game))
         self.menu()
         self.game = game
+        self.navigation += 1
         self.emit(saves=saves)
         if opening:
             game.resume()
-        return {"save": game.court.db_path.name}
+        return {"save": game.court.db_path.name, "navigation": self.navigation}
 
     async def state(self, request: Request) -> JSONResponse:
         return JSONResponse(self.snapshot())
@@ -202,26 +222,31 @@ class Web:
             action = Action.model_validate(await request.json())
         except (ValidationError, ValueError) as error:
             raise HTTPException(400, "无效的动作") from error
-        if action.action in {"new", "load", "continue"}:
-            return JSONResponse(await self.select(action.action, action.save))
-        if action.action == "menu":
-            self.menu()
-            self.emit()
-            return Response(status_code=204)
-        if action.action == "settings":
-            return self.configure(action)
-        if self.game is None:
-            raise HTTPException(409, "请先打开一局")
+        # Child work inherits this action's reads, never another request's.
+        token = _action_settings.set({})
         try:
-            task = self.game.start(
-                action.action,
-                action.model_dump(mode="json", include={"words", "petition", "option"}),
-            )
-        except InvalidAction as error:
-            raise HTTPException(error.status, str(error)) from error
-        if task is not None:
-            await asyncio.shield(task)
-        return Response(status_code=204)
+            if action.action in {"new", "load", "continue"}:
+                return JSONResponse(await self.select(action.action, action.save))
+            if action.action == "menu":
+                self.menu()
+                self.emit()
+                return Response(status_code=204)
+            if action.action == "settings":
+                return self.configure(action)
+            if self.game is None:
+                raise HTTPException(409, "请先打开一局")
+            try:
+                task = self.game.start(
+                    action.action,
+                    action.model_dump(mode="json", include={"words", "petition", "option"}),
+                )
+            except InvalidAction as error:
+                raise HTTPException(error.status, str(error)) from error
+            if task is not None:
+                await asyncio.shield(task)
+            return Response(status_code=204)
+        finally:
+            _action_settings.reset(token)
 
     def configure(self, action: Action) -> Response:
         if action.settings is None:
@@ -232,6 +257,9 @@ class Web:
         path = self.directory / "settings.json"
         path.touch(mode=0o600, exist_ok=True)
         path.write_text(action.settings.model_dump_json())
+        # Also invalidate reads held by still-running work from earlier actions.
+        self.settings_revision += 1
+        self.settings(action.settings)
         if self.game is not None:
             self.game.configure(action.settings, month_model=action.settings.month_model)
         self.emit()
