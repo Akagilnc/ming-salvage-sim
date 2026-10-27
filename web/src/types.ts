@@ -37,7 +37,7 @@ export interface Snapshot {
   };
 }
 export interface Action {
-  action: 'new' | 'load' | 'continue' | 'settings' | 'open' | 'say' | 'dismiss' | 'month' | 'choose' | 'retry';
+  action: 'new' | 'load' | 'continue' | 'menu' | 'settings' | 'open' | 'say' | 'dismiss' | 'month' | 'choose' | 'retry';
   save?: string;
   words?: string;
   petition?: string;

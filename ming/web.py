@@ -4,6 +4,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from functools import partial
 from pathlib import Path
 from typing import Any, Literal
 from uuid import UUID
@@ -27,6 +28,7 @@ class Action(BaseModel):
         "new",
         "load",
         "continue",
+        "menu",
         "settings",
         "open",
         "say",
@@ -46,6 +48,8 @@ class Web:
     def __init__(self, directory: Path) -> None:
         self.directory = directory
         self.game: Game | None = None
+        self.departed: dict[str, Game] = {}
+        self.retiring: dict[Game, asyncio.Task[None]] = {}
         self.listeners: set[asyncio.Queue[dict[str, Any]]] = set()
 
     def settings(self) -> Configuration:
@@ -79,7 +83,12 @@ class Web:
             "game": self.game.presentation() if self.game else None,
         }
 
-    def emit(self, event: dict[str, Any]) -> None:
+    def emit(
+        self, event: dict[str, Any] | None = None, *, source: Game | None = None
+    ) -> None:
+        if source is not None and source is not self.game:
+            return
+        event = event or {"event": "state", "data": None}
         if event["event"] == "delta":
             assert self.game is not None
             event = {
@@ -91,17 +100,40 @@ class Web:
                     ],
                 },
             }
-        elif event["event"] == "done":
+        elif event["event"] in {"state", "done"}:
             event = {**event, "data": self.snapshot()}
         for queue in self.listeners:
             queue.put_nowait(event)
 
-    async def close(self, shutdown: bool = True) -> None:
-        if shutdown:
-            self.emit({"event": "close", "data": None})
-        if self.game is not None:
-            await self.game.close()
-            self.game = None
+    def menu(self) -> None:
+        game, self.game = self.game, None
+        if game is not None:
+            save = game.court.db_path.name
+            self.departed[save] = game
+            if game not in self.retiring:
+                self.retiring[game] = asyncio.create_task(self.retire(game))
+        self.emit()
+
+    async def retire(self, game: Game) -> None:
+        try:
+            # Reentry may have accepted a new foreground action while this drain
+            # was awaiting the prior work's background continuations.
+            while True:
+                await game.drain()
+                if not game.busy():
+                    break
+        finally:
+            del self.retiring[game]
+            save = game.court.db_path.name
+            if self.departed.get(save) is game:
+                del self.departed[save]
+                game.court.close()
+
+    async def close(self) -> None:
+        self.emit({"event": "close", "data": None})
+        self.menu()
+        if self.retiring:
+            await asyncio.gather(*self.retiring.values())
 
     async def select(self, action: str, save: str = "") -> dict[str, Any]:
         if action == "continue":
@@ -113,7 +145,19 @@ class Web:
                 raise HTTPException(400, "无效的存档名")
             if not (self.directory / save).is_file():
                 raise HTTPException(404, "存档不存在")
-        await self.close(shutdown=False)
+        if self.game is not None and self.game.court.db_path.name == save:
+            game = self.game
+            await game.drain()
+            if self.game is not game:
+                return {"save": save}
+            game.court.close()
+            self.game = None
+        else:
+            self.menu()
+        if save in self.departed:
+            self.game = self.departed.pop(save)
+            self.emit()
+            return {"save": save}
         model = self.settings()
         if action == "new":
             try:
@@ -122,9 +166,11 @@ class Web:
                 raise HTTPException(503, str(error)) from error
         else:
             court = Court(self.directory / save, model)
-        self.game = Game(court, model, self.emit, month_model=model.month_model)
-        court.observe(lambda: self.emit({"event": "state", "data": self.snapshot()}))
+        self.game = Game(court, model, month_model=model.month_model)
+        self.game.emit = partial(self.emit, source=self.game)
+        court.observe(partial(self.emit, source=self.game))
         self.game.resume()
+        self.emit()
         return {"save": court.db_path.name}
 
     async def state(self, request: Request) -> JSONResponse:
@@ -163,6 +209,9 @@ class Web:
             raise HTTPException(400, "无效的动作") from error
         if action.action in {"new", "load", "continue"}:
             return JSONResponse(await self.select(action.action, action.save))
+        if action.action == "menu":
+            self.menu()
+            return JSONResponse(self.snapshot())
         if action.action == "settings":
             return await self.configure(action)
         if self.game is None:

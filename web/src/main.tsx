@@ -36,6 +36,12 @@ export function App() {
       && (before.game.date.year !== value.game.date.year || before.game.date.month !== value.game.date.month)) {
       setReading('latest'); setPanel(null);
     }
+    if (before?.save !== value.save) {
+      setLive(''); setLiveGazette(''); setPendingWords(''); setBusy(false);
+      setPanel(null); setReading(null); setInput(''); setError('');
+      gazetteStreaming.current = false;
+      choosingNow.current.clear(); setChoosing(new Set());
+    }
     previous.current = value;
     setBook(contents);
     setSnapshot(value);
@@ -73,20 +79,22 @@ export function App() {
   }, [live, snapshot?.game?.night?.turns.length]);
 
   async function action(value: Action) {
+    const save = previous.current?.save;
     setError('');
     if (value.action === 'choose' && value.petition) {
       if (choosingNow.current.has(value.petition)) return;
       choosingNow.current.add(value.petition);
       setChoosing(new Set(choosingNow.current));
     }
-    else if (value.action !== 'dismiss') setBusy(true);
+    else if (value.action !== 'dismiss' && value.action !== 'menu') setBusy(true);
     if (value.action === 'say') { setPendingWords(value.words ?? ''); setLive(''); follow.current = true; }
     try {
       if (await act(value) === 200 || value.action === 'choose') await refresh();
       if (value.action === 'open') follow.current = true;
       if (value.action === 'new' || value.action === 'continue' || value.action === 'load') { setPanel(null); setReading(value.action === 'new' ? 'latest' : null); }
-    } catch (reason) { setError(String(reason)); }
+    } catch (reason) { if (previous.current?.save === save) setError(String(reason)); }
     finally {
+      if (previous.current?.save !== save) return;
       if (value.action === 'choose') {
         choosingNow.current.delete(value.petition!);
         setChoosing(new Set(choosingNow.current));
@@ -137,6 +145,7 @@ export function App() {
         <button onClick={() => setPanel(panel === 'orders' ? null : 'orders')}>案头</button>
         <button onClick={() => setPanel(panel === 'history' ? null : 'history')}>起居录</button>
         <button onClick={() => setPanel(panel === 'settings' ? null : 'settings')}>设置</button>
+        <button onClick={() => void action({ action: 'menu' })}>回主菜单</button>
       </nav>
       {audience ? <button onClick={() => void action({ action: 'dismiss' })}>退朝</button>
         : <button disabled={busy || game.running || game.face === 'month'} onClick={() => void action({ action: 'open' })}>召对</button>}
