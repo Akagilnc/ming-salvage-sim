@@ -35,12 +35,15 @@ export function App() {
       && (before.game.date.year !== value.game.date.year || before.game.date.month !== value.game.date.month)) {
       setReading('latest'); setPanel(null);
     }
+    // SSE snapshots are ordered with deltas; same-save HTTP responses are not.
+    if (next || before?.save !== value.save) {
+      setLive(value.game?.live.delta ?? ''); setLiveGazette(value.game?.live.gazette ?? '');
+      gazetteStreaming.current = Boolean(value.game?.live.gazette);
+    }
     if (before?.save !== value.save) {
       setSnapshot(value); setBook({ entities: [], facts: [] });
-      setLive(value.game?.live.delta ?? ''); setLiveGazette(value.game?.live.gazette ?? '');
       setPendingWords(''); setBusy(false);
       setPanel(null); setReading(null); setInput(''); setError('');
-      gazetteStreaming.current = Boolean(value.game?.live.gazette);
       choosingNow.current.clear(); setChoosing(new Set());
     }
     previous.current = value;
@@ -69,7 +72,6 @@ export function App() {
     });
     const receive = (event: Event) => {
       const next = JSON.parse((event as MessageEvent).data) as Snapshot;
-      if (next.game?.face !== 'month' || next.game.failure) gazetteStreaming.current = false;
       void refresh(next).catch(reason => setError(String(reason)));
     };
     events.addEventListener('state', receive);
