@@ -62,8 +62,8 @@ class Month:
             calendar = self.court.calendar()
             if date != calendar.data:
                 return self.petitions()
-            public = [d for d in self.court.current_decrees() if not d.data["secret"]]
-            pushes = self.court.pending_pushes()
+            public = [d for d in self.court.current_decrees(calendar.data) if not d.data["secret"]]
+            pushes = self.court.pending_pushes(calendar.data)
             await gather_or_raise(
                 *(self.deliberations.run(d) for d in public),
                 *(self.deliberations.run(d, decision) for d, decision in pushes),

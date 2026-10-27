@@ -490,11 +490,11 @@ class Court:
             )
         ]
 
-    def current_decrees(self) -> list[EntityView]:
+    def current_decrees(self, date: Item | None = None) -> list[EntityView]:
         return [
             EntityView.model_validate(e)
             for e in self._ledger.read(
-                queries.decrees_with("decreed", self.calendar().data)
+                queries.decrees_with("decreed", self.calendar().data if date is None else date)
             )
         ]
 
@@ -526,11 +526,11 @@ class Court:
             )
         ]
 
-    def pending_pushes(self) -> list[tuple[EntityView, Item]]:
+    def pending_pushes(self, date: Item | None = None) -> list[tuple[EntityView, Item]]:
         """Prior-month backing without its corresponding durable reconsideration."""
         endorsement = F.position.table.alias("backing").c
         verdict = F.position.table.alias("reconsideration").c
-        date = self.calendar().data
+        date = self.calendar().data if date is None else date
         rows = ENTITY_ROWS.add_columns(endorsement.detail.label("backing")).join(
             endorsement.position.table, endorsement.entity_id == E.id,
         ).where(
