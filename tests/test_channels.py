@@ -305,6 +305,7 @@ def assert_scene(state: dict[str, object], events: asyncio.Queue) -> None:
         if event["event"] == "delta":
             deltas.append(event["data"])
     assert deltas
+    live = ""
     for data in deltas:
         assert set(data) == {"text", "hall"}
         assert isinstance(data["hall"], list)
@@ -313,6 +314,8 @@ def assert_scene(state: dict[str, object], events: asyncio.Queue) -> None:
             isinstance(text, dict) and set(text) == {"replace"}
             and isinstance(text["replace"], str)
         )
+        live = text["replace"] if isinstance(text, dict) else live + text
+    assert live == night["turns"][-1]["scene"]
 
 
 @pytest.mark.parametrize(
