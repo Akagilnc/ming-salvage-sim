@@ -97,12 +97,19 @@ def check(ledger: Ledger, out: Declaration, source: UUID) -> None:
                 "entity_type 改成 expected 里的类型，重交整份。",
             )
         if fact.create and fact.entity_type == "decree":
-            fail(
-                path + ".create", True,
-                {"declaration": NightDeclaration.__name__, "field": "decrees"}, names,
-                "通用 facts 无法表达成旨所需信息。新旨意须通过整夜声明 NightDeclaration.decrees 提交，来源夜由引擎记录；"
-                "若只是变更已有旨意，核对其正名并用 create=false。按实际情况重交整份，不得捏造来源、改换对象或丢项。",
+            expected, action = (
+                (
+                    {"declaration": NightDeclaration.__name__, "field": "decrees"},
+                    "通用 facts 无法表达成旨所需信息。新旨意须通过整夜声明 NightDeclaration.decrees 提交，来源夜由引擎记录；"
+                    "若只是变更已有旨意，核对其正名并用 create=false。按实际情况重交整份，不得捏造来源、改换对象或丢项。",
+                ) if isinstance(out, NightDeclaration) else (
+                    {"declaration": Declaration.__name__, "field": "facts"},
+                    "月末 Declaration 没有新建谕旨的出口，不要添加 decrees。回查月定稿：已发生的后果按实际实体写入 facts，"
+                    "按需引用输入 decrees 的下标；奏报与公开说法写 reports。若是变更已有旨意，用其正名及 create=false。"
+                    "移除误作新旨意的包装，保留实际后果并重交整份；不得捏造来源夜、成旨轮次或尚未发生的后果。",
+                )
             )
+            fail(path + ".create", True, expected, names, action)
         if fact.create and fact.entity_type in CATALOGUES:
             fail(
                 path + ".create",
