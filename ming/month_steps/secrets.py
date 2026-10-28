@@ -20,8 +20,8 @@ class Secrets:
             instructions="按本月实况与风声，用本旨承办人复命的口吻给皇帝写这一道密令的密报。按 catalogue 用 read_records 查本人所知材料，按本人的立场与利害复命；查得什么、听得什么、尚有何难处，由承办人据其所知复命。人物的打算与文字由你发挥。" + "\n" + "\n".join((SECRET, HANDLER, PEOPLE)),
         )
 
-    async def report(self, decree: EntityView) -> None:
-        if self.court.products(decree.id, kind="secret_report"):
+    async def report(self, decree: EntityView, calendar: EntityView) -> None:
+        if self.court.products(decree.id, kind="secret_report", date=calendar.data):
             return
         identity = Officials(people=[decree.data["handler"]])
         result = await invoke(
@@ -32,17 +32,17 @@ class Secrets:
                     "decree": decree.model_dump(mode="json"),
                     "facts": [
                         f.model_dump(mode="json", exclude={"emperor_words"})
-                        for f in self.court.consequences(decree.id)
+                        for f in self.court.consequences(decree.id, calendar.data)
                     ],
                     "products": [
                         f.model_dump(mode="json", exclude={"emperor_words"})
                         for f in self.court.products(
-                            decree.id, kind=("completed", "handled")
+                            decree.id, kind=("completed", "handled"), date=calendar.data
                         )
                     ],
-                },
+                }, calendar.data,
             ),
             deps=Materials(self.court, identity),
         )
         self.court.log.info("model output: %s", result.output)
-        self.court.record_product(decree.id, "secret_report", {"text": result.output})
+        self.court.record_product(decree.id, "secret_report", {"text": result.output}, date=calendar.data)

@@ -67,12 +67,20 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
         ])
         case["reply"] = json.dumps(case["parsed"])
     received = []
-    steps["NightDeclaration"] = replaying([case["reply"], replacement["reply"], replacement["reply"]], received)
+    from tests.test_read_budget import measure_reads
+
+    sent = []
+    steps["NightDeclaration"] = replaying([case["reply"], replacement["reply"], replacement["reply"]], received, sent=sent)
     before = {e["key"]: e for e in audit(game_db)["entities"] if e["kind"] == "person"}
     with TestClient(create_app(game_db.parent)) as client:
         client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
-        client.post("/actions", json={"action": "dismiss"}).raise_for_status()
-        client.portal.call(client.app.state.web.game.drain)
+        with measure_reads(operations=sent) as reads:
+            client.post("/actions", json={"action": "dismiss"}).raise_for_status()
+            client.portal.call(client.app.state.web.game.drain)
+        assert any(reads["appointments"].values())
+        assert all(count == 1 for group in reads["appointments"].values() for count in group.values()), reads["appointments"]
+        assert all(len({key for kind, key in group if kind == wanted}) <= 1
+                   for group in reads["singletons"].values() for wanted in ("office", "territory"))
         state = client.get("/state").json()["game"]
         assert state["failure"] is None
         assert state["night"]["result"] == "translated"

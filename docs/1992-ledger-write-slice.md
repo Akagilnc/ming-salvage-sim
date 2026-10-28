@@ -332,3 +332,118 @@ SQL_REPORT=/tmp/1992-direct-after.json PYTHONPATH=/tmp:$PWD \
 观察文件含逐句 SQL、参数、调用链与返回行数；拆分复算在 `/tmp/1992-direct-{before,after}-counts.txt`。前态和后态探针分别 `1 passed in 15.20s`、`1 passed in 10.29s`。
 
 **未作终验**：本轮不是最终待合并状态，未运行全量，也未推送、开 PR、合并或派审。票面要求的 `1f2d13220`／最终 HEAD 全量串行 cProfile、全量 CPU 对照与十分钟 CI 仍由最终待合并轮执行，不用上述单案替代；ADR 修订仍待评审。
+
+## R1／R2：已有输入传递与已知批次（基于 df7db3f3）
+
+### 刀口与边界
+
+- `Game.execute`、召对、过月各步、译史与呈现传递已读月历／夜谈／产品／旨意材料；推进月份返回新的月历。锁确实等待过才重新确认日期。后台译史等待结束后再开始取月材料，不把等待前日期当作永远有效。
+- 月度草稿、终稿、待答题、已退题、题目选择／预测与落地旨意在本轮消费者间传递；已有题目 ID 和派别官员需求分别批取。落地直接返回 `record()` 已更新的旨意快照供密奏使用，不再另查 errands。
+- 一份声明里的任官引用批量解析；同次已知的内阁校验需求一起纳入 office／incumbency 查询，返回实际材料交给校验和落账。复用已有 `office_pairs`、`ALIASES`、`json_each` 与落账 `existing`，删去平行的 `cabinet_records`。目录别名校验使用已取得的 names，不逐个查库。
+- 删除 `Court.errands`、`Court.landing_sources`、`view.decree_nights`、无消费者的参数／fallback；历史旨意条件并入原查询。日期需要当前月的调用者显式传日期，需要历史的调用者不传日期。
+- 译史目录指令用官方逐次 `Agent.run(instructions=...)`，删除反复求值的动态 instructions hook。[官方 API](https://ai.pydantic.dev/api/agent/) 的定义为 “Optional additional instructions to use for this run.”；没有自行实现宿主能力。
+- 自审保留失败后的真实 pending 复核（回调失败不等于译史未提交）；pending 查询只取实际消费的 ID。模拟输入按真实 deliberation 事件筛选，保持原来不含纯历史指针的边界。恢复时已完成的奏源不再提前加载其官员／目录材料。
+- 不跨操作存结果，不增加应用缓存、失效器、依赖分析、只读保护或索引机制。不改权限、模型输入内容、独立工具请求、提交后呈现推送、原子落账、显式重建及库聚合缓存。
+
+不能仅凭相同 SQL／结果判重：最终 regular 观察里，每月剩余的相同 `journeys_due` 分别供模拟输入和**落地后**结算。落地可改人物行程，后者需要现状；不能复用落地前的空集合。独立模型工具取阅和每次提交后的呈现也保持各自边界。失败落账重新查日期：提交可能已完成而提交后的呈现回调抛错，不能拿失败工作开始时的日期冒充现状。
+
+曾试过提前把目录、全部财政和内阁材料都交给译史，regular 返回行从 18430 涨到 25597，已撤销。仅按实际输出需要校验、传递材料；不以「读一次」为由多读一大包。
+
+### 既有入口与变异
+
+没有新增测试用例／平行夹具。扩展既有 `measure_reads`，从真实 HTTP 进入，观察 `Game.execute`、呈现及实际 `Ledger.read` 返回值；应用查询不再为观测另执行一次。库内聚合／通知查询保留原 SQL 探针。已知需求按实际模型响应／tool call 分组，不按 SQL 字符串、参数写法或 commit 区间分组。
+
+- 月历、夜谈断言落在实体 ID、年月、闭朝／堂上人／译史状态与读次数上，且要求观测非空。
+- 任官案同时约束批次的单项读取和校验—落账间 office／territory／incumbency 材料重读。只统计现有真实链路，不替换被测读取。
+- 恢复路径区别正常输入和结构化 `status="failed"` 落账；两处各只准一次，不把断言放宽成一律允许两次。原失败／重试业务断言保留。
+
+初次月历红案先观测到 75 次、再收敛为 5 次，随后通过。真实返回观察方式下的反向变异：
+
+| 装回的行为 | 真实入口结果 | 证据 |
+| --- | --- | --- |
+| `_generate` 重取 night；`pending_petitions` 忽略已给日期；任官逐引用解析 | regular／召对／任官／HTTP state 四个既有案 `4 failed in 3.36s`，日期与夜谈计数均捕获 2 | `/tmp/1992-mutation-final-observer.log` |
+| 解析后再分别查询内阁材料 | 既有任官案 `1 failed in 0.81s`，内阁大学士读取 2 次 | `/tmp/1992-mutation-cabinet.log` |
+| 把批量入口改回逐引用调用，仍消费真实结果 | 同案 `1 failed in 0.83s`，内阁材料读取 10 次 | `/tmp/1992-mutation-appointment-batch-final.log` |
+
+全部变异已撤回。任官材料合并后的聚焦命令（运行时 HEAD `df7db3f3205aa9bbb766f7acfcd4f90c4fa093c2`，包含本轮工作树）：
+
+```sh
+.venv/bin/python -m pytest -q --durations=5 --tb=line --show-capture=no \
+  tests/test_court.py tests/test_read_budget.py \
+  'tests/test_month_steps.py::test_month_pays_affair_from_declaration_month[resume]' \
+  'tests/test_month_steps.py::test_month_pays_affair_from_declaration_month[regular]' \
+  tests/test_audience.py::test_scene_tools_use_physical_location_not_office_and_project_dossiers \
+  tests/test_secrets.py::test_every_model_call_reads_identity_scoped_records \
+  'tests/test_month.py::test_exhausted_month_declaration_is_unhandled_not_a_stopped_month[ambiguous]' \
+  'tests/test_month.py::test_exhausted_month_declaration_is_unhandled_not_a_stopped_month[unknown_office]' \
+  'tests/test_month.py::test_exhausted_month_declaration_is_unhandled_not_a_stopped_month[unknown_incumbency_report]' \
+  'tests/test_month.py::test_exhausted_month_declaration_is_unhandled_not_a_stopped_month[multiple]' \
+  'tests/test_month.py::test_exhausted_month_declaration_is_unhandled_not_a_stopped_month[unknown_person]'
+```
+
+结果原文：`36 passed in 36.60s`（`/tmp/1992-r1-last-focused.log`）。最慢 call 为既有任官集成案 3.57s；这些是本机 SQLite／HTTP 中型案，不冒称单元测试。Ruff：`All checks passed!`；显式 venv pyright：`0 errors, 0 warnings, 0 informations`；import-linter：`Contracts: 4 kept, 0 broken.`；`git diff --check` 通过。
+
+之后自审补验：`.venv/bin/python -m pytest -q --durations=5 --tb=line --show-capture=no tests/test_audience.py tests/test_read_budget.py tests/test_month_steps.py::test_rejected_decree_is_forced_withdrawn_or_held tests/test_month_steps.py::test_imperial_backing_reconsiders_the_original_decree tests/test_month_steps.py::test_two_nights_feed_world_and_arrivals_wait_for_audience 'tests/test_month_steps.py::test_month_pays_affair_from_declaration_month[resume]' tests/test_court.py::test_common_declaration_updates_entities_and_displaces_incumbent_atomically` → `31 passed in 44.80s`（`/tmp/1992-r1-self-review-focused.log`）。最后收窄已完成奏源的取材，再跑 `.venv/bin/python -m pytest -q --tb=line --show-capture=no 'tests/test_month_steps.py::test_month_pays_affair_from_declaration_month[resume]' tests/test_secrets.py::test_every_model_call_reads_identity_scoped_records` → `2 passed in 5.67s`（`/tmp/1992-r1-source-recovery-final.log`）；HEAD 仍为上述施工基点。
+
+此前六个触及文件合跑 `1 failed, 127 passed in 223.27s`，唯一失败是把恢复取日期混入正常输入计数；修正上述边界后 resume 与相关案通过。该次明显超过日常聚焦参考尺，未重复整组；只重跑改变的任官、恢复、身份材料及对应负例，不把旧的 127 个通过冒称新状态全量。任官材料合并前还分别有 `29 passed in 28.71s`、合并后任官三分支 `3 passed in 7.02s`。
+
+### 同案完整 SQL 账与速度边界
+
+同一 regular 案、同一 `/tmp/probe1992_direct.py`、只计 call 阶段。前态为干净 `df7db3f3`（`/tmp/ming-1992-review-baseline`），后态为本轮最终生产改动。逐句 SQL、参数、行数、调用链在 `/tmp/1992-r1-before.json` 与 `/tmp/1992-r1-final3-sql.json`。观察命令为 `SQL_REPORT=... PYTHONPATH=/tmp:$PWD .venv/bin/python -m pytest -q -s -p probe1992_direct --tb=line --show-capture=no 'tests/test_month_steps.py::test_month_pays_affair_from_declaration_month[regular]'`。
+
+| 全部 call SQL，按语句／账本入口 | 前 | 后 |
+| --- | ---: | ---: |
+| SELECT / read | 650 | 419 |
+| WITH / read | 44 | 44 |
+| SELECT / get（聚合事件） | 161 | 161 |
+| INSERT / commit | 358 | 358 |
+| INSERT / write_rows | 36 | 36 |
+| PRAGMA / init | 12 | 12 |
+| PRAGMA / read | 4 | 4 |
+| **全部 SQL** | **1265** | **1034** |
+| **SELECT + WITH** | **855** | **624** |
+| **返回行** | **18430** | **18501** |
+
+以下覆盖全部 SELECT／WITH 的首个业务调用者（含其 get 事件读取，不只截取下降项）：
+
+| 调用者 | 前 | 后 |
+| --- | ---: | ---: |
+| calendar.calendar_row | 197 | 52 |
+| calendar.journeys_due | 4 | 4 |
+| court.current_decrees | 2 | 2 |
+| court.errands | 2 | 0 |
+| court.interactions | 49 | 49 |
+| court.month_petitions | 6 | 2 |
+| court.nights | 47 | 47 |
+| court.pending_nights | 7 | 3 |
+| court.pending_petitions | 50 | 48 |
+| court.pending_pushes | 2 | 2 |
+| court.petition_officials | 16 | 4 |
+| court.petition_products | 2 | 0 |
+| court.products | 80 | 58 |
+| court.record | 1 | 1 |
+| court.record_catalogue | 22 | 22 |
+| court.record_product | 7 | 7 |
+| court.returned_petitions | 49 | 47 |
+| court.unhandled_monthly | 45 | 45 |
+| dispatch.dispatch | 2 | 2 |
+| dispatch.landing_sources | 16 | 6 |
+| fiscal.__init__ | 157 | 157 |
+| fiscal.due_levies | 2 | 2 |
+| fiscal.run | 2 | 2 |
+| translate.catalogue | 0 | 2 |
+| view.decree_nights | 30 | 0 |
+| view.entities | 53 | 53 |
+| view.project | 5 | 7 |
+
+速度另量，不拿上述账单代替：regular＋holders 两案串行 `/usr/bin/time -p .venv/bin/python -m pytest ...`，同机最近前态 `2 passed in 6.93s; real 8.53; user 7.78; sys 0.43`，任官材料合并后样本 `2 passed in 5.81s; real 7.23; user 6.57; sys 0.34`（`/tmp/1992-r1-pair-baseline-repeat.log`、`/tmp/1992-r1-pair-final2.log`）。这是包含启动、夹具与测试观察的局部样本，不是纯游戏 CPU，也不证明全套加速。
+
+此前同案还出现过 user `9.89 → 10.67` 的反向结果；配对 cProfile 总时长 `15.031 → 15.678`，新观察函数 `count_reads` 累积 0.528s，发现了额外观测开销。之后移除了应用查询的探针重执行；保留这些反向记录，不把它们洗成加速。最终 SQL 探针的 `1 passed in 11.46s` 同样不是无仪表速度证据。
+
+### 自审与尚余验收
+
+新增生产函数／测试用例为零；四个测试内适配函数为 `measure_reads.observing`、`observe_action`、`observe_presentation`、`observe_read`，分别承接业务范围、异步动作、同步呈现、真实读返回；检索仓内无相同入口适配。原 SQL listener 保留库内观察职责，应用行观察迁走，不双算。三问：入口仍是 HTTP／模型；断言是结构化状态／返回行，修正了恢复阶段边界；旧 cabinet 查询、动态指令 hook、无用取阅函数和参数已删。
+
+本轮跨多个文件是已有日期／材料接口的完整消费者迁移，以及解析—校验—落账共用同一批材料，不能只改生产者留下旧 fallback；不是新增平台或通用组件。超过 400 行的重点审查面是任官 SQL、月内材料传递与观察边界，其余主要为调用签名和删除旧读取。
+
+**仍非终验**：R1／R2 施工与上述聚焦验证不等于独立评审或全量通过。未 push、开 PR、合并或派审；最终待合并状态仍须完成票面 `1f2d13220` 对最终 HEAD 的全量串行 cProfile／CPU 对照及十分钟 CI，ADR 仍待评审。

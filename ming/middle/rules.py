@@ -6,9 +6,8 @@ from typing import Any, Never
 
 from pydantic_ai import ModelRetry
 
-from ming.ledger import Entity, Ledger
+from ming.ledger import Entity, Item, Ledger
 from ming.middle.appointments import CATALOGUE_KINDS
-from ming.middle.calendar import calendar_row
 from ming.middle.declaration import Declaration, Fact
 from ming.middle.fiscal import WAN, current_paid, has_obligation, obligation
 from ming.middle.fields import FIELDS
@@ -40,9 +39,8 @@ def fail(field: str, value: object, expected: object, names: Names, how: str) ->
     }, ensure_ascii=False))
 
 
-def check_rules(ledger: Ledger, out: Declaration, names: Names) -> None:
+def check_rules(ledger: Ledger, out: Declaration, names: Names, date: Item) -> None:
     people: dict[str, Entity] = {}
-    date = calendar_row(ledger)["data"]
     for i, fact in enumerate(out.facts):
         person = check_journey(ledger, fact, f"facts[{i}]", names, people)
         if fact.affair is not None and fact.affair not in names.get("affair", {}):

@@ -89,16 +89,8 @@ class FactView(BaseModel):
     detail: dict[str, Any]
 
 
-def decree_nights(ledger: Ledger) -> tuple[UUID, ...]:
-    """Referenced nights for this identity query's parameters."""
-    return tuple(dict.fromkeys(UUID(row["night_id"]) for row in ledger.read(
-        select(E.id, E.data["night_id"].as_string().label("night_id")).where(E.kind == "decree"),
-    )))
-
-
-def view_parameters(ledger: Ledger, identity: Identity, kind: str | None = None) -> Item:
+def view_parameters(identity: Identity, kind: str | None = None) -> Item:
     return {
-        "decree_nights": decree_nights(ledger) if isinstance(identity, Officials) else (),
         "read_people": identity.people if isinstance(identity, Officials) else [],
         "exclude_secrets": identity.exclude_secrets if isinstance(identity, Officials) else False,
         "read_kind": kind,
@@ -109,9 +101,9 @@ def identity_key(identity: Identity) -> str:
     return "official" if isinstance(identity, Officials) else identity
 
 
-def month_open(ledger: Ledger) -> ColumnElement[int]:
+def month_open(date: Item) -> ColumnElement[int]:
     """One opening cutoff expression, with the current calendar bound explicitly."""
-    return MONTH_OPEN_QUERY.where(facts_in_month(calendar_row(ledger)["data"])).scalar_subquery()
+    return MONTH_OPEN_QUERY.where(facts_in_month(date)).scalar_subquery()
 
 
 def decree_access(identity: Identity, reference: ColumnElement[Any]) -> dict[str, ColumnElement[bool]]:
@@ -147,7 +139,7 @@ def visible_appointments(ledger: Ledger, identity: Identity, rows: Sequence[Item
         return []
     visible = {row["id"] for row in ledger.read(
         select(E.id).where(E.id.in_([r["id"] for r in rows]), APPOINTMENT_ACCESS[identity_key(identity)]),
-        view_parameters(ledger, identity),
+        view_parameters(identity),
     )}
     return [r for r in rows if r["id"] in visible]
 
@@ -177,12 +169,14 @@ def person_projection(dossiers: Item, row: Item, identity: Identity, appointment
 
 def entities(
     ledger: Ledger, identity: Identity, selection: Item | None = None,
+    *, date: Item | None = None,
 ) -> tuple[EntityView, ...]:
     selection = dict(selection or {})
-    sourced = selection.pop("sourced", False)
     keys = selection.pop("keys", None)
     catalogue = selection.pop("catalogue", False)
-    if identity == "emperor" and (opening := next(iter(ledger.read(FACT_ROWS.where(F.position == month_open(ledger)))), None)):
+    if identity == "emperor" and (opening := next(iter(ledger.read(FACT_ROWS.where(
+        F.position == month_open(date if date is not None else calendar_row(ledger)["data"]),
+    ))), None)):
         return tuple(
             EntityView.model_validate(e)
             for e in opening["detail"]["entities"]
@@ -192,9 +186,8 @@ def entities(
     query = query.where(E.kind == selection["kind"]) if selection.get("kind") is not None else query
     query = query.where(E.key == selection["key"]) if selection.get("key") is not None else query
     query = query.where(E.key.in_(keys)) if keys is not None else query
-    query = query.where(E.source != "") if sourced else query
     query = query.with_only_columns(E.id, E.kind, E.key, E.source) if catalogue else query
-    parameters = view_parameters(ledger, identity, selection.get("kind"))
+    parameters = view_parameters(identity, selection.get("kind"))
     rows = ledger.read(query, parameters)
     if catalogue:
         return tuple(EntityView.model_validate({**row, "data": {}}) for row in rows)
@@ -369,7 +362,7 @@ def fact_exposure(
     )
 
 
-def fact_sources(ledger: Ledger, identity: Identity) -> Select[Any]:
+def fact_sources(ledger: Ledger, identity: Identity, date: Item | None = None) -> Select[Any]:
     """One query for live controls and immutable facts at the opening cutoff."""
     exposure = FACT_EXPOSURE[identity_key(identity)]
     query = FACT_ROWS.add_columns(exposure.label("exposure")).where(exposure.is_not(None))
@@ -377,7 +370,7 @@ def fact_sources(ledger: Ledger, identity: Identity) -> Select[Any]:
         query = query.where(AVAILABLE)
     if identity == "emperor":
         live = F.kind.in_(OPENING_CONTROLS)
-        opening = month_open(ledger)
+        opening = month_open(date if date is not None else calendar_row(ledger)["data"])
         query = query.where(or_(opening.is_(None), live, F.position < opening)).order_by(None).order_by(
             case((opening.is_not(None), live), else_=False), ENTITY_ORDER, F.position,
         )
@@ -391,7 +384,7 @@ def project(
     selection = selection or {}
     query = fact_sources(ledger, identity) if query is None else query
     result: list[FactView] = []
-    for item in ledger.facts(**selection, query=query, parameters=view_parameters(ledger, identity)):
+    for item in ledger.facts(**selection, query=query, parameters=view_parameters(identity)):
         detail = item["detail"]
         if identity not in ("audit", "world"):
             if item["exposure"] in ("text", "dated"):

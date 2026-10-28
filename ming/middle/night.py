@@ -5,7 +5,7 @@ from typing import Any, Literal
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel
-from sqlalchemy import JSON, CompoundSelect, FromClause, Select, bindparam, case, func, literal, or_, select, true, union_all
+from sqlalchemy import JSON, CompoundSelect, FromClause, Select, case, func, literal, or_, select, true, union_all
 from sqlalchemy.sql.elements import BindParameter, ColumnElement
 
 from ming.ledger import ENTITY_COLUMNS as E, FACT_COLUMNS as F, FACT_ROWS, Entity, Item, Ledger
@@ -13,11 +13,14 @@ from ming.middle.calendar import calendar_row
 from ming.middle.queries import LATEST_NIGHT, NIGHT_ROWS
 
 INITIAL_HALL = ("王承恩",)
-# All knowledge subqueries share one referenced-night domain and its bindings.
-# Turn prose is not needed by the history relation.
+# Resolve the referenced-night domain in the permission query itself, rather
+# than issuing a separate query before every identity read.
+DECREE = E.id.table.alias("history_decree").c
 DECREE_HISTORY = select(
     F.position, F.entity_id, F.kind, case((F.kind == "hall", F.detail)).label("detail"),
-).where(F.entity_id.in_(bindparam("decree_nights", expanding=True)), F.kind.in_(("hall", "turn"))).cte()
+).where(F.entity_id.in_(select(func.replace(DECREE.data["night_id"].as_string(), "-", ""))
+                       .where(DECREE.kind == "decree").correlate(None)),
+        F.kind.in_(("hall", "turn"))).cte()
 
 
 class TurnView(BaseModel):

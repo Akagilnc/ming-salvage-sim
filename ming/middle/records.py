@@ -1,14 +1,15 @@
 """The model's single identity-scoped record tool."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 from typing import TYPE_CHECKING
-from uuid import UUID
 
 from pydantic import BaseModel
 from pydantic_ai import RunContext
 
 from ming.middle.rules import matching_names
-from ming.middle.view import Identity, character_input
+from ming.middle.view import EntityView, Identity, character_input
+from ming.middle.night import NightView
 
 if TYPE_CHECKING:
     from ming.middle.court import Court
@@ -23,11 +24,15 @@ class RecordMonth(BaseModel):
 class Materials:
     court: "Court"
     identity: Identity
+    names: dict[str, dict[str, list[str]]] = field(default_factory=dict[str, dict[str, list[str]]], kw_only=True)
 
 
 @dataclass
 class TranslationMaterials(Materials):
-    source: UUID
+    calendar: EntityView
+    decrees: tuple[dict[str, object], ...] = ()
+    night: NightView | None = None
+    appointments: tuple[dict[str, Any], ...] = ()
 
 
 async def read_records(

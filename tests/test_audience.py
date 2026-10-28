@@ -149,6 +149,9 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
             assert {
                 d.id for d in court.entities(Officials(people=[person]), kind="decree")
             } == known
+    actions = [action for action in reads["actions"] if action["action"] == "say"]
+    assert actions and all(action["calendar"] and action["night"] for action in actions)
+    assert all(count == 1 for action in actions for kind in ("calendar", "night") for count in action[kind].values()), actions
     returned = {
         part.tool_call_id: (part.tool_name, part.model_response_object())
         for message in received

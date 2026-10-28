@@ -26,13 +26,12 @@ class Deliberations:
         )
 
     async def run(
-        self, decree: EntityView, decision: dict[str, Any] | None = None,
+        self, decree: EntityView, date: dict[str, Any], decision: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Initial verdict or next-month reconsideration of one selected push."""
-        done = self.court.deliberation(decree.id, decision)
+        done = self.court.deliberation(decree.id, decision, date)
         if done is not None:
             return done
-        decree = self.court.entity(decree.id)
         identity = Officials(people=decree.data["people"], exclude_secrets=True)
         result = await invoke(
             self.agent,
@@ -41,7 +40,7 @@ class Deliberations:
                 {
                     "decree": decree.model_dump(mode="json"),
                     "imperial_prestige": self.court.entities("audit", kind="world")[0].data["imperial_prestige"],
-                },
+                }, date,
             ),
             deps=Materials(self.court, identity),
         )
@@ -50,5 +49,5 @@ class Deliberations:
             **result.output.model_dump(),
             "decision_key": decision,
         }
-        self.court.record_product(decree.id, "deliberation", verdict)
+        self.court.record_product(decree.id, "deliberation", verdict, date=date)
         return verdict
