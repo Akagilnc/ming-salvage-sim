@@ -35,12 +35,16 @@ def change_hall(hall: list[str], add: list[str], remove: list[str]) -> list[str]
     return list(dict.fromkeys(p for p in hall + add if p not in remove))
 
 
-def hall_history(night_id: ColumnElement[Any], turn_position: ColumnElement[Any]) -> Select[Any]:
+def hall_history(
+    night_id: ColumnElement[Any], turn_position: ColumnElement[Any],
+    night_ids: list[UUID] | BindParameter[Any] | None = None,
+) -> Select[Any]:
     """Members when this turn's words were spoken, with first surviving entries."""
     # Scene changes precede their turn record; speech uses the preceding turn's state.
     previous = F.position.table.alias().c
     boundary = select(func.max(previous.position)).where(
         previous.entity_id == night_id, previous.kind == "turn", previous.position < turn_position,
+        previous.entity_id.in_(night_ids) if night_ids is not None else true(),
     ).correlate_except(previous.position.table).scalar_subquery()
     hall = F.position.table.alias().c
     added = func.json_each(hall.detail["add"]).table_valued("key", "value")
@@ -49,13 +53,15 @@ def hall_history(night_id: ColumnElement[Any], turn_position: ColumnElement[Any]
           for index, person in enumerate(INITIAL_HALL)),
         select(added.c.value.label("person"), hall.position, added.c.key.label("ordinal")).select_from(
             hall.position.table.join(added, true()),
-        ).where(hall.entity_id == night_id, hall.kind == "hall", hall.position <= boundary)
+        ).where(hall.entity_id == night_id, hall.kind == "hall", hall.position <= boundary,
+                hall.entity_id.in_(night_ids) if night_ids is not None else true())
         .correlate_except(hall.position.table, added),
     ).subquery()
     removed = func.json_each(hall.detail["remove"]).table_valued("value")
     absent = select(hall.position).where(
         hall.entity_id == night_id, hall.kind == "hall",
         hall.position >= candidates.c.position, hall.position <= boundary,
+        hall.entity_id.in_(night_ids) if night_ids is not None else true(),
         select(removed.c.value).where(removed.c.value == candidates.c.person).correlate_except(removed).exists(),
     ).correlate_except(hall.position.table)
     ranked = select(
@@ -107,18 +113,19 @@ def witnessed_nights(people: list[str] | BindParameter[str], query: Select[Any])
 
 
 def known_people(
-    data: ColumnElement[Any], people: list[str] | BindParameter[str] | None = None,
+    data: ColumnElement[Any], night_ids: list[UUID] | BindParameter[Any],
+    people: list[str] | BindParameter[str] | None = None,
 ) -> CompoundSelect[Any]:
     """Involved people, the handler, and the hall at the approval turn."""
     night_id = func.replace(data["night_id"].as_string(), "-", "")
     turn = F.position.table.alias().c
     turns = select(turn.position, func.row_number().over(order_by=turn.position).label("number")).where(
-        turn.entity_id == night_id, turn.kind == "turn",
+        turn.entity_id == night_id, turn.kind == "turn", turn.entity_id.in_(night_ids),
     ).correlate_except(turn.position.table).subquery()
     turn_position = select(turns.c.position).where(
         turns.c.number == data["turn"].as_integer(),
     ).correlate_except(turns).scalar_subquery()
-    attendees = hall_history(night_id, turn_position)
+    attendees = hall_history(night_id, turn_position, night_ids)
     attendees = attendees.with_only_columns(attendees.selected_columns.person)
     assigned = func.json_each(func.json_insert(
         data["people"], "$[#]", data["handler"].as_string(),

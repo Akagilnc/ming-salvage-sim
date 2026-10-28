@@ -20,6 +20,7 @@ from ming.middle.travel import travel_days
 OPENING_CONTROLS = {"interaction", "petition", "choice", "gazette", "secret_report"}
 EMPTY_ACCOUNTS = select(E.id).where(literal(False)).correlate(None)
 READ_PEOPLE: BindParameter[str] = bindparam("read_people", expanding=True)
+DECREE_NIGHTS: BindParameter[UUID] = bindparam("decree_nights", expanding=True)
 APPOINTED_PEOPLE: BindParameter[str] = bindparam("appointed_people", expanding=True)
 HELD_BY = held_by(APPOINTED_PEOPLE)
 EXCLUDE_SECRETS: BindParameter[bool] = bindparam("exclude_secrets", False)
@@ -90,8 +91,18 @@ class FactView(ReadView):
     detail: ReadData[Any]
 
 
-def view_parameters(identity: Identity, kind: str | None = None) -> Item:
+@read_once
+def decree_nights(ledger: Ledger) -> tuple[UUID, ...]:
+    """Bind the referenced nights once, shared by all identity query parameters."""
+    return tuple(dict.fromkeys(UUID(row["night_id"]) for row in ledger.read(
+        select(E.id, E.data["night_id"].as_string().label("night_id")).where(E.kind == "decree"),
+    )))
+
+
+@read_once
+def view_parameters(ledger: Ledger, identity: Identity, kind: str | None = None) -> Item:
     return {
+        "decree_nights": decree_nights(ledger) if isinstance(identity, Officials) else (),
         "read_people": identity.people if isinstance(identity, Officials) else [],
         "exclude_secrets": identity.exclude_secrets if isinstance(identity, Officials) else False,
         "read_kind": kind,
@@ -122,7 +133,7 @@ def decree_access(identity: Identity, reference: ColumnElement[Any]) -> dict[str
             (decree.data["secret"].as_boolean(), decree.data["handler"].as_string().in_(READ_PEOPLE)),
             else_=select(people.c.value).where(people.c.value.in_(READ_PEOPLE)).exists(),
         )
-        known = or_(known, known_people(decree.data, READ_PEOPLE).exists())
+        known = or_(known, known_people(decree.data, DECREE_NIGHTS, READ_PEOPLE).exists())
         allowed = ~EXCLUDE_SECRETS | decree.data["secret"].as_boolean().is_(False)
         known = known & allowed
         handled = handled & allowed
@@ -141,7 +152,7 @@ def visible_appointments(ledger: Ledger, identity: Identity, rows: Sequence[Item
         return []
     visible = {row["id"] for row in ledger.read(
         select(E.id).where(E.id.in_([r["id"] for r in rows]), APPOINTMENT_ACCESS[identity_key(identity)]),
-        view_parameters(identity),
+        view_parameters(ledger, identity),
     )}
     return [r for r in rows if r["id"] in visible]
 
@@ -189,12 +200,12 @@ def entities(
     query = query.where(E.key.in_(keys)) if keys is not None else query
     query = query.where(E.source != "") if sourced else query
     query = query.with_only_columns(E.id, E.kind, E.key, E.source) if catalogue else query
-    rows = ledger.read(query, view_parameters(identity, selection.get("kind")))
+    rows = ledger.read(query, view_parameters(ledger, identity, selection.get("kind")))
     if catalogue:
         return tuple(EntityView.model_validate({**row, "data": {}}) for row in rows)
     appointments: Sequence[Item] = ledger.entities(
         kind="incumbency", query=ENTITY_ROWS.where(HELD_BY, APPOINTMENT_ACCESS[identity_key(identity)]),
-        parameters={**view_parameters(identity), "appointed_people": people},
+        parameters={**view_parameters(ledger, identity), "appointed_people": people},
     ) if (people := [row["key"] for row in rows if row["kind"] == "person" and identity != "audit"]) else []
     own: set[str] = set(identity.people) if isinstance(identity, Officials) else set()
     dossiers = {r["key"]: r["data"] for r in ledger.entities(
@@ -387,7 +398,7 @@ def project(
     selection = selection or {}
     query = fact_sources(ledger, identity) if query is None else query
     result: list[FactView] = []
-    for item in ledger.facts(**selection, query=query, parameters=view_parameters(identity)):
+    for item in ledger.facts(**selection, query=query, parameters=view_parameters(ledger, identity)):
         detail = item["detail"]
         if identity not in ("audit", "world"):
             if item["exposure"] in ("text", "dated"):

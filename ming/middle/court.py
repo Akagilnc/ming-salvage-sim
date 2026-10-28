@@ -326,12 +326,12 @@ class Court:
         )
         result = self._ledger.read(
             names.where(eligible if date is None or keys is not None else counts.c.entity_id.is_not(None)),
-            view_parameters(identity, kind),
+            view_parameters(self._ledger, identity, kind),
         )
         if date is not None and keys is None and kind is not None and not result:
             result = self._ledger.read(
                 names.where(eligible).order_by(None).order_by(visible_entities.c.id.is_(None), ENTITY_ORDER).limit(1),
-                view_parameters(identity, kind),
+                view_parameters(self._ledger, identity, kind),
             )
         return result
 
@@ -543,7 +543,7 @@ class Court:
 
     @read_once
     def known_people(self, decree: EntityView) -> frozenset[str]:
-        readers = known_people(literal(decree.data, type_=JSON)).subquery()
+        readers = known_people(literal(decree.data, type_=JSON), [UUID(decree.data["night_id"])]).subquery()
         return frozenset(row["person"] for row in self._ledger.read(select(readers.c.person)))
 
     @read_once

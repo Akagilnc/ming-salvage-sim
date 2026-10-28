@@ -3,8 +3,8 @@
 from collections.abc import Callable, Generator, Iterable, Mapping
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
-from functools import lru_cache, partial, wraps
-from itertools import chain
+from functools import cache, lru_cache, partial, wraps
+from itertools import product
 from inspect import signature
 from pathlib import Path
 from threading import RLock
@@ -21,6 +21,7 @@ from sqlalchemy import Engine, Select
 from sqlalchemy.dialects.sqlite import dialect, insert
 from sqlglot import exp, parse_one
 from sqlglot.optimizer.scope import Scope, build_scope, find_all_in_scope
+from sqlglot.optimizer.simplify import simplify
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.cache_key import CacheKey
 from sqlalchemy.sql.compiler import SQLCompiler
@@ -74,7 +75,13 @@ class ReadScope:
             return False
         if table == "entities" and fields is not None and (not fields or (self.data is not None and self.data.isdisjoint(fields))):
             return False
-        return all(row[field] in values for field, values in self.filters)
+        for field, values in self.filters:
+            column, _, member = field.partition(":")
+            value = row[column].get(member) if member else row[column]
+            # SQL JSON scalar comparisons do not constrain object/array values.
+            if not isinstance(value, (dict, list)) and value not in values:
+                return False
+        return True
 
 
 def column_source(scope: Scope, column: exp.Column) -> tuple[Scope, str]:
@@ -83,35 +90,112 @@ def column_source(scope: Scope, column: exp.Column) -> tuple[Scope, str]:
     return scope, column.table
 
 
-def query_filters(sources: list[Scope], parameters: Mapping[str, Any]) -> dict[tuple[Scope, str], list[tuple[str, frozenset[Any]]]]:
-    """Propagate immutable selectors through SQL equality joins/correlation."""
+def query_terms(node: exp.Expr, *, nonnull: bool = False) -> list[list[exp.Expr]]:
+    """Expose alternative selectors without copying or mutating the SQL tree."""
+    node = node.unnest()
+    if nonnull:
+        if isinstance(node, exp.Case):
+            # Null-producing branches cannot contribute rows. Conditions that
+            # reject an earlier branch remain in the original SQL permission.
+            return [left + right for branch in node.args["ifs"]
+                    for left, right in product(query_terms(branch.this), query_terms(branch.args["true"], nonnull=True))] + query_terms(
+                        node.args.get("default") or exp.Null(), nonnull=True)
+        return [] if isinstance(node, exp.Null) else [[]]
+    if isinstance(node, exp.And):
+        return [left + right for left, right in product(query_terms(node.this), query_terms(node.expression))]
+    if isinstance(node, exp.Or):
+        return query_terms(node.this) + query_terms(node.expression)
+    if isinstance(node, exp.Not) and isinstance(node.this, exp.Is) and isinstance(node.this.expression, exp.Null):
+        return query_terms(node.this.this, nonnull=True)
+    return [[node]]
+
+
+@lru_cache
+def json_path(value: str) -> exp.JSONPath:
+    return cast(exp.JSONPath, parse_one("JSON_EXTRACT(data, " + exp.convert(value).sql() + ")", dialect="sqlite").expression)
+
+
+def query_selector(scope: Scope, node: exp.Expr, parameters: Mapping[str, Any]) -> tuple[tuple[Scope, str, str], frozenset[Any]] | None:
+    """Only immutable columns and facts' JSON members may select dependencies."""
+    if not isinstance(node, (exp.EQ, exp.In)):
+        return None
+    column = node.this
+    field = column.name
+    if isinstance(column, (exp.JSONExtract, exp.JSONExtractScalar)) and isinstance(column.this, exp.Column) and column.this.name == "detail":
+        path = column.expression
+        if isinstance(path, exp.Placeholder):
+            path = json_path(parameters[path.name])
+        if not isinstance(path, exp.JSONPath) or len(path.expressions) != 2 or not isinstance(path.expressions[1], exp.JSONPathKey):
+            return None
+        field, column = "detail:" + path.expressions[1].name, column.this
+    elif field not in {"id", "entity_id", "kind", "key", "source", "position"}:
+        return None
+    if isinstance(node, exp.In) and (query := node.args.get("query")) is not None:
+        where = query.this.args.get("where")
+        if (isinstance(column, exp.Column) and where is not None
+                and not any(where.this.find_all(exp.Column, exp.Placeholder, exp.Subquery))
+                and simplify(where.this.copy()) == exp.false()):
+            return (*column_source(scope, column), field), frozenset()
+    values = node.expressions if isinstance(node, exp.In) else [node.expression]
+    if not isinstance(column, exp.Column) or not values or not all(isinstance(v, (exp.Placeholder, exp.Literal)) for v in values):
+        return None
+    return (*column_source(scope, column), field), frozenset(parameters[v.name] if isinstance(v, exp.Placeholder) else v.to_py() for v in values)
+
+
+def query_graph(
+    roots: dict[Scope, list[exp.Expr]],
+    selector: Callable[[Scope, exp.Expr], tuple[tuple[Scope, str, str], frozenset[Any]] | None],
+) -> nx.Graph[tuple[Scope, str, str]]:
+    """Link unconditional equalities; alternative branch values stay separate."""
     graph: nx.Graph[tuple[Scope, str, str]] = nx.Graph()
-    for scope in sources:
-        where = scope.expression.args.get("where")
-        joins = cast(list[exp.Join], scope.expression.args.get("joins") or [])
-        roots = ([where.this] if where is not None else []) + [j.args["on"] for j in joins if "on" in j.args and not j.args.get("side")]
-        for node in chain.from_iterable(n.flatten() if isinstance(n, exp.And) else [n] for n in roots):
-            if not isinstance(node, (exp.EQ, exp.In)) or not isinstance(node.this, exp.Column):
-                continue
-            left = (*column_source(scope, node.this), node.this.name)
-            if isinstance(node, exp.EQ) and isinstance(node.expression, exp.Column):
+    for scope, conditions in roots.items():
+        for node in (node for root in conditions for node in (root.flatten() if isinstance(root, exp.And) else [root])):
+            if isinstance(node, exp.EQ) and isinstance(node.this, exp.Column) and isinstance(node.expression, exp.Column):
+                left = (*column_source(scope, node.this), node.this.name)
                 right = (*column_source(scope, node.expression), node.expression.name)
                 graph.add_edge(left, right)
                 for entity, fact in ((left, right), (right, left)):
                     if entity[2] == "id" and fact[2] == "entity_id":
                         for field in ("kind", "key", "source"):
                             graph.add_edge((*entity[:2], field), (*fact[:2], "entity_" + field))
-            else:
-                values = node.expressions if isinstance(node, exp.In) else [node.expression]
-                if values and node.this.name in {"id", "entity_id", "kind", "key", "source", "position"} and all(isinstance(v, (exp.Placeholder, exp.Literal)) for v in values):
-                    graph.add_node(left, values=frozenset(parameters[v.name] if isinstance(v, exp.Placeholder) else v.to_py() for v in values))
-    predicates: dict[tuple[Scope, str], list[tuple[str, frozenset[Any]]]] = {}
-    for connected in nx.connected_components(graph):
-        values = [graph.nodes[n]["values"] for n in connected if "values" in graph.nodes[n]]
-        if values:
-            allowed: frozenset[Any] = values[0].intersection(*values[1:])
-            for owner, alias, field in connected:
-                predicates.setdefault((owner, alias), []).append((field, allowed))
+            elif selected := selector(scope, node):
+                key, values = selected
+                graph.add_node(key, values=values & graph.nodes[key].get("values", values) if key in graph else values)
+    return graph
+
+
+def query_filters(sources: list[Scope], parameters: Mapping[str, Any]) -> dict[tuple[Scope, str], set[tuple[tuple[str, frozenset[Any]], ...]]]:
+    """Propagate immutable selectors through SQL equality joins/correlation."""
+    roots: dict[Scope, list[exp.Expr]] = {}
+    for scope in sources:
+        where = scope.expression.args.get("where")
+        joins = cast(list[exp.Join], scope.expression.args.get("joins") or [])
+        roots[scope] = ([where.this] if where is not None else []) + [j.args["on"] for j in joins if "on" in j.args and not j.args.get("side")]
+    selector = cache(partial(query_selector, parameters=parameters))
+    graph = query_graph(roots, selector)
+    inherited: dict[tuple[Scope, str, str], frozenset[Any]] = {}
+    connected: dict[tuple[Scope, str, str], set[tuple[Scope, str, str]]] = {}
+    for component in nx.connected_components(graph):
+        values = [graph.nodes[n]["values"] for n in component if "values" in graph.nodes[n]]
+        allowed = values[0].intersection(*values[1:]) if values else None
+        for node in component:
+            connected[node] = component
+            if allowed is not None:
+                inherited[node] = allowed
+    predicates: dict[tuple[Scope, str], set[tuple[tuple[str, frozenset[Any]], ...]]] = {}
+    for scope, conditions in roots.items():
+        for terms in product(*(query_terms(root) for root in conditions)):
+            term = [node for nodes in terms for node in nodes]
+            selectors = dict(inherited)
+            for node in term:
+                if selected := selector(scope, node):
+                    key, values = selected
+                    for target in connected.get(key, {key}):
+                        selectors[target] = values & selectors.get(target, values)
+            for alias in scope.selected_sources:
+                filters = tuple(sorted((field, values) for (owner, name, field), values in selectors.items() if owner is scope and name == alias))
+                if all(values for _, values in filters):
+                    predicates.setdefault((scope, alias), set()).add(filters)
     return predicates
 
 
@@ -160,7 +244,8 @@ def query_scopes(ledger: "Ledger", query: Select[Any], parameters: Mapping[str, 
             if isinstance(parent, (exp.JSONExtract, exp.JSONExtractScalar)) and isinstance(parent.expression, exp.Placeholder):
                 fields = data.setdefault(key, set())
                 if fields is not None:
-                    fields.add(expanded.parameters[parent.expression.name])
+                    path = json_path(expanded.parameters[parent.expression.name])
+                    data[key] = fields | {path.expressions[1].name} if len(path.expressions) > 1 and isinstance(path.expressions[1], exp.JSONPathKey) else None
             elif (scope is root and column in root.expression.expressions
                   and any(isinstance(c, exp.Column) and c.table == column.table and c.name == "id" for c in root.expression.expressions)):
                 outputs.add(key)
@@ -185,8 +270,9 @@ def query_scopes(ledger: "Ledger", query: Select[Any], parameters: Mapping[str, 
                 for join in joins if not join.args.get("side")
             )
             fields = data.get((scope, alias), set())
-            scopes.add(ReadScope(source.name, tuple(sorted(predicates.get((scope, alias), ()))),
-                                 None if fields is None else frozenset(fields), not fetched, (scope, alias) in outputs))
+            for filters in predicates.get((scope, alias), ()):
+                scopes.add(ReadScope(source.name, filters,
+                                     None if fields is None else frozenset(fields), not fetched, (scope, alias) in outputs))
     return frozenset(scopes)
 
 
@@ -287,7 +373,7 @@ class Ledger:
                 changes.append(("entities", changed_entities[change.originator_id],
                                 (change.changes or {}) if isinstance(change, Entity.Recorded) else None))
                 if isinstance(change, Entity.Recorded):
-                    changes.append(("facts", {"position": recording.notification.id, "entity_id": change.originator_id, "kind": change.kind,
+                    changes.append(("facts", {"position": recording.notification.id, "entity_id": change.originator_id, "kind": change.kind, "detail": change.detail,
                                               **{"entity_" + field: value for field, value in changed_entities[change.originator_id].items() if field != "id"}}, None))
             invalid = {scope for scope in set[ReadScope]().union(*(s for _, s in self.read_results.values()))
                        if any(scope.changed(*change) for change in changes)}

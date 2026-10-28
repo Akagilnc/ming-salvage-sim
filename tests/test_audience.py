@@ -91,6 +91,7 @@ def test_nights_are_persistent_and_translate_only_after_dismissal(
         second = client.get("/state").json()["game"]["night"]
         assert first["id"] != second["id"]
         assert second["turns"] == []
+        assert not reads["repeated"]
 
 
 @pytest.mark.parametrize("game_db", ["first_night"], indirect=True)
