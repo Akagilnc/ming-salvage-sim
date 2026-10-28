@@ -172,7 +172,6 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
         assert secret.data["handler"] == handler
         assert public.data.get("handler") is None
         assert not court.facts("audit", kind="unhandled")
-        assert court.known_people(secret) == {handler, "王承恩", "杨嗣昌"}
         assert "exposure" not in secret.data
         for person, expected in (
             (handler, {secret.id}),
@@ -261,6 +260,7 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
                 and (prompt := _declaration_prompt([r]))["scope"] == "month"
                 and prompt["date"] == court.facts("emperor", kind="secret_report")[-1].detail["date"]
             )
+            assert set(next(o["known_people"] for o in world["decrees"] if o["decree"]["id"] == str(secret.id))) == {handler, "王承恩", "杨嗣昌"}
             assert {o["decree"]["id"] for o in world["decrees"]} == {
                 str(d.id) for d in orders if month == 0 or d.id == secret.id or failure != "declaration"
             }
@@ -375,7 +375,7 @@ def test_discoveries_stay_private_and_completion_stops_only_reports(
                 for order in json.loads(message.parts[0].content)["context"]["decrees"]:
                     if order["decree"]["data"]["secret"]:
                         assert "exposure" not in order["decree"]["data"]
-                        assert set(order["known_people"]) == court.known_people(secret)
+                        assert set(order["known_people"]) == {"王承恩", "杨嗣昌"}
         assert not json.loads(simulations[-1].parts[0].content)["context"]["decrees"]
 
 

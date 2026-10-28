@@ -1,6 +1,6 @@
 """Monthly person movement settles before reports; the calendar advances last."""
 
-from ming.ledger import Entity, Item, Ledger, read_once
+from ming.ledger import Entity, Item, Ledger
 from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS
 from ming.middle.travel import CLEARED_JOURNEY
 
@@ -15,12 +15,10 @@ def next_month(date: Item) -> Item:
     }
 
 
-@read_once
 def calendar_row(ledger: Ledger) -> Item:
     return ledger.entities(kind="calendar")[0]
 
 
-@read_once
 def journeys_due(ledger: Ledger) -> tuple[Item, ...]:
     """Stored journeys due this month, shared by the draft read and settlement."""
     date = calendar_row(ledger)["data"]

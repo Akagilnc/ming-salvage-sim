@@ -74,36 +74,42 @@ def landing_entities(
             for e in ledger.entities(kind=("fiscal", "building"))
         )
     incumbents = {name for (kind, _), row in found.items() if kind == "incumbency" for field in APPOINTMENT_ROLES for name in row["data"][field]}
-    for e in ledger.entities(kind="person", query=ENTITY_ROWS.where(E.key.in_(incumbents))):
-        found.setdefault((e["kind"], e["key"]), e)
+    incumbents.difference_update(key for kind, key in found if kind == "person")
+    if incumbents:
+        found.update(((e["kind"], e["key"]), e) for e in ledger.entities(
+            kind="person", query=ENTITY_ROWS.where(E.key.in_(incumbents)),
+        ))
     return found
 
 
 def landing_sources(
     ledger: Ledger, date: Item, *, include_history: bool = True,
-) -> list[tuple[Item, LandingMode | None]]:
-    """The ordered decree references shared by monthly input, validation and landing."""
+) -> list[tuple[Item, LandingMode | None, list[Item]]]:
+    """Ordered decree references with the current verdicts used to derive their modes."""
     sources: dict[UUID, tuple[Item, LandingMode | None]] = {
         row["id"]: (row, "landed") for row in ledger.read(queries.errands(date))
     }
     deliberated = ledger.read(queries.decrees_with("deliberation", date))
-    events: dict[UUID, list[tuple[str, Item]]] = {row["id"]: [] for row in deliberated}
+    for row in deliberated:
+        sources.setdefault(row["id"], (row, None))
+    if include_history:
+        for row in ledger.read(ENTITY_ROWS.where(queries.public_decree())):
+            sources.setdefault(row["id"], (row, None))
+    events: dict[UUID, list[Item]] = {entity_id: [] for entity_id in sources}
     if events:
         for fact in ledger.facts(entity_id=list(events), kind=("deliberation", "choice"), date=date):
-            events[fact["entity_id"]].append((fact["kind"], fact["detail"]))
+            events[fact["entity_id"]].append(fact)
     for row in deliberated:
-        verdict = latest_detail(events[row["id"]], "deliberation")
-        choice = latest_detail(events[row["id"]], "choice")
+        details = [(fact["kind"], fact["detail"]) for fact in events[row["id"]]]
+        verdict = latest_detail(details, "deliberation")
+        choice = latest_detail(details, "choice")
         mode: LandingMode | None = None
         if verdict and (verdict["verdict"] == "准" or (choice and choice["text"] == "强颁")):
             mode = "landed"
         elif row["data"].get("interim"):
             mode = "attempted"
         sources[row["id"]] = (row, mode)
-    if include_history:
-        for row in ledger.read(ENTITY_ROWS.where(queries.public_decree())):
-            sources.setdefault(row["id"], (row, None))
-    return list(sources.values())
+    return [(row, mode, events[row["id"]]) for row, mode in sources.values()]
 
 
 def dispatch(

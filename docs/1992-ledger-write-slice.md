@@ -1,6 +1,6 @@
-# #1992 落账、重建与读复用施工记录
+# #1992 落账、重建与按需读取施工记录
 
-以下第一片记录对应 `5effbcdfa42b48c36caeaf269bb7b33dbc7b58bc`，保留当时结论；当时的续修前置已由后续用户指令解除。Q4/Q5 续修及现状见后半篇，不再把失效算法选择作为外部缺前置，未送大理寺。
+**现行状态见文末「删应用层机制」**。此前 Q4/Q5 的跨提交复用、依赖分析及只读转换已由新版票面撤回，下列各轮数字与判断仅为历史证据，不再是现行设计。第一片对应 `5effbcdfa42b48c36caeaf269bb7b33dbc7b58bc`。
 
 ## 第一片：范围与当时剩余决定
 
@@ -234,3 +234,101 @@ SQL_REPORT=/tmp/1992-after-fixes.json PYTHONPATH=/tmp:$PWD .venv/bin/python -m p
 总 SQL、SELECT、E/F 查询仍为 714／304／143；Q4 月结样本仍零重复。缓存观测峰值变为 309 项，编译缓存 38 项、解析缓存 60 项，仍在原上界内。前表原 `view.month_open` 的两次实体快照事实读取现由 `view.entities` 直接发起，合计没有变化。来件所报召对 `record_catalogue` 的保守失效线索，本轮不外推为已消除。
 
 以上跑时 HEAD 为 `90a9e64c3516ec048de884d74473cca706a45e03` 加本轮工作区，本腿 runId 同前。ruff、pyright、四条 import-linter 合约均通过。自审：无新增生产函数或测试函数；入口仍为 HTTP／CLI／模型工具；删除字面参数哨兵，只断言结构化实体归属及状态；退役 tracking 引用、内嵌 MONTH_OPEN 和无意义 async/await 调用均删除。不推送、不派发角色、不以施工代评审。
+
+## 删应用层机制（基于 2239a891e）
+
+新版票面 `updatedAt=2026-10-28T15:39:37Z`；给事中 `01a1832a-d16d-7fbf-a19e-932f5273bb77@countersign`、符宝郎 `01a18332-8144-7dd4-8e41-2b3a77bbf309@notary` 均署。官方例文链接与原句见 ADR 0160「官方能力依据」。本轮没有保留缓存的 A/B 设计选择，也没有新增替代机制。
+
+### 实施与退役
+
+- `Ledger.read` 直接经记录器事务、Session 按条件查询，返回普通 dict；`get` 仍用 `repository.get`。删除全部 `read_once`、结果缓存、锁、键、依赖分析、编译／解析缓存和提交后失效。事件与读表同事务、回滚时淘汰库聚合缓存、显式分页重建均保留。
+- 删除 `deepfreeze`、`ReadData`、冻结 `ReadView`；视图直接使用 Pydantic BaseModel。删除 sqlglot、cachetools、frozendict 依赖；NetworkX 仍供既有 `opening.py` 构造开局图，不能随 SQL 分析用途一起误删。
+- `presentation` 一次取月历、交互、当前夜，传给已有下游；最新夜查询所得行直接用于夜投影。`Game.start → accept` 传已算的 state；`Month.resume` 不再为同一分支重复取 pending/draft。模型工具一次确定本次身份，实体投影共享本次查询参数；未跨模型请求、await 后重新取阅或前端推送存结果。
+- 月度落账材料复用判定落账模式时读出的议处／选择，当前旨意的既往 interim 和密令知情人各批读一次，删除逐旨包装；仍用原 `known_people` 权限表达式。落账补在任者时不重读手里已有的人。
+- 退役旧 SQL 同文同参／版本比较观察器、跨提交零重复与日历参数哨兵。保留返回行预算、通知唯一性与入殿已知批量断言；`/state` 在单个请求内观察完整实体行 ID，不跨请求判等。密令断言移到模型实际收到的结构化材料，预期知情人不变；不再拿同一个查询 helper 的结果作预期。
+
+### 红绿与变异证据
+
+```sh
+.venv/bin/python -m pytest -q --tb=line --show-capture=no \
+  'tests/test_read_budget.py::test_http_read_work_ignores_unrelated_history[state-night]'
+```
+
+删除缓存但未合并调用时：`1 failed in 2.21s`，同次 `/state` 的当前夜／月历行被读取 4／6 次。合并后连同 regular、holders 两案：`3 passed in 7.52s`。装回 `pending_petitions()` 自取月历的旧调用：`1 failed in 1.46s`，实体读取次数为 `{1, 2}`，恢复后继续聚焦验证。
+
+```sh
+.venv/bin/python -m pytest -q --tb=line --show-capture=no \
+  'tests/test_audience.py::test_scene_tools_use_physical_location_not_office_and_project_dossiers'
+```
+
+装回逐人 `ledger.entities(kind="person", key=name)`：`1 failed in 1.66s`，`assert False`。已恢复原批读，`scene.py` 无最终 diff。
+
+### 聚焦验证与耗时边界
+
+- 施工前 regular＋holders：`2 passed in 16.48s`；删机制并改调用后相同两案：`2 passed in 6.30s`。这是两案的实测，不推算全量 CPU 或全量占比。
+- `tests/test_read_budget.py tests/test_audience.py`、官职取阅两案、全模型身份案、`tests/test_opening.py tests/test_ledger.py`：`28 passed in 31.89s`。
+- `tests/test_month_steps.py tests/test_secrets.py tests/test_web.py`：初跑 `5 failed, 55 passed in 72.68s`，五个失败都是旧测试调用已退役 `Court.known_people`。改为读取真正发送的材料并保留原预期；这五案复跑 `5 passed in 11.98s`。
+- `tests/test_month.py tests/test_court.py tests/test_cli.py`：`77 passed in 120.13s`。它们是中型串行行为验证，不称小型测试。
+- 裸调 `.venv/bin/pyright` 未找到虚拟环境包，报 2450 个导入派生错误；改用 `.venv/bin/pyright --pythonpath .venv/bin/python`：`0 errors, 0 warnings, 0 informations`。未因此改配置或压断言。
+- 最后聚焦：`tests/test_read_budget.py`、入殿工具案、`tests/test_secrets.py`、月结原子落账案，`23 passed in 45.88s`。命令前缀均为 `.venv/bin/python -m pytest -q --tb=line --show-capture=no`；同时 ruff `All checks passed!`、pyright 零错误、`PYTHONPATH=. .venv/bin/lint-imports` 四合约 kept、`git diff --check` 无输出。
+- 提交前自审：逐文件 AST 对比 HEAD，无新增生产／测试函数，diffItems 为空。入口：移除了密令测试对退役 helper 的调用，改观察 HTTP 链路实际发送给模型的材料；断言：删除跨请求 SQL／参数哨兵，只保结构化行 ID、预算、材料值，未发现新增盯文；退役：缓存、分析器、冻结类型、专用依赖、逐旨包装及失效测试均在 diff 中删除。
+
+### 同案完整 SQL 拆分
+
+同一临时 SQLAlchemy `after_cursor_execute` 探针 `/tmp/probe1992_direct.py`，不替换应用读取。只计 regular 的 call 段；查询返回行用独立 DBAPI cursor 观察，不计入应用 SQL。前态为独立工作树 `2239a891e`，后态为本轮工作区。探针有明显观察开销，**以下探针耗时不作应用性能结论**。
+
+```sh
+SQL_REPORT=/tmp/1992-direct-after.json PYTHONPATH=/tmp:$PWD \
+  .venv/bin/python -m pytest -q -s -p probe1992_direct --tb=line --show-capture=no \
+  'tests/test_month_steps.py::test_month_pays_affair_from_declaration_month[regular]'
+# 前态同命令，使用主工作树 venv 的绝对路径，输出 /tmp/1992-direct-before.json
+```
+
+| call 段 | 2239a891e | 本轮 |
+| --- | ---: | ---: |
+| 全部 SQL | 715 | 1265 |
+| SELECT（含 WITH） | 305 | 855 |
+| 返回行 | 17906 | 18430 |
+| 实体／事实查询 | 144 | 694 |
+| 聚合未命中回读 | 161 | 161 |
+| tracking SQL／写后事件回读 | 0 / 0 | 0 / 0 |
+| 事件 INSERT | 322 | 322 |
+| 实体 INSERT 执行 | 36 | 36 |
+| 事实 INSERT 执行 | 36 | 36 |
+| PRAGMA | 16 | 16 |
+
+删除跨请求缓存后 SQL 增加，如实保留；不以 SQL 相同冒称业务重复，也不以减少查询数替代提速。E＝entities，F＝facts，L＝ledger_events；按最近业务调用者拆 SELECT（未出现项为 0）：
+
+| 调用者 | 表 | 前 | 后 |
+| --- | --- | ---: | ---: |
+| calendar.calendar_row | E | 3 | 197 |
+| calendar.journeys_due | E | 2 | 4 |
+| court.current_decrees | E+F | 2 | 2 |
+| court.errands | E+F | 0 | 2 |
+| court.interactions | E+F | 5 | 49 |
+| court.month_petitions | E+F | 2 | 6 |
+| court.nights | E+F | 1 | 47 |
+| court.pending_nights | E+F | 1 | 7 |
+| court.pending_petitions | E+F | 3 | 50 |
+| court.pending_pushes | E+F | 2 | 2 |
+| court.petition_officials | E | 8 | 16 |
+| court.petition_products | E+F | 1 | 2 |
+| court.products | E+F | 35 | 80 |
+| court.record | L | 1 | 1 |
+| court.record_catalogue | E+F | 22 | 22 |
+| court.record_product | L | 7 | 7 |
+| court.returned_petitions | E+F | 4 | 49 |
+| court.unhandled_monthly | E+F | 3 | 45 |
+| dispatch.dispatch | E+F | 1 | 2 |
+| dispatch.landing_entities | E | 1 | 0 |
+| dispatch.landing_sources | E+F | 5 | 16 |
+| fiscal.__init__ | E / L | 4 / 153 | 4 / 153 |
+| fiscal.due_levies | E | 1 | 2 |
+| fiscal.run | E+F | 2 | 2 |
+| view.decree_nights | E | 1 | 30 |
+| view.entities | E / E+F | 11 / 19 | 19 / 34 |
+| view.project | E+F | 5 | 5 |
+
+观察文件含逐句 SQL、参数、调用链与返回行数；拆分复算在 `/tmp/1992-direct-{before,after}-counts.txt`。前态和后态探针分别 `1 passed in 15.20s`、`1 passed in 10.29s`。
+
+**未作终验**：本轮不是最终待合并状态，未运行全量，也未推送、开 PR、合并或派审。票面要求的 `1f2d13220`／最终 HEAD 全量串行 cProfile、全量 CPU 对照与十分钟 CI 仍由最终待合并轮执行，不用上述单案替代；ADR 修订仍待评审。

@@ -4,11 +4,11 @@ from operator import itemgetter
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
+from pydantic import BaseModel
 from sqlalchemy import JSON, CompoundSelect, FromClause, Select, bindparam, case, func, literal, or_, select, true, union_all
 from sqlalchemy.sql.elements import BindParameter, ColumnElement
 
-from ming.ledger import ENTITY_COLUMNS as E, FACT_COLUMNS as F, FACT_ROWS, Entity, Ledger, read_once
-from ming.middle import ReadData, ReadView
+from ming.ledger import ENTITY_COLUMNS as E, FACT_COLUMNS as F, FACT_ROWS, Entity, Item, Ledger
 from ming.middle.calendar import calendar_row
 from ming.middle.queries import LATEST_NIGHT, NIGHT_ROWS
 
@@ -20,18 +20,18 @@ DECREE_HISTORY = select(
 ).where(F.entity_id.in_(bindparam("decree_nights", expanding=True)), F.kind.in_(("hall", "turn"))).cte()
 
 
-class TurnView(ReadView):
+class TurnView(BaseModel):
     id: str
     emperor_words: str
     scene: str
     hall: tuple[str, ...]
 
 
-class NightView(ReadView):
+class NightView(BaseModel):
     id: UUID
     closed: bool
     hall: tuple[str, ...]
-    date: ReadData[int]
+    date: dict[str, int]
     turns: tuple[TurnView, ...] = ()
     result: Literal["translated", "unhandled"] | None = None
 
@@ -84,9 +84,8 @@ TURN_HALL = select(func.json_group_array(func.json_object(
 TURN_ROWS = FACT_ROWS.add_columns(TURN_HALL.label("hall"))
 
 
-@read_once
-def read_night(ledger: Ledger, night_id: UUID) -> NightView:
-    night = ledger.entities(entity_id=night_id, query=NIGHT_ROWS)[0]
+def read_night(ledger: Ledger, night_id: UUID, *, row: Item | None = None) -> NightView:
+    night = row if row is not None else ledger.entities(entity_id=night_id, query=NIGHT_ROWS)[0]
     turns = tuple(TurnView(
         **item["detail"], emperor_words=item["emperor_words"],
         hall=tuple(member["person"] for member in sorted(item["hall"], key=itemgetter("position", "ordinal"))),

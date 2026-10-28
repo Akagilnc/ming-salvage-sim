@@ -1,7 +1,6 @@
 """Medium: audience behavior through the HTTP boundary and CLI ledger reads."""
 
 import json
-from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -48,7 +47,7 @@ def test_nights_are_persistent_and_translate_only_after_dismissal(
         assert not [
             e for e in audit(tmp_path / save)["entities"] if e["kind"] == "decree"
         ]
-    with TestClient(create_app(tmp_path)) as client, measure_reads() as reads:
+    with TestClient(create_app(tmp_path)) as client:
         client.post("/actions", json={"action": "continue"})
         assert client.get("/state").json()["game"]["night"] == first
         for words in case["words"][1:]:
@@ -95,13 +94,8 @@ def test_nights_are_persistent_and_translate_only_after_dismissal(
             assert {e["data"]["interim"] for e in orders} == {True, False}
             assert [x["endorser"] for e in orders for x in e["data"]["endorsements"]] == ["御笔"]
         assert client.get("/state").json()["game"]["petitions"] == []
-        # Night/translation commits do not change this same calendar demand.
-        calendar_reads = Counter(engine for engine, parameters in reads["queries"] if parameters == ("calendar",))
-        assert set(calendar_reads.values()) == {1}
         client.post("/actions", json={"action": "month"}).raise_for_status()
         assert client.get("/state").json()["game"]["date"]["month"] == 11
-        # Advancing the calendar does: the next state must read its new revision.
-        assert sum(parameters == ("calendar",) for _, parameters in reads["queries"]) == calendar_reads.total() + 1
         ledger = audit(tmp_path / save)
         assert {f["entity_id"] for f in ledger["facts"] if f["kind"] == "landed" and f["entity_id"] in {e["id"] for e in orders}} == {e["id"] for e in orders}
         if recording == "approved":
@@ -110,7 +104,6 @@ def test_nights_are_persistent_and_translate_only_after_dismissal(
         second = client.get("/state").json()["game"]["night"]
         assert first["id"] != second["id"]
         assert second["turns"] == []
-        assert not reads["repeated"]
 
 
 @pytest.mark.parametrize("game_db", ["first_night"], indirect=True)

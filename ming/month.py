@@ -32,7 +32,8 @@ class Month:
         self.lock = asyncio.Lock()
 
     def opened(self) -> bool:
-        return bool(self.court.products(self.court.calendar().id, kind="month_open"))
+        calendar = self.court.calendar()
+        return bool(self.court.products(calendar.id, kind="month_open", date=calendar.data))
 
     def open(self) -> None:
         if not self.opened():
@@ -63,16 +64,19 @@ class Month:
                 return self.court.pending_petitions()
             # Opening urgent petitions must be answered before drafting, since
             # their choices are inputs to this month's single timeline.
-            if self.court.pending_petitions() and not self.court.products(self.court.calendar().id, kind="month_draft"):
-                return self.court.pending_petitions()
-            if not self.court.products(self.court.calendar().id, kind="month_draft"):
+            pending = self.court.pending_petitions(date)
+            calendar = self.court.calendar()
+            drafted = self.court.products(calendar.id, kind="month_draft", date=calendar.data)
+            if pending and not drafted:
+                return pending
+            if not drafted:
                 # These are this stage's completed outputs, including newly
                 # committed verdicts, not a cache of unchanged ledger reads.
                 await self.simulations.draft(list(zip(public, verdicts[:len(public)], strict=True)))
-            if not self.court.products(self.court.calendar().id, kind="month_final"):
+            if not self.court.products(calendar.id, kind="month_final", date=calendar.data):
                 self.simulations.speculate()
-                if self.court.pending_petitions():
-                    return self.court.pending_petitions()
+                if pending := self.court.pending_petitions():
+                    return pending
                 await self.simulations.final()
             await self.landing.run()
             self.court.settle_accounts()

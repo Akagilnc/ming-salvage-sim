@@ -86,8 +86,9 @@ class Game:
 
     def resume(self) -> None:
         self.settle_month()
-        failures = self.court.failures()
-        pending = [i for i in self.court.running() if not failures or i["action"] == "choose"]
+        interactions = self.court.interactions()
+        failures = self.court.failures(interactions)
+        pending = [i for i in self.court.running(interactions) if not failures or i["action"] == "choose"]
         if pending:
             self.active = asyncio.create_task(self._resume(pending))
         elif failures:
@@ -210,7 +211,7 @@ class Game:
             self.interaction(action, "running", payload)
         else:
             if action == "dismiss":
-                if not self.court.nights():
+                if state["night"] is None:
                     raise InvalidAction("请先召对")
                 self.audience.dismiss()
                 self.start_background()
@@ -220,7 +221,7 @@ class Game:
             if action == "open":
                 self.audience.open()
                 return None
-            payload = self.accept(action, payload)
+            payload = self.accept(action, payload, state)
         task = asyncio.create_task(self.execute(action, payload))
         if action == "translation":
             self.translation = task
@@ -231,8 +232,7 @@ class Game:
         self.active = task
         return task
 
-    def accept(self, action: str, payload: dict[str, Any]) -> dict[str, Any]:
-        state = self.court.presentation()
+    def accept(self, action: str, payload: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
         if (
             state["failure"]
             and action != "choose"

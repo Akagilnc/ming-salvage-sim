@@ -8,8 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy import Select, bindparam, case, func, literal, or_, select
 from sqlalchemy.sql.elements import BindParameter, ColumnElement
 
-from ming.ledger import Item, Ledger, read_once
-from ming.middle import ReadData, ReadView
+from ming.ledger import Item, Ledger
 from ming.ledger import ENTITY_COLUMNS as E, FACT_COLUMNS as F, ENTITY_ROWS, FACT_ROWS, ENTITY_ORDER, facts_in_month
 from ming.middle.queries import CALENDAR, available_on, public_decree
 from ming.middle.calendar import calendar_row
@@ -75,24 +74,23 @@ def character_input(value: Any) -> Any:
     return result
 
 
-class EntityView(ReadView):
+class EntityView(BaseModel):
     id: UUID
     kind: str
     key: str
     source: str
-    data: ReadData[Any]
+    data: dict[str, Any]
 
 
-class FactView(ReadView):
+class FactView(BaseModel):
     entity_id: UUID
     kind: str
     emperor_words: str
-    detail: ReadData[Any]
+    detail: dict[str, Any]
 
 
-@read_once
 def decree_nights(ledger: Ledger) -> tuple[UUID, ...]:
-    """Bind the referenced nights once, shared by all identity query parameters."""
+    """Referenced nights for this identity query's parameters."""
     return tuple(dict.fromkeys(UUID(row["night_id"]) for row in ledger.read(
         select(E.id, E.data["night_id"].as_string().label("night_id")).where(E.kind == "decree"),
     )))
@@ -111,7 +109,6 @@ def identity_key(identity: Identity) -> str:
     return "official" if isinstance(identity, Officials) else identity
 
 
-@read_once
 def month_open(ledger: Ledger) -> ColumnElement[int]:
     """One opening cutoff expression, with the current calendar bound explicitly."""
     return MONTH_OPEN_QUERY.where(facts_in_month(calendar_row(ledger)["data"])).scalar_subquery()
@@ -178,7 +175,6 @@ def person_projection(dossiers: Item, row: Item, identity: Identity, appointment
     return data
 
 
-@read_once
 def entities(
     ledger: Ledger, identity: Identity, selection: Item | None = None,
 ) -> tuple[EntityView, ...]:
@@ -198,12 +194,13 @@ def entities(
     query = query.where(E.key.in_(keys)) if keys is not None else query
     query = query.where(E.source != "") if sourced else query
     query = query.with_only_columns(E.id, E.kind, E.key, E.source) if catalogue else query
-    rows = ledger.read(query, view_parameters(ledger, identity, selection.get("kind")))
+    parameters = view_parameters(ledger, identity, selection.get("kind"))
+    rows = ledger.read(query, parameters)
     if catalogue:
         return tuple(EntityView.model_validate({**row, "data": {}}) for row in rows)
     appointments: Sequence[Item] = ledger.entities(
         kind="incumbency", query=ENTITY_ROWS.where(HELD_BY, APPOINTMENT_ACCESS[identity_key(identity)]),
-        parameters={**view_parameters(ledger, identity), "appointed_people": people},
+        parameters={**parameters, "appointed_people": people},
     ) if (people := [row["key"] for row in rows if row["kind"] == "person" and identity != "audit"]) else []
     own: set[str] = set(identity.people) if isinstance(identity, Officials) else set()
     dossiers = {r["key"]: r["data"] for r in ledger.entities(
@@ -372,7 +369,6 @@ def fact_exposure(
     )
 
 
-@read_once
 def fact_sources(ledger: Ledger, identity: Identity) -> Select[Any]:
     """One query for live controls and immutable facts at the opening cutoff."""
     exposure = FACT_EXPOSURE[identity_key(identity)]
@@ -388,7 +384,6 @@ def fact_sources(ledger: Ledger, identity: Identity) -> Select[Any]:
     return query
 
 
-@read_once
 def project(
     ledger: Ledger, identity: Identity, selection: Item | None = None,
     query: Select[Any] | None = None,
