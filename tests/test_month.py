@@ -746,6 +746,11 @@ def test_fiscal_petition_lands_only_declared_outcome_without_readding_levies(
             ("positive_counterpart", "facts[0].changes[0].value"),
         ]],
         pytest.param((RECORDED / "month_invalid.txt").read_text(), id="invalid_shape"),
+        pytest.param([
+            {**fact, "changes": []} for fact in json.loads(json.loads(
+                (RECORDED / "night_invalid.json").read_text(),
+            )["cases"]["decree_field"]["reply"])["facts"]
+        ], id="decree_creation"),
         pytest.param(
             [
                 {
@@ -931,6 +936,7 @@ def test_exhausted_month_declaration_is_unhandled_not_a_stopped_month(
         assert "fiscal_surcharge" not in rows[("region", "陕西")]
         assert "payment_policy" not in rows[("fiscal", "宗室禄米_base")]
         assert not any(e["key"] == "不存在省" for e in ledger["entities"])
+        assert not any(e["kind"] == "decree" for e in ledger["entities"])
         assert not any(f["kind"] == "received" for f in ledger["facts"])
         settled = [f for f in ledger["facts"] if f["kind"] == "month_accounts"]
         assert settled[-1]["detail"]["date"]["year"] == 1627
@@ -950,3 +956,9 @@ def test_exhausted_month_declaration_is_unhandled_not_a_stopped_month(
                 steps["Declaration"] = replaying([(RECORDED / "month_empty.txt").read_text()])
                 client.post("/actions", json={"action": "month"}).raise_for_status()
                 assert client.get("/state").json()["game"]["unhandled_monthly"] == []
+        elif isinstance(declared, list) and any(f["entity_type"] == "decree" for f in declared):
+            assert [json.loads(p.content)["expected"] for m in received for p in m.parts
+                    if isinstance(p, RetryPromptPart)] == [{"declaration": "NightDeclaration", "field": "decrees"}]
+            client.post("/actions", json={"action": "open"}).raise_for_status()
+            client.post("/actions", json={"action": "say", "words": "继续议事。"}).raise_for_status()
+            assert client.get("/state").json()["game"]["failure"] is None

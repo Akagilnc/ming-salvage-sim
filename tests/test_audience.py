@@ -28,6 +28,15 @@ def test_nights_are_persistent_and_translate_only_after_dismissal(
     tmp_path: Path, game_db: Path, steps, audit, recording
 ) -> None:
     case = json.loads((RECORDED / f"night_{recording}.json").read_text())
+    received = []
+    if recording == "approved":
+        rejected = json.loads(json.loads((RECORDED / "night_invalid.json").read_text())["cases"]["decree_field"]["reply"])
+        rejected["facts"][0]["changes"] = [
+            {"field": field, "value": value}
+            for field, value in json.loads(case["replies"][-1])["decrees"][0].items()
+            if field in {"text", "origin", "people"}
+        ]
+        steps["NightDeclaration"] = replaying([json.dumps(rejected), case["replies"][-1]], received)
     with TestClient(create_app(tmp_path)) as client:
         save = client.post(
             "/actions", json={"action": "load", "save": game_db.name}
@@ -53,6 +62,13 @@ def test_nights_are_persistent_and_translate_only_after_dismissal(
         ledger = audit(tmp_path / save)
         orders = [e for e in ledger["entities"] if e["kind"] == "decree"]
         assert orders
+        if recording == "approved":
+            assert [json.loads(p.content)["expected"] for m in received for p in m.parts
+                    if isinstance(p, RetryPromptPart)] == [{"declaration": "NightDeclaration", "field": "decrees"}]
+            steps["Declaration"] = replaying([json.dumps({"facts": [{
+                "entity_type": "decree", "entity": orders[0]["key"], "create": False,
+                "changes": [{"field": "people", "value": []}], "text": "",
+            }]})])
         assert all(e["data"]["night_id"] == first["id"] for e in orders)
         assert all(e["data"].get("secret") is False for e in orders)
         assert all(e["data"]["turn"] == {"approved": 4, "new_office": 2}[recording] for e in orders)
@@ -86,7 +102,10 @@ def test_nights_are_persistent_and_translate_only_after_dismissal(
         assert client.get("/state").json()["game"]["date"]["month"] == 11
         # Advancing the calendar does: the next state must read its new revision.
         assert sum(parameters == ("calendar",) for _, parameters in reads["queries"]) == calendar_reads.total() + 1
-        assert {f["entity_id"] for f in audit(tmp_path / save)["facts"] if f["kind"] == "landed" and f["entity_id"] in {e["id"] for e in orders}} == {e["id"] for e in orders}
+        ledger = audit(tmp_path / save)
+        assert {f["entity_id"] for f in ledger["facts"] if f["kind"] == "landed" and f["entity_id"] in {e["id"] for e in orders}} == {e["id"] for e in orders}
+        if recording == "approved":
+            assert next(e["data"]["people"] for e in ledger["entities"] if e["id"] == orders[0]["id"]) == []
         client.post("/actions", json={"action": "open"})
         second = client.get("/state").json()["game"]["night"]
         assert first["id"] != second["id"]
@@ -273,9 +292,13 @@ def test_failed_night_translation_is_terminal_and_reaches_following_nights(
 ) -> None:
     recording = json.loads((RECORDED / "night_invalid.json").read_text())
     cases = recording["cases"]
+    rejected = json.loads(cases["decree_field"]["reply"])
+    rejected["facts"][0]["changes"] = []
+    cases = {"decree_creation": {**cases.pop("decree_field"), "reply": json.dumps(rejected)}, **cases}
+    received = []
     steps["scene"] = replaying([case["scene"] for case in cases.values()])
     steps["NightDeclaration"] = replaying(
-        [case["reply"] for case in cases.values() for _ in range(2)]
+        [case["reply"] for case in cases.values() for _ in range(2)], received,
     )
     with TestClient(create_app(tmp_path)) as client:
         save = client.post(
@@ -283,7 +306,7 @@ def test_failed_night_translation_is_terminal_and_reaches_following_nights(
         ).json()["save"]
         before = audit(tmp_path / save)["entities"]
         nights = []
-        for _ in cases:
+        for case in cases:
             assert client.post("/actions", json={"action": "open"}).status_code == 200
             assert (
                 client.post(
@@ -304,9 +327,15 @@ def test_failed_night_translation_is_terminal_and_reaches_following_nights(
             assert state["face"] == "desk"
             assert state["night"]["result"] == "unhandled"
             assert state["failure"] is None
+            ledger = audit(tmp_path / save)
+            if case == "decree_creation":
+                assert [json.loads(p.content)["expected"] for m in received for p in m.parts
+                        if isinstance(p, RetryPromptPart)] == [{"declaration": "NightDeclaration", "field": "decrees"}]
+                assert set(next(f["detail"]["result"] for f in ledger["facts"]
+                                if f["kind"] == "unhandled")) == {"model_text", "failure_point"}
             nights.append(state["night"]["id"])
             assert [
-                e for e in audit(tmp_path / save)["entities"] if e["kind"] != "night"
+                e for e in ledger["entities"] if e["kind"] != "night"
             ] == before
         assert {
             f["entity_id"]

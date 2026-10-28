@@ -96,6 +96,13 @@ def check(ledger: Ledger, out: Declaration, source: UUID) -> None:
                 names,
                 "entity_type 改成 expected 里的类型，重交整份。",
             )
+        if fact.create and fact.entity_type == "decree":
+            fail(
+                path + ".create", True,
+                {"declaration": NightDeclaration.__name__, "field": "decrees"}, names,
+                "通用 facts 无法表达成旨所需信息。新旨意须通过整夜声明 NightDeclaration.decrees 提交，来源夜由引擎记录；"
+                "若只是变更已有旨意，核对其正名并用 create=false。按实际情况重交整份，不得捏造来源、改换对象或丢项。",
+            )
         if fact.create and fact.entity_type in CATALOGUES:
             fail(
                 path + ".create",
