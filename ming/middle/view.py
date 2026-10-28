@@ -27,9 +27,6 @@ READ_KIND: BindParameter[str] = bindparam("read_kind")
 MONTH_OPEN_QUERY = FACT_ROWS.with_only_columns(F.position).where(
     E.kind == "calendar", F.kind == "month_open",
 ).order_by(None).order_by(F.position.desc()).limit(1).correlate(None)
-MONTH_OPEN = MONTH_OPEN_QUERY.where(facts_in_month({
-    "year": CALENDAR["year"].as_integer(), "month": CALENDAR["month"].as_integer(),
-})).scalar_subquery()
 
 PublicIdentity = Literal["emperor", "audit", "world", "public"]
 
@@ -105,10 +102,10 @@ def identity_key(identity: Identity) -> str:
     return "official" if isinstance(identity, Officials) else identity
 
 
-def month_open(ledger: Ledger, query: Select[Any] = FACT_ROWS) -> Item | None:
-    """The month's existing opening record; callers select the columns they need."""
-    position = MONTH_OPEN_QUERY.where(facts_in_month(calendar_row(ledger)["data"])).scalar_subquery()
-    return next(iter(ledger.read(query.where(F.position == position))), None)
+@read_once
+def month_open(ledger: Ledger) -> ColumnElement[int]:
+    """One opening cutoff expression, with the current calendar bound explicitly."""
+    return MONTH_OPEN_QUERY.where(facts_in_month(calendar_row(ledger)["data"])).scalar_subquery()
 
 
 def decree_access(identity: Identity, reference: ColumnElement[Any]) -> dict[str, ColumnElement[bool]]:
@@ -180,7 +177,7 @@ def entities(
     sourced = selection.pop("sourced", False)
     keys = selection.pop("keys", None)
     catalogue = selection.pop("catalogue", False)
-    if identity == "emperor" and (opening := month_open(ledger)):
+    if identity == "emperor" and (opening := next(iter(ledger.read(FACT_ROWS.where(F.position == month_open(ledger)))), None)):
         return tuple(
             EntityView.model_validate(e)
             for e in opening["detail"]["entities"]
@@ -366,7 +363,8 @@ def fact_exposure(
     )
 
 
-def fact_sources(identity: Identity) -> Select[Any]:
+@read_once
+def fact_sources(ledger: Ledger, identity: Identity) -> Select[Any]:
     """One query for live controls and immutable facts at the opening cutoff."""
     exposure = FACT_EXPOSURE[identity_key(identity)]
     query = FACT_ROWS.add_columns(exposure.label("exposure")).where(exposure.is_not(None))
@@ -374,8 +372,9 @@ def fact_sources(identity: Identity) -> Select[Any]:
         query = query.where(AVAILABLE)
     if identity == "emperor":
         live = F.kind.in_(OPENING_CONTROLS)
-        query = query.where(or_(MONTH_OPEN.is_(None), live, F.position < MONTH_OPEN)).order_by(None).order_by(
-            case((MONTH_OPEN.is_not(None), live), else_=False), ENTITY_ORDER, F.position,
+        opening = month_open(ledger)
+        query = query.where(or_(opening.is_(None), live, F.position < opening)).order_by(None).order_by(
+            case((opening.is_not(None), live), else_=False), ENTITY_ORDER, F.position,
         )
     return query
 
@@ -386,7 +385,7 @@ def project(
     query: Select[Any] | None = None,
 ) -> tuple[FactView, ...]:
     selection = selection or {}
-    query = FACT_SOURCES[identity_key(identity)] if query is None else query
+    query = fact_sources(ledger, identity) if query is None else query
     result: list[FactView] = []
     for item in ledger.facts(**selection, query=query, parameters=view_parameters(identity)):
         detail = item["detail"]
@@ -427,4 +426,3 @@ FACT_EXPOSURE = {key: fact_exposure(identity, ACCOUNTS[key]) for key, identity i
 AVAILABLE = or_(CALENDAR.is_(None), available_on({
     "year": CALENDAR["year"].as_integer(), "month": CALENDAR["month"].as_integer(),
 }))
-FACT_SOURCES = {key: fact_sources(identity) for key, identity in IDENTITIES.items()}

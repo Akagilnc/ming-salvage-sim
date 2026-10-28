@@ -133,7 +133,7 @@ class Web:
     async def records(self, request: Request) -> JSONResponse:
         if self.game is None:
             raise HTTPException(409, "请先打开一局")
-        return JSONResponse(await self.game.court.read_records("emperor"))
+        return JSONResponse(self.game.court.read_records("emperor"))
 
     async def stream(self, request: Request) -> EventSourceResponse:
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()

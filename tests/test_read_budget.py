@@ -23,9 +23,9 @@ RECORDED = Path(__file__).parent / "recorded"
 
 
 @contextmanager
-def measure_reads():
+def measure_reads(operations=None):
     """Observe real SQL without consuming its cursor or replacing the read path."""
-    result = {"budget": [0, 0], "repeated": [], "queries": []}
+    result = {"budget": [0, 0], "repeated": [], "queries": [], "singletons": {}}
     previous = {}
     fields = {"id", "entity_id", "position", "kind", "key", "event_count", "person", "ordinal", "result", "exposure", "originator_id", "originator_version"}
 
@@ -55,6 +55,12 @@ def measure_reads():
                                versions.get(row[identity_column]) if identity_column is not None else None) for row in rows)
             finally:
                 probe.close()
+            if operations is not None and identity_column is not None and len(rows) == 1:
+                # Associate actual single-entity results with the issued model
+                # request, independent of lookup predicates or parameter layout.
+                result["singletons"].setdefault((len(operations), query["conn"].engine, statement), set()).add(
+                    (rows[0][columns.index("kind")], rows[0][columns.index("key")]),
+                )
             result["queries"].append((query["conn"].engine, tuple(parameters)))
             result["budget"][0] += 1
             result["budget"][1] += len(rows)

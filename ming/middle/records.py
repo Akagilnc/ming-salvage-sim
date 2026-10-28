@@ -71,5 +71,5 @@ async def read_records(
         }
     if not keys:
         return {"catalogue": [e for e in selected if date is None or e["event_count"]]}
-    result = await ctx.deps.court.read_records(ctx.deps.identity, kind, [v[0] for v in resolved.values()], month)
+    result = ctx.deps.court.read_records(ctx.deps.identity, kind, [v[0] for v in resolved.values()], month)
     return result if isinstance(ctx.deps, TranslationMaterials) else character_input(result)

@@ -63,11 +63,10 @@ BORDER_ARMIES = [
     "广东水师",
     "西南土司兵",
 ]
-# Event log, read rows, and tracking: one landing commit lands all three.
+# Event log and read rows share the same landing transaction.
 LANDING = (
     "SELECT max(id) FROM ledger_events",
     "SELECT count(*) FROM facts WHERE kind = 'landed'",
-    "SELECT max(notification_id) FROM readmodel_tracking",
 )
 
 
@@ -338,7 +337,7 @@ def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
     observed = []
 
     def before_commit(session):
-        # Outer SQLAlchemy commit: policy rows and tracking exist, none durable.
+        # Outer SQLAlchemy commit: events and read rows exist, none durable.
         current = tuple(session.execute(text(q)).scalar_one() for q in LANDING)
         if current[1] and not observed:
             observed.append(current)
@@ -363,9 +362,10 @@ def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
                 event.remove(Session, "before_commit", before_commit)
         with sqlite3.connect(db) as connection:
             durable = tuple(connection.execute(q).fetchone()[0] for q in LANDING)
-        assert durable[0] == durable[2] and bool(durable[1]) != bool(interrupt)
+        assert bool(durable[1]) != bool(interrupt)
         if interrupt == "commit":
-            assert observed[0][0] == observed[0][2] > durable[0]
+            assert observed[0][0] > durable[0]
+            assert observed[0][1] > durable[1] == 0
         if interrupt:
             ledger = audit(db)
             assert {

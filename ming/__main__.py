@@ -147,7 +147,7 @@ def main(argv: list[str] | None = None) -> None:
             json.dumps(
                 {
                     "db": str(court.db_path),
-                    **asyncio.run(court.read_records(args.identity, replay=getattr(args, "replay", False))),
+                    **court.read_records(args.identity, replay=getattr(args, "replay", False)),
                 },
                 ensure_ascii=False,
                 indent=2,

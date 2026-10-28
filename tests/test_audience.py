@@ -98,7 +98,7 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
     tmp_path: Path, game_db: Path, steps
 ) -> None:
     case = json.loads((RECORDED / "night_tools.json").read_text())
-    received = []
+    received, sent = [], []
     steps["scene"] = replaying(
         [
             ModelResponse(parts=[ToolCallPart("read_records", {"kind": "person", "key": "王体乾"}, tool_call_id="before")]),
@@ -106,10 +106,10 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
             ModelResponse(parts=[ToolCallPart("read_records", {"kind": "person", "key": "王体乾"}, tool_call_id="after")]),
             ModelResponse(parts=[ToolCallPart("set_hall", {"add": [], "remove": ["王体乾"]})]),
             *ModelMessagesTypeAdapter.validate_python(case["scene_responses"]),
-        ], received,
+        ], received, sent=sent,
     )
     steps["NightDeclaration"] = replaying(case["replies"])
-    with TestClient(create_app(tmp_path)) as client, measure_reads() as reads:
+    with TestClient(create_app(tmp_path)) as client, measure_reads(sent) as reads:
         client.post("/actions", json={"action": "load", "save": game_db.name})
         for turn, hall in zip(case["turns"], (
             {"王承恩", "杨嗣昌", "王绍徽"},
@@ -142,13 +142,12 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
         for part in message.parts
         if isinstance(part, ToolReturnPart)
     }
-    batches = [part.args_as_dict()["add"] for message in received for part in message.parts
+    batches = [(operation, part.args_as_dict()["add"]) for operation, message in enumerate(sent, 1) for part in message.parts
                if isinstance(part, ToolCallPart) and part.tool_name == "set_hall" and len(part.args_as_dict()["add"]) > 1]
     assert batches
-    parameters = [values for _, values in reads["queries"]]
-    for names in batches:
-        assert any(set(names) <= set(values) for values in parameters)
-        assert not any(("person", name) in parameters for name in names)
+    for operation, names in batches:
+        members = {("person", name) for name in names}
+        assert all(len(found & members) <= 1 for (current, _, _), found in reads["singletons"].items() if current == operation)
     before, after = (returned[key][1]["entities"][0] for key in ("before", "after"))
     assert before["key"] == after["key"] == "王体乾"
     for field in ("name", "location", "appointments"):

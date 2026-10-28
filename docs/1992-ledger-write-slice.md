@@ -101,7 +101,7 @@ E＝实体表；E+F＝语句涉及实体与事实表（含关联子查询）。�
 
 复用原 `read_once`，不建并行读口。SQLGlot 的作用域解析从真实查询取得表、不可变等值／IN 条件及 JSON 数据字段依赖；返回的整行数据另依赖实际返回的实体 ID。父读收集子读依赖，命中缓存也传递依赖。落账用本次 recordings 的建立、修改字段与新增事实使相交依赖失效；没有实体字段变化的 Recorded 不冒充实体建立。其他 SQL 谓词保留较宽依赖，不复制权限规则，不按业务 kind 列免检名单。
 
-当前月份进入 products、month_open 的需求参数，不再把动态月历藏在同参数 SQL 中。落账引用按 `(kind, key)` 成批读取；已有 owner 直接传其 snapshot；入殿名单、已知谕旨的议处／选择／暂行记录成批读。引用顺序、原录件输入、权限和材料均不改。
+products 的月份及 month_open 截止位现统一从 calendar_row 显式绑定（前轮遗漏的另一 MONTH_OPEN 表达式由下节 F2 修正）；既有 AVAILABLE 权限条件未改。落账引用按 `(kind, key)` 成批读取；已有 owner 直接传其 snapshot；入殿名单、已知谕旨的议处／选择／暂行记录成批读。引用顺序、原录件输入、权限和材料均不改。
 
 ### 生态选择与成本
 
@@ -163,7 +163,7 @@ E＝实体表；E+F＝语句涉及实体与事实表（含关联子查询）。�
 - 正确：既有 regular 月结案断言重复列表为空；同口径旧 clear 变异检出 307 次，修后为 0，不以 SELECT 总数减少替代此证据。
 - 无关／相关提交边界：既有召对连续 say、翻译、重开案，未改月历时每个 Ledger 的月历需求只读一次；推进月份后多读一次，并断言日期为 11。旧 clear 变异得 `assert {1, 19} == {1}`。重开产生不同 engine，不把新 Ledger 的首次读取算重复。
 - 不同需求边界：既有 `test_translation_queries_preserve_two_table_permissions` 保留 night/month 两案及原 `declarations_1972.json` 录件；官职、保定府新城县、郭允厚等不同取阅的原结构化结果断言不变。
-- 已知批量错误：既有入殿工具案检查多个人的参数同批进入实际查询，且无逐个 `(person, name)` 查询；恢复旧逐人查后 `assert not True`，`1 failed in 4.41s`。
+- 前轮已知批量错误证据（F3 判定不足，现已替换）：入殿工具案检查多个人的参数同批进入查询，且无逐个 `(person, name)` 查询；恢复旧逐人查后 `assert not True`，`1 failed in 4.41s`。新的按类判定及两种形状变异见下节。
 - 依赖传递回归：把父读的依赖合并临时改成空集合，真实召对入口得 `assert {'王承恩'} == {'杨嗣昌', '王承恩', '王绍徽'}`，`1 failed in 1.92s`；不是只关失效求少读。三处变异已恢复。
 
 clear 变异命令：`PYTHONPATH=/tmp:$PWD .venv/bin/python -m pytest -q -p duplicate1992 --tb=line --show-capture=no 'tests/test_month_steps.py::test_month_pays_affair_from_declaration_month[regular]' 'tests/test_audience.py::test_nights_are_persistent_and_translate_only_after_dismissal[first_night-approved-approved]'` → `2 failed in 7.28s`。
@@ -186,4 +186,51 @@ clear 变异命令：`PYTHONPATH=/tmp:$PWD .venv/bin/python -m pytest -q -p dupl
 
 前述独立 regular 单案为第 32 个通过的聚焦参数案。未跑全量、未 push／开 PR／merge、未送大理寺；ADR 修订仍待评审。临时 threading/cProfile 探针曾超时，已改用 HTTP action 上的标准 cProfile；不把探针失败当测试通过或基础设施故障。
 
-自审三问：入口沿用 HTTP／模型工具／CLI，未造内部函数测试；断言移除正文比较，只保留结构化状态与真实查询参数，并纠正 JSON null 的 changes 不应推进实体字段版本；旧按提交清空、逐条引用／人员／议处查询、隐藏当前月份表达式及内联重复监听均退役。没有新增权限规则、跟随者或第二套读表写者。
+前轮自审记录：入口沿用 HTTP／模型工具／CLI，未造内部函数测试；断言移除正文比较，只保留结构化状态与真实查询参数，并纠正 JSON null 的 changes 不应推进实体字段版本。前轮对「退役已齐、实现范围无剩余」的结论不成立：遗漏 CLI 异步调用边界、tracking 测试引用及另一月份表达式，按以下封驳续修。
+
+## F1–F3 封驳续修（基于 90a9e64c3）
+
+### 修法与边界
+
+- F1：`Court.read_records` 内无异步工作，改回同步调用，CLI、Web、模型工具三个调用方一并改；不加线程桥接或嵌套事件循环适配。Python [asyncio.run 官方文档](https://docs.python.org/3/library/asyncio-runner.html#asyncio.run) 明示：“This function cannot be called when another asyncio event loop is running in the same thread.” `audit` 夹具、原模型回调及业务断言不变。
+- F1：`LANDING` 删除退役 tracking 查询及其等式，只观察事件和事实；保留提交前故障注入、落账有无、库银回滚及重试断言，明确检查故障前可见的事件和 landed 行均未持久化。没有恢复进度表来迁就测试。
+- F2：复用 `month_open(ledger)` 作为唯一的本月截止位表达式，日期来自 `calendar_row`；实体快照和事实权限查询共同引用。`fact_sources` 从一次性全局表改为既有 `read_once` 缓存的查询构造，不重复构造同一需求；重建使用重建库的月历。删除另一内嵌 `MONTH_OPEN`，不改来件排除的基线 `AVAILABLE`。
+- F3：原 `replaying` 只增加对实际发出 `ModelResponse` 的记录；原 `measure_reads` 按这份请求序列的当前位置、engine、实际 SQL 分组，记录完整实体单行结果的 `(kind, key)`。原入殿案据真实 `set_hall.add` 检查：同一请求中同一 SQL 不得逐次返回已知批量中的多个不同单体。不匹配参数元组，不预定按名字还是按 UUID 查询；先后请求不会合组。没有替换工具或数据库行为、没有新增测试函数或夹具。继续使用 [FunctionModel 官方接口](https://ai.pydantic.dev/api/models/function/#pydantic_ai.models.function.FunctionModel)：“A model controlled by a local function.”
+
+### 红绿与变异
+
+同一 F1 命令，在修前 `11 failed, 3 warnings in 11.91s`（2 例月份停在 10，9 例 `no such table: readmodel_tracking`）；修后 `11 passed in 25.27s`：
+
+```sh
+.venv/bin/python -m pytest -q --tb=line --show-capture=no \
+  'tests/test_month_steps.py::test_two_nights_feed_world_and_arrivals_wait_for_audience' \
+  'tests/test_month.py::test_month_lands_both_sides_at_source_stock_and_preserves_nominal'
+```
+
+F3 沿用前节入殿工具案命令：
+
+1. 恢复 `for name in dict.fromkeys(add): ledger.entities(kind="person", key=name)` 的逐人查询：新类判定 `assert False`，`1 failed in 2.61s`。
+2. 保留批量查人，再对每人的 UUID 调 `ledger.entities(entity_id=e["id"])`：同一类判定 `assert False`，`1 failed in 2.55s`。这一路没有旧 `(person, name)` 哨兵形状。
+3. 恢复批量生产实现：`1 passed in 2.58s`；`git diff -- ming/middle/scene.py` 为空，两处变异均已还原。
+
+### 扩大的触及面与结果
+
+此前聚焦覆盖不足。本轮纳入全部使用 `audit` 的测试文件、整个 `test_month.py`，以及直接 CLI、工具权限和读量边界；这是入口替换的触及面，不是全量：
+
+```sh
+.venv/bin/python -m pytest -q --tb=line --show-capture=no tests/test_month.py tests/test_month_steps.py tests/test_audience.py tests/test_court.py tests/test_web.py tests/test_secrets.py tests/test_travel.py tests/test_opening.py tests/test_cli.py tests/test_read_budget.py
+# 165 passed in 337.64s (0:05:37)
+```
+
+耗时为串行中型测试的实际总时间，不称小型/秒级整套测试，不以该结果冒称 CI 全量通过。另单独复核 F2 的召对月界、regular 月结、opening/replay：`10 passed in 20.22s`。
+
+```sh
+SQL_REPORT=/tmp/1992-after-fixes.json PYTHONPATH=/tmp:$PWD .venv/bin/python -m pytest -q -p probe1992 --tb=line --show-capture=no 'tests/test_month_steps.py::test_month_pays_affair_from_declaration_month[regular]'
+# 1 passed in 4.75s
+# SQL_REPORT /tmp/1992-after-fixes.json call statements 714
+# READ_OBSERVATION {'selects': 304, 'rows': 17906, 'repeats': 0}
+```
+
+总 SQL、SELECT、E/F 查询仍为 714／304／143；Q4 月结样本仍零重复。缓存观测峰值变为 309 项，编译缓存 38 项、解析缓存 60 项，仍在原上界内。前表原 `view.month_open` 的两次实体快照事实读取现由 `view.entities` 直接发起，合计没有变化。来件所报召对 `record_catalogue` 的保守失效线索，本轮不外推为已消除。
+
+以上跑时 HEAD 为 `90a9e64c3516ec048de884d74473cca706a45e03` 加本轮工作区，本腿 runId 同前。ruff、pyright、四条 import-linter 合约均通过。自审：无新增生产函数或测试函数；入口仍为 HTTP／CLI／模型工具；删除字面参数哨兵，只断言结构化实体归属及状态；退役 tracking 引用、内嵌 MONTH_OPEN 和无意义 async/await 调用均删除。不推送、不派发角色、不以施工代评审。

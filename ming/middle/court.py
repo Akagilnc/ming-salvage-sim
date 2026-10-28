@@ -47,7 +47,7 @@ from ming.middle.view import (
     Identity,
     character_input,
     entities,
-    FACT_SOURCES,
+    fact_sources,
     ENTITY_SOURCES,
     identity_key,
     project,
@@ -298,7 +298,7 @@ class Court:
         matches = named(self._ledger, kind, keys) if keys is not None else None
         selection: Item = {"catalogue": True, **({"kind": kind} if kind is not None else {}),
                            **({"keys": [r["key"] for r in matches]} if matches is not None else {})}
-        source = FACT_SOURCES[identity_key(identity)]
+        source = fact_sources(self._ledger, identity)
         visible = ENTITY_SOURCES[identity_key(identity)].with_only_columns(E.id).order_by(None)
         if kind is not None:
             source, visible = source.where(E.kind == kind), visible.where(E.kind == kind)
@@ -366,7 +366,7 @@ class Court:
             "facts": [f.model_dump(mode="json") for f in self.facts(identity, entity_id=[e["id"] for e in visible], date=date)],
         }
 
-    async def read_records(
+    def read_records(
         self, identity: Identity, kind: str | None = None,
         key: str | list[str] | None = None, date: Item | None = None,
         *, replay: bool = False,
@@ -374,10 +374,10 @@ class Court:
         """Read one identity projection, sharing one reconstruction for --replay."""
         keys = list(dict.fromkeys(key)) if isinstance(key, list) else [key] if key is not None else None
         selection = {k: v for k, v in {"kind": kind, "keys": keys}.items() if v is not None}
-        query = FACT_SOURCES[identity_key(identity)]
-        query = query.where(E.kind == kind) if kind is not None else query
-        query = query.where(E.key.in_(keys)) if keys is not None else query
         with self._ledger.reading(replay) as ledger:
+            query = fact_sources(ledger, identity)
+            query = query.where(E.kind == kind) if kind is not None else query
+            query = query.where(E.key.in_(keys)) if keys is not None else query
             return {
                 "entities": [e.model_dump(mode="json") for e in entities(ledger, identity, selection)],
                 "facts": [
