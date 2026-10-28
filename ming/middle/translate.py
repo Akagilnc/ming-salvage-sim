@@ -15,7 +15,7 @@ from pydantic_ai import (
 from pydantic_ai.exceptions import ToolRetryError, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelResponse
 
-from ming.ledger import ENTITY_COLUMNS as E, Item, Ledger
+from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS, Item, Ledger
 from ming.middle.fiscal import OUTPUT_METRICS, levers, payable_army, settling
 from ming.middle.declaration import (
     Declaration,
@@ -99,20 +99,6 @@ def check(ledger: Ledger, out: Declaration, materials: TranslationMaterials) -> 
                 names,
                 "entity_type 改成 expected 里的类型，重交整份。",
             )
-        if fact.create and fact.entity_type == "decree":
-            expected, action = (
-                (
-                    {"declaration": NightDeclaration.__name__, "field": "decrees"},
-                    "通用 facts 无法表达成旨所需信息。新旨意须通过整夜声明 NightDeclaration.decrees 提交，来源夜由引擎记录；"
-                    "若只是变更已有旨意，核对其正名并用 create=false。按实际情况重交整份，不得捏造来源、改换对象或丢项。",
-                ) if isinstance(out, NightDeclaration) else (
-                    {"declaration": Declaration.__name__, "field": "facts"},
-                    "月末 Declaration 没有新建谕旨的出口，不要添加 decrees。回查月定稿：已发生的后果按实际实体写入 facts，"
-                    "按需引用输入 decrees 的下标；奏报与公开说法写 reports。若是变更已有旨意，用其正名及 create=false。"
-                    "移除误作新旨意的包装，保留实际后果并重交整份；不得捏造来源夜、成旨轮次或尚未发生的后果。",
-                )
-            )
-            fail(path + ".create", True, expected, names, action)
         if fact.create and fact.entity_type in CATALOGUES:
             fail(
                 path + ".create",
@@ -258,6 +244,16 @@ def check_fiscal(ledger: Ledger, out: Declaration, names: Names) -> None:
         if r["data"].get("direction") == "expense"
     }
     funding = check_funding(ledger, out, names)
+    materials: Item = {
+        "historical_event": {fact.entity: [] for fact in out.facts if fact.entity_type == "historical_event"
+                             and any(c.field == "terminal_reason" for c in fact.changes)},
+        "army": [row["key"] for row in ledger.entities(kind="army") if payable_army(row["data"])]
+        if any(fact.entity_type == "account" and any(c.field == "army_order" for c in fact.changes) for fact in out.facts) else [],
+    }
+    if materials["historical_event"]:
+        materials["historical_event"].update((row["key"], row["data"].get("terminal_reason_labels", [])) for row in ledger.entities(
+            kind="historical_event", query=ENTITY_ROWS.where(E.key.in_(materials["historical_event"])),
+        ))
     # A fiscal lever only on an entity the month accounts read it from.
     targets = {
         ("fiscal", "value"): levers(config),
@@ -291,11 +287,7 @@ def check_fiscal(ledger: Ledger, out: Declaration, names: Names) -> None:
                         "output_metric 改成 expected 里的计量，重交整份。",
                     )
             if (fact.entity_type, change.field) == ("historical_event", "terminal_reason"):
-                labels = [
-                    label
-                    for row in ledger.entities(kind="historical_event", key=fact.entity)
-                    for label in row["data"].get("terminal_reason_labels", [])
-                ]
+                labels = materials["historical_event"].get(fact.entity, [])
                 if change.value not in labels:
                     fail(
                         path + ".value",
@@ -309,11 +301,7 @@ def check_fiscal(ledger: Ledger, out: Declaration, names: Names) -> None:
                 "army_order",
             }:
                 choices = (
-                    [
-                        r["key"]
-                        for r in ledger.entities(kind="army")
-                        if payable_army(r["data"])
-                    ]
+                    materials["army"]
                     if change.field == "army_order"
                     else [
                         key

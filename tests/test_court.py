@@ -348,10 +348,12 @@ def test_recorded_r2_reply_lands(game_db, steps, audit, case):
 def test_translation_queries_preserve_two_table_permissions(game_db, steps, stage):
     recording = json.loads((RECORDED / "declarations_1972.json").read_text())["cases"]
     received = []
+    offices = ["陕西巡抚", "巡抚", "新城知县", "西安知府", "内阁大学士", "陕西巡府", "不存在的官职", "内阁大学士"]
     steps["NightDeclaration"] = replaying([(RECORDED / "night_empty.txt").read_text()])
     steps["NightDeclaration" if stage == "night" else "Declaration"] = replaying(
-        [ModelResponse(parts=[ToolCallPart("read_records", {"kind": "incumbency", "key": name}, tool_call_id=name)
-                              for name in ("陕西巡抚", "巡抚", "新城知县", "西安知府", "内阁大学士", "陕西巡府", "不存在的官职")]),
+        [ModelResponse(parts=[ToolCallPart("read_records", {"kind": "incumbency", "key": offices}, tool_call_id="batch"),
+                              *(ToolCallPart("read_records", {"kind": "incumbency", "key": name}, tool_call_id=name)
+                                for name in dict.fromkeys(offices))]),
          *ModelMessagesTypeAdapter.validate_python(recording["night_catalogue_queries" if stage == "night" else "catalogue_queries"])], received,
     )
     with TestClient(create_app(game_db.parent)) as client:
@@ -363,6 +365,13 @@ def test_translation_queries_preserve_two_table_permissions(game_db, steps, stag
         assert client.get("/state").json()["game"]["failure"] is None
     queries = {p.tool_call_id: p.args_as_dict() for m in received for p in m.parts if isinstance(p, ToolCallPart)}
     results = {p.tool_call_id: p.model_response_object() for m in received for p in m.parts if isinstance(p, ToolReturnPart)}
+    batches = [[(
+        {field: result.get(field) for field in ("status", "appointments", "territories", "pairs", "names_and_aliases")},
+        [e["id"] for e in result.get("entities", [])],
+        [(f["entity_id"], f["kind"]) for f in result.get("facts", [])],
+    ) for result in batch] for batch in (results.pop("batch")["offices"], [results[name] for name in offices])]
+    assert batches[0] == batches[1]
+    queries.pop("batch")
     for call_id, query in queries.items():
         result = results[call_id]
         if query.get("kind") == "incumbency":

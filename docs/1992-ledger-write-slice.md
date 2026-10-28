@@ -447,3 +447,37 @@ SQL_REPORT=/tmp/1992-direct-after.json PYTHONPATH=/tmp:$PWD \
 本轮跨多个文件是已有日期／材料接口的完整消费者迁移，以及解析—校验—落账共用同一批材料，不能只改生产者留下旧 fallback；不是新增平台或通用组件。超过 400 行的重点审查面是任官 SQL、月内材料传递与观察边界，其余主要为调用签名和删除旧读取。
 
 **仍非终验**：R1／R2 施工与上述聚焦验证不等于独立评审或全量通过。未 push、开 PR、合并或派审；最终待合并状态仍须完成票面 `1f2d13220` 对最终 HEAD 的全量串行 cProfile／CPU 对照及十分钟 CI，ADR 仍待评审。
+
+## J-current-1／2：撤销检查与批量取阅（基于 1d1d33d70）
+
+本轮 runId：`01a184d9-e7ac-7cdf-879e-8e47f248aad4`。判卷为 `01a184ce-64ae-7cbc-af1d-32cb805d61f3@judge/current.json`。删除 `translate.check` 的通用 facts 建旨拒绝，以及召对／月末专属输入改造、反馈断言和参数案；不添加替代检查。原有非法字段、其他失败路径及已有旨意更新仍保留。
+
+`read_records` 把整组官职交给原 `office_pairs`；缺少的任职记录、可见性、官职实体和事实按组读取，最后按输入顺序组装，重复 key 不丢。单 key 的未包装结果与多 key 的 `offices` 契约不变。沿调用链扫到的同类读取也合并：夜谈的结果／turn 投影、声明内人物初态、财政校验的历史事件标签与军队付序名单。未新增缓存、读依赖分析、持久结构或护栏。
+
+仍使用官方现查方式：[Searchable timestamps](https://eventsourcing.readthedocs.io/en/stable/topics/examples/searchable-timestamps.html) 的 `recorder.get_version_at_timestamp(tracking_id, timestamp)`；列表条件复用仓内 SQLAlchemy `in_`，[官方 IN 文档](https://docs.sqlalchemy.org/en/20/core/operators.html#in-against-a-list-of-values) 原句：“IN is available most typically by passing a list of values to the ColumnOperators.in_() method”。未从库源码推断用法。
+
+### 真实入口与变异
+
+复用 `test_scene_tools_use_physical_location_not_office_and_project_dossiers`，由 HTTP load／say 进入，模型一次取两官职。既有观察器按本次 tool call 与真实返回的实体归属断言，不按 SQL 文本或参数写法判重。原逻辑先红：`1 failed in 2.04s`，两个结果正确但批量断言失败（toolCallId `call_fe5353fb9a5f4262be09e12b03448dc6`）。
+
+修后再次装回 `records.py` 的逐 key 调用，命令：
+
+```sh
+PYTHONPATH=/tmp/1992-fixer-probes:$PWD .venv/bin/python -m pytest -q -s \
+  -p office_probe --tb=line --show-capture=no \
+  tests/test_audience.py::test_scene_tools_use_physical_location_not_office_and_project_dossiers
+```
+
+临时探针只观察实际调用和返回，不替换查询结果。旧拆批：`1 failed in 1.54s`，本次工具 11 次查询、9 行、2 次 office_record；恢复：`1 passed in 1.50s`，6 次查询、9 行、1 次 office_record。带探针的 office_record 合计为 0.133s／0.111s；这是单次局部观测，不是可靠的全局加速结论。变异已恢复；探针留在明确的 `/tmp/1992-fixer-probes/` 调试目录，不进入仓库。
+
+原 `test_translation_queries_preserve_two_table_permissions` 增加批量／逐项对照，保留两种身份、地域缺失、歧义、未知官职、近似名称及重复 key；只比较状态、任职材料、目录候选、实体 ID 与事实归属，不锁正文。
+
+### 验证与自审
+
+- 召对、身份、月末校验／财政、行程触及面：`47 passed in 45.95s`（toolCallId `call_9a6c96bc3a374203a87f01174e1b9d0d`）。之后补充批量边界并复验。
+- 最后聚焦命令：`.venv/bin/python -m pytest -q --tb=line --show-capture=no tests/test_court.py::test_translation_queries_preserve_two_table_permissions tests/test_read_budget.py tests/test_audience.py::test_scene_tools_use_physical_location_not_office_and_project_dossiers tests/test_secrets.py::test_every_model_call_reads_identity_scoped_records tests/test_travel.py` → `15 passed in 14.62s`。跑时 HEAD 为 `1d1d33d70252276af7aad88167b0ee412f4acf95` 加本轮工作区；随后只清理未使用的解包变量与补本记录。
+- AST 自审新增项：`read_nights` 是原 `read_night` 的批量改写，旧函数删除、调用方迁移；`Court.office_record.result` 是批读后的纯结果组装，无查询，仓内无独立同职函数。无新增测试函数／夹具。
+- 扫描全部生产循环读取及其下游；独立 CLI 动作、恢复失败后的现状读取、库原生聚合获取不冒称同一读表批次。声明人物按顺序回放的行程检查保留顺序，不预先把后条事实的状态套到前条。
+- 撤销类从票面起点 `1f2d13220` 对工作区逐文件检查；指定检查与专属测试内容已删除。没有恢复旧缓存或偷加读侧吞错。
+
+本轮仅交修理，不宣称关票或最终验收。全量剖析、CPU 对照、CI、PR 对齐和独立评审仍按最终待合并状态执行；未 push、开 PR 或合并。

@@ -27,15 +27,6 @@ def test_nights_are_persistent_and_translate_only_after_dismissal(
     tmp_path: Path, game_db: Path, steps, audit, recording
 ) -> None:
     case = json.loads((RECORDED / f"night_{recording}.json").read_text())
-    received = []
-    if recording == "approved":
-        rejected = json.loads(json.loads((RECORDED / "night_invalid.json").read_text())["cases"]["decree_field"]["reply"])
-        rejected["facts"][0]["changes"] = [
-            {"field": field, "value": value}
-            for field, value in json.loads(case["replies"][-1])["decrees"][0].items()
-            if field in {"text", "origin", "people"}
-        ]
-        steps["NightDeclaration"] = replaying([json.dumps(rejected), case["replies"][-1]], received)
     with TestClient(create_app(tmp_path)) as client:
         save = client.post(
             "/actions", json={"action": "load", "save": game_db.name}
@@ -62,8 +53,6 @@ def test_nights_are_persistent_and_translate_only_after_dismissal(
         orders = [e for e in ledger["entities"] if e["kind"] == "decree"]
         assert orders
         if recording == "approved":
-            assert [json.loads(p.content)["expected"] for m in received for p in m.parts
-                    if isinstance(p, RetryPromptPart)] == [{"declaration": "NightDeclaration", "field": "decrees"}]
             steps["Declaration"] = replaying([json.dumps({"facts": [{
                 "entity_type": "decree", "entity": orders[0]["key"], "create": False,
                 "changes": [{"field": "people", "value": []}], "text": "",
@@ -112,8 +101,10 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
 ) -> None:
     case = json.loads((RECORDED / "night_tools.json").read_text())
     received, sent = [], []
+    case["offices"] = ["内阁首辅", "户部尚书"]
     steps["scene"] = replaying(
         [
+            ModelResponse(parts=[ToolCallPart("read_records", {"kind": "office", "key": case["offices"]}, tool_call_id="offices")]),
             ModelResponse(parts=[ToolCallPart("read_records", {"kind": "person", "key": "王体乾"}, tool_call_id="before")]),
             ModelResponse(parts=[ToolCallPart("set_hall", {"add": ["王体乾"], "remove": []})]),
             ModelResponse(parts=[ToolCallPart("read_records", {"kind": "person", "key": "王体乾"}, tool_call_id="after")]),
@@ -164,6 +155,10 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
     for operation, names in batches:
         members = {("person", name) for name in names}
         assert all(len(found & members) <= 1 for (current, _, _), found in reads["singletons"].items() if current == operation)
+    assert [result["status"] for result in returned["offices"][1]["offices"]] == ["occupied", "occupied"]
+    assert [result["appointments"][0]["holders"] for result in returned["offices"][1]["offices"]] == [["黄立极"], ["郭允厚"]]
+    assert all(len(found & {("office", name) for name in case["offices"]}) <= 1
+               for (_, _, call_id), found in reads["singletons"].items() if call_id == "offices"), reads["singletons"]
     before, after = (returned[key][1]["entities"][0] for key in ("before", "after"))
     assert before["key"] == after["key"] == "王体乾"
     for field in ("name", "location", "appointments"):
@@ -174,7 +169,7 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
     assert {(f["name"], f["found"]) for f in absent["failures"]} == {("徐光启", True), ("张三", False)}
     assert set(absent["hall"]) == {"王承恩", "杨嗣昌", "王绍徽"}
     dossier = next(value["entities"][0]["data"] for name, value in returned.values()
-                   if name == "read_records" and value["entities"][0]["key"] == "徐光启")
+                   if name == "read_records" and value.get("entities") and value["entities"][0]["key"] == "徐光启")
     assert dossier["location"] == "南直隶 / 南京"
     assert dossier["status"] == "offstage"
     assert not {"loyalty", "ability", "integrity", "courage", "intrigue"}.intersection(dossier)
@@ -288,13 +283,9 @@ def test_failed_night_translation_is_terminal_and_reaches_following_nights(
 ) -> None:
     recording = json.loads((RECORDED / "night_invalid.json").read_text())
     cases = recording["cases"]
-    rejected = json.loads(cases["decree_field"]["reply"])
-    rejected["facts"][0]["changes"] = []
-    cases = {"decree_creation": {**cases.pop("decree_field"), "reply": json.dumps(rejected)}, **cases}
-    received = []
     steps["scene"] = replaying([case["scene"] for case in cases.values()])
     steps["NightDeclaration"] = replaying(
-        [case["reply"] for case in cases.values() for _ in range(2)], received,
+        [case["reply"] for case in cases.values() for _ in range(2)],
     )
     with TestClient(create_app(tmp_path)) as client:
         save = client.post(
@@ -324,11 +315,6 @@ def test_failed_night_translation_is_terminal_and_reaches_following_nights(
             assert state["night"]["result"] == "unhandled"
             assert state["failure"] is None
             ledger = audit(tmp_path / save)
-            if case == "decree_creation":
-                assert [json.loads(p.content)["expected"] for m in received for p in m.parts
-                        if isinstance(p, RetryPromptPart)] == [{"declaration": "NightDeclaration", "field": "decrees"}]
-                assert set(next(f["detail"]["result"] for f in ledger["facts"]
-                                if f["kind"] == "unhandled")) == {"model_text", "failure_point"}
             nights.append(state["night"]["id"])
             assert [
                 e for e in ledger["entities"] if e["kind"] != "night"

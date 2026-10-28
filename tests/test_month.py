@@ -12,7 +12,7 @@ from sqlalchemy import event, text
 from sqlalchemy.orm import Session
 from starlette.testclient import TestClient
 
-from ming.middle.declaration import Declaration, PendingPetition
+from ming.middle.declaration import PendingPetition
 from ming.middle.view import Officials
 from ming.web import create_app
 from tests.test_court import replaying
@@ -746,10 +746,6 @@ def test_fiscal_petition_lands_only_declared_outcome_without_readding_levies(
             ("positive_counterpart", "facts[0].changes[0].value"),
         ]],
         pytest.param((RECORDED / "month_invalid.txt").read_text(), id="invalid_shape"),
-        pytest.param([
-            {**fact, "entity_type": "decree"}
-            for fact in json.loads((RECORDED / "month_fiscal_building.txt").read_text())["facts"]
-        ], id="decree_creation"),
         pytest.param(
             [
                 {
@@ -955,18 +951,3 @@ def test_exhausted_month_declaration_is_unhandled_not_a_stopped_month(
                 steps["Declaration"] = replaying([(RECORDED / "month_empty.txt").read_text()])
                 client.post("/actions", json={"action": "month"}).raise_for_status()
                 assert client.get("/state").json()["game"]["unhandled_monthly"] == []
-        elif isinstance(declared, list) and any(f["entity_type"] == "decree" for f in declared):
-            failure = [json.loads(p.content)["expected"] for m in received for p in m.parts
-                       if isinstance(p, RetryPromptPart)]
-            assert failure == [{"declaration": "Declaration", "field": "facts"}]
-            assert failure[0]["field"] in Declaration.model_fields
-            steps["Declaration"] = replaying([reply, json.dumps({
-                failure[0]["field"]: [{**fact, "entity_type": "building"} for fact in declared],
-            })])
-            client.post("/actions", json={"action": "month"}).raise_for_status()
-            assert client.get("/state").json()["game"]["unhandled_monthly"] == []
-            assert next(e["data"]["condition"] for e in audit(tmp_path / save)["entities"]
-                        if e["kind"] == "building" and e["key"] == declared[0]["entity"]) == 55
-            client.post("/actions", json={"action": "open"}).raise_for_status()
-            client.post("/actions", json={"action": "say", "words": "继续议事。"}).raise_for_status()
-            assert client.get("/state").json()["game"]["failure"] is None

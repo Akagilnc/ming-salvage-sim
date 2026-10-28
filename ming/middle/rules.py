@@ -6,7 +6,7 @@ from typing import Any, Never
 
 from pydantic_ai import ModelRetry
 
-from ming.ledger import Entity, Item, Ledger
+from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS, Entity, Item, Ledger
 from ming.middle.appointments import CATALOGUE_KINDS
 from ming.middle.declaration import Declaration, Fact
 from ming.middle.fiscal import WAN, current_paid, has_obligation, obligation
@@ -40,7 +40,10 @@ def fail(field: str, value: object, expected: object, names: Names, how: str) ->
 
 
 def check_rules(ledger: Ledger, out: Declaration, names: Names, date: Item) -> None:
-    people: dict[str, Entity] = {}
+    rows: dict[str, Item] = {fact.entity: {} for fact in out.facts if fact.entity_type == "person"}
+    if rows:
+        rows.update((row["key"], row["data"]) for row in ledger.entities(kind="person", query=ENTITY_ROWS.where(E.key.in_(rows))))
+    people = {key: Entity("person", key, "", dict(data)) for key, data in rows.items()}
     for i, fact in enumerate(out.facts):
         person = check_journey(ledger, fact, f"facts[{i}]", names, people)
         if fact.affair is not None and fact.affair not in names.get("affair", {}):
@@ -72,9 +75,6 @@ def check_rules(ledger: Ledger, out: Declaration, names: Names, date: Item) -> N
 def check_journey(ledger: Ledger, fact: Fact, path: str, names: Names, people: dict[str, Entity]) -> Entity | None:
     if fact.entity_type != "person":
         return None
-    if fact.entity not in people:
-        rows = ledger.entities(kind="person", key=fact.entity)
-        people[fact.entity] = Entity("person", fact.entity, "", dict(rows[0]["data"]) if rows else {})
     person = people[fact.entity]
     changes = {c.field: c.value for c in fact.changes}
     try:

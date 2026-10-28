@@ -35,7 +35,7 @@ from ming.middle.invoke import ModelSource
 from ming.middle.records import TranslationMaterials
 from ming.middle.rules import matching_names
 from ming.middle.opening import opening_template
-from ming.middle.night import NightView, dismiss, known_people, open_night, read_night
+from ming.middle.night import NightView, dismiss, known_people, open_night, read_nights
 from ming.middle.scene import HallResult, set_hall
 from ming.middle.translate import declaration_agent, translate
 from ming.middle.translate import catalogue as names_and_aliases
@@ -92,7 +92,7 @@ class Court:
         return open_night(self._ledger)
 
     def night(self, night_id: UUID) -> NightView:
-        return read_night(self._ledger, night_id)
+        return read_nights(self._ledger, [night_id])[0]
 
     def dismiss(self, night_id: UUID) -> None:
         dismiss(self._ledger, night_id)
@@ -101,7 +101,7 @@ class Court:
         return set_hall(self._ledger, night_id, add, remove)
 
     def nights(self) -> tuple[NightView, ...]:
-        return tuple(read_night(self._ledger, e["id"], row=e) for e in self._ledger.read(queries.LATEST_NIGHT))
+        return read_nights(self._ledger, [], rows=self._ledger.read(queries.LATEST_NIGHT))
 
     def pending_nights(self) -> tuple[UUID, ...]:
         return tuple(
@@ -331,37 +331,56 @@ class Court:
             )
         return result
 
-    def office_record(self, identity: Identity, key: str, date: Item | None = None) -> Item:
-        resolutions, records = office_pairs(self._ledger, [key], partial(visible_appointments, self._ledger, identity))
-        pairs, resolution, _ = resolutions[key]
-        if resolution["status"] == "territory_required":
-            return resolution
-        if resolution["status"] == "office_not_found":
-            names = self.catalogue([*self.record_catalogue(identity, kind="office"), *self.record_catalogue(identity, kind="territory")])
-            prefix = max((label for name, aliases in names.get("territory", {}).items()
-                          for label in [name, *aliases] if key.startswith(label)), key=len, default="")
-            candidates = matching_names({"office": names.get("office", {})}, [key])
-            if not candidates:
-                candidates = {"office": {name: names["office"][name] for name in get_close_matches(
-                    key[len(prefix):], list(names.get("office", {})), n=len(names.get("office", {})) + 1, cutoff=0.5
-                )}}
-                if not candidates["office"]:
-                    candidates = {}
-            return {"status": "office_not_found", "names_and_aliases": candidates}
-        office = pairs[0][0]
-        record_key, data = incumbency_record(pairs[0], [])
-        rows = [row for row in records if row["kind"] == "incumbency" and row["key"] == record_key] or self._ledger.entities(kind="incumbency", key=record_key)
-        visible = visible_appointments(self._ledger, identity, rows)
-        if rows and not visible:
-            return {"status": "not_found", "message": "未找到"}
-        if visible:
-            data = visible[0]["data"]
-        return {
-            "status": "occupied" if data["holders"] else "acting" if data["acting"] else "vacant",
-            "appointments": [data],
-            "entities": [e.model_dump(mode="json") for e in self.entities(identity, kind="office", key=office)],
-            "facts": [f.model_dump(mode="json") for f in self.facts(identity, entity_id=[e["id"] for e in visible], date=date)],
-        }
+    def office_record(self, identity: Identity, key: str | list[str], date: Item | None = None) -> Item:
+        keys = [key] if isinstance(key, str) else key
+        resolutions, records = office_pairs(self._ledger, keys, partial(visible_appointments, self._ledger, identity))
+        requests = {name: incumbency_record(pairs[0], []) for name, (pairs, resolution, _) in resolutions.items()
+                    if resolution["status"] == "resolved"}
+        requested = dict(requests.values())
+        rows = {row["key"]: row for row in records if row["kind"] == "incumbency" and row["key"] in requested}
+        if missing := requested.keys() - rows.keys():
+            rows.update((row["key"], row) for row in self._ledger.entities(kind="incumbency", query=ENTITY_ROWS.where(E.key.in_(missing))))
+        visible = {row["key"]: row for row in visible_appointments(self._ledger, identity, list(rows.values()))}
+        offices = {e.key: e.model_dump(mode="json") for e in self.entities(
+            identity, kind="office", key=list({data["office"] for data in requested.values()}),
+        )} if requested else {}
+        facts: dict[UUID, list[Item]] = {row["id"]: [] for row in visible.values()}
+        if facts:
+            for fact in self.facts(identity, entity_id=list(facts), date=date):
+                facts[fact.entity_id].append(fact.model_dump(mode="json"))
+        names = self.catalogue([*self.record_catalogue(identity, kind="office"), *self.record_catalogue(identity, kind="territory")]) if any(
+            resolution["status"] == "office_not_found" for _, resolution, _ in resolutions.values()
+        ) else {}
+
+        def result(name: str) -> Item:
+            _, resolution, _ = resolutions[name]
+            if resolution["status"] == "territory_required":
+                return resolution
+            if resolution["status"] == "office_not_found":
+                prefix = max((label for key, aliases in names.get("territory", {}).items()
+                              for label in [key, *aliases] if name.startswith(label)), key=len, default="")
+                candidates = matching_names({"office": names.get("office", {})}, [name])
+                if not candidates:
+                    candidates = {"office": {key: names["office"][key] for key in get_close_matches(
+                        name[len(prefix):], list(names.get("office", {})), n=len(names.get("office", {})) + 1, cutoff=0.5
+                    )}}
+                    if not candidates["office"]:
+                        candidates = {}
+                return {"status": "office_not_found", "names_and_aliases": candidates}
+            record_key, _ = requests[name]
+            if record_key in rows and record_key not in visible:
+                return {"status": "not_found", "message": "未找到"}
+            row = visible.get(record_key)
+            data = row["data"] if row else requested[record_key]
+            return {
+                "status": "occupied" if data["holders"] else "acting" if data["acting"] else "vacant",
+                "appointments": [data],
+                "entities": [offices[data["office"]]] if data["office"] in offices else [],
+                "facts": facts[row["id"]] if row else [],
+            }
+
+        results = [result(name) for name in keys]
+        return results[0] if len(results) == 1 else {"offices": results}
 
     def read_records(
         self, identity: Identity, kind: str | None = None,

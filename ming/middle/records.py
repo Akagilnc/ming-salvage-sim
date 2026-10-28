@@ -54,9 +54,7 @@ async def read_records(
     month = date.model_dump() if date is not None else None
     identity = ctx.deps.identity
     if kind in {"office", "incumbency"} and key:
-        results = [ctx.deps.court.office_record(identity, name, month)
-                   for name in ([key] if isinstance(key, str) else key)]
-        return results[0] if len(results) == 1 else {"offices": results}
+        return ctx.deps.court.office_record(identity, key, month)
     keys = ([key] if isinstance(key, str) else key) or None
     catalogue = ctx.deps.court.record_catalogue(identity, month, kind, keys)
     selected = [e for e in catalogue if kind is None or e["kind"] == kind]
