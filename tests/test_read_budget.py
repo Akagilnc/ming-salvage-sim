@@ -25,18 +25,20 @@ RECORDED = Path(__file__).parent / "recorded"
 @contextmanager
 def measure_reads(operations=None):
     """Observe real SQL without consuming its cursor or replacing the read path."""
-    result = {"budget": [0, 0], "repeated": [], "queries": [], "singletons": {}}
+    result = {"budget": [0, 0], "repeated": [], "queries": [], "singletons": {}, "notifications": []}
     previous = {}
     fields = {"id", "entity_id", "position", "kind", "key", "event_count", "person", "ordinal", "result", "exposure", "originator_id", "originator_version"}
 
     def count_reads(**query):
         statement, parameters = query["statement"], query["parameters"]
-        if statement.lstrip().upper().startswith("SELECT"):
+        if query["context"].compiled is not None and query["context"].compiled.statement.is_select:
             probe = query["conn"].connection.cursor()
             try:
                 probe.execute(statement, parameters)
                 rows = tuple(probe.fetchall())
                 columns = [column[0] for column in probe.description]
+                if "ledger_events_id" in columns:
+                    result["notifications"].extend(row[columns.index("ledger_events_id")] for row in rows)
                 identity_column = columns.index("id") if {"id", "kind", "key", "data"} <= set(columns) else None
                 identities = {row[identity_column] for row in rows} if identity_column is not None else set()
                 versions = {}

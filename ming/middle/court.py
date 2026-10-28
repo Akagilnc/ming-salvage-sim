@@ -543,8 +543,10 @@ class Court:
 
     @read_once
     def known_people(self, decree: EntityView) -> frozenset[str]:
-        readers = known_people(literal(decree.data, type_=JSON), [UUID(decree.data["night_id"])]).subquery()
-        return frozenset(row["person"] for row in self._ledger.read(select(readers.c.person)))
+        readers = known_people(literal(decree.data, type_=JSON)).subquery()
+        return frozenset(row["person"] for row in self._ledger.read(
+            select(readers.c.person), {"decree_nights": [UUID(decree.data["night_id"])]},
+        ))
 
     @read_once
     def consequences(self, decree: UUID) -> tuple[FactView, ...]:

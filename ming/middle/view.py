@@ -20,7 +20,6 @@ from ming.middle.travel import travel_days
 OPENING_CONTROLS = {"interaction", "petition", "choice", "gazette", "secret_report"}
 EMPTY_ACCOUNTS = select(E.id).where(literal(False)).correlate(None)
 READ_PEOPLE: BindParameter[str] = bindparam("read_people", expanding=True)
-DECREE_NIGHTS: BindParameter[UUID] = bindparam("decree_nights", expanding=True)
 APPOINTED_PEOPLE: BindParameter[str] = bindparam("appointed_people", expanding=True)
 HELD_BY = held_by(APPOINTED_PEOPLE)
 EXCLUDE_SECRETS: BindParameter[bool] = bindparam("exclude_secrets", False)
@@ -99,7 +98,6 @@ def decree_nights(ledger: Ledger) -> tuple[UUID, ...]:
     )))
 
 
-@read_once
 def view_parameters(ledger: Ledger, identity: Identity, kind: str | None = None) -> Item:
     return {
         "decree_nights": decree_nights(ledger) if isinstance(identity, Officials) else (),
@@ -133,7 +131,7 @@ def decree_access(identity: Identity, reference: ColumnElement[Any]) -> dict[str
             (decree.data["secret"].as_boolean(), decree.data["handler"].as_string().in_(READ_PEOPLE)),
             else_=select(people.c.value).where(people.c.value.in_(READ_PEOPLE)).exists(),
         )
-        known = or_(known, known_people(decree.data, DECREE_NIGHTS, READ_PEOPLE).exists())
+        known = or_(known, known_people(decree.data, READ_PEOPLE).exists())
         allowed = ~EXCLUDE_SECRETS | decree.data["secret"].as_boolean().is_(False)
         known = known & allowed
         handled = handled & allowed

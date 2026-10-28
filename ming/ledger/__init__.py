@@ -4,8 +4,8 @@ from collections.abc import Callable, Generator, Iterable, Mapping
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from functools import cache, lru_cache, partial, wraps
-from itertools import product
 from inspect import signature
+from sys import maxsize
 from pathlib import Path
 from threading import RLock
 from typing import Any, ParamSpec, TypeVar, cast
@@ -17,10 +17,12 @@ from eventsourcing.application import Application, LocalNotificationLog
 from eventsourcing.persistence import Recording
 from eventsourcing.domain import CanMutateAggregate
 from eventsourcing_sqlalchemy.recorders import SQLAlchemyApplicationRecorder
-from sqlalchemy import Engine, Select
+from sqlalchemy import Engine, Select, TupleType
 from sqlalchemy.dialects.sqlite import dialect, insert
 from sqlglot import exp, parse_one
 from sqlglot.optimizer.scope import Scope, build_scope, find_all_in_scope
+from sqlglot.jsonpath import parse as parse_json_path
+from sqlglot.optimizer.normalize import normalize
 from sqlglot.optimizer.simplify import simplify
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.cache_key import CacheKey
@@ -90,29 +92,26 @@ def column_source(scope: Scope, column: exp.Column) -> tuple[Scope, str]:
     return scope, column.table
 
 
-def query_terms(node: exp.Expr, *, nonnull: bool = False) -> list[list[exp.Expr]]:
-    """Expose alternative selectors without copying or mutating the SQL tree."""
+def query_terms(node: exp.Expr, atoms: dict[exp.Expr, str], *, nonnull: bool = False) -> exp.Expr:
+    """Expose CASE branches; keep nested SQL opaque to boolean normalization."""
     node = node.unnest()
     if nonnull:
         if isinstance(node, exp.Case):
-            # Null-producing branches cannot contribute rows. Conditions that
-            # reject an earlier branch remain in the original SQL permission.
-            return [left + right for branch in node.args["ifs"]
-                    for left, right in product(query_terms(branch.this), query_terms(branch.args["true"], nonnull=True))] + query_terms(
-                        node.args.get("default") or exp.Null(), nonnull=True)
-        return [] if isinstance(node, exp.Null) else [[]]
-    if isinstance(node, exp.And):
-        return [left + right for left, right in product(query_terms(node.this), query_terms(node.expression))]
-    if isinstance(node, exp.Or):
-        return query_terms(node.this) + query_terms(node.expression)
+            return exp.or_(*(exp.and_(query_terms(branch.this, atoms), query_terms(branch.args["true"], atoms, nonnull=True))
+                             for branch in node.args["ifs"]),
+                           query_terms(node.args.get("default") or exp.Null(), atoms, nonnull=True))
+        return exp.convert(not isinstance(node, exp.Null))
+    if isinstance(node, (exp.And, exp.Or)):
+        return type(node)(this=query_terms(node.this, atoms), expression=query_terms(node.expression, atoms))
     if isinstance(node, exp.Not) and isinstance(node.this, exp.Is) and isinstance(node.this.expression, exp.Null):
-        return query_terms(node.this.this, nonnull=True)
-    return [[node]]
+        return query_terms(node.this.this, atoms, nonnull=True)
+    if isinstance(node, exp.Boolean):
+        return node.copy()
+    return exp.Placeholder(this=atoms.setdefault(node, f"p{len(atoms)}"))
 
 
-@lru_cache
-def json_path(value: str) -> exp.JSONPath:
-    return cast(exp.JSONPath, parse_one("JSON_EXTRACT(data, " + exp.convert(value).sql() + ")", dialect="sqlite").expression)
+json_path = lru_cache(parse_json_path)
+type QueryPlan = tuple[Scope, dict[Scope, list[exp.Expr]], dict[Scope, list[list[exp.Expr]]], dict[tuple[Scope, str, str], set[tuple[Scope, str, str]]]]
 
 
 def query_selector(scope: Scope, node: exp.Expr, parameters: Mapping[str, Any]) -> tuple[tuple[Scope, str, str], frozenset[Any]] | None:
@@ -130,26 +129,18 @@ def query_selector(scope: Scope, node: exp.Expr, parameters: Mapping[str, Any]) 
         field, column = "detail:" + path.expressions[1].name, column.this
     elif field not in {"id", "entity_id", "kind", "key", "source", "position"}:
         return None
-    if isinstance(node, exp.In) and (query := node.args.get("query")) is not None:
-        where = query.this.args.get("where")
-        if (isinstance(column, exp.Column) and where is not None
-                and not any(where.this.find_all(exp.Column, exp.Placeholder, exp.Subquery))
-                and simplify(where.this.copy()) == exp.false()):
-            return (*column_source(scope, column), field), frozenset()
     values = node.expressions if isinstance(node, exp.In) else [node.expression]
     if not isinstance(column, exp.Column) or not values or not all(isinstance(v, (exp.Placeholder, exp.Literal)) for v in values):
         return None
-    return (*column_source(scope, column), field), frozenset(parameters[v.name] if isinstance(v, exp.Placeholder) else v.to_py() for v in values)
+    bound = [parameters[v.name] if isinstance(v, exp.Placeholder) else v.to_py() for v in values]
+    return (*column_source(scope, column), field), frozenset[Any]().union(*(cast(tuple[Any, ...], v) if isinstance(v, tuple) else (v,) for v in bound))
 
 
-def query_graph(
-    roots: dict[Scope, list[exp.Expr]],
-    selector: Callable[[Scope, exp.Expr], tuple[tuple[Scope, str, str], frozenset[Any]] | None],
-) -> nx.Graph[tuple[Scope, str, str]]:
+def query_graph(roots: dict[Scope, list[exp.Expr]]) -> nx.Graph[tuple[Scope, str, str]]:
     """Link unconditional equalities; alternative branch values stay separate."""
     graph: nx.Graph[tuple[Scope, str, str]] = nx.Graph()
-    for scope, conditions in roots.items():
-        for node in (node for root in conditions for node in (root.flatten() if isinstance(root, exp.And) else [root])):
+    for scope, nodes in roots.items():
+        for node in nodes:
             if isinstance(node, exp.EQ) and isinstance(node.this, exp.Column) and isinstance(node.expression, exp.Column):
                 left = (*column_source(scope, node.this), node.this.name)
                 right = (*column_source(scope, node.expression), node.expression.name)
@@ -158,49 +149,40 @@ def query_graph(
                     if entity[2] == "id" and fact[2] == "entity_id":
                         for field in ("kind", "key", "source"):
                             graph.add_edge((*entity[:2], field), (*fact[:2], "entity_" + field))
-            elif selected := selector(scope, node):
-                key, values = selected
-                graph.add_node(key, values=values & graph.nodes[key].get("values", values) if key in graph else values)
     return graph
 
 
-def query_filters(sources: list[Scope], parameters: Mapping[str, Any]) -> dict[tuple[Scope, str], set[tuple[tuple[str, frozenset[Any]], ...]]]:
-    """Propagate immutable selectors through SQL equality joins/correlation."""
-    roots: dict[Scope, list[exp.Expr]] = {}
-    for scope in sources:
-        where = scope.expression.args.get("where")
-        joins = cast(list[exp.Join], scope.expression.args.get("joins") or [])
-        roots[scope] = ([where.this] if where is not None else []) + [j.args["on"] for j in joins if "on" in j.args and not j.args.get("side")]
+def query_filters(plan: QueryPlan, parameters: Mapping[str, Any]) -> dict[tuple[Scope, str], set[tuple[tuple[str, frozenset[Any]], ...]]]:
+    """Bind values to the already compiled alternatives and equality graph."""
+    _, roots, alternatives, connected = plan
     selector = cache(partial(query_selector, parameters=parameters))
-    graph = query_graph(roots, selector)
     inherited: dict[tuple[Scope, str, str], frozenset[Any]] = {}
-    connected: dict[tuple[Scope, str, str], set[tuple[Scope, str, str]]] = {}
-    for component in nx.connected_components(graph):
-        values = [graph.nodes[n]["values"] for n in component if "values" in graph.nodes[n]]
-        allowed = values[0].intersection(*values[1:]) if values else None
-        for node in component:
-            connected[node] = component
-            if allowed is not None:
-                inherited[node] = allowed
+    for scope, nodes in roots.items():
+        for node in nodes:
+            if selected := selector(scope, node):
+                key, values = selected
+                for target in connected.get(key, {key}):
+                    inherited[target] = values & inherited.get(target, values)
     predicates: dict[tuple[Scope, str], set[tuple[tuple[str, frozenset[Any]], ...]]] = {}
-    for scope, conditions in roots.items():
-        for terms in product(*(query_terms(root) for root in conditions)):
-            term = [node for nodes in terms for node in nodes]
-            selectors = dict(inherited)
+    for scope, terms in alternatives.items():
+        local = {(name, field): values for (owner, name, field), values in inherited.items() if owner is scope}
+        for term in terms:
+            selectors = dict(local)
             for node in term:
                 if selected := selector(scope, node):
                     key, values = selected
-                    for target in connected.get(key, {key}):
-                        selectors[target] = values & selectors.get(target, values)
+                    for owner, name, field in connected.get(key, {key}):
+                        if owner is scope:
+                            selectors[name, field] = values & selectors.get((name, field), values)
             for alias in scope.selected_sources:
-                filters = tuple(sorted((field, values) for (owner, name, field), values in selectors.items() if owner is scope and name == alias))
+                filters = tuple(sorted((field, values) for (name, field), values in selectors.items() if name == alias))
                 if all(values for _, values in filters):
                     predicates.setdefault((scope, alias), set()).add(filters)
     return predicates
 
 
 @cached(LRUCache(maxsize=128), key=partial(read_key, include_values=False), lock=RLock())
-def query_compiler(query: Select[Any]) -> SQLCompiler:
+def query_compiler(query: Select[Any]) -> tuple[SQLCompiler, QueryPlan, Mapping[str, list[str]]]:
     """Keep SQL compilation independent of bound values, as SQLAlchemy does."""
     key = cast(CacheKey, cast(Any, query)._generate_cache_key())
     # SQLGlot requires literal JSON object keys; values remain SQL parameters.
@@ -209,15 +191,39 @@ def query_compiler(query: Select[Any]) -> SQLCompiler:
     query = cast(Select[Any], replacement_traverse(query, {}, lambda element, **kw:
                  cast(BindParameter[Any], element).render_literal_execute()
                  if isinstance(element, BindParameter) and element in json_keys else None))
-    return query.compile(dialect=dialect(paramstyle="named"), cache_key=key)
+    compiler = query.compile(dialect=dialect(paramstyle="named"), cache_key=key)
+    # Analyze one slot per IN parameter, not a different SQL tree per list length.
+    # Execution still receives the original query and its complete parameter set.
+    expanded = compiler.construct_expanded_state(compiler.construct_params({
+        name: [(None,) * len(bind.type.types) if isinstance(bind.type, TupleType) else None] if bind.expanding else bind.value
+        for bind, name in compiler.bind_names.items()
+    }))
+    return compiler, sql_scope(expanded.statement), expanded.parameter_expansion
 
 
 @lru_cache
-def sql_scope(statement: str) -> Scope:
-    """Parse a SQL shape once, independent of query arguments and game state."""
+def sql_scope(statement: str) -> QueryPlan:
+    """Compile each SQL shape once, including boolean branches and join links."""
     root = build_scope(parse_one(statement, dialect="sqlite"))
     assert root is not None
-    return root
+    roots: dict[Scope, list[exp.Expr]] = {}
+    alternatives: dict[Scope, list[list[exp.Expr]]] = {}
+    for scope in root.traverse():
+        where = scope.expression.args.get("where")
+        joins = cast(list[exp.Join], scope.expression.args.get("joins") or [])
+        conditions = ([where.this] if where is not None else []) + [j.args["on"] for j in joins if "on" in j.args and not j.args.get("side")]
+        roots[scope] = [node for condition in conditions for node in (condition.flatten() if isinstance(condition, exp.And) else [condition])]
+        atoms: dict[exp.Expr, str] = {}
+        expression = normalize(simplify(query_terms(exp.and_(exp.true(), *conditions), atoms)), dnf=True, max_distance=maxsize).unnest()
+        for paren in expression.find_all(exp.Paren):
+            paren.replace(paren.this)
+        by_name = {name: node for node, name in atoms.items()}
+        alternatives[scope] = [[by_name[node.name] for node in (term.flatten() if isinstance(term, exp.And) else [term])
+                                if isinstance(node, exp.Placeholder)]
+                               for term in (expression.flatten() if isinstance(expression, exp.Or) else [expression])
+                               if term != exp.false()]
+    connected = {node: component for component in nx.connected_components(query_graph(roots)) for node in component}
+    return root, roots, alternatives, connected
 
 
 def query_scopes(ledger: "Ledger", query: Select[Any], parameters: Mapping[str, Any]) -> frozenset[ReadScope]:
@@ -226,13 +232,12 @@ def query_scopes(ledger: "Ledger", query: Select[Any], parameters: Mapping[str, 
     Immutable equality/IN selectors narrow a dependency. Other predicates keep
     broader dependencies, never a second implementation of permission rules.
     """
-    compiler = query_compiler(query)
-    expanded = compiler.construct_expanded_state(compiler.construct_params(
-        parameters, extracted_parameters=cast(CacheKey, cast(Any, query)._generate_cache_key()).bindparams,
-    ))
-    root = sql_scope(expanded.statement)
-    sources = list(root.traverse())
-    predicates = query_filters(sources, expanded.parameters)
+    compiled = query_compiler(query)
+    parameters = compiled[0].construct_params(parameters, extracted_parameters=cast(CacheKey, cast(Any, query)._generate_cache_key()).bindparams)
+    for name, slots in compiled[2].items():
+        parameters.update(dict.fromkeys(slots, tuple(parameters[name] or ())))
+    root, sources = compiled[1][:2]
+    predicates = query_filters(compiled[1], parameters)
     data: dict[tuple[Scope, str], set[str] | None] = {}
     outputs: set[tuple[Scope, str]] = set()
     for scope in sources:
@@ -244,7 +249,7 @@ def query_scopes(ledger: "Ledger", query: Select[Any], parameters: Mapping[str, 
             if isinstance(parent, (exp.JSONExtract, exp.JSONExtractScalar)) and isinstance(parent.expression, exp.Placeholder):
                 fields = data.setdefault(key, set())
                 if fields is not None:
-                    path = json_path(expanded.parameters[parent.expression.name])
+                    path = json_path(parameters[parent.expression.name])
                     data[key] = fields | {path.expressions[1].name} if len(path.expressions) > 1 and isinstance(path.expressions[1], exp.JSONPathKey) else None
             elif (scope is root and column in root.expression.expressions
                   and any(isinstance(c, exp.Column) and c.table == column.table and c.name == "id" for c in root.expression.expressions)):

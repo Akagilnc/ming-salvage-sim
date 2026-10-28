@@ -8,11 +8,11 @@ from pathlib import Path
 import pytest
 from pydantic_ai.models.test import TestModel
 from starlette.testclient import TestClient
-from sqlalchemy import Engine, event
 
 from ming.__main__ import main
 from ming.middle.court import Court
 from ming.web import create_app
+from tests.test_read_budget import measure_reads
 
 CONTENT = Path(__file__).parents[1] / "content"
 
@@ -160,24 +160,10 @@ def test_cli_new_games_never_overwrite_and_missing_game_is_not_created(
     assert month["date"]["month"] == 11
     main(["read", "--db", first["db"], "--identity", "audit"])
     live = json.loads(capsys.readouterr().out)
-    notifications = []
-
-    def count_events(**query):
-        if query["statement"].startswith("SELECT ledger_events."):
-            probe = query["conn"].connection.cursor()
-            try:
-                probe.execute(query["statement"], query["parameters"])
-                notifications.extend(row[0] for row in probe.fetchall())
-            finally:
-                probe.close()
-
     for _ in range(2):
-        notifications.clear()
-        event.listen(Engine, "after_cursor_execute", count_events, named=True)
-        try:
+        with measure_reads() as reads:
             main(["read", "--db", first["db"], "--identity", "audit", "--replay"])
-        finally:
-            event.remove(Engine, "after_cursor_execute", count_events)
+        notifications = reads["notifications"]
         replay = json.loads(capsys.readouterr().out)
         assert replay == live
         assert len(notifications) == len(set(notifications))
