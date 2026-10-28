@@ -369,21 +369,22 @@ class Court:
     async def read_records(
         self, identity: Identity, kind: str | None = None,
         key: str | list[str] | None = None, date: Item | None = None,
+        *, replay: bool = False,
     ) -> Item:
-        """Read the selected identity projection; the frontend retains its full read."""
+        """Read one identity projection, sharing one reconstruction for --replay."""
         keys = list(dict.fromkeys(key)) if isinstance(key, list) else [key] if key is not None else None
         selection = {k: v for k, v in {"kind": kind, "keys": keys}.items() if v is not None}
-        rows = entities(self._ledger, identity, selection)
         query = FACT_SOURCES[identity_key(identity)]
         query = query.where(E.kind == kind) if kind is not None else query
         query = query.where(E.key.in_(keys)) if keys is not None else query
-        return {
-            "entities": [e.model_dump(mode="json") for e in rows],
-            "facts": [
-                f.model_dump(mode="json")
-                for f in project(self._ledger, identity, {"date": date} if date is not None else {}, query)
-            ],
-        }
+        with self._ledger.reading(replay) as ledger:
+            return {
+                "entities": [e.model_dump(mode="json") for e in entities(ledger, identity, selection)],
+                "facts": [
+                    f.model_dump(mode="json")
+                    for f in project(ledger, identity, {"date": date} if date is not None else {}, query)
+                ],
+            }
 
     def facts(
         self,

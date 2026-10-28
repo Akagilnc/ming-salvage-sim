@@ -2,11 +2,13 @@
 
 import json
 import shutil
+import sqlite3
 from pathlib import Path
 
 import pytest
 from pydantic_ai.models.test import TestModel
 from starlette.testclient import TestClient
+from sqlalchemy import Engine, event
 
 from ming.__main__ import main
 from ming.middle.court import Court
@@ -141,6 +143,8 @@ def test_cli_new_games_never_overwrite_and_missing_game_is_not_created(
     first = json.loads(capsys.readouterr().out)
     main(["read", "--db", first["db"], "--identity", "audit"])
     saved = json.loads(capsys.readouterr().out)
+    main(["read", "--db", first["db"], "--identity", "audit", "--replay"])
+    assert json.loads(capsys.readouterr().out) == saved
     main(args)
     second = json.loads(capsys.readouterr().out)
     assert first["db"] != second["db"]
@@ -154,8 +158,44 @@ def test_cli_new_games_never_overwrite_and_missing_game_is_not_created(
     )
     month = json.loads(capsys.readouterr().out)
     assert month["date"]["month"] == 11
-    main(["read", "--db", first["db"], "--identity", "audit", "--replay"])
-    replay = json.loads(capsys.readouterr().out)
+    main(["read", "--db", first["db"], "--identity", "audit"])
+    live = json.loads(capsys.readouterr().out)
+    notifications = []
+
+    def count_events(**query):
+        if query["statement"].startswith("SELECT ledger_events."):
+            probe = query["conn"].connection.cursor()
+            try:
+                probe.execute(query["statement"], query["parameters"])
+                notifications.extend(row[0] for row in probe.fetchall())
+            finally:
+                probe.close()
+
+    for _ in range(2):
+        notifications.clear()
+        event.listen(Engine, "after_cursor_execute", count_events, named=True)
+        try:
+            main(["read", "--db", first["db"], "--identity", "audit", "--replay"])
+        finally:
+            event.remove(Engine, "after_cursor_execute", count_events)
+        replay = json.loads(capsys.readouterr().out)
+        assert replay == live
+        assert len(notifications) == len(set(notifications))
+        assert len(notifications) > 1000
+    for damage in ("missing", "extra"):
+        corrupted = tmp_path / f"{damage}.sqlite"
+        shutil.copyfile(first["db"], corrupted)
+        with sqlite3.connect(corrupted) as connection:
+            connection.execute(
+                "DELETE FROM facts WHERE position = (SELECT min(position) FROM facts)"
+                if damage == "missing" else
+                "INSERT INTO facts SELECT (SELECT max(position) + 1 FROM facts), "
+                "entity_id, kind, date, emperor_words, detail FROM facts LIMIT 1"
+            )
+        main(["read", "--db", str(corrupted), "--identity", "audit"])
+        assert json.loads(capsys.readouterr().out)["facts"] != live["facts"]
+        main(["read", "--db", str(corrupted), "--identity", "audit", "--replay"])
+        assert json.loads(capsys.readouterr().out) == {**live, "db": str(corrupted)}
     assert (
         next(e["data"]["month"] for e in replay["entities"] if e["kind"] == "calendar")
         == 11

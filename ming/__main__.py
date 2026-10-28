@@ -147,18 +147,7 @@ def main(argv: list[str] | None = None) -> None:
             json.dumps(
                 {
                     "db": str(court.db_path),
-                    "entities": [
-                        e.model_dump(mode="json")
-                        for e in court.entities(
-                            args.identity, getattr(args, "replay", False)
-                        )
-                    ],
-                    "facts": [
-                        f.model_dump(mode="json")
-                        for f in court.facts(
-                            args.identity, getattr(args, "replay", False)
-                        )
-                    ],
+                    **asyncio.run(court.read_records(args.identity, replay=getattr(args, "replay", False))),
                 },
                 ensure_ascii=False,
                 indent=2,
