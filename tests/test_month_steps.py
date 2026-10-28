@@ -1,6 +1,7 @@
 """Medium: month forks and durable recovery through HTTP actions and CLI reads."""
 
 import json
+from contextlib import nullcontext
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,7 @@ from starlette.testclient import TestClient
 from ming.web import create_app
 from tests.test_court import replaying
 from tests.test_month import GUOKU_ORDER
+from tests.test_read_budget import measure_reads
 from tests.test_secrets import _declaration_prompt
 
 RECORDED = Path(__file__).parent / "recorded"
@@ -265,7 +267,10 @@ def test_month_pays_affair_from_declaration_month(game_db, steps, audit, clock, 
     )
     if case == "resume":
         steps["gazette"] = replaying([TimeoutError()] * 3 + [(RECORDED / "gazette.txt").read_text()])
-    with TestClient(create_app(game_db.parent)) as client:
+    with (
+        measure_reads() if case == "regular" else nullcontext() as reads,
+        TestClient(create_app(game_db.parent)) as client,
+    ):
         client.post("/actions", json={"action": "load", "save": game_db.name})
         for index in range(1 if case == "invalid_account" else 2 if name != "陕西专款" else 3):
             # Session nodes run the first month from the opening through HTTP;
@@ -320,3 +325,4 @@ def test_month_pays_affair_from_declaration_month(game_db, steps, audit, clock, 
                     "text": "改序",
                 })
             steps["Declaration"] = replaying([json.dumps(declaration, ensure_ascii=False)])
+    assert reads is None or reads["repeated"] == []

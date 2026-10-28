@@ -1,6 +1,8 @@
-# #1992 落账／重建片施工记录（未完成全票）
+# #1992 落账、重建与读复用施工记录
 
-## 范围与剩余决定
+以下第一片记录对应 `5effbcdfa42b48c36caeaf269bb7b33dbc7b58bc`，保留当时结论；当时的续修前置已由后续用户指令解除。Q4/Q5 续修及现状见后半篇，不再把失效算法选择作为外部缺前置，未送大理寺。
+
+## 第一片：范围与当时剩余决定
 
 本片替换落账与重建路径，未改 `read_once` 的按提交清空策略。Q4/Q5 的跨无关提交去重尚未实现，不能据本片减少的 SQL 数宣称重复归零。
 
@@ -93,4 +95,95 @@ E＝实体表；E+F＝语句涉及实体与事实表（含关联子查询）。�
 - `.venv/bin/pyright --pythonpath .venv/bin/python` → `0 errors, 0 warnings, 0 informations`；触及文件 `ruff check` → `All checks passed!`。
 - 自审将新增 `Court.records` 并入已有 `Court.read_records`，删去平行入口；CLI 用原入口的新增 replay 选项一次读取实体与事实。
 - 最后聚焦调用（本腿 runId `01a180fe-a9d1-74bb-8484-61260ab2fc3f`，跑时 HEAD `1f2d13220c74df389c8af1d339fbfc1d36a7e169` 加本片工作区）：`.venv/bin/python -m pytest -q tests/test_ledger.py tests/test_opening.py tests/test_secrets.py 'tests/test_month_steps.py::test_month_pays_affair_from_declaration_month[regular]' 'tests/test_court.py::test_common_declaration_updates_entities_and_displaces_incumbent_atomically[holders-first_night]'` → `17 passed in 56.42s`。同次随后 ruff、pyright、lint-imports、diff --check 均通过。
-- 未跑全量，未 push／开 PR／merge；ADR 0159、0160 与 CONTEXT 修订待评审。Q4/Q5、跨提交边界与错误常驻案仍待施工，不以已有权限测试通过替代它们。
+- 未跑全量，未 push／开 PR／merge；ADR 0159、0160 与 CONTEXT 修订待评审。第一片交卷时 Q4/Q5、跨提交边界与错误常驻案仍待施工，不以已有权限测试通过替代它们。
+
+## 续修：Q4/Q5
+
+复用原 `read_once`，不建并行读口。SQLGlot 的作用域解析从真实查询取得表、不可变等值／IN 条件及 JSON 数据字段依赖；返回的整行数据另依赖实际返回的实体 ID。父读收集子读依赖，命中缓存也传递依赖。落账用本次 recordings 的建立、修改字段与新增事实使相交依赖失效；没有实体字段变化的 Recorded 不冒充实体建立。其他 SQL 谓词保留较宽依赖，不复制权限规则，不按业务 kind 列免检名单。
+
+当前月份进入 products、month_open 的需求参数，不再把动态月历藏在同参数 SQL 中。落账引用按 `(kind, key)` 成批读取；已有 owner 直接传其 snapshot；入殿名单、已知谕旨的议处／选择／暂行记录成批读。引用顺序、原录件输入、权限和材料均不改。
+
+### 生态选择与成本
+
+仓内已有 `read_once`、SQLAlchemy 查询键、NetworkX；没有 SQL 作用域分析器。先查官方资料，再选现成 SQLGlot 解析而不是自造 SQL 遍历器；不翻 eventsourcing 源码推断接口。
+
+- [SQLGlot AST primer](https://github.com/tobymao/sqlglot/blob/main/posts/ast_primer.md)："Scope is a traversal module that handles more semantic context of SQL queries." 其例用 `build_scope`、`root.traverse()`、`selected_sources`；`find_all_in_scope` "doesn't traverse into subqueries"。
+- [SQLAlchemy 编译器文档](https://docs.sqlalchemy.org/en/20/core/internals.html#sqlalchemy.sql.compiler.SQLCompiler.construct_expanded_state)："this method will provide for both the finalized SQL string as well as the parameters that would be used for a particular parameter set." 用原生 CacheKey、`construct_params(extracted_parameters=...)` 和 `construct_expanded_state()` 复用结构编译、绑定本次实参；不是自拼 SQL。只把 JSON object 的键用原生 `render_literal_execute()` 展开以供解析，业务值仍是参数。
+- [SQLAlchemy Tuple IN](https://docs.sqlalchemy.org/en/20/core/operators.html#tuple-in-expressions) 的 `tuple_().in_()` 承接成批复合条件；[NetworkX](https://networkx.org/documentation/stable/reference/algorithms/generated/networkx.algorithms.components.connected_components.html) 的 `connected_components()`（"Generate connected components."）承接 SQL 等值关联，不自写图遍历。
+- [SQLGlot 安装说明](https://github.com/tobymao/sqlglot#install) 提供 `sqlglot[c]`；README 原句："It is roughly 3-5x faster than the pure Python version"。本包无自定义 dialect 子类。此前纯 Python 解析密件样本超时；改用官方编译版，并修掉重复结构编译。
+- [cachetools](https://cachetools.readthedocs.io/en/stable/#cachetools.LRUCache) 的 LRUCache："This class discards the least recently used items first to make space"。跨提交复用不再自然清空，普通字典会积累历次查询、无界占用内存，且下游无容量回收；标准库 `lru_cache` 又不支持逐键删除，故直接换有界现成容器，不造淘汰器。每 Ledger 至多 10000 个结果／依赖条目；结构编译和 SQL 作用域各至多 128 项，后者用标准库 `lru_cache`。这是条目数界，不是字节界；单项仍随该需求合法读取的材料量增长，未截断材料。容量淘汰不是测试里的重复豁免。
+
+初版依赖分析把每组参数都重新编译：真实 HTTP 月结的 cProfile 中 `query_scopes` 占 7.519s，作用域解析仅 1.076s。改为复用库编译对象后，同组月结＋密件样本由 `37.06s` 降至 `15.71s`。这是聚焦样本时间，不冒称全量或产品墙钟。
+
+最终单案 SQL 执行点观测到结果缓存最多 297 项；编译缓存 39 项、作用域缓存 60 项，均未触及容量。一次提交对缓存依赖去重后与本次变化相交，不增加数据库读取。材料与角色返回内容不做散文指纹或措辞断言。
+
+### 同口径 SQL 拆分
+
+命令：`SQL_REPORT=/tmp/1992-after-q4.json PYTHONPATH=/tmp:$PWD .venv/bin/python -m pytest -q -p probe1992 -p duplicate1992 --tb=line --show-capture=no 'tests/test_month_steps.py::test_month_pays_affair_from_declaration_month[regular]'`。
+
+结果原文：`1 passed in 4.91s`；`call statements 714`；`READ_OBSERVATION {'selects': 304, 'rows': 17906, 'repeats': 0}`。读预算的额外 DBAPI 观测不计入应用 SQL。以下调用者 × 表覆盖全部 304 次 SELECT；E/F 含该语句内的关联子查询，不把表参与冒称返回行依赖。
+
+| 调用者 | 表 | 修前 | 第一片 | 续修 |
+| --- | --- | ---: | ---: | ---: |
+| calendar.calendar_row | E | 37 | 37 | 3 |
+| calendar.journeys_due | E | 4 | 4 | 2 |
+| court.current_decrees | E+F | 2 | 2 | 2 |
+| court.errands | E+F | 2 | 2 | 0 |
+| court.interactions | E+F | 37 | 37 | 5 |
+| court.month_petitions | E+F | 2 | 2 | 2 |
+| court.nights | E+F | 37 | 37 | 1 |
+| court.pending_nights | E+F | 5 | 5 | 1 |
+| court.pending_petitions | E+F | 37 | 37 | 3 |
+| court.pending_pushes | E+F | 2 | 2 | 2 |
+| court.petition_officials | E | 16 | 16 | 8 |
+| court.petition_products | E+F | 2 | 2 | 1 |
+| court.products | E+F | 67 | 67 | 35 |
+| court.record_catalogue | E+F | 22 | 22 | 22 |
+| court.returned_petitions | E+F | 41 | 41 | 4 |
+| court.unhandled_monthly | E+F | 37 | 37 | 3 |
+| dispatch.dispatch | E+F | 2 | 2 | 1 |
+| dispatch.landing_entities | E | 6 | 6 | 1 |
+| dispatch.landing_sources | E+F | 16 | 16 | 5 |
+| fiscal.Accounts.__init__ | E | 4 | 4 | 4 |
+| fiscal.due_levies | E | 2 | 2 | 1 |
+| fiscal.Accounts.run | E+F | 2 | 2 | 2 |
+| view.entities | E / E+F | 19 / 32 | 19 / 32 | 11 / 17 |
+| view.month_open | E+F | 2 | 2 | 2 |
+| view.project | E+F | 5 | 5 | 5 |
+| 取聚合（修前含快进）：fiscal.Accounts.__init__ / court.record_product / court.record | 事件 | 344（合计） | 153 / 7 / 1 | 153 / 7 / 1 |
+| 初始化／落账／跟随者 | 事件 | 427 | 0 | 0 |
+| 进度读取 | tracking | 684 | 0 | 0 |
+
+总 SQL `3207 → 1011 → 714`；SELECT `1895 → 601 → 304`；E/F 读取 `440 → 440 → 143`。续修仍是事件写 322、实体写 36、事实写 36、PRAGMA 16，合计 714；无 tracking，落账不回读事件。保留的 161 次聚合未命中按票面已声明的官方缓存行为统计，不冒称消除了它们。
+
+### 常驻与变异证据
+
+未新增测试用例函数或业务夹具；把既有 `test_read_budget` 监听器提成共享观察器，仍执行真实 SQL。比较同一 engine、SQL、参数下的行身份、实体字段变更版本和选定结构化输出；只有附加事实、没有实体字段 changes 时，不推进实体状态版本。模型正文、data 文本不哈希、不锁定。
+
+- 正确：既有 regular 月结案断言重复列表为空；同口径旧 clear 变异检出 307 次，修后为 0，不以 SELECT 总数减少替代此证据。
+- 无关／相关提交边界：既有召对连续 say、翻译、重开案，未改月历时每个 Ledger 的月历需求只读一次；推进月份后多读一次，并断言日期为 11。旧 clear 变异得 `assert {1, 19} == {1}`。重开产生不同 engine，不把新 Ledger 的首次读取算重复。
+- 不同需求边界：既有 `test_translation_queries_preserve_two_table_permissions` 保留 night/month 两案及原 `declarations_1972.json` 录件；官职、保定府新城县、郭允厚等不同取阅的原结构化结果断言不变。
+- 已知批量错误：既有入殿工具案检查多个人的参数同批进入实际查询，且无逐个 `(person, name)` 查询；恢复旧逐人查后 `assert not True`，`1 failed in 4.41s`。
+- 依赖传递回归：把父读的依赖合并临时改成空集合，真实召对入口得 `assert {'王承恩'} == {'杨嗣昌', '王承恩', '王绍徽'}`，`1 failed in 1.92s`；不是只关失效求少读。三处变异已恢复。
+
+clear 变异命令：`PYTHONPATH=/tmp:$PWD .venv/bin/python -m pytest -q -p duplicate1992 --tb=line --show-capture=no 'tests/test_month_steps.py::test_month_pays_affair_from_declaration_month[regular]' 'tests/test_audience.py::test_nights_are_persistent_and_translate_only_after_dismissal[first_night-approved-approved]'` → `2 failed in 7.28s`。
+
+另两处变异均用：`.venv/bin/python -m pytest -q --tb=line --show-capture=no 'tests/test_audience.py::test_scene_tools_use_physical_location_not_office_and_project_dossiers'`。
+
+聚焦验证（跑时 HEAD `5effbcdfa42b48c36caeaf269bb7b33dbc7b58bc` ＋续修工作区，本腿 runId 同上）：
+
+```sh
+.venv/bin/python -m pytest -q --tb=line --show-capture=no tests/test_ledger.py tests/test_opening.py tests/test_secrets.py
+# 15 passed in 45.07s
+.venv/bin/python -m pytest -q --tb=line --show-capture=no tests/test_read_budget.py \
+  'tests/test_audience.py::test_nights_are_persistent_and_translate_only_after_dismissal' \
+  'tests/test_audience.py::test_scene_tools_use_physical_location_not_office_and_project_dossiers' \
+  'tests/test_court.py::test_translation_queries_preserve_two_table_permissions' \
+  'tests/test_court.py::test_common_declaration_updates_entities_and_displaces_incumbent_atomically[holders-first_night]' \
+  'tests/test_month_steps.py::test_interim_costs_follow_promulgation_not_backing'
+# 16 passed in 36.85s
+```
+
+前述独立 regular 单案为第 32 个通过的聚焦参数案。未跑全量、未 push／开 PR／merge、未送大理寺；ADR 修订仍待评审。临时 threading/cProfile 探针曾超时，已改用 HTTP action 上的标准 cProfile；不把探针失败当测试通过或基础设施故障。
+
+自审三问：入口沿用 HTTP／模型工具／CLI，未造内部函数测试；断言移除正文比较，只保留结构化状态与真实查询参数，并纠正 JSON null 的 changes 不应推进实体字段版本；旧按提交清空、逐条引用／人员／议处查询、隐藏当前月份表达式及内联重复监听均退役。没有新增权限规则、跟随者或第二套读表写者。

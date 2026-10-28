@@ -15,14 +15,10 @@ from ming.ledger import (
     FACT_COLUMNS as F,
     ENTITY_ROWS,
     FACT_ROWS,
-    facts_in_month,
 )
 from ming.middle.appointments import APPOINTMENT_ROLES
 
 CALENDAR = select(E.data).where(E.kind == "calendar").correlate(None).scalar_subquery()
-CURRENT_FACTS = FACT_ROWS.where(facts_in_month({
-    "year": CALENDAR["year"].as_integer(), "month": CALENDAR["month"].as_integer(),
-}))
 
 NIGHT_RESULT = (
     select(F.kind)

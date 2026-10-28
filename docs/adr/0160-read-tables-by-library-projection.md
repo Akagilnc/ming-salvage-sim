@@ -2,7 +2,7 @@
 
 Status: accepted（2026-10-22 owner grill 定方向：「那肯定是优先用库的做法而不是自己去写。不然还用库干什么。A」；spec #1959 v3 经中书省、给事中、符宝郎三席署过；符宝郎五题 owner `aac1e468`「1A 2A 3B 4A 5A 可以」）
 
-#1992 修订待评审：按 [票面 Q1–Q7](https://github.com/Akagilnc/ming-salvage-sim/issues/1992) 替代跟随者、tracking 与旧重建实现，其余决定不变。施工原话及完整源卷 UUID 见票面；本修订不宣称读账重复已归零。
+#1992 修订待评审：按 [票面 Q1–Q7](https://github.com/Akagilnc/ming-salvage-sim/issues/1992) 替代跟随者、tracking 与旧重建实现，其余决定不变。施工原话及完整源卷 UUID 见票面；SQL 拆分、Q4/Q5 实测与变异证据见 [施工记录](../1992-ledger-write-slice.md)。
 
 原问题：重写后的账本只有一张 `entities` 表，每个实体一行，`data` 和整份事件列表 `events` 都是 JSON 列；中间层的每一个小问题（今天几号、这夜什么状态、按名找人）都是全表 `SELECT` 再在 Python 里挑。一次 `presentation()` 要全表读 (8+2N) 次、重放 N 个夜（N＝夜数），而它挂在每次落账和每个流式片段上。57 个录播测试跑四分半，一个月级测试里全表读近三千次。病在两处：**一件小事查整个世界**；**事件在事件库之外又存了一份**（`events` 列，以及聚合 `Entity` 身上的 `events` 列表）。[0159](0159-ledger-entities-events-and-landing.md) 当初以「库在 SQLite 上维护不了查询表」为由自写内联刷新，这个前提经核不成立（见文末）。
 
@@ -16,6 +16,7 @@ Status: accepted（2026-10-22 owner grill 定方向：「那肯定是优先用�
 - **读表两张**：实体读表（id、kind、key、data；索引 kind 与 (kind, key)）；事实读表（追加式：实体 id、kind、日期、正文；不设夜 id 列）。
 - **合理查询**：每个问题只读回答它真正需要的材料，不读与它无关的历史。账本对中间层开窄读口：按 id、按 kind、按 (kind, key)；事实按实体（可加 kind、日期）、按 kind；替换中间层现有的全部全表读调用。`/state` 只读当前画面需要的材料（如最近一夜、本月未批奏疏），不读已结的历史。凡材料契约本身就要求整类、整份的读（审计与世界视图的「取全部」、转译名册与字段表、月初皇帝视图快照、`scene_material` 的接不住清单、人物履历、本夜轮次、模型自主取阅）照原契约读；不建豁免清单，不开具名通道，模型与前端看到的材料都不变。模型用 `read_records` 的读法现由 [#1970](https://github.com/Akagilnc/ming-salvage-sim/issues/1970) 取代：目录进输入，只给类或日期列名单，点正名才给全文，空参正常提示；权限不变，前端 `/records` 仍按皇帝身份整份读。射程已扩到所有模型调用并加官职三态，见 [0162](0162-every-model-reads-one-way-and-speaks-as-a-person.md)。
 - **聚合缓存开着**（`AGGREGATE_CACHE_MAXSIZE=10000`），单个应用实例写入，关闭快进（`AGGREGATE_CACHE_FASTFORWARD=n`）；不开 snapshotting。未命中仍由库读该实体的历史重建，重入复用原实例时保留缓存。依据 [官方缓存文档](https://eventsourcing.readthedocs.io/en/stable/topics/application.html#configuring-aggregate-caching)：“Only do this when only one instance of the application is being used to evolve the state of the aggregates”。
+- **按读依赖复用，而非按提交清空**：同一需求的相关状态未变就复用；提交只使相关 SQL 及其派生结果失效。依赖从查询本身取得，不另写身份／业务 kind 名单；已知成批的条件一次读取，模型先后提出的不同取阅仍各按需执行。当前月份作为读需求的显式输入。缓存不持久化；容量与计算成本见施工记录，不以缓存策略豁免 Q4 的重复检查。
 - **presentation 便宜但仍按提交推送**：前端把 `state` 与 `done` 一视同仁整份接收，核账期靠逐次提交的推送显示进度，所以每次提交推一份保留；流式 `delta` 仍是 `{text, hall}`，`hall` 每片段按夜 id 读一次，不再每片段重算整份 presentation；前端不改。
 - **不变量**：同一请求、相关材料相同、只有无关的已结历史多少不同的至少三局，`GET /state` 与 `POST /actions`（say／month／choose）的 SQL 读量（条数与返回行数）相等；另加未召对的新开局测 `/state`。相关材料增长不判违规，不得为凑等量裁材料；现状必须红、修后转绿。这是「一件小事不查整个世界」的机械表述，不锚墙钟；哪些历史对哪个请求无关按各请求的材料契约定，计量接法留施工。
 - **示范模块**：月历与夜。最热的两条读路径，一块完整的「落账与读表同事务写 → 按条件读 → 预算测试覆盖」，之后的人物、账户照抄。

@@ -1,6 +1,7 @@
 """Medium: audience behavior through the HTTP boundary and CLI ledger reads."""
 
 import json
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -16,6 +17,7 @@ from starlette.testclient import TestClient
 from ming.middle.view import Officials
 from ming.web import create_app
 from tests.test_court import replaying
+from tests.test_read_budget import measure_reads
 
 RECORDED = Path(__file__).parent / "recorded"
 
@@ -37,7 +39,7 @@ def test_nights_are_persistent_and_translate_only_after_dismissal(
         assert not [
             e for e in audit(tmp_path / save)["entities"] if e["kind"] == "decree"
         ]
-    with TestClient(create_app(tmp_path)) as client:
+    with TestClient(create_app(tmp_path)) as client, measure_reads() as reads:
         client.post("/actions", json={"action": "continue"})
         assert client.get("/state").json()["game"]["night"] == first
         for words in case["words"][1:]:
@@ -77,8 +79,13 @@ def test_nights_are_persistent_and_translate_only_after_dismissal(
             assert {e["data"]["interim"] for e in orders} == {True, False}
             assert [x["endorser"] for e in orders for x in e["data"]["endorsements"]] == ["御笔"]
         assert client.get("/state").json()["game"]["petitions"] == []
+        # Night/translation commits do not change this same calendar demand.
+        calendar_reads = Counter(engine for engine, parameters in reads["queries"] if parameters == ("calendar",))
+        assert set(calendar_reads.values()) == {1}
         client.post("/actions", json={"action": "month"}).raise_for_status()
         assert client.get("/state").json()["game"]["date"]["month"] == 11
+        # Advancing the calendar does: the next state must read its new revision.
+        assert sum(parameters == ("calendar",) for _, parameters in reads["queries"]) == calendar_reads.total() + 1
         assert {f["entity_id"] for f in audit(tmp_path / save)["facts"] if f["kind"] == "landed" and f["entity_id"] in {e["id"] for e in orders}} == {e["id"] for e in orders}
         client.post("/actions", json={"action": "open"})
         second = client.get("/state").json()["game"]["night"]
@@ -102,7 +109,7 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
         ], received,
     )
     steps["NightDeclaration"] = replaying(case["replies"])
-    with TestClient(create_app(tmp_path)) as client:
+    with TestClient(create_app(tmp_path)) as client, measure_reads() as reads:
         client.post("/actions", json={"action": "load", "save": game_db.name})
         for turn, hall in zip(case["turns"], (
             {"王承恩", "杨嗣昌", "王绍徽"},
@@ -135,6 +142,13 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
         for part in message.parts
         if isinstance(part, ToolReturnPart)
     }
+    batches = [part.args_as_dict()["add"] for message in received for part in message.parts
+               if isinstance(part, ToolCallPart) and part.tool_name == "set_hall" and len(part.args_as_dict()["add"]) > 1]
+    assert batches
+    parameters = [values for _, values in reads["queries"]]
+    for names in batches:
+        assert any(set(names) <= set(values) for values in parameters)
+        assert not any(("person", name) in parameters for name in names)
     before, after = (returned[key][1]["entities"][0] for key in ("before", "after"))
     assert before["key"] == after["key"] == "王体乾"
     for field in ("name", "location", "appointments"):

@@ -9,6 +9,7 @@ measurement; the measured month request resumes an already open month.
 """
 
 import json
+from contextlib import contextmanager
 from pathlib import Path
 from shutil import copyfile
 
@@ -19,6 +20,54 @@ from starlette.testclient import TestClient
 from ming.web import create_app
 
 RECORDED = Path(__file__).parent / "recorded"
+
+
+@contextmanager
+def measure_reads():
+    """Observe real SQL without consuming its cursor or replacing the read path."""
+    result = {"budget": [0, 0], "repeated": [], "queries": []}
+    previous = {}
+    fields = {"id", "entity_id", "position", "kind", "key", "event_count", "person", "ordinal", "result", "exposure", "originator_id", "originator_version"}
+
+    def count_reads(**query):
+        statement, parameters = query["statement"], query["parameters"]
+        if statement.lstrip().upper().startswith("SELECT"):
+            probe = query["conn"].connection.cursor()
+            try:
+                probe.execute(statement, parameters)
+                rows = tuple(probe.fetchall())
+                columns = [column[0] for column in probe.description]
+                identity_column = columns.index("id") if {"id", "kind", "key", "data"} <= set(columns) else None
+                identities = {row[identity_column] for row in rows} if identity_column is not None else set()
+                versions = {}
+                if identities:
+                    probe.execute(
+                        "SELECT originator_id, max(originator_version) FROM ledger_events WHERE originator_id IN ("
+                        + ",".join("?" for _ in identities) + ") AND (originator_version = 1 "
+                        "OR EXISTS (SELECT 1 FROM json_each(CAST(state AS TEXT), '$.changes') WHERE key IS NOT NULL)) GROUP BY originator_id",
+                        tuple(bytes.fromhex(identity) for identity in identities),
+                    )
+                    versions = {identity.hex(): version for identity, version in probe.fetchall()}
+                # Compare only row identities, revisions and typed query outputs;
+                # model prose/data payloads are neither hashed nor constrained.
+                indices = [i for i, name in enumerate(columns) if name in fields]
+                state = tuple((tuple(row[i] for i in indices),
+                               versions.get(row[identity_column]) if identity_column is not None else None) for row in rows)
+            finally:
+                probe.close()
+            result["queries"].append((query["conn"].engine, tuple(parameters)))
+            result["budget"][0] += 1
+            result["budget"][1] += len(rows)
+            key = query["conn"].engine, statement, tuple(parameters)
+            if key in previous and previous[key] == state:
+                result["repeated"].append((statement, parameters))
+            previous[key] = state
+
+    event.listen(Engine, "after_cursor_execute", count_reads, named=True)
+    try:
+        yield result
+    finally:
+        event.remove(Engine, "after_cursor_execute", count_reads)
 
 
 @pytest.mark.parametrize(
@@ -49,33 +98,13 @@ def test_http_read_work_ignores_unrelated_history(
                 petition = client.get("/state").json()["game"]["petitions"][0]
                 payload.update(petition=petition["id"], option=0)
 
-            budget = [0, 0]
-
-            def count_reads(**query):
-                statement, parameters = query["statement"], query["parameters"]
-                if statement.lstrip().upper().startswith("SELECT"):
-                    # Count returned rows without consuming or replacing the real
-                    # cursor; the probe bypasses SQLAlchemy's event listeners.
-                    probe = query["conn"].connection.cursor()
-                    try:
-                        probe.execute(
-                            "SELECT count(*) FROM (" + statement + ")", parameters
-                        )
-                        budget[0] += 1
-                        budget[1] += probe.fetchone()[0]
-                    finally:
-                        probe.close()
-
-            event.listen(Engine, "after_cursor_execute", count_reads, named=True)
-            try:
+            with measure_reads() as reads:
                 response = (
                     client.get("/state")
                     if action == "state"
                     else client.post("/actions", json=payload)
                 )
                 client.portal.call(app.state.web.game.drain)
-            finally:
-                event.remove(Engine, "after_cursor_execute", count_reads)
             assert response.status_code == (200 if action == "state" else 204)
             assert client.get("/state").json()["game"]["failure"] is None
             if action == "choose":
@@ -85,6 +114,6 @@ def test_http_read_work_ignores_unrelated_history(
                     len(client.get("/state").json()["game"]["petitions"])
                     == len(json.loads(petitions)["petitions"]) - 1
                 )
-            budgets.append(tuple(budget))
+            budgets.append(tuple(reads["budget"]))
 
     assert budgets[0] == budgets[1] == budgets[2]

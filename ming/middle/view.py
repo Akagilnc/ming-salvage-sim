@@ -10,8 +10,9 @@ from sqlalchemy.sql.elements import BindParameter, ColumnElement
 
 from ming.ledger import Item, Ledger, read_once
 from ming.middle import ReadData, ReadView
-from ming.ledger import ENTITY_COLUMNS as E, FACT_COLUMNS as F, ENTITY_ROWS, FACT_ROWS, ENTITY_ORDER
-from ming.middle.queries import CALENDAR, CURRENT_FACTS, available_on, public_decree
+from ming.ledger import ENTITY_COLUMNS as E, FACT_COLUMNS as F, ENTITY_ROWS, FACT_ROWS, ENTITY_ORDER, facts_in_month
+from ming.middle.queries import CALENDAR, available_on, public_decree
+from ming.middle.calendar import calendar_row
 from ming.middle.appointments import APPOINTMENT_ROLES, CATALOGUE_KINDS, held_by
 from ming.middle.night import known_people, read_night, witnessed_nights
 from ming.middle.travel import travel_days
@@ -23,9 +24,12 @@ APPOINTED_PEOPLE: BindParameter[str] = bindparam("appointed_people", expanding=T
 HELD_BY = held_by(APPOINTED_PEOPLE)
 EXCLUDE_SECRETS: BindParameter[bool] = bindparam("exclude_secrets", False)
 READ_KIND: BindParameter[str] = bindparam("read_kind")
-MONTH_OPEN = CURRENT_FACTS.with_only_columns(F.position).where(
+MONTH_OPEN_QUERY = FACT_ROWS.with_only_columns(F.position).where(
     E.kind == "calendar", F.kind == "month_open",
-).order_by(None).order_by(F.position.desc()).limit(1).correlate(None).scalar_subquery()
+).order_by(None).order_by(F.position.desc()).limit(1).correlate(None)
+MONTH_OPEN = MONTH_OPEN_QUERY.where(facts_in_month({
+    "year": CALENDAR["year"].as_integer(), "month": CALENDAR["month"].as_integer(),
+})).scalar_subquery()
 
 PublicIdentity = Literal["emperor", "audit", "world", "public"]
 
@@ -103,7 +107,8 @@ def identity_key(identity: Identity) -> str:
 
 def month_open(ledger: Ledger, query: Select[Any] = FACT_ROWS) -> Item | None:
     """The month's existing opening record; callers select the columns they need."""
-    return next(iter(ledger.read(query.where(F.position == MONTH_OPEN))), None)
+    position = MONTH_OPEN_QUERY.where(facts_in_month(calendar_row(ledger)["data"])).scalar_subquery()
+    return next(iter(ledger.read(query.where(F.position == position))), None)
 
 
 def decree_access(identity: Identity, reference: ColumnElement[Any]) -> dict[str, ColumnElement[bool]]:

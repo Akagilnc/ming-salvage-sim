@@ -209,11 +209,11 @@ class Court:
         current: bool = True,
         kind: str | tuple[str, ...] | None = None,
     ) -> tuple[FactView, ...]:
-        query = queries.CURRENT_FACTS if current else FACT_ROWS
         return tuple(
             FactView(**event)
             for event in self._ledger.facts(
-                entity_id=entity_id, kind=kind, query=query,
+                entity_id=entity_id, kind=kind,
+                date=calendar_row(self._ledger)["data"] if current else None,
             )
         )
 
