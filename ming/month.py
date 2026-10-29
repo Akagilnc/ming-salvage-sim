@@ -2,7 +2,7 @@
 
 import asyncio
 from collections.abc import Callable
-from ming.ledger import Item
+from typing import Any
 
 from ming.middle.court import Court
 from ming.middle.declaration import PendingPetition
@@ -43,7 +43,7 @@ class Month:
                 "entities": [e.model_dump(mode="json") for e in self.court.entities("emperor", current=calendar.data)],
             })
 
-    def choose(self, petition: Item | None, option: int, date: Item) -> None:
+    def choose(self, petition: dict[str, Any] | None, option: int, date: dict[str, Any]) -> None:
         self.inbox.choose(petition, option, date)
 
     async def resume(self, *, speculative: bool = False) -> tuple[PendingPetition, ...]:

@@ -1,8 +1,7 @@
 """Source-blind petition inbox: only petitions and emperor choices."""
 
+from typing import Any
 from uuid import UUID
-
-from ming.ledger import Item
 
 from ming.middle.court import Court
 
@@ -11,7 +10,7 @@ class Inbox:
     def __init__(self, court: Court) -> None:
         self.court = court
 
-    def choose(self, petition: Item | None, option: int, date: Item) -> None:
+    def choose(self, petition: dict[str, Any] | None, option: int, date: dict[str, Any]) -> None:
         if (
             petition is None
             or type(option) is not int
