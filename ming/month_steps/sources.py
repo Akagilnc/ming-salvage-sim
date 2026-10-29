@@ -54,7 +54,7 @@ class Sources:
         ]:
             if self.court.products(source.id, kind=kind, date=calendar.data):
                 continue
-            people = [e.key for e in self.court.petition_officials(faction)]
+            people = list(self.court.petition_officials(faction))
             if kind == "urgent" and not people:
                 self.court.record_product(source.id, kind, {"petitions": []})
                 continue

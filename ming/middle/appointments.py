@@ -17,7 +17,10 @@ ALIASES = type_coerce(case(
     ((DISPLAY_NAME != "") & (DISPLAY_NAME != E.key),
      func.json_insert(DECLARED_ALIASES, "$[#]", DISPLAY_NAME)),
     else_=DECLARED_ALIASES,
-), JSON)
+), JSON).label("aliases")
+PAIR_DATA = type_coerce(func.json_object(
+    "office", E.data["office"].as_string(), "territory", E.data["territory"].as_string(),
+), JSON).label("data")
 
 
 def incumbency_record(pair: Sequence[str], holders: list[str]) -> tuple[str, Item]:
@@ -34,11 +37,13 @@ def named(
     if records is not None:
         return tuple(row for (entity_kind, key), row in records.items()
                      if (kind is None or entity_kind == kind) and any(
-                         name == key or name == row["data"].get("name") or name in row["data"].get("aliases", [])
+                         name == key or name in row["aliases"]
                          for name in values
                      ))
     aliases = func.json_each(ALIASES).table_valued("value")
-    return ledger.entities(kind=kind, query=ENTITY_ROWS.where(or_(
+    return ledger.entities(kind=kind, query=ENTITY_ROWS.with_only_columns(
+        E.id, E.kind, E.key, ALIASES, E.data["external"].as_boolean().label("external"),
+    ).where(or_(
         E.key.in_(values),
         select(aliases.c.value).where(aliases.c.value.in_(values)).exists(),
     )))
@@ -51,9 +56,9 @@ def office_pairs(
 ) -> tuple[list[tuple[str, str]], Item]:
     """Resolve once for both queries and landing; candidates are caller-visible rows."""
     exact = named(ledger, "office", value, records=records)
-    if exact and any(row["data"]["external"] for row in exact):
+    if exact and any(row["external"] for row in exact):
         offices = {row["key"] for row in exact}
-        incumbencies = ledger.entities(kind="incumbency", query=ENTITY_ROWS.where(
+        incumbencies = ledger.entities(kind="incumbency", query=ENTITY_ROWS.with_only_columns(E.id, PAIR_DATA).where(
             E.data["office"].as_string().in_(offices)
         )) if records is None else tuple(
             row for (kind, _), row in records.items()
@@ -64,7 +69,9 @@ def office_pairs(
         }), "pairs": []}
     incumbencies: tuple[Item, ...] = ()
     if not exact:
-        incumbencies = ledger.entities(kind="incumbency", key=value) if records is None else tuple(
+        incumbencies = ledger.entities(
+            kind="incumbency", key=value, query=ENTITY_ROWS.with_only_columns(PAIR_DATA),
+        ) if records is None else tuple(
             row for (kind, key), row in records.items() if kind == "incumbency" and key == value
         )
     pairs: set[tuple[str, str]] = set()
@@ -74,13 +81,13 @@ def office_pairs(
         pairs.update((row["data"]["office"], row["data"]["territory"]) for row in incumbencies)
     else:
         aliases = func.json_each(ALIASES).table_valued("value")
-        query = ENTITY_ROWS.where(E.data["external"].as_boolean().is_(True), or_(
+        query = ENTITY_ROWS.with_only_columns(E.key, ALIASES).where(E.data["external"].as_boolean().is_(True), or_(
             func.substr(literal(value), -func.length(E.key)) == E.key,
             select(aliases.c.value).where(func.substr(literal(value), -func.length(aliases.c.value)) == aliases.c.value).exists(),
         ))
         for office in (ledger.entities(kind="office", query=query) if records is None
-                       else (row for (kind, _), row in records.items() if kind == "office" and row["data"]["external"])):
-            for title in dict.fromkeys([office["key"], office["data"].get("name", ""), *office["data"].get("aliases", [])]):
+                       else (row for (kind, _), row in records.items() if kind == "office" and row["external"])):
+            for title in dict.fromkeys([office["key"], *office["aliases"]]):
                 if title and value.endswith(title):
                     for territory in named(ledger, "territory", value[:-len(title)], records=records):
                         pairs.add((office["key"], territory["key"]))

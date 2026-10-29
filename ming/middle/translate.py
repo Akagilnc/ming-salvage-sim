@@ -7,6 +7,7 @@ from typing import Any, TypeVar, cast
 from uuid import UUID
 
 from pydantic import ValidationError
+from sqlalchemy import case
 from pydantic_ai import (
     Agent,
     PromptedOutput,
@@ -16,7 +17,7 @@ from pydantic_ai import (
 from pydantic_ai.exceptions import ToolRetryError, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelResponse
 
-from ming.ledger import Item, Ledger
+from ming.ledger import ENTITY_COLUMNS as E, Item, Ledger
 from ming.middle.fiscal import OUTPUT_METRICS, levers, payable_army, settling
 from ming.middle.declaration import (
     Declaration,
@@ -31,7 +32,7 @@ from ming.middle.declaration import (
 from ming.middle.queries import CATALOGUE
 from ming.middle.night import read_night
 from ming.middle.opening import REFERENCES
-from ming.middle.appointments import APPOINTMENT_ROLES, cabinet_members, incumbency_record, office_pairs, reference_key
+from ming.middle.appointments import ALIASES, APPOINTMENT_ROLES, cabinet_members, incumbency_record, office_pairs, reference_key
 from ming.middle.calendar import calendar_row
 from ming.middle.dispatch import landing_sources
 from ming.middle.rules import Names, check_rules, fail, name_expected
@@ -64,10 +65,7 @@ text 保留圣旨定稿全文，不改写、不摘要。origin、people、endors
 def catalogue(records: Sequence[Item]) -> dict[str, dict[str, list[str]]]:
     result: dict[str, dict[str, list[str]]] = {}
     for row in records:
-        aliases = list(row["data"].get("aliases", []))
-        if (name := row["data"].get("name")) and name != row["key"]:
-            aliases.append(name)
-        result.setdefault(row["kind"], {})[row["key"]] = aliases
+        result.setdefault(row["kind"], {})[row["key"]] = row["aliases"]
     return result
 
 
@@ -79,13 +77,16 @@ CATALOGUES = {"historical_event", "fiscal", "account", "office", "territory", "i
 def check(ledger: Ledger, out: Declaration, source: UUID) -> None:
     if not (out.facts or out.reports or out.decree_events or isinstance(out, NightDeclaration) and out.decrees):
         return
-    records = ledger.entities(query=CATALOGUE)
+    appointment_kinds = ("office", "incumbency") if any(f.entity_type == "incumbency" for f in out.facts) else ()
+    records = ledger.read(CATALOGUE.with_only_columns(
+        E.kind, E.key, ALIASES, E.data["external"].as_boolean().label("external"),
+        case((E.kind.in_((*appointment_kinds, "fiscal", "affair", "region", "historical_event", "army")), E.data),
+             else_="{}").label("data"),
+    ))
     names = catalogue(records)
     fields = FIELDS_BY_KIND
     appointments = {(row["kind"], row["key"]): row for row in records
-                    if row["kind"] in {"office", "territory", "incumbency"}} if any(
-        fact.entity_type == "incumbency" for fact in out.facts
-    ) else {}
+                    if row["kind"] in {"office", "territory", "incumbency"}} if appointment_kinds else {}
     for i, fact in enumerate(out.facts):
         path = f"facts[{i}]"
         if fact.entity_type != "incumbency":

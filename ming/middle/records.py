@@ -54,7 +54,7 @@ async def read_records(
     keys = ([key] if isinstance(key, str) else key) or None
     catalogue = ctx.deps.court.record_catalogue(ctx.deps.identity, month, kind, keys)
     selected = [e for e in catalogue if kind is None or e["kind"] == kind]
-    names = ctx.deps.court.catalogue(selected)
+    names = ctx.deps.court.catalogue(selected) if keys else {}
     resolved = {
         value: ([value] if any(value in entries for entries in names.values()) else
                 list(dict.fromkeys(name for entries in names.values() for name, aliases in entries.items()
@@ -64,7 +64,7 @@ async def read_records(
     if (kind is not None and not selected) or any(len(v) != 1 for v in resolved.values()):
         candidates = matching_names(
             ctx.deps.court.catalogue(ctx.deps.court.record_catalogue(ctx.deps.identity, month, kind)), keys or []
-        )
+        ) if keys else {}
         return {
             "status": "not_found", "message": "未找到",
             **({"names_and_aliases": candidates} if candidates else {}),

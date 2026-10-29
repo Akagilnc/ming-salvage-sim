@@ -83,7 +83,7 @@ def test_every_model_call_reads_identity_scoped_records(game_db, steps, model_in
             else:
                 assert all(isinstance(identity, Officials) and not identity.exclude_secrets for identity in model_invocations[name])
                 assert {frozenset(identity.people) for identity in model_invocations[name]} == {
-                    frozenset(p.key for p in court.petition_officials(faction.key))
+                    frozenset(court.petition_officials(faction.key))
                     for faction in court.entities("audit", kind="faction")
                 }
             assert tools[name]

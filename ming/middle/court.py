@@ -20,7 +20,7 @@ from ming.ledger import (
     facts_in_month,
 )
 from ming.middle import queries
-from ming.middle.appointments import office_pairs, incumbency_record, named
+from ming.middle.appointments import ALIASES, office_pairs, incumbency_record, named
 
 from ming.ledger import Entity, Item, Ledger
 from ming.middle.dispatch import dispatch, landing_sources
@@ -119,7 +119,7 @@ class Court:
     def scene_material(self) -> dict[str, object]:
         rows = self._ledger.entities(
             kind="person",
-            query=ENTITY_ROWS.where(E.data["waiting_audience"].as_boolean().is_(True)),
+            query=ENTITY_ROWS.with_only_columns(E.key).where(E.data["waiting_audience"].as_boolean().is_(True)),
         )
         gazette = self.entities("audit", kind="gazette")[0].data["text"]
         calendar = self.calendar()
@@ -276,17 +276,23 @@ class Court:
     ) -> tuple[Item, ...]:
         """Names and counts from the existing entity/fact projections, never prose."""
         matches = named(self._ledger, kind, keys) if keys is not None else None
-        selection: Item = {"catalogue": True, **({"kind": kind} if kind is not None else {}),
-                           **({"keys": [r["key"] for r in matches]} if matches is not None else {})}
-        source = fact_sources(self._ledger, identity)
+        cutoff = month_open(calendar_row(self._ledger)["data"]) if identity == "emperor" else None
+        source = fact_sources(self._ledger, identity, cutoff=cutoff)
         visible = ENTITY_SOURCES[identity_key(identity)].with_only_columns(E.id).order_by(None)
+        if cutoff is not None:
+            opening = FACT_ROWS.with_only_columns(F.detail["entities"]).where(
+                F.position == cutoff,
+            ).order_by(None).scalar_subquery()
+            snapshot = func.json_each(opening).table_valued("value")
+            visible = select(E.id).where(or_(
+                E.id.in_(select(func.replace(func.json_extract(snapshot.c.value, "$.id"), "-", ""))),
+                cutoff.is_(None) & E.id.in_(visible.correlate(None)),
+            ))
         if kind is not None:
             source, visible = source.where(E.kind == kind), visible.where(E.kind == kind)
         if matches is not None:
             source = source.where(F.entity_id.in_([r["id"] for r in matches]))
             visible = visible.where(E.id.in_([r["id"] for r in matches]))
-        if identity == "emperor":
-            visible = select(E.id).where(E.id.in_([e.id for e in entities(self._ledger, identity, selection)]))
         query = source
         if date is not None:
             query = query.where(facts_in_month(date))
@@ -410,12 +416,12 @@ class Court:
             for f in self._ledger.read(queries.pending_petitions(self.calendar().data if date is None else date))
         )
 
-    def petition_officials(self, faction: str | None = None) -> tuple[EntityView, ...]:
+    def petition_officials(self, faction: str | None = None) -> tuple[str, ...]:
         return tuple(
-            EntityView.model_validate(e)
+            e["key"]
             for e in self._ledger.entities(
                 kind="person",
-                query=ENTITY_ROWS.where(
+                query=ENTITY_ROWS.with_only_columns(E.key).where(
                     queries.IN_OFFICE,
                     E.data["faction"].as_string() == faction
                     if faction is not None
@@ -427,11 +433,10 @@ class Court:
         )
 
     def catalogue(self, records: Sequence[Item] | None = None) -> dict[str, dict[str, list[str]]]:
-        if records is None:
-            return names_and_aliases(self._ledger.entities(query=queries.CATALOGUE))
-        return names_and_aliases(self._ledger.entities(query=ENTITY_ROWS.where(
+        query = queries.CATALOGUE if records is None else ENTITY_ROWS.where(
             tuple_(E.kind, E.key).in_([(e["kind"], e["key"]) for e in records])
-        )))
+        )
+        return names_and_aliases(self._ledger.read(query.with_only_columns(E.kind, E.key, ALIASES)))
 
     def returned_petitions(
         self, *, visible: bool = False, date: Item | None = None,

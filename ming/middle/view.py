@@ -173,7 +173,6 @@ def entities(
 ) -> tuple[EntityView, ...]:
     selection = dict(selection or {})
     keys = selection.pop("keys", None)
-    catalogue = selection.pop("catalogue", False)
     if identity == "emperor" and (opening := next(iter(ledger.read(FACT_ROWS.where(
         F.position == (month_open(calendar_row(ledger)["data"]) if cutoff is None else cutoff),
     ))), None)):
@@ -188,8 +187,6 @@ def entities(
     query = query.where(E.key.in_(keys)) if keys is not None else query
     parameters = view_parameters(identity, selection.get("kind"))
     rows = ledger.read(query, parameters)
-    if catalogue:
-        return tuple(EntityView.model_validate({**row, "data": {}}) for row in rows)
     appointments: Sequence[Item] = ledger.entities(
         kind="incumbency", query=ENTITY_ROWS.where(HELD_BY, APPOINTMENT_ACCESS[identity_key(identity)]),
         parameters={**parameters, "appointed_people": people},
@@ -198,8 +195,8 @@ def entities(
     dossiers = {r["key"]: r["data"] for r in ledger.entities(
         kind="dossier", query=ENTITY_ROWS.where(E.key.in_(own.intersection(people))),
     )} if own.intersection(people) else {}
-    factions: set[Any] = {r["data"].get("faction") for r in ledger.entities(
-        kind="person", query=ENTITY_ROWS.where(E.key.in_(own)),
+    factions: set[Any] = {r["faction"] for r in ledger.entities(
+        kind="person", query=ENTITY_ROWS.with_only_columns(E.data["faction"].as_string().label("faction")).where(E.key.in_(own)),
     )} if any(row["exposure"] == "faction" for row in rows) else set()
     result: list[EntityView] = []
     for row in map(dict, rows):
