@@ -884,7 +884,7 @@ def test_fiscal_petition_lands_only_declared_outcome_without_readding_levies(
         ),
     ],
 )
-def test_exhausted_month_declaration_is_unhandled_not_a_stopped_month(
+def test_exhausted_declaration_is_unhandled_not_a_stopped_action(
     tmp_path: Path, game_db: Path, steps, audit, declared
 ) -> None:
     reply = (
@@ -894,8 +894,13 @@ def test_exhausted_month_declaration_is_unhandled_not_a_stopped_month(
     )
     if isinstance(declared, tuple) and declared[0] not in {"duplicate_state", "missing_counterpart_v2"}:
         reply = json.dumps(json.loads((RECORDED / {"fiscal_target": "cabinet_wei.json"}.get(declared[0], "declarations_v9.json")).read_text())["cases"][declared[0]], ensure_ascii=False)
+    # Keep the recorded monthly shape error and validator failures (including
+    # partial money movement). Local field/reference errors need no settlement.
+    monthly = isinstance(declared, str) or (isinstance(declared, tuple) and declared[0] in {"duplicate_state", "missing_counterpart_v2"})
+    if not monthly:
+        reply = json.dumps({"decrees": [], **json.loads(reply)}, ensure_ascii=False)
     received = []
-    steps["Declaration"] = replaying(
+    steps["Declaration" if monthly else "NightDeclaration"] = replaying(
         ModelMessagesTypeAdapter.validate_python(json.loads((RECORDED / "declarations_1972.json").read_text())["cases"][declared[0]])
         if isinstance(declared, tuple) and declared[0] in {"duplicate_state", "missing_counterpart_v2"}
         else [reply, reply], received,
@@ -904,26 +909,33 @@ def test_exhausted_month_declaration_is_unhandled_not_a_stopped_month(
         save = client.post(
             "/actions", json={"action": "load", "save": game_db.name}
         ).json()["save"]
-        client.post("/actions", json={"action": "month"})
+        if monthly:
+            client.post("/actions", json={"action": "month"}).raise_for_status()
+        else:
+            client.post("/actions", json={"action": "open"}).raise_for_status()
+            client.post("/actions", json={"action": "dismiss"}).raise_for_status()
+            client.portal.call(client.app.state.web.game.drain)
         state = client.get("/state").json()["game"]
         assert (state["date"]["month"], state["running"], state["failure"]) == (
-            11,
+            11 if monthly else 10,
             False,
             None,
         )
+        if not monthly:
+            assert state["night"]["result"] == "unhandled"
         facts = client.get("/records").json()["facts"]
-        assert {f["kind"] for f in facts if f["kind"] != "interaction"} == {
-            "unhandled",
-            "gazette",
-        }
+        assert {f["kind"] for f in facts if f["kind"] != "interaction"} == ({"unhandled", "gazette"} if monthly else {"unhandled"})
         assert all(not f["detail"] for f in facts if f["kind"] == "unhandled")
         ledger = audit(tmp_path / save)
-        assert state["unhandled_monthly"] == [{"entity_id": next(e["id"] for e in ledger["entities"] if e["kind"] == "calendar")}]
+        assert state["unhandled_monthly"] == ([{"entity_id": next(e["id"] for e in ledger["entities"] if e["kind"] == "calendar")}] if monthly else [])
         assert {
             e["key"]: e["data"]["taels"]
             for e in ledger["entities"]
             if e["kind"] == "account"
-        } == pytest.approx({"国库": 11940269.2869425, "内库": 7657600, "节慎库": 630000, "常盈库": 1250000})
+        } == pytest.approx(
+            {"国库": 11940269.2869425, "内库": 7657600, "节慎库": 630000, "常盈库": 1250000}
+            if monthly else {"国库": 3200000, "内库": 4400000, "节慎库": 600000, "常盈库": 1200000}
+        )
         rows = {(e["kind"], e["key"]): e["data"] for e in ledger["entities"]}
         assert rows[("historical_event", "辽饷升至一分二厘")].get("terminal_reason") is None
         assert rows[("army", "关宁军 / 宁锦防线")]["arrears"] == 60
@@ -934,8 +946,7 @@ def test_exhausted_month_declaration_is_unhandled_not_a_stopped_month(
         assert not any(e["kind"] == "decree" for e in ledger["entities"])
         assert not any(f["kind"] == "received" for f in ledger["facts"])
         settled = [f for f in ledger["facts"] if f["kind"] == "month_accounts"]
-        assert settled[-1]["detail"]["date"]["year"] == 1627
-        assert settled[-1]["detail"]["date"]["month"] == 10
+        assert [f["detail"]["date"] for f in settled] == ([{"id": "world", "year": 1627, "month": 10}] if monthly else [])
         if isinstance(declared, tuple):
             failure = json.loads(next(p.content for m in received for p in m.parts if isinstance(p, RetryPromptPart)))
             assert failure["field"] == declared[1]

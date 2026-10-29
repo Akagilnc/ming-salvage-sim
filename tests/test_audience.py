@@ -246,9 +246,12 @@ def test_backing_follows_its_decree_and_signers(game_db, steps, audit, case, rec
                 assert set(failure) == {"field", "current", "expected", "action"}
             assert len([f for f in audit(game_db)["facts"] if f["kind"] == "unhandled"]) == 1
             assert [f["detail"] for f in client.get("/records").json()["facts"] if f["kind"] == "unhandled"] == [{}]
-            client.post("/actions", json={"action": "month"}).raise_for_status()
-            state = client.get("/state").json()["game"]
-            assert (state["face"], state["failure"], state["unhandled_monthly"]) == ("desk", None, [])
+            # One terminal night failure proves month handoff; the other
+            # invalid fields still prove rejection and opening the next night.
+            if case == "source":
+                client.post("/actions", json={"action": "month"}).raise_for_status()
+                state = client.get("/state").json()["game"]
+                assert (state["face"], state["failure"], state["unhandled_monthly"], state["date"]["month"]) == ("desk", None, [], 11)
             client.post("/actions", json={"action": "open"}).raise_for_status()
             assert client.get("/state").json()["game"]["night"]["turns"] == []
             return
