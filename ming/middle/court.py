@@ -416,10 +416,10 @@ class Court:
     def entity(self, entity_id: UUID) -> EntityView:
         return EntityView.model_validate(self._ledger.entities(entity_id=entity_id)[0])
 
-    def pending_petitions(self, date: Item | None = None) -> tuple[PendingPetition, ...]:
+    def pending_petitions(self, date: Item) -> tuple[PendingPetition, ...]:
         return tuple(
             self.as_petition(FactView(**f))
-            for f in self._ledger.read(queries.pending_petitions(self.calendar().data if date is None else date))
+            for f in self._ledger.read(queries.pending_petitions(date))
         )
 
     def has_pending_petitions(self, date: Item) -> bool:
