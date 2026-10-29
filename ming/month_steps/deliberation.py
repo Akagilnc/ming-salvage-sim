@@ -8,7 +8,7 @@ from pydantic_ai import PromptedOutput
 from ming.middle.court import Court
 from ming.middle.concepts import ACTING, IMPERIAL_PUSH, INTERIM, VERDICT
 from ming.middle.invoke import ModelSource, build_agent, gather_or_raise, invoke
-from ming.middle.month_work import Deliberation, prompt
+from ming.middle.month_work import Deliberation, prompt, prompt_materials
 from ming.middle.records import Materials, read_records
 from ming.middle.view import EntityView, FactView, Officials
 
@@ -43,13 +43,17 @@ class Deliberations:
         pending = [i for i in range(len(requests)) if i not in verdicts]
         if pending:
             prestige = self.court.entities("audit", kind="world")[0].data["imperial_prestige"]
+            materials = {people: prompt_materials(self.court, Officials(people=list(people), exclude_secrets=True))
+                         for people in dict.fromkeys(tuple(requests[i][0].data["people"]) for i in pending)}
             verdicts.update(zip(pending, await gather_or_raise(*(
-                self.decide(requests[i][0], date, requests[i][1], prestige) for i in pending
+                self.decide(requests[i][0], date, requests[i][1], prestige,
+                            materials[tuple(requests[i][0].data["people"])]) for i in pending
             )), strict=True))
         return [verdicts[i] for i in range(len(requests))]
 
     async def decide(
         self, decree: EntityView, date: dict[str, Any], decision: dict[str, Any] | None, prestige: float,
+        materials: dict[str, Any],
     ) -> dict[str, Any]:
         """Initial verdict or next-month reconsideration of one selected push."""
         identity = Officials(people=decree.data["people"], exclude_secrets=True)
@@ -60,7 +64,7 @@ class Deliberations:
                 {
                     "decree": decree.model_dump(mode="json"),
                     "imperial_prestige": prestige,
-                }, date,
+                }, date, materials,
             ),
             deps=Materials(self.court, identity),
         )

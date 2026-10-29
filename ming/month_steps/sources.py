@@ -12,7 +12,7 @@ from ming.middle.court import Court
 from ming.middle.concepts import ACTING
 from ming.middle.declaration import Petition, PendingPetition, StrictModel
 from ming.middle.invoke import ModelSource, build_agent, gather_or_raise, invoke
-from ming.middle.month_work import prompt
+from ming.middle.month_work import prompt, prompt_materials
 from ming.middle.records import Materials, read_records
 from ming.middle.view import EntityView, FactView, Officials
 from ming.middle.rules import fail, name_expected
@@ -58,9 +58,13 @@ class Sources:
         faction_keys = [faction for _, _, faction in sources if faction is not None]
         officials = self.court.petition_officials(faction_keys) if faction_keys else ()
         names = self.court.catalogue(kind="person")
+        groups = {(source.id, kind): tuple(e.key for e in officials if e.data["faction"] == faction)
+                  if faction is not None else tuple(e.key for e in self.court.petition_officials())
+                  for source, kind, faction in sources}
+        shared = {people: prompt_materials(self.court, Officials(people=list(people)))
+                  for people in dict.fromkeys(people for (_, kind), people in groups.items() if people or kind != "urgent")}
         for source, kind, faction in sources:
-            people = ([e.key for e in officials if e.data["faction"] == faction] if faction is not None else
-                      [e.key for e in self.court.petition_officials()])
+            people = list(groups[source.id, kind])
             if kind == "urgent" and not people:
                 self.court.record_product(source.id, kind, {"petitions": []}, date=calendar.data)
                 continue
@@ -72,17 +76,18 @@ class Sources:
                 "people": people,
                 "instruction": "以本派在朝人物的身份看本月见闻和本派、对手势力，自行决定劾不劾、劾谁、如何归因，可以交空。灾难真而归因可夹私货。署名人及被劾人用账本正名。每折三项：顺水推舟办人、压下、查实再办，措辞自拟。",
             }
-            calls.append(self.call(source, kind, Materials(self.court, Officials(people=people), names=names), context, date=calendar.data))
+            calls.append(self.call((source, kind), Materials(self.court, Officials(people=people), names=names),
+                                   context, date=calendar.data, shared=shared[tuple(people)]))
         await gather_or_raise(*calls)
 
     async def call(
         self,
-        source: EntityView,
-        kind: str,
+        request: tuple[EntityView, str],
         materials: Materials,
         context: dict[str, object],
-        *, date: dict[str, object],
+        *, date: dict[str, object], shared: dict[str, Any],
     ) -> None:
+        source, kind = request
         identity = cast(Officials, materials.identity)
         originals = {str(f["id"]) for f in cast(list[dict[str, Any]], context.get("returned", []))}
         agent = build_agent(
@@ -131,7 +136,7 @@ class Sources:
 
         result = await invoke(
             agent,
-            prompt(self.court, identity, context, date),
+            prompt(self.court, identity, context, date, shared),
             deps=materials,
         )
         self.court.log.info("%s output: %s", kind, result.output.model_dump_json())
