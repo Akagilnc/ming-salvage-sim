@@ -3,6 +3,7 @@
 import logging
 from difflib import get_close_matches
 from functools import partial
+from collections import defaultdict
 from collections.abc import Sequence
 from pathlib import Path
 from shutil import copyfileobj
@@ -10,7 +11,7 @@ from typing import TypeVar
 from uuid import UUID, uuid4
 
 from pydantic_ai import Agent
-from sqlalchemy import JSON, func, literal, or_, select, tuple_
+from sqlalchemy import JSON, func, or_, select, tuple_
 from ming.ledger import (
     ENTITY_COLUMNS as E,
     FACT_COLUMNS as F,
@@ -36,7 +37,7 @@ from ming.middle.invoke import ModelSource
 from ming.middle.records import TranslationMaterials
 from ming.middle.rules import matching_names
 from ming.middle.opening import opening_template
-from ming.middle.night import NightView, dismiss, known_people, open_night, read_night
+from ming.middle.night import NightView, dismiss, known_people, open_night, read_nights
 from ming.middle.scene import HallResult, set_hall
 from ming.middle.translate import declaration_agent, translate
 from ming.middle.translate import catalogue as names_and_aliases
@@ -94,7 +95,7 @@ class Court:
         return open_night(self._ledger)
 
     def night(self, night_id: UUID) -> NightView:
-        return read_night(self._ledger, self._ledger.entities(entity_id=night_id)[0])
+        return read_nights(self._ledger, self._ledger.entities(entity_id=night_id))[0]
 
     def dismiss(self, night_id: UUID) -> None:
         dismiss(self._ledger, night_id)
@@ -103,7 +104,7 @@ class Court:
         return set_hall(self._ledger, night_id, add, remove)
 
     def nights(self) -> tuple[NightView, ...]:
-        return tuple(read_night(self._ledger, row) for row in self._ledger.read(queries.LATEST_NIGHT))
+        return read_nights(self._ledger, self._ledger.read(queries.LATEST_NIGHT))
 
     def pending_nights(self) -> tuple[UUID, ...]:
         return tuple(
@@ -537,13 +538,20 @@ class Court:
     def landing_materials(self, *, include_history: bool = True) -> tuple[Item, ...]:
         """Monthly materials; translation also needs historical decree pointers."""
         materials: list[Item] = []
-        date = self.calendar().data
-        for row, mode, events in landing_sources(self._ledger, date, include_history=include_history):
+        sources = landing_sources(self._ledger, self.calendar().data, include_history=include_history)
+        readers = known_people(E.data).subquery()
+        secret_ids = [row["id"] for row, _mode, _events in sources if row["data"]["secret"]]
+        known = {row["id"]: sorted(row["people"]) for row in self._ledger.read(select(
+            E.id, select(func.json_group_array(readers.c.person, type_=JSON)).scalar_subquery().label("people"),
+        ).where(E.id.in_(secret_ids)))} if secret_ids else {}
+        prior: dict[UUID, list[Item]] = defaultdict(list)
+        if current_ids := [row["id"] for row, mode, events in sources if mode is not None or events]:
+            for event in self._ledger.facts(entity_id=current_ids, kind="interim"):
+                prior[event["entity_id"]].append(event["detail"])
+        for row, mode, events in sources:
             decree = EntityView.model_validate(row)
-            deliberations = (self.products(decree.id, kind=("deliberation", "choice"), date=date)
-                            if events is None else tuple(FactView(**event) for event in events))
+            deliberations = [FactView(**event) for event in events]
             current = mode is not None or bool(deliberations)
-            readers = known_people(literal(decree.data, type_=JSON)).subquery()
             materials.append({
                 "decree": decree.model_dump(mode="json") if current else {
                     "id": str(decree.id), "kind": decree.kind, "key": decree.key,
@@ -551,9 +559,8 @@ class Court:
                 },
                 "mode": mode,
                 "deliberations": [f.model_dump(mode="json") for f in deliberations],
-                "prior_interim": [f.detail for f in self.products(decree.id, current=False, kind="interim")] if current else [],
-                **({"known_people": sorted(row["person"] for row in self._ledger.read(select(readers.c.person)))}
-                   if decree.data["secret"] else {}),
+                "prior_interim": prior[decree.id] if current else [],
+                **({"known_people": known[decree.id]} if decree.data["secret"] else {}),
             })
         return tuple(materials)
 

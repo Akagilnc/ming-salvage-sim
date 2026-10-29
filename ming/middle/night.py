@@ -1,5 +1,7 @@
 """Persistent audience records, owned by the same entity/event ledger."""
 
+from collections import defaultdict
+from collections.abc import Sequence
 from operator import itemgetter
 from typing import Any, Literal
 from uuid import UUID, uuid4
@@ -87,14 +89,21 @@ TURN_HALL = select(func.json_group_array(func.json_object(
 TURN_ROWS = FACT_ROWS.add_columns(TURN_HALL.label("hall"))
 
 
-def read_night(ledger: Ledger, night: Item) -> NightView:
-    night_id = night["id"]
-    turns = tuple(TurnView(
-        **item["detail"], emperor_words=item["emperor_words"],
-        hall=tuple(member["person"] for member in sorted(item["hall"], key=itemgetter("position", "ordinal"))),
-    ) for item in ledger.facts(entity_id=night_id, kind="turn", query=TURN_ROWS))
-    result = ledger.read(select(NIGHT_RESULT.label("result")).where(E.id == night_id))[0]["result"]
-    return NightView(id=night_id, **night["data"], turns=turns, result=result)
+def read_nights(ledger: Ledger, nights: Sequence[Item]) -> tuple[NightView, ...]:
+    if not nights:
+        return ()
+    ids = [night["id"] for night in nights]
+    turns: dict[UUID, list[TurnView]] = defaultdict(list)
+    for item in ledger.facts(entity_id=ids, kind="turn", query=TURN_ROWS):
+        turns[item["entity_id"]].append(TurnView(
+            **item["detail"], emperor_words=item["emperor_words"],
+            hall=tuple(member["person"] for member in sorted(item["hall"], key=itemgetter("position", "ordinal"))),
+        ))
+    results = {row["id"]: row["result"] for row in ledger.read(
+        select(E.id, NIGHT_RESULT.label("result")).where(E.id.in_(ids)),
+    )}
+    return tuple(NightView(id=night["id"], **night["data"], turns=tuple(turns[night["id"]]), result=results[night["id"]])
+                 for night in nights)
 
 
 def witnessed_nights(people: list[str] | BindParameter[str], query: Select[Any]) -> Select[Any]:

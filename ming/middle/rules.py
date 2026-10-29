@@ -6,7 +6,7 @@ from typing import Any, Never, cast
 
 from pydantic_ai import ModelRetry
 
-from ming.ledger import Entity, Item, Ledger
+from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS, Entity, Item, Ledger
 from ming.middle.appointments import CATALOGUE_KINDS
 from ming.middle.calendar import calendar_row
 from ming.middle.declaration import Declaration, Fact
@@ -41,7 +41,9 @@ def fail(field: str, value: object, expected: object, names: Names, how: str) ->
 
 
 def check_rules(ledger: Ledger, out: Declaration, names: Names) -> None:
-    people: dict[str, Entity] = {}
+    person_names = {fact.entity for fact in out.facts if fact.entity_type == "person"}
+    people: dict[str, Entity] = {row["key"]: Entity("person", row["key"], "", dict(row["data"]))
+                               for row in ledger.entities(kind="person", query=ENTITY_ROWS.where(E.key.in_(person_names)))} if person_names else {}
     date: Item | None = None
     for i, fact in enumerate(out.facts):
         person = check_journey(ledger, fact, f"facts[{i}]", names, people)
@@ -77,8 +79,7 @@ def check_journey(ledger: Ledger, fact: Fact, path: str, names: Names, people: d
     if fact.entity_type != "person":
         return None
     if fact.entity not in people:
-        rows = ledger.entities(kind="person", key=fact.entity)
-        people[fact.entity] = Entity("person", fact.entity, "", dict(rows[0]["data"]) if rows else {})
+        people[fact.entity] = Entity("person", fact.entity, "", {})
     person = people[fact.entity]
     changes = {c.field: c.value for c in fact.changes}
     try:

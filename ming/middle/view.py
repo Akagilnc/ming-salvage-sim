@@ -13,7 +13,7 @@ from ming.ledger import ENTITY_COLUMNS as E, FACT_COLUMNS as F, ENTITY_ROWS, FAC
 from ming.middle.queries import CALENDAR, available_on, public_decree
 from ming.middle.calendar import calendar_row
 from ming.middle.appointments import APPOINTMENT_ROLES, CATALOGUE_KINDS, held_by
-from ming.middle.night import known_people, read_night, witnessed_nights
+from ming.middle.night import known_people, read_nights, witnessed_nights
 from ming.middle.travel import travel_days
 
 OPENING_CONTROLS = {"interaction", "petition", "choice", "gazette", "secret_report"}
@@ -198,6 +198,9 @@ def entities(
     factions: set[Any] = {r["faction"] for r in ledger.entities(
         kind="person", query=ENTITY_ROWS.with_only_columns(E.data["faction"].as_string().label("faction")).where(E.key.in_(own)),
     )} if any(row["exposure"] == "faction" for row in rows) else set()
+    nights = {night.id: night.model_dump(mode="json") for night in read_nights(
+        ledger, [row for row in rows if row["exposure"] == "night"],
+    )}
     result: list[EntityView] = []
     for row in map(dict, rows):
         if row["kind"] == "person":
@@ -211,7 +214,7 @@ def entities(
             elif row["exposure"] == "account_name":
                 row["data"] = {"name": row["key"]}
             elif row["exposure"] == "night":
-                row["data"] = read_night(ledger, row).model_dump(mode="json")
+                row["data"] = nights[row["id"]]
             elif row["exposure"] == "decree":
                 row["data"] = {
                     k: v
