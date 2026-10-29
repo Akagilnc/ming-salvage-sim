@@ -1,5 +1,6 @@
 """Medium: audience behavior through the HTTP boundary and CLI ledger reads."""
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from starlette.testclient import TestClient
 from ming.middle.view import Officials
 from ming.web import create_app
 from tests.test_court import replaying
+from tests.test_web import state_updates
 
 RECORDED = Path(__file__).parent / "recorded"
 
@@ -27,10 +29,17 @@ def test_nights_are_persistent_and_translate_only_after_dismissal(
 ) -> None:
     case = json.loads((RECORDED / f"night_{recording}.json").read_text())
     with TestClient(create_app(tmp_path)) as client:
+        events = asyncio.Queue()
+        client.app.state.web.listeners.add(events)
         save = client.post(
             "/actions", json={"action": "load", "save": game_db.name}
         ).json()["save"]
+        assert [state["game"]["face"] for state in state_updates(events)] == ["audience"]
         client.post("/actions", json={"action": "say", "words": case["words"][0]})
+        assert [
+            (state["game"]["running"], len(state["game"]["night"]["turns"]))
+            for state in state_updates(events)
+        ] == [(True, 0), (False, 1)]
         first = client.get("/state").json()["game"]["night"]
         assert first["closed"] is False
         assert first["result"] is None
@@ -38,12 +47,31 @@ def test_nights_are_persistent_and_translate_only_after_dismissal(
             e for e in audit(tmp_path / save)["entities"] if e["kind"] == "decree"
         ]
     with TestClient(create_app(tmp_path)) as client:
+        events = asyncio.Queue()
+        client.app.state.web.listeners.add(events)
         client.post("/actions", json={"action": "continue"})
+        assert [(state["game"]["night"]["id"], len(state["game"]["night"]["turns"]))
+                for state in state_updates(events)] == [(first["id"], 1)]
         assert client.get("/state").json()["game"]["night"] == first
-        for words in case["words"][1:]:
+        for index, words in enumerate(case["words"][1:], start=1):
             client.post("/actions", json={"action": "say", "words": words})
+            client.portal.call(client.app.state.web.game.drain)
+            assert [
+                (state["game"]["running"], len(state["game"]["night"]["turns"]),
+                 state["game"]["night"]["result"])
+                for state in state_updates(events)
+            ] == [
+                (True, index, None), (False, index + 1, None),
+                *([(False, index + 1, "translated")]
+                  if recording == "approved" and index == len(case["words"]) - 1 else []),
+            ]
         if recording == "new_office":
             client.post("/actions", json={"action": "dismiss"}).raise_for_status()
+            client.portal.call(client.app.state.web.game.drain)
+            assert [(state["game"]["night"]["closed"], state["game"]["night"]["result"])
+                    for state in state_updates(events)] == [(True, None), (True, "translated")]
+            client.post("/actions", json={"action": "dismiss"}).raise_for_status()
+            assert state_updates(events) == []
         client.post("/actions", json={"action": "load", "save": save})
         night = client.get("/state").json()["game"]["night"]
         assert night["closed"] is True
