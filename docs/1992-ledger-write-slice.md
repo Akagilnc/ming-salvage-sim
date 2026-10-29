@@ -518,3 +518,25 @@ PYTHONPATH=/tmp/1992-fixer-probes:$PWD .venv/bin/python -m pytest -q -s \
 取材都只活在本次调用：world 目录一份、每个未完密报身份一份、里程仅按请求起点取；无跨操作缓存或失效机制。新增生产函数逐项自审为 `prompt_materials`、`journey_distances`、`Secrets.run`，分别拆出原获取工作及同身份批次装配，旧单项读取已删除；没有新增测试函数。入口及业务断言仍是原 HTTP／模型工具，未放宽断言。
 
 本轮将前轮遗留 `office_probe.py`、`operators.html` 与本轮 runtime 探针及输出一并清理；证据以本节和上述会话 toolCallId 为准。不派发角色、不推送或开 PR，交驱动席按原话送大理寺复审。
+
+## T-fanout-batch：议处与密报的整批前置读取（基于 58fd53be5）
+
+本轮只修复审列出的三处剩余扇出读取，不撤回上轮已成立修理，不新增常驻测试、缓存、失效机制或并行器。
+
+- `Month.resume` 把明旨与待复议的整批请求传给 `Deliberations.run`。一次取这些旨意本月的 deliberation 产品，按 id 与原 decision_key 匹配；返回仍保留输入次序。仅有缺失产品时取一次 audit world，皇威传给各 `decide`；仍由原 gather_or_raise 并发执行。旧单项 `Court.deliberation` 及其读取删除。
+- `Secrets.run` 筛出未完成密报后，一次取得其 consequences，一次取得其 completed／handled 产品，按 origin_ref／entity_id 分进各旨原有 context，传给 report。每条事实仍剔除 emperor_words，身份、日期、事实序与产品序不改；report 内旧读取删除。
+- 复用现有门：`Court.products` 接收 Ledger.facts 本已支持的 UUID 列表；`Court.consequences` 的单值等式改成列表 in_，没有留下单项兼容旁路。官方依据仍为 [SQLAlchemy IN against a list of values](https://docs.sqlalchemy.org/en/20/core/operators.html#in-against-a-list-of-values)： “IN is available most typically by passing a list of values to the ColumnOperators.in_() method”。不把查询推到使用者层。
+
+### 复现、变异与复扫
+
+临时 `/tmp/1992-fanout-probe.py` 走 new → open → say → dismiss → month 的真实 HTTP 入口，只有外部模型使用仓内 recorded_steps／replaying。包装 Ledger.read／commit 原样执行，按 Month.resume 和明确的议处／密报取材调用归属计数，不比较 SQL 文本；提交序号只是诊断证据。最小案例为两道不同经手人的明旨、两道同承办人的密令；另给两道密令各一条实际后果及 handled 产品，核验分发归属与排除字段，不断言自由文本。
+
+修前重复跑均报红：议处产品 2 次、world 2 次；下一次 resume 已有议处产品仍查 2 次，密报后果／产品各 2 次。调用链记录显示前者同属 epoch=0、audit world 同为20；后者同属 epoch=6、同日期，仅旨意 id 不同（`call_e69876ba3fd34af1a5f247ae3ccbd692`）。因此排除「不同世界状态」或「身份／日期不同」；根因是已知整批需求仍落在逐项路径。
+
+变异命令：`/usr/bin/time -p env PYDANTIC_AI_NO_BANNER=1 PYTHONPATH=$PWD .venv/bin/python /tmp/1992-fanout-probe.py`。装回逐 id 取议处产品、每个 decide 自读 world、密报逐 id 取两类材料：业务结构仍正确，次数断言红，exit=1、real=2.03s（`call_55b2fd3633c540b096a447dc34d4a158`）。恢复后同命令 exit=0、real=2.03s（`call_439a4e1b45ba40c59665a00251baf27b`）：四类读取各1次；已有全部议处时 world 为0次。两道议处、两份密报、身份及密报材料归属均通过。时长相等，不宣称墙钟提速；这个两旨样本只证明所列查询减半。
+
+既有聚焦复扫命令：`PYTHONPATH=/tmp:$PWD .venv/bin/python -m pytest -q -s -p 1992-fanout-probe --tb=line --show-capture=no tests/test_secrets.py tests/test_month_steps.py::test_imperial_backing_reconsiders_the_original_decree tests/test_month_steps.py::test_two_nights_feed_world_and_arrivals_wait_for_audience 'tests/test_month.py::test_month_advances_after_reopening[deltas-None]'`。结果 `14 passed in 77.83s`（`call_80308890f6154aa58bf4243c0cedf2b0`）：含新旧议处混合、强推准驳、失败重试／重开、密报失败重试、完成后停报、跨月和两夜合并。每个 resume 所列每类至多一次，空批次不读；既有业务断言未动。跑时 HEAD 为 `58fd53be5e490f02f7b7956b6c205403bb701d60` 加本轮工作区；随后仅装入并恢复上述变异、补本节。
+
+对全体扇出复扫：month 两处（议处改为批入口、末尾异类任务）；sources 按不同身份；simulation 已共享 world 材料；game 两处等待独立操作；simulation.drain 只是等已有任务。原三处命中均已修，没有把独立工具请求、流式推送或校验重试合并。Ruff 通过、Pyright 0 errors、import-linter 4 kept／0 broken、diff --check 通过。
+
+自审新增函数逐项仅 `Deliberations.decide`：从原单旨 run 移出的模型调用与记录，不保留旧单旨入口或另一个同职实现；没有新增测试函数。所有批材料限于本次所需旨意及月份，按行一次归组，模型调用数不变。临时探针交卷前删除，证据保留在本席会话；未跑全量、未 push／开 PR／合并，交驱动席送大理寺复审。

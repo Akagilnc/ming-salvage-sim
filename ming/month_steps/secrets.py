@@ -29,30 +29,25 @@ class Secrets:
             "audit", entity_id=[d.id for d in decrees], kind="secret_report", date=calendar.data,
         )}
         pending = [d for d in decrees if d.id not in done]
+        if not pending:
+            return
+        ids = [d.id for d in pending]
+        contexts: dict[str, dict[str, Any]] = {
+            str(d.id): {"decree": d.model_dump(mode="json"), "facts": [], "products": []} for d in pending
+        }
+        for fact in self.court.consequences(ids, calendar.data):
+            contexts[fact.detail["origin_ref"]]["facts"].append(fact.model_dump(mode="json", exclude={"emperor_words"}))
+        for fact in self.court.products(ids, kind=("completed", "handled"), date=calendar.data):
+            contexts[str(fact.entity_id)]["products"].append(fact.model_dump(mode="json", exclude={"emperor_words"}))
         materials = {handler: prompt_materials(self.court, Officials(people=[handler]))
                      for handler in dict.fromkeys(d.data["handler"] for d in pending)}
-        await gather_or_raise(*(self.report(d, calendar, materials[d.data["handler"]]) for d in pending))
+        await gather_or_raise(*(self.report(d, calendar, materials[d.data["handler"]], contexts[str(d.id)]) for d in pending))
 
-    async def report(self, decree: EntityView, calendar: EntityView, materials: dict[str, Any]) -> None:
+    async def report(self, decree: EntityView, calendar: EntityView, materials: dict[str, Any], context: dict[str, Any]) -> None:
         identity = Officials(people=[decree.data["handler"]])
         result = await invoke(
             self.agent,
-            prompt(
-                self.court, identity,
-                {
-                    "decree": decree.model_dump(mode="json"),
-                    "facts": [
-                        f.model_dump(mode="json", exclude={"emperor_words"})
-                        for f in self.court.consequences(decree.id, calendar.data)
-                    ],
-                    "products": [
-                        f.model_dump(mode="json", exclude={"emperor_words"})
-                        for f in self.court.products(
-                            decree.id, kind=("completed", "handled"), date=calendar.data
-                        )
-                    ],
-                }, calendar.data, materials,
-            ),
+            prompt(self.court, identity, context, calendar.data, materials),
             deps=Materials(self.court, identity),
         )
         self.court.log.info("model output: %s", result.output)

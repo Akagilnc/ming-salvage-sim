@@ -6,7 +6,7 @@ from functools import partial
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from shutil import copyfileobj
-from typing import Any, TypeVar
+from typing import TypeVar
 from uuid import UUID, uuid4
 
 from pydantic_ai import Agent
@@ -196,7 +196,7 @@ class Court:
 
     def products(
         self,
-        entity_id: UUID,
+        entity_id: UUID | list[UUID],
         *,
         kind: str | tuple[str, ...] | None = None,
         date: Item | None = None,
@@ -212,18 +212,6 @@ class Court:
     def as_petition(self, fact: FactView) -> PendingPetition:
         return PendingPetition.model_validate(
             {k: v for k, v in fact.detail.items() if k != "date"}
-        )
-
-    def deliberation(
-        self, entity_id: UUID, decision: dict[str, Any] | None, date: Item,
-    ) -> dict[str, Any] | None:
-        return next(
-            (
-                f.detail
-                for f in self.products(entity_id, kind="deliberation", date=date)
-                if f.detail["decision_key"] == decision
-            ),
-            None,
         )
 
     def record_product(
@@ -531,12 +519,12 @@ class Court:
             for e in self._ledger.read(queries.SECRET_DECREES)
         )
 
-    def consequences(self, decree: UUID, date: Item) -> tuple[FactView, ...]:
+    def consequences(self, decrees: list[UUID], date: Item) -> tuple[FactView, ...]:
         return tuple(
             FactView(**f)
             for f in self._ledger.facts(
                 query=FACT_ROWS.where(
-                    F.detail["origin_ref"].as_string() == str(decree)
+                    F.detail["origin_ref"].as_string().in_([str(decree) for decree in decrees])
                 ),
                 kind=("changed", "received", "reported", "unhandled"),
                 date=date,

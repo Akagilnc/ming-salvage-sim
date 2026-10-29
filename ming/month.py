@@ -60,9 +60,8 @@ class Month:
                 if calendar.data != current.data:
                     return current, self.court.pending_petitions(current.data)
             public = [d for d in self.court.current_decrees(calendar.data) if not d.data["secret"]]
-            verdicts = await gather_or_raise(
-                *(self.deliberations.run(d, calendar.data) for d in public),
-                *(self.deliberations.run(d, calendar.data, decision) for d, decision in self.court.pending_pushes(calendar.data)),
+            verdicts = await self.deliberations.run(
+                [*((d, None) for d in public), *self.court.pending_pushes(calendar.data)], calendar.data,
             )
             if speculative:
                 return calendar, self.court.pending_petitions(calendar.data)
