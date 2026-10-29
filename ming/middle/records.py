@@ -63,7 +63,7 @@ async def read_records(
     }
     if (kind is not None and not selected) or any(len(v) != 1 for v in resolved.values()):
         candidates = matching_names(
-            ctx.deps.court.catalogue(ctx.deps.court.record_catalogue(ctx.deps.identity, month, kind)), keys or []
+            ctx.deps.court.catalogue(ctx.deps.court.record_catalogue(ctx.deps.identity, month, kind)), keys
         ) if keys else {}
         return {
             "status": "not_found", "message": "未找到",

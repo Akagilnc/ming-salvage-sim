@@ -42,7 +42,7 @@ def named(
                      ))
     aliases = func.json_each(ALIASES).table_valued("value")
     return ledger.entities(kind=kind, query=ENTITY_ROWS.with_only_columns(
-        E.id, E.kind, E.key, ALIASES, E.data["external"].as_boolean().label("external"),
+        E.id, E.key, E.data["external"].as_boolean().label("external"),
     ).where(or_(
         E.key.in_(values),
         select(aliases.c.value).where(aliases.c.value.in_(values)).exists(),
