@@ -20,11 +20,13 @@ export interface Petition { id: string; text: string; options: string[]; blockin
 export interface Settings { backend: '' | 'api' | 'claude-cli' | 'codex' | 'grok' | 'pi'; model: string; base_url: string; api_key: string; effort: string }
 export interface Configuration extends Settings { month_model: Settings | null }
 export interface Snapshot {
+  navigation: number;
   saves: string[];
   save: string | null;
   settings: Configuration;
   required_settings: Partial<Record<Settings['backend'], (keyof Settings)[]>>;
   game: null | {
+    live: Partial<Record<'delta' | 'gazette', string>>;
     face: 'desk' | 'audience' | 'month';
     date: { year: number; month: number };
     night: Night | null;
@@ -37,7 +39,7 @@ export interface Snapshot {
   };
 }
 export interface Action {
-  action: 'new' | 'load' | 'continue' | 'settings' | 'open' | 'say' | 'dismiss' | 'month' | 'choose' | 'retry';
+  action: 'new' | 'load' | 'continue' | 'menu' | 'settings' | 'open' | 'say' | 'dismiss' | 'month' | 'choose' | 'retry';
   save?: string;
   words?: string;
   petition?: string;

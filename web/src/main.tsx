@@ -1,6 +1,6 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import { act, records, state } from './api';
+import { act, records } from './api';
 import { MenuPage, SettingsForm } from './components/menuPage';
 import { MarkdownText } from './components/markdownText';
 import { currentSpeaker, Scene, ScrollMessages } from './components/scrollMessages';
@@ -14,10 +14,11 @@ export function App() {
   const [busy, setBusy] = React.useState(false);
   const [live, setLive] = React.useState('');
   const [liveGazette, setLiveGazette] = React.useState('');
-  const [reading, setReading] = React.useState<number | 'latest' | null>(null);
-  const gazetteStreaming = React.useRef(false);
+  const [reading, setReading] = React.useState<{ navigation: number; page: number | 'latest' } | null>(null);
   const previous = React.useRef<Snapshot | null>(null);
   const refreshing = React.useRef(0);
+  // A later navigation supersedes action effects even when it selects the same save.
+  const navigation = React.useRef(0);
   const choosingNow = React.useRef(new Set<string>());
   const [choosing, setChoosing] = React.useState<Set<string>>(new Set());
   const [pendingWords, setPendingWords] = React.useState('');
@@ -26,24 +27,34 @@ export function App() {
   const scroll = React.useRef<HTMLDivElement>(null);
   const follow = React.useRef(true);
 
-  const refresh = React.useCallback(async (next?: Snapshot) => {
+  const refresh = React.useCallback(async (value: Snapshot) => {
     const request = ++refreshing.current;
-    const value = next ?? await state();
-    const contents = value.save ? await records() : { entities: [], facts: [] };
-    if (request !== refreshing.current) return;
-    const before = previous.current;
-    if (before?.save === value.save && before?.game && value.game
-      && (before.game.date.year !== value.game.date.year || before.game.date.month !== value.game.date.month)) {
-      setReading('latest'); setPanel(null);
+    try {
+      const before = previous.current;
+      if (before?.navigation === value.navigation && before?.game && value.game
+        && (before.game.date.year !== value.game.date.year || before.game.date.month !== value.game.date.month)) {
+        setReading({ navigation: value.navigation, page: 'latest' }); setPanel(null);
+      }
+      setLive(value.game?.live.delta ?? ''); setLiveGazette(value.game?.live.gazette ?? '');
+      if (before?.navigation !== value.navigation) {
+        setSnapshot(value); setBook({ entities: [], facts: [] });
+        setPendingWords(''); setBusy(false);
+        setPanel(null); setReading(current => current?.navigation === value.navigation ? current : null); setInput(''); setError('');
+        choosingNow.current.clear(); setChoosing(new Set());
+      }
+      previous.current = value;
+      const contents = value.save ? await records() : { entities: [], facts: [] };
+      if (request !== refreshing.current) return;
+      setBook(contents);
+      setSnapshot(value);
+      if (!value.game?.running) { setLive(''); setPendingWords(''); setLiveGazette(''); }
+    } catch (reason) {
+      // Only the current refresh owns either results or errors on this page.
+      if (request === refreshing.current) setError(String(reason));
     }
-    previous.current = value;
-    setBook(contents);
-    setSnapshot(value);
-    if (!value.game?.running) { setLive(''); setPendingWords(''); setLiveGazette(''); }
   }, []);
 
   React.useEffect(() => {
-    void refresh().catch(reason => setError(String(reason)));
     const events = new EventSource('/stream');
     events.addEventListener('delta', event => {
       const chunk = JSON.parse((event as MessageEvent).data) as { text: TextUpdate; hall: string[] };
@@ -53,18 +64,14 @@ export function App() {
       } : value);
     });
     events.addEventListener('gazette', event => {
-      if (!gazetteStreaming.current) setLiveGazette('');
-      gazetteStreaming.current = true;
       const chunk = JSON.parse((event as MessageEvent).data) as TextUpdate;
       setLiveGazette(text => typeof chunk === 'string' ? text + chunk : chunk.replace);
     });
     const receive = (event: Event) => {
       const next = JSON.parse((event as MessageEvent).data) as Snapshot;
-      if (next.game?.face !== 'month' || next.game.failure) gazetteStreaming.current = false;
-      void refresh(next).catch(reason => setError(String(reason)));
+      void refresh(next);
     };
     events.addEventListener('state', receive);
-    events.addEventListener('done', receive);
     return () => events.close();
   }, [refresh]);
 
@@ -73,20 +80,27 @@ export function App() {
   }, [live, snapshot?.game?.night?.turns.length]);
 
   async function action(value: Action) {
+    const navigating = ['new', 'continue', 'load', 'menu'].includes(value.action);
+    const owner = navigating ? ++navigation.current : navigation.current;
+    let shared = previous.current?.navigation ?? 0;
     setError('');
     if (value.action === 'choose' && value.petition) {
       if (choosingNow.current.has(value.petition)) return;
       choosingNow.current.add(value.petition);
       setChoosing(new Set(choosingNow.current));
     }
-    else if (value.action !== 'dismiss') setBusy(true);
+    else if (value.action !== 'dismiss' && value.action !== 'menu') setBusy(true);
     if (value.action === 'say') { setPendingWords(value.words ?? ''); setLive(''); follow.current = true; }
     try {
-      if (await act(value) === 200 || value.action === 'choose') await refresh();
+      const result = await act(value);
+      if (navigating) shared = result.navigation ?? shared;
+      if (owner !== navigation.current || (previous.current?.navigation ?? 0) > shared) return;
       if (value.action === 'open') follow.current = true;
-      if (value.action === 'new' || value.action === 'continue' || value.action === 'load') { setPanel(null); setReading(value.action === 'new' ? 'latest' : null); }
-    } catch (reason) { setError(String(reason)); }
+      if (value.action === 'settings') setPanel(null);
+      if (value.action === 'new' || value.action === 'continue' || value.action === 'load') { setPanel(null); setReading(value.action === 'new' ? { navigation: shared, page: 'latest' } : null); }
+    } catch (reason) { if (owner === navigation.current && previous.current?.navigation === shared) setError(String(reason)); }
     finally {
+      if (owner !== navigation.current || previous.current?.navigation !== shared) return;
       if (value.action === 'choose') {
         choosingNow.current.delete(value.petition!);
         setChoosing(new Set(choosingNow.current));
@@ -113,15 +127,16 @@ export function App() {
     const date = record.date as typeof game.date | undefined;
     return date?.year === game.date.year && date.month === game.date.month;
   })?.text ?? liveGazette);
-  const gazette = reading === 'latest' ? (liveGazette || gazettes.at(-1))
-    : reading === null ? null : gazettes[reading];
+  const readingPage = reading?.navigation === snapshot.navigation ? reading.page : null;
+  const gazette = readingPage === 'latest' ? (liveGazette || gazettes.at(-1))
+    : readingPage === null ? null : gazettes[readingPage];
   const pending = game.pending?.payload.words || pendingWords || game.failure?.payload.words;
   const failure = game.failure && <div className="system-failure" role="alert">
     此处未能完成。{game.failure.payload.log && <>错误记录：<code>{game.failure.payload.log}</code>，请把它发给作者。</>}
     <button disabled={busy || game.running} onClick={() => void action({ action: 'retry' })}>重试</button>
   </div>;
 
-  if (game.face !== 'month' && reading !== null && gazette != null) return <main className="game desk">
+  if (game.face !== 'month' && readingPage !== null && gazette != null) return <main className="game desk">
     <header className="topbar"><h1>残明朱批</h1><span>{game.date.year} 年 {game.date.month} 月</span></header>
     <div className="court-layout"><section className="paper"><div className="scroll">
       <article className="gazette"><h2>邸报</h2><MarkdownText>{gazette}</MarkdownText>
@@ -137,6 +152,7 @@ export function App() {
         <button onClick={() => setPanel(panel === 'orders' ? null : 'orders')}>案头</button>
         <button onClick={() => setPanel(panel === 'history' ? null : 'history')}>起居录</button>
         <button onClick={() => setPanel(panel === 'settings' ? null : 'settings')}>设置</button>
+        <button onClick={() => void action({ action: 'menu' })}>回主菜单</button>
       </nav>
       {audience ? <button onClick={() => void action({ action: 'dismiss' })}>退朝</button>
         : <button disabled={busy || game.running || game.face === 'month'} onClick={() => void action({ action: 'open' })}>召对</button>}
@@ -195,7 +211,7 @@ export function App() {
       </section>
       {panel && <aside className="drawer">
         <button className="close" onClick={() => setPanel(null)}>合上</button>
-        {panel === 'settings' ? <SettingsForm initial={snapshot.settings} requiredSettings={snapshot.required_settings} onSave={settings => { void action({ action: 'settings', settings }).then(() => setPanel(null)); }} /> :
+        {panel === 'settings' ? <SettingsForm initial={snapshot.settings} requiredSettings={snapshot.required_settings} onSave={settings => { void action({ action: 'settings', settings }); }} /> :
           panel === 'roster' ? <><h2>名册</h2>{people.map(person => <article key={person.id}>
             <header><MarkdownText>{person.key}</MarkdownText></header><MarkdownText>{`${((person.data.appointments ?? []) as { office: string; territory: string; role: string }[]).map(a => `${a.role === 'acting' ? '署' : ''}${a.territory}${a.office}`).join('、') || String(person.data.identity_description ?? '')} · ${String(person.data.location ?? '')} · ${String(person.data.status ?? '')}`}</MarkdownText>
             {audience && <button disabled={busy || game.running} onClick={() => void action({ action: 'say', words: `宣${person.key}。` })}>宣召</button>}
@@ -208,7 +224,7 @@ export function App() {
           </article>)}</> : <><h2>起居录</h2>{book.entities.filter(entity => entity.kind === 'night').map(entity => <details key={entity.id}>
             <summary><MarkdownText>{entity.key}</MarkdownText></summary><ScrollMessages turns={(entity.data as unknown as NonNullable<typeof night>).turns} />
             {entity.data.result === 'unhandled' && <p className="unhandled">接不住</p>}
-          </details>)}<h2>历期邸报</h2>{gazettes.map((_text, index) => <button key={index} onClick={() => { setReading(index); setPanel(null); }}>第 {index + 1} 期</button>)}</>}
+          </details>)}<h2>历期邸报</h2>{gazettes.map((_text, index) => <button key={index} onClick={() => { setReading({ navigation: snapshot.navigation, page: index }); setPanel(null); }}>第 {index + 1} 期</button>)}</>}
       </aside>}
     </div>
   </main>;

@@ -2,11 +2,11 @@
 
 import json
 import math
-from typing import Any, Never
+from typing import Any, Never, cast
 
 from pydantic_ai import ModelRetry
 
-from ming.ledger import Entity, Ledger
+from ming.ledger import Entity, Item, Ledger
 from ming.middle.appointments import CATALOGUE_KINDS
 from ming.middle.calendar import calendar_row
 from ming.middle.declaration import Declaration, Fact
@@ -42,7 +42,7 @@ def fail(field: str, value: object, expected: object, names: Names, how: str) ->
 
 def check_rules(ledger: Ledger, out: Declaration, names: Names) -> None:
     people: dict[str, Entity] = {}
-    date = calendar_row(ledger)["data"]
+    date: Item | None = None
     for i, fact in enumerate(out.facts):
         person = check_journey(ledger, fact, f"facts[{i}]", names, people)
         if fact.affair is not None and fact.affair not in names.get("affair", {}):
@@ -64,6 +64,8 @@ def check_rules(ledger: Ledger, out: Declaration, names: Names) -> None:
                 fail(f"facts[{i}].changes[{j}].value", change.value, list(SPEEDS), names, "行速用 expected 中的档名，重交整份。")
         check_money(fact, names, i)
         if person is not None:
+            if date is None:
+                date = cast(Item, calendar_row(ledger)["data"])
             changes = field_values(fact, person.data, None)["changes"]
             # Replay landing's lifecycle on detached aggregates, without committing.
             move_person(person, changes, ledger,

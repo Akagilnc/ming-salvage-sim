@@ -92,7 +92,7 @@ class Simulations:
         if existing is not None:
             return existing
         calendar = self.court.calendar()
-        draft = self.court.products(calendar.id, kind="month_draft")[0].detail
+        draft = self.court.products(calendar.id, kind="month_draft", date=calendar.data)[0].detail
         result = await self.call({
             **self.context(), "draft": draft["output"],
             "choices": [{"petition": petition.model_dump(mode="json"),
@@ -116,7 +116,7 @@ class Simulations:
 
     async def final(self) -> None:
         calendar = self.court.calendar()
-        draft = self.court.products(calendar.id, kind="month_draft")[0].detail
+        draft = self.court.products(calendar.id, kind="month_draft", date=calendar.data)[0].detail
         petitions = self.court.month_petitions()
         choices = self.choices()
         result: dict[str, Any]
@@ -139,6 +139,6 @@ class Simulations:
         self.court.record_product(calendar.id, "month_final", result)
 
     async def drain(self) -> None:
-        if self.tasks:
+        while tasks := [task for task in self.tasks.values() if not task.done()]:
             # Candidate failures are logged, not promoted to failed emperor actions.
-            await asyncio.gather(*self.tasks.values(), return_exceptions=True)
+            await asyncio.gather(*tasks, return_exceptions=True)

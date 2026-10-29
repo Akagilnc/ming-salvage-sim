@@ -4,6 +4,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from functools import partial
 from pathlib import Path
 from typing import Any, Literal
 from uuid import UUID
@@ -27,6 +28,7 @@ class Action(BaseModel):
         "new",
         "load",
         "continue",
+        "menu",
         "settings",
         "open",
         "say",
@@ -46,15 +48,15 @@ class Web:
     def __init__(self, directory: Path) -> None:
         self.directory = directory
         self.game: Game | None = None
-        self.listeners: set[asyncio.Queue[dict[str, Any]]] = set()
-
-    def settings(self) -> Configuration:
-        path = self.directory / "settings.json"
-        return (
+        self.navigation = 0
+        path = directory / "settings.json"
+        self.configuration = (
             Configuration.model_validate_json(path.read_text())
-            if path.exists()
-            else Configuration()
+            if path.exists() else Configuration()
         )
+        self.departed: dict[str, Game] = {}
+        self.retiring: dict[Game, asyncio.Task[None]] = {}
+        self.listeners: set[asyncio.Queue[dict[str, Any]]] = set()
 
     def saves(self) -> list[str]:
         return [
@@ -70,62 +72,102 @@ class Web:
             )
         ]
 
-    def snapshot(self) -> dict[str, Any]:
+    def snapshot(self, saves: list[str] | None = None) -> dict[str, Any]:
         return {
-            "saves": self.saves(),
-            "settings": self.settings().model_dump(),
+            "navigation": self.navigation,
+            "saves": self.saves() if saves is None else saves,
+            "settings": self.configuration.model_dump(),
             "required_settings": REQUIRED_SETTINGS,
             "save": self.game.court.db_path.name if self.game else None,
-            "game": self.game.court.presentation() if self.game else None,
+            "game": {**self.game.court.presentation(), "live": dict(self.game.live)}
+            if self.game else None,
         }
 
-    def emit(self, event: dict[str, Any]) -> None:
+    def emit(
+        self, event: dict[str, Any] | None = None, *, source: Game | None = None,
+        saves: list[str] | None = None,
+    ) -> None:
+        if source is not None and source is not self.game:
+            return
+        event = event or {"event": "state", "data": None}
         if event["event"] == "delta":
             assert self.game is not None
             event = {
                 **event,
                 "data": {
                     "text": event["data"],
-                    "hall": self.game.court.entity(self.game.audience.night_id).data[
-                        "hall"
-                    ],
+                    "hall": list(
+                        self.game.court.entity(self.game.audience.night_id).data["hall"]
+                    ),
                 },
             }
-        elif event["event"] == "done":
-            event = {**event, "data": self.snapshot()}
+        elif event["event"] == "state":
+            event = {**event, "data": self.snapshot(saves)}
         for queue in self.listeners:
             queue.put_nowait(event)
 
-    async def close(self, shutdown: bool = True) -> None:
-        if shutdown:
-            self.emit({"event": "close", "data": None})
-        if self.game is not None:
-            await self.game.close()
-            self.game = None
+    def menu(self) -> None:
+        game, self.game = self.game, None
+        if game is not None:
+            self.navigation += 1
+            save = game.court.db_path.name
+            self.departed[save] = game
+            if game not in self.retiring:
+                self.retiring[game] = asyncio.create_task(self.retire(game))
+
+    async def retire(self, game: Game) -> None:
+        try:
+            await game.drain()
+        finally:
+            del self.retiring[game]
+            save = game.court.db_path.name
+            if self.departed.get(save) is game:
+                del self.departed[save]
+                game.court.close()
+
+    async def close(self) -> None:
+        self.emit({"event": "close", "data": None})
+        self.menu()
+        if self.retiring:
+            await asyncio.gather(*self.retiring.values())
 
     async def select(self, action: str, save: str = "") -> dict[str, Any]:
+        saves = self.saves() if action == "continue" else None
         if action == "continue":
-            if not self.saves():
+            if not saves:
                 raise HTTPException(404, "没有存档")
-            save = self.saves()[0]
+            save = saves[0]
         if action != "new":
             if Path(save).name != save or not save.endswith(".sqlite"):
                 raise HTTPException(400, "无效的存档名")
             if not (self.directory / save).is_file():
                 raise HTTPException(404, "存档不存在")
-        await self.close(shutdown=False)
-        model = self.settings()
-        if action == "new":
-            try:
-                court = Court.new_game(self.directory, model)
-            except FileNotFoundError as error:
-                raise HTTPException(503, str(error)) from error
+        if self.game is not None and self.game.court.db_path.name == save:
+            navigation = self.navigation
+            await self.game.drain()
+            return {"save": save, "navigation": navigation}
+        model = self.configuration
+        game = self.departed.pop(save, None)
+        opening = game is None
+        if game is not None:
+            game.configure(model, month_model=model.month_model)
         else:
-            court = Court(self.directory / save, model)
-        self.game = Game(court, model, self.emit, month_model=model.month_model)
-        court.observe(lambda: self.emit({"event": "state", "data": self.snapshot()}))
-        self.game.resume()
-        return {"save": court.db_path.name}
+            if action == "new":
+                try:
+                    court = Court.new_game(self.directory, model)
+                except FileNotFoundError as error:
+                    raise HTTPException(503, str(error)) from error
+            else:
+                court = Court(self.directory / save, model)
+            game = Game(court, model, month_model=model.month_model)
+            game.emit = partial(self.emit, source=game)
+        self.menu()
+        self.game = game
+        self.navigation += 1
+        if opening:
+            game.resume()
+        self.emit(saves=saves)
+        return {"save": game.court.db_path.name, "navigation": self.navigation}
 
     async def state(self, request: Request) -> JSONResponse:
         return JSONResponse(self.snapshot())
@@ -163,8 +205,13 @@ class Web:
             raise HTTPException(400, "无效的动作") from error
         if action.action in {"new", "load", "continue"}:
             return JSONResponse(await self.select(action.action, action.save))
+        if action.action == "menu":
+            if self.game is not None:
+                self.menu()
+                self.emit()
+            return Response(status_code=204)
         if action.action == "settings":
-            return await self.configure(action)
+            return self.configure(action)
         if self.game is None:
             raise HTTPException(409, "请先打开一局")
         try:
@@ -174,12 +221,11 @@ class Web:
             )
         except InvalidAction as error:
             raise HTTPException(error.status, str(error)) from error
-        if task is None:
-            return JSONResponse(self.snapshot())
-        await asyncio.shield(task)
+        if task is not None:
+            await asyncio.shield(task)
         return Response(status_code=204)
 
-    async def configure(self, action: Action) -> JSONResponse:
+    def configure(self, action: Action) -> Response:
         if action.settings is None:
             raise HTTPException(400, "缺少设置")
         if self.game is not None and self.game.busy():
@@ -188,9 +234,11 @@ class Web:
         path = self.directory / "settings.json"
         path.touch(mode=0o600, exist_ok=True)
         path.write_text(action.settings.model_dump_json())
+        self.configuration = action.settings
         if self.game is not None:
-            await self.select("load", self.game.court.db_path.name)
-        return JSONResponse(self.snapshot())
+            self.game.configure(action.settings, month_model=action.settings.month_model)
+        self.emit()
+        return Response(status_code=204)
 
 
 def create_app(

@@ -21,15 +21,15 @@ class Landing:
 
     async def run(self) -> None:
         calendar = self.court.calendar()
-        if self.court.products(calendar.id, kind=("landed", "unhandled")):
+        if self.court.products(calendar.id, kind=("landed", "unhandled"), date=calendar.data):
             return
-        declarations = self.court.products(calendar.id, kind="declaration")
+        declarations = self.court.products(calendar.id, kind="declaration", date=calendar.data)
         if not declarations:
             result = await self.court.translate(
                 self.agent,
                 json.dumps({
                     "date": calendar.data, "scope": "month",
-                    "month_final": self.court.products(calendar.id, kind="month_final")[0].detail["output"],
+                    "month_final": self.court.products(calendar.id, kind="month_final", date=calendar.data)[0].detail["output"],
                     "decrees": self.court.landing_materials(),
                 }, ensure_ascii=False),
                 calendar.id,

@@ -28,9 +28,7 @@ NIGHT_RESULT = (
     .correlate(E.id.table)
     .scalar_subquery()
 )
-NIGHT_ROWS = ENTITY_ROWS.add_columns(NIGHT_RESULT.label("result")).where(
-    E.kind == "night"
-)
+NIGHT_ROWS = ENTITY_ROWS.where(E.kind == "night")
 LATEST_NIGHT = NIGHT_ROWS.order_by(None).order_by(ENTITY_ORDER.desc()).limit(1)
 # Translation's names and fields: imported kinds plus those landing creates.
 CATALOGUE = ENTITY_ROWS.where(

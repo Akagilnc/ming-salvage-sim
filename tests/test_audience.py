@@ -282,7 +282,7 @@ def test_failed_night_translation_is_terminal_and_reaches_following_nights(
         before = audit(tmp_path / save)["entities"]
         nights = []
         for case in cases:
-            assert client.post("/actions", json={"action": "open"}).status_code == 200
+            assert client.post("/actions", json={"action": "open"}).status_code == 204
             assert (
                 client.post(
                     "/actions",
@@ -295,7 +295,7 @@ def test_failed_night_translation_is_terminal_and_reaches_following_nights(
             assert len(state["night"]["turns"]) == 1
             assert state["failure"] is None
             assert (
-                client.post("/actions", json={"action": "dismiss"}).status_code == 200
+                client.post("/actions", json={"action": "dismiss"}).status_code == 204
             )
             client.post("/actions", json={"action": "load", "save": save})
             state = client.get("/state").json()["game"]
@@ -317,7 +317,7 @@ def test_failed_night_translation_is_terminal_and_reaches_following_nights(
             for f in client.get("/records").json()["facts"]
             if f["kind"] == "unhandled"
         )
-        assert client.post("/actions", json={"action": "open"}).status_code == 200
+        assert client.post("/actions", json={"action": "open"}).status_code == 204
     with TestClient(create_app(tmp_path)) as client:
         assert client.get("/state").json()["game"] is None
         client.post("/actions", json={"action": "continue"})

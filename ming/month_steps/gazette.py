@@ -25,7 +25,7 @@ class Gazette:
 
     async def run(self) -> None:
         calendar = self.court.calendar()
-        if self.court.products(calendar.id, kind="gazette"):
+        if self.court.products(calendar.id, kind="gazette", date=calendar.data):
             return
         result = await invoke(
             self.agent,

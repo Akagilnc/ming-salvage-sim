@@ -8,9 +8,9 @@ from pydantic import BaseModel
 from sqlalchemy import JSON, CompoundSelect, FromClause, Select, case, func, literal, or_, select, true, union_all
 from sqlalchemy.sql.elements import BindParameter, ColumnElement
 
-from ming.ledger import ENTITY_COLUMNS as E, FACT_COLUMNS as F, FACT_ROWS, Entity, Ledger
+from ming.ledger import ENTITY_COLUMNS as E, FACT_COLUMNS as F, FACT_ROWS, Entity, Item, Ledger
 from ming.middle.calendar import calendar_row
-from ming.middle.queries import LATEST_NIGHT
+from ming.middle.queries import LATEST_NIGHT, NIGHT_RESULT
 
 INITIAL_HALL = ("王承恩",)
 # Resolve the referenced-night domain in the permission query itself, rather
@@ -87,17 +87,14 @@ TURN_HALL = select(func.json_group_array(func.json_object(
 TURN_ROWS = FACT_ROWS.add_columns(TURN_HALL.label("hall"))
 
 
-def read_night(ledger: Ledger, night_id: UUID) -> NightView:
-    night = ledger.get(night_id)
+def read_night(ledger: Ledger, night: Item) -> NightView:
+    night_id = night["id"]
     turns = tuple(TurnView(
         **item["detail"], emperor_words=item["emperor_words"],
         hall=tuple(member["person"] for member in sorted(item["hall"], key=itemgetter("position", "ordinal"))),
     ) for item in ledger.facts(entity_id=night_id, kind="turn", query=TURN_ROWS))
-    result = next(iter(ledger.facts(
-        entity_id=night_id, kind=("translated", "unhandled"),
-        query=FACT_ROWS.with_only_columns(F.kind).order_by(None).order_by(F.position.desc()).limit(1),
-    )), None)
-    return NightView(id=night.id, **night.data, turns=turns, result=result["kind"] if result else None)
+    result = ledger.read(select(NIGHT_RESULT.label("result")).where(E.id == night_id))[0]["result"]
+    return NightView(id=night_id, **night["data"], turns=turns, result=result)
 
 
 def witnessed_nights(people: list[str] | BindParameter[str], query: Select[Any]) -> Select[Any]:
@@ -140,16 +137,16 @@ def known_people(
     return declared.union(attendees)
 
 
-def open_night(ledger: Ledger) -> UUID:
+def open_night(ledger: Ledger) -> tuple[UUID, bool]:
     for row in ledger.entities(query=LATEST_NIGHT):
         if not row["data"]["closed"]:
-            return row["id"]
+            return row["id"], False
     date = calendar_row(ledger)["data"]
     night = Entity(
         "night", str(uuid4()), "", {"closed": False, "hall": list(INITIAL_HALL), "date": {k: date[k] for k in ("year", "month")}}
     )
     ledger.commit([night])
-    return night.id
+    return night.id, True
 
 
 def dismiss(ledger: Ledger, night_id: UUID) -> None:

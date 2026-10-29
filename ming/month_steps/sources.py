@@ -52,7 +52,7 @@ class Sources:
             (calendar, "urgent", None),
             *((f, "impeachment", f.key) for f in self.court.entities("audit", kind="faction")),
         ]:
-            if self.court.products(source.id, kind=kind):
+            if self.court.products(source.id, kind=kind, date=calendar.data):
                 continue
             people = [e.key for e in self.court.petition_officials(faction)]
             if kind == "urgent" and not people:

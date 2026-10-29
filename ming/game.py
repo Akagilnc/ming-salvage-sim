@@ -8,7 +8,8 @@ from uuid import UUID, uuid4
 
 from ming.audience import Audience
 from ming.middle.court import Court
-from ming.middle.invoke import ModelSource
+from ming.middle.invoke import ModelSource, build_agent
+from ming.middle.view import EntityView
 from ming.month import Month
 
 
@@ -29,12 +30,12 @@ class Game:
         self,
         court: Court,
         model: ModelSource,
-        emit: Callable[[dict[str, Any]], None] | None = None,
         *,
         month_model: ModelSource | None = None,
     ) -> None:
         self.court = court
-        self.emit = emit
+        self.emit: Callable[[dict[str, Any]], None] | None = None
+        self.live: dict[str, str] = {}
         self.audience = Audience(court, model)
         self.month = Month(
             court, month_model if month_model is not None else model,
@@ -45,17 +46,39 @@ class Game:
         self.translation: asyncio.Task[Any] | None = None
         nights = court.nights()
         if nights:
-            self.audience.open(nights[-1].id)
+            self.audience.open(nights[-1])
+
+    def configure(
+        self, model: ModelSource, *, month_model: ModelSource | None = None,
+    ) -> None:
+        self.court.model = model
+        for agent in (self.audience.scene, self.audience.translation):
+            build_agent(model, agent=agent)
+        month_model = month_model if month_model is not None else model
+        for agent in (
+            self.month.deliberations.agent, self.month.simulations.draft_agent,
+            self.month.simulations.final_agent, self.month.landing.agent,
+            self.month.gazette.agent, self.month.secrets.agent,
+        ):
+            build_agent(month_model, agent=agent)
+        self.month.sources.model = month_model
 
     def notify(self, event: str, data: Any) -> None:
+        if event != "state":
+            self.live[event] = (
+                data["replace"] if isinstance(data, dict)
+                else self.live.get(event, "") + data
+            )
         if self.emit:
             self.emit({"event": event, "data": data})
 
     def interaction(
-        self, action: str, status: str, payload: dict[str, Any],
-    ) -> None:
+        self, action: str, status: str, payload: dict[str, Any], *, calendar: EntityView | None = None,
+    ) -> EntityView:
         key = f"choose:{payload['petition']}" if action == "choose" else action
-        calendar = self.court.calendar()
+        if status != "running" and action in {"say", "month"}:
+            self.live.pop("delta" if action == "say" else "gazette", None)
+        calendar = self.court.calendar() if calendar is None else calendar
         self.court.record(
             calendar.id,
             [
@@ -71,60 +94,71 @@ class Game:
                 )
             ],
         )
+        return calendar
 
-    def settle_month(self, date: dict[str, Any] | None = None) -> None:
+    def settle_month(
+        self, date: dict[str, Any] | None = None, *, interactions: dict[str, Any] | None = None,
+        calendar: EntityView | None = None,
+    ) -> bool:
         # A completed advance settles all failed callers of that work. On reopen,
         # a changed calendar is durable proof even if completion events were interrupted.
-        for item in self.court.interactions().values():
-            if (
-                item["action"] in {"month", "choose"}
-                and item["status"] == "failed"
-                and (item["payload"]["date"] == date if date is not None
-                     else item["payload"]["date"] != self.court.calendar().data)
-            ):
-                self.interaction(item["action"], "done", item["payload"])
+        interactions = self.court.interactions() if interactions is None else interactions
+        failed = [i for i in interactions.values() if i["action"] in {"month", "choose"} and i["status"] == "failed"]
+        if failed and date is None and calendar is None:
+            calendar = self.court.calendar()
+        current = calendar.data if calendar else None
+        settled = [i for i in failed if (i["payload"]["date"] == date if date is not None else i["payload"]["date"] != current)]
+        for item in settled:
+            calendar = calendar or self.court.calendar()
+            self.interaction(item["action"], "done", item["payload"], calendar=calendar)
+        return bool(settled)
 
-    def resume(self) -> None:
-        self.settle_month()
-        failures = self.court.failures()
-        pending = [i for i in self.court.running() if not failures or i["action"] == "choose"]
+    def resume(
+        self, calendar: EntityView | None = None, interactions: dict[str, Any] | None = None,
+    ) -> None:
+        interactions = self.court.interactions() if interactions is None else interactions
+        if self.settle_month(interactions=interactions, calendar=calendar):
+            interactions = self.court.interactions()
+        failures = self.court.failures(interactions=interactions)
+        pending = [i for i in self.court.running(interactions) if not failures or i["action"] == "choose"]
         if pending:
             self.active = asyncio.create_task(self._resume(pending))
-        elif failures:
-            return
-        elif self.month.opened():
-            # Missing products are decided by the ledger, not the showing face:
-            # reopening fills them even while an audience is open, and the month
-            # work itself translates any pending nights before advancing.
-            self.recover_month()
-        elif self.court.pending_nights():
-            self.start_background()
-        elif self.court.pending_petitions():
-            self.start_background()
+        elif not failures:
+            calendar = self.court.calendar() if calendar is None else calendar
+            # Recovery belongs to the ledger, not to the currently showing face.
+            if not self.recover_month(calendar, ready=True) and (
+                self.court.pending_nights() or self.court.pending_petitions(calendar.data)
+            ):
+                self.start_background()
 
-    def recover_month(self) -> None:
+    def recover_month(self, calendar: EntityView | None = None, *, ready: bool | None = None) -> bool:
         """The one ledger-driven month gap-fill after a reopen, a recovery or a
         choice; the 请先退朝 gate only guards user clicks. Running or failed work
         keeps it from starting, so it never runs twice or silently retries."""
-        if (
-            not self.month.opened()
-            or self.court.failures()
-            or self.court.running()
-        ):
-            return
-        payload = {"date": self.court.calendar().data}
-        self.interaction("month", "running", payload)
+        calendar = self.court.calendar() if calendar is None else calendar
+        if not self.month.opened(calendar):
+            return False
+        if ready is None:
+            interactions = self.court.interactions()
+            ready = not self.court.failures(interactions=interactions) and not self.court.running(interactions)
+        if not ready:
+            return False
+        payload = {"date": calendar.data}
+        self.interaction("month", "running", payload, calendar=calendar)
         self.active = asyncio.create_task(self.execute("month", payload))
         # Started from inside other work, it replaces the task a drain is already
         # awaiting; tracking it keeps every drain waiting for the gap-fill too.
         self.track(self.active)
+        return True
 
     async def _resume(self, pending: list[dict[str, Any]]) -> None:
+        resume_month = all(item["action"] != "month" for item in pending)
+
         async def ordered() -> None:
             for item in pending:
                 if item["action"] not in {"month", "choose"}:
-                    await self.execute(item["action"], item["payload"])
-                    if self.court.presentation()["failure"]:
+                    await self.execute(item["action"], item["payload"], resume_month=resume_month)
+                    if self.court.failures():
                         return
             for item in pending:
                 if item["action"] == "month":
@@ -135,40 +169,40 @@ class Game:
         await asyncio.gather(
             ordered(),
             *(
-                self.execute(item["action"], item["payload"])
+                self.execute(item["action"], item["payload"], resume_month=resume_month)
                 for item in pending
                 if item["action"] == "choose"
             ),
         )
-        if self.court.presentation()["failure"]:
+        if self.court.failures():
             return
         if not self.month.opened():
             self.start_background()
-        elif all(item["action"] != "month" for item in pending):
-            # Missing products are filled by the same ledger-driven month entry
-            # as any other reopen (a recovered month already was that entry); the
-            # speculative path stops before world products and would leave them.
-            self.recover_month()
 
     async def command(self, action: str, payload: dict[str, Any]) -> None:
-        date = self.court.calendar().data
+        calendar = self.court.calendar() if action == "month" else None
+        interactions = self.court.interactions()
         accepted = any(
             item["status"] == "running" and same_call(item, action, payload)
-            for item in self.court.interactions().values()
+            for item in interactions.values()
         )
-        self.resume()
+        self.resume(calendar, interactions)
         # A question — fresh or retrying its own failed call — is accepted at
         # once; draining unrelated in-flight work first would block it.
         if action == "choose" and not accepted:
-            self.start(action, payload, repeat=True)
+            self.start(action, payload, failures=self.court.failures())
             await self.drain()
             return
         await self.drain()
-        if not self.court.presentation()["failure"] and (
-            accepted or (action == "month" and self.court.calendar().data != date)
-        ):
+        failures = self.court.failures()
+        if not failures and accepted:
             return
-        self.start(action, payload, repeat=True)
+        current = None
+        if not failures and calendar is not None:
+            current = self.court.calendar()
+            if current.data != calendar.data:
+                return
+        self.start(action, payload, failures=failures, calendar=current)
         await self.drain()
 
     def busy(self) -> bool:
@@ -179,23 +213,16 @@ class Game:
         action: str,
         payload: dict[str, Any] | None = None,
         *,
-        repeat: bool = False,
+        failures: tuple[dict[str, Any], ...] = (),
+        calendar: EntityView | None = None,
     ) -> asyncio.Task[Any] | None:
         payload = dict(payload or {})
-        failure: dict[str, Any] | None = None
-        if repeat and (
-            repeated := next(
-                (
-                    item
-                    for item in self.court.failures()
-                    if same_call(item, action, payload)
-                ),
-                None,
-            )
-        ):
-            action, failure = "retry", repeated
+        failure = next((item for item in failures if same_call(item, action, payload)), None)
+        if failure:
+            action = "retry"
         if action == "retry":
-            state = self.court.presentation()
+            calendar = self.court.calendar() if calendar is None else calendar
+            state = self.court.presentation(calendar)
             failure = failure or state["failure"]
             if not failure:
                 raise InvalidAction("没有待重试的动作")
@@ -208,32 +235,49 @@ class Game:
             if action != "choose" and self.busy():
                 raise InvalidAction("这一步还在进行")
             # Replay accepted parameters, not a second choice event.
-            self.interaction(action, "running", payload)
+            self.interaction(action, "running", payload, calendar=calendar)
         else:
-            if action == "dismiss":
-                if not self.court.nights():
-                    raise InvalidAction("请先召对")
-                self.audience.dismiss()
-                self.start_background()
+            if action in {"open", "dismiss"}:
+                self.night_action(action)
                 return None
             if action != "choose" and self.busy():
                 raise InvalidAction("这一步还在进行")
-            if action == "open":
-                self.audience.open()
-                return None
-            payload = self.accept(action, payload)
-        task = asyncio.create_task(self.execute(action, payload))
+            payload = self.accept(action, payload, calendar=calendar)
+        task = asyncio.create_task(self.execute(action, payload, starting=action == "month"))
         if action == "translation":
             self.translation = task
             self.start_background()
         if action == "translation" or (action == "choose" and self.busy()):
             self.track(task)
+            self.notify("state", None)
             return None if action == "translation" else task
         self.active = task
+        if action != "month":
+            self.notify("state", None)
         return task
 
-    def accept(self, action: str, payload: dict[str, Any]) -> dict[str, Any]:
-        state = self.court.presentation()
+    def night_action(self, action: str) -> None:
+        if action == "dismiss":
+            nights = self.court.nights()
+            if not nights:
+                raise InvalidAction("请先召对")
+            if nights[-1].closed:
+                return
+            self.audience.dismiss()
+            self.start_background()
+            if not self.busy():
+                self.notify("state", None)
+        else:
+            if self.busy():
+                raise InvalidAction("这一步还在进行")
+            if self.audience.open():
+                self.notify("state", None)
+
+    def accept(
+        self, action: str, payload: dict[str, Any], *, calendar: EntityView | None = None,
+    ) -> dict[str, Any]:
+        calendar = self.court.calendar() if calendar is None else calendar
+        state = self.court.presentation(calendar)
         if (
             state["failure"]
             and action != "choose"
@@ -254,7 +298,7 @@ class Game:
         elif action != "month":
             raise InvalidAction("无效的动作", 400)
         payload["date"] = state["date"]
-        self.interaction(action, "running", payload)
+        self.interaction(action, "running", payload, calendar=calendar)
         return payload
 
     def track(self, task: asyncio.Task[Any]) -> None:
@@ -264,24 +308,25 @@ class Game:
         task = asyncio.create_task(self.precompute())
         self.track(task)
 
-    async def translate(self) -> None:
+    async def translate(self, *, starting: bool = False) -> None:
+        if self.translation is None or self.translation.done():
+            pending = self.court.pending_nights()
+            if pending:
+                payload = {"nights": [str(n) for n in pending]}
+                self.interaction("translation", "running", payload)
+                self.translation = asyncio.create_task(self.execute("translation", payload))
+        # Month acceptance includes its prerequisite translation retry: register
+        # both before showing the start, so the old failure is no longer shown.
+        if starting:
+            self.notify("state", None)
         if self.translation is not None and not self.translation.done():
             await asyncio.shield(self.translation)
-            return
-        pending = self.court.pending_nights()
-        if not pending:
-            return
-        payload = {"nights": [str(n) for n in pending]}
-        self.interaction("translation", "running", payload)
-        self.translation = asyncio.create_task(self.execute("translation", payload))
-        await asyncio.shield(self.translation)
 
     async def precompute(self) -> None:
         # Dismissal may be requested while the last accepted scene is still live.
         if self.active is not None and not self.active.done():
             await asyncio.shield(self.active)
-        failure = self.court.presentation()["failure"]
-        if failure:
+        if self.court.failures():
             return
         await self.translate()
         if self.court.pending_nights():
@@ -292,17 +337,18 @@ class Game:
             # Night speculation has a documented non-blocking failure contract.
             self.court.log.exception("night precomputation failed")
 
-    async def execute(self, action: str, payload: dict[str, Any]) -> str | None:
+    async def execute(
+        self, action: str, payload: dict[str, Any], *, resume_month: bool = False, starting: bool = False,
+    ) -> str | None:
         try:
-            output = await self.work(action, payload)
+            output = await self.work(action, payload, starting=starting)
             if action == "month" and self.court.pending_nights():
                 return None
-            self.interaction(action, "done", payload)
+            calendar = self.interaction(action, "done", payload)
             # The choice is complete before shared month work resumes. Reuse the
             # normal month action so its waiting and failures cannot belong to it.
-            if action == "choose" and not self.court.pending_petitions():
-                self.recover_month()
-            return output
+            if resume_month or (action == "choose" and not self.court.pending_petitions(calendar.data)):
+                self.recover_month(calendar)
         except Exception as error:
             self.court.log.exception("action=%s", action)
             self.interaction(
@@ -315,15 +361,16 @@ class Game:
                     "log": str(self.court.error_path),
                 },
             )
-            return None
-        finally:
-            self.notify("done", None)
+            output = None
+        self.notify("state", None)
+        return output
 
-    async def work(self, action: str, payload: dict[str, Any]) -> str | None:
+    async def work(self, action: str, payload: dict[str, Any], *, starting: bool = False) -> str | None:
         if action == "say":
-            self.audience.open(UUID(payload["night_id"]))
+            night = self.court.night(UUID(payload["night_id"]))
+            self.audience.open(night)
             output = await self.audience.say(
-                payload["words"],
+                night, payload["words"],
                 payload["turn_id"],
                 partial(self.notify, "delta"),
             )
@@ -333,34 +380,41 @@ class Game:
         if action == "translation":
             await self.audience.translate_pending()
             return None
-        if payload["date"] != self.court.calendar().data:
-            self.settle_month(payload["date"])
+        calendar = self.court.calendar()
+        if payload["date"] != calendar.data:
+            if starting:
+                self.notify("state", None)
+            self.settle_month(payload["date"], calendar=calendar)
             return None  # The prior month committed before the process stopped.
         if action == "choose":
-            await self.month.resume(petition_id=payload["petition"])
-            if payload["date"] != self.court.calendar().data:
-                self.settle_month(payload["date"])
             return None
-        await self.translate()
+        await self.translate(starting=starting)
         if not self.court.pending_nights():
             await self.month.advance()
             self.settle_month(payload["date"])
         return None
 
     async def drain(self) -> None:
-        if self.active is not None:
-            await asyncio.shield(self.active)
-        while self.background:
-            tasks = list(self.background)
-            try:
-                await asyncio.gather(*tasks)
-            finally:
-                # Drain itself retires what it awaited: gather over finished tasks
-                # returns without yielding, so a done callback could never run.
-                self.background.difference_update(t for t in tasks if t.done())
-        if self.translation is not None:
-            await asyncio.shield(self.translation)
-        await self.month.simulations.drain()
+        while True:
+            if self.active is not None:
+                await asyncio.shield(self.active)
+            while self.background:
+                tasks = list(self.background)
+                try:
+                    await asyncio.gather(*tasks)
+                finally:
+                    # Drain itself retires what it awaited: gather over finished tasks
+                    # returns without yielding, so a done callback could never run.
+                    self.background.difference_update(t for t in tasks if t.done())
+            if self.translation is not None:
+                await asyncio.shield(self.translation)
+            await self.month.simulations.drain()
+            # Reentry can accept work in an earlier lane while a later one waits.
+            # No await separates this completion check from the caller's close.
+            if not self.busy() and not self.background and (
+                self.translation is None or self.translation.done()
+            ):
+                return
 
     async def close(self) -> None:
         try:

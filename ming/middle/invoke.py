@@ -18,6 +18,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 from pydantic_ai.models import Model
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 from tenacity import AsyncRetrying, retry_if_exception, stop_after_attempt, wait_fixed
@@ -95,20 +96,24 @@ def build_agent(
     model: ModelSource,
     *,
     tools: Sequence[Callable[..., Any] | Tool[Any]] = (),
+    agent: Agent[Any, Any] | None = None,
     **kwargs: Any,
 ) -> Agent[Any, Any]:
-    """Declare a call once, including its native transport and callable tools."""
+    """Bind a call's model and tools, initially or for its future runs."""
+    if agent is None:
+        agent = Agent(tools=tools, **kwargs)
     if isinstance(model, Settings):
         model = configured_model(model)
-    declared: list[Tool[Any]] = [
-        cast(Tool[Any], tool) if isinstance(tool, Tool) else Tool[Any](tool)
-        for tool in tools
-    ]
     if isinstance(model, CliHost):
-        model = type(model)(model.cli_name, declared, effort=model.effort)
+        tools = [
+            tool for toolset in agent.toolsets if isinstance(toolset, FunctionToolset)
+            for tool in toolset.tools.values()
+        ]
+        model = type(model)(model.cli_name, tools, effort=model.effort)
     if isinstance(model, (OpenAIChatModel, OpenAIResponsesModel)):
         model.client.max_retries = 0
-    return Agent(model, tools=declared, **kwargs)
+    agent.model = model
+    return agent
 
 
 def transient(error: BaseException) -> bool:

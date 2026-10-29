@@ -1,6 +1,6 @@
 """Events and derived rows commit atomically; explicit replay shares the row writer."""
 
-from collections.abc import Callable, Generator, Iterable, Mapping
+from collections.abc import Generator, Iterable, Mapping
 from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Any, cast
@@ -39,10 +39,8 @@ class Ledger:
             "AGGREGATE_CACHE_MAXSIZE": "10000",
             "AGGREGATE_CACHE_FASTFORWARD": "n",
         })
-        self.repository = self.events.repository
         self.sql = cast(SQLAlchemyApplicationRecorder, self.events.recorder)
         Base.metadata.create_all(cast(Engine, self.sql.datastore.engine))
-        self.on_commit: Callable[[], None] | None = None
 
     def close(self) -> None:
         self.events.close()
@@ -84,8 +82,6 @@ class Ledger:
                     with suppress(KeyError):
                         cache.get(entity.id, evict=True)
             raise
-        if self.on_commit is not None:
-            self.on_commit()
 
     @contextmanager
     def reading(self, replay: bool) -> Generator["Ledger"]:
@@ -94,7 +90,6 @@ class Ledger:
             return
         rebuilt = Ledger(Path(f"file:{uuid4().hex}?mode=memory&cache=shared&uri=true"))
         try:
-            rebuilt.repository = self.repository
             log = LocalNotificationLog(self.events.recorder, section_size=1000)
             start = 1
             # Read each source page outside the destination transaction: the
@@ -138,8 +133,7 @@ class Ledger:
                 if isinstance(entity_id, list)
                 else EntityRow.id == entity_id
             )
-        return tuple(self.get(row["id"]).snapshot()
-                     for row in self.read(query.with_only_columns(EntityRow.id), parameters))
+        return self.read(query, parameters)
 
     def facts(
         self,
@@ -167,4 +161,4 @@ class Ledger:
         return self.read(query, parameters)
 
     def get(self, entity_id: UUID) -> Entity:
-        return self.repository.get(entity_id)
+        return self.events.repository.get(entity_id)

@@ -169,12 +169,13 @@ def person_projection(dossiers: Item, row: Item, identity: Identity, appointment
 
 def entities(
     ledger: Ledger, identity: Identity, selection: Item | None = None,
+    *, cutoff: ColumnElement[int] | None = None,
 ) -> tuple[EntityView, ...]:
     selection = dict(selection or {})
     keys = selection.pop("keys", None)
     catalogue = selection.pop("catalogue", False)
     if identity == "emperor" and (opening := next(iter(ledger.read(FACT_ROWS.where(
-        F.position == month_open(calendar_row(ledger)["data"]),
+        F.position == (month_open(calendar_row(ledger)["data"]) if cutoff is None else cutoff),
     ))), None)):
         return tuple(
             EntityView.model_validate(e)
@@ -186,8 +187,7 @@ def entities(
     query = query.where(E.key == selection["key"]) if selection.get("key") is not None else query
     query = query.where(E.key.in_(keys)) if keys is not None else query
     parameters = view_parameters(identity, selection.get("kind"))
-    rows = tuple({**ledger.get(row["id"]).snapshot(), "exposure": row["exposure"]}
-                 for row in ledger.read(query.with_only_columns(E.id, ENTITY_EXPOSURE[identity_key(identity)].label("exposure")), parameters))
+    rows = ledger.read(query, parameters)
     if catalogue:
         return tuple(EntityView.model_validate({**row, "data": {}}) for row in rows)
     appointments: Sequence[Item] = ledger.entities(
@@ -214,7 +214,7 @@ def entities(
             elif row["exposure"] == "account_name":
                 row["data"] = {"name": row["key"]}
             elif row["exposure"] == "night":
-                row["data"] = read_night(ledger, row["id"]).model_dump(mode="json")
+                row["data"] = read_night(ledger, row).model_dump(mode="json")
             elif row["exposure"] == "decree":
                 row["data"] = {
                     k: v
@@ -360,7 +360,9 @@ def fact_exposure(
     )
 
 
-def fact_sources(ledger: Ledger, identity: Identity) -> Select[Any]:
+def fact_sources(
+    ledger: Ledger, identity: Identity, *, cutoff: ColumnElement[int] | None = None,
+) -> Select[Any]:
     """One query for live controls and immutable facts at the opening cutoff."""
     exposure = FACT_EXPOSURE[identity_key(identity)]
     query = FACT_ROWS.add_columns(exposure.label("exposure")).where(exposure.is_not(None))
@@ -368,7 +370,7 @@ def fact_sources(ledger: Ledger, identity: Identity) -> Select[Any]:
         query = query.where(AVAILABLE)
     if identity == "emperor":
         live = F.kind.in_(OPENING_CONTROLS)
-        opening = month_open(calendar_row(ledger)["data"])
+        opening = month_open(calendar_row(ledger)["data"]) if cutoff is None else cutoff
         query = query.where(or_(opening.is_(None), live, F.position < opening)).order_by(None).order_by(
             case((opening.is_not(None), live), else_=False), ENTITY_ORDER, F.position,
         )

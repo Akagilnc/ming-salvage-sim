@@ -7,6 +7,7 @@ from uuid import UUID
 from ming.middle.court import Court
 from ming.middle.declaration import PendingPetition
 from ming.middle.invoke import ModelSource, TextUpdate, gather_or_raise
+from ming.middle.view import EntityView
 from ming.month_steps.deliberation import Deliberations
 from ming.month_steps.simulation import Simulations
 from ming.month_steps.petitions import Inbox
@@ -31,50 +32,46 @@ class Month:
         self.secrets = Secrets(court, model)
         self.lock = asyncio.Lock()
 
-    def opened(self) -> bool:
-        return bool(self.court.products(self.court.calendar().id, kind="month_open"))
+    def opened(self, calendar: EntityView | None = None) -> bool:
+        calendar = self.court.calendar() if calendar is None else calendar
+        return bool(self.court.products(calendar.id, kind="month_open", date=calendar.data))
 
     def open(self) -> None:
-        if not self.opened():
-            self.court.record_product(self.court.calendar().id, "month_open", {
+        calendar = self.court.calendar()
+        if not self.opened(calendar):
+            self.court.record_product(calendar.id, "month_open", {
                 "entities": [e.model_dump(mode="json") for e in self.court.entities("emperor")],
             })
 
     def choose(self, petition_id: UUID, option: int) -> None:
         self.inbox.choose(petition_id, option)
 
-    async def resume(
-        self, *, speculative: bool = False, petition_id: str | None = None,
-    ) -> tuple[PendingPetition, ...]:
-        # A click records its choice immediately. Shared finalization belongs to
-        # the month action, never to one question or a second round of choices.
-        if petition_id is not None:
-            return self.court.pending_petitions()
+    async def resume(self, *, speculative: bool = False) -> tuple[PendingPetition, ...]:
         date = self.court.calendar().data
         async with self.lock:
-            if date != self.court.calendar().data:
-                return self.court.pending_petitions()
+            calendar = self.court.calendar()
+            if date != calendar.data:
+                return self.court.pending_petitions(calendar.data)
             public = [d for d in self.court.current_decrees() if not d.data["secret"]]
             verdicts = await gather_or_raise(
                 *(self.deliberations.run(d) for d in public),
                 *(self.deliberations.run(d, decision) for d, decision in self.court.pending_pushes()),
             )
-            if speculative or not self.opened():
-                return self.court.pending_petitions()
+            if speculative or not self.opened(calendar):
+                return self.court.pending_petitions(calendar.data)
             # Opening urgent petitions must be answered before drafting, since
             # their choices are inputs to this month's single timeline.
-            pending = self.court.pending_petitions()
-            calendar = self.court.calendar()
-            drafted = self.court.products(calendar.id, kind="month_draft")
+            pending = self.court.pending_petitions(calendar.data)
+            drafted = self.court.products(calendar.id, kind="month_draft", date=calendar.data)
             if pending and not drafted:
                 return pending
             if not drafted:
                 # These are this stage's completed outputs, including newly
                 # committed verdicts, not a cache of unchanged ledger reads.
                 await self.simulations.draft(list(zip(public, verdicts[:len(public)], strict=True)))
-            if not self.court.products(calendar.id, kind="month_final"):
+            if not self.court.products(calendar.id, kind="month_final", date=calendar.data):
                 self.simulations.speculate()
-                if pending := self.court.pending_petitions():
+                if pending := self.court.pending_petitions(calendar.data):
                     return pending
                 await self.simulations.final()
             await self.landing.run()
