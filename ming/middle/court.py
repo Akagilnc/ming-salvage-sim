@@ -264,11 +264,7 @@ class Court:
         *,
         monthly: LandingMode | None = None,
     ) -> None:
-        dispatch(
-            self._ledger, result, source, monthly,
-            sources=[(row["id"], mode) for row, mode in landing_sources(self._ledger, self.calendar().data)]
-            if monthly and source == self.calendar().id else (),
-        )
+        dispatch(self._ledger, result, source, monthly)
 
     def record_catalogue(
         self, identity: Identity, date: Item | None = None,
@@ -541,9 +537,11 @@ class Court:
     def landing_materials(self, *, include_history: bool = True) -> tuple[Item, ...]:
         """Monthly materials; translation also needs historical decree pointers."""
         materials: list[Item] = []
-        for row, mode in landing_sources(self._ledger, self.calendar().data, include_history=include_history):
+        date = self.calendar().data
+        for row, mode, events in landing_sources(self._ledger, date, include_history=include_history):
             decree = EntityView.model_validate(row)
-            deliberations = self.products(decree.id, kind=("deliberation", "choice"))
+            deliberations = (self.products(decree.id, kind=("deliberation", "choice"), date=date)
+                            if events is None else tuple(FactView(**event) for event in events))
             current = mode is not None or bool(deliberations)
             readers = known_people(literal(decree.data, type_=JSON)).subquery()
             materials.append({

@@ -17,7 +17,7 @@ from pydantic_ai import (
 from pydantic_ai.exceptions import ToolRetryError, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelResponse
 
-from ming.ledger import ENTITY_COLUMNS as E, Item, Ledger
+from ming.ledger import ENTITY_COLUMNS as E, FACT_COLUMNS as F, FACT_ROWS, Item, Ledger
 from ming.middle.fiscal import OUTPUT_METRICS, levers, payable_army, settling
 from ming.middle.declaration import (
     Declaration,
@@ -30,7 +30,6 @@ from ming.middle.declaration import (
     Unhandled,
 )
 from ming.middle.queries import CATALOGUE
-from ming.middle.night import read_night
 from ming.middle.opening import REFERENCES
 from ming.middle.appointments import ALIASES, APPOINTMENT_ROLES, cabinet_members, incumbency_record, office_pairs, reference_key
 from ming.middle.calendar import calendar_row
@@ -157,7 +156,9 @@ def check_decrees(
             if (ref is None and (isinstance(item, DecreeEvent) or item.discovered)) or (ref is not None and not 0 <= ref < len(decrees)):
                 fail(path, ref, "decrees 的零基下标", names, "使用所属旨意在 decrees 中的下标，重交整份。")
     if isinstance(out, NightDeclaration) and out.decrees:
-        turns = read_night(ledger, ledger.entities(entity_id=source)[0]).turns
+        turns = ledger.facts(entity_id=source, kind="turn", query=FACT_ROWS.with_only_columns(
+            F.detail["id"].as_string().label("turn_id"),
+        ))
         for i, decree in enumerate(out.decrees):
             if decree.secret:
                 decree.handler = reference_key(ledger, "person", decree.handler, names) if decree.handler is not None else None
@@ -175,17 +176,15 @@ def check_decrees(
                     names,
                     "turn 改成 expected 里的本夜轮次，重交整份。",
                 )
-    if isinstance(out, NightDeclaration):
-        check_endorsements(ledger, out, source, names)
+        check_endorsements(ledger, out, {row["turn_id"] for row in turns}, names)
 
 
 def check_endorsements(
     ledger: Ledger,
     out: NightDeclaration,
-    source: UUID,
+    turn_ids: set[str],
     names: dict[str, dict[str, list[str]]],
 ) -> None:
-    turn_ids = {f["detail"]["id"] for f in ledger.facts(entity_id=source, kind="turn")}
     for i, decree in enumerate(out.decrees):
         for j, endorsement in enumerate(decree.endorsements):
             path = f"decrees[{i}].endorsements[{j}]"
