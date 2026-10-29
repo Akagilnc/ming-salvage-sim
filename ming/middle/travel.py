@@ -17,20 +17,11 @@ CLEARED_JOURNEY = {
 
 
 def journey_distances(ledger: Ledger, facts: Sequence[Fact], people: Mapping[str, Item]) -> dict[str, Item]:
-    """Read the origins this declaration can use, separately for checking and landing."""
-    locations = {name: data.get("location") for name, data in people.items()}
-    origins: set[str] = set()
-    for fact in facts:
-        if fact.entity_type != "person":
-            continue
-        destination = next((change.value for change in reversed(fact.changes) if change.field == "location"), None)
-        if destination is not None:
-            # A departure keeps its physical origin; only a first location establishes one.
-            if origin := locations.get(fact.entity):
-                if destination != origin:
-                    origins.add(origin)
-            elif isinstance(destination, str):
-                locations[fact.entity] = destination
+    """Read current and declared places without simulating the journey lifecycle."""
+    origins = {location for fact in facts if fact.entity_type == "person"
+               if (location := people.get(fact.entity, {}).get("location"))}
+    origins.update(change.value for fact in facts if fact.entity_type == "person"
+                   for change in fact.changes if change.field == "location" and isinstance(change.value, str))
     return {row["key"]: row["data"] for row in ledger.entities(
         kind="distance", query=ENTITY_ROWS.with_only_columns(E.key, E.data).where(E.key.in_(origins)),
     )} if origins else {}

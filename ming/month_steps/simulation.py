@@ -75,7 +75,7 @@ class Simulations:
     async def forecast(self, petition: PendingPetition, option: int) -> dict[str, Any]:
         calendar = self.court.calendar()
         existing = next((f.detail for f in self.court.petition_products(
-            [str(petition.id)], "forecast", current=True, date=calendar.data,
+            [str(petition.id)], "forecast", date=calendar.data,
         ) if f.detail["option"] == option), None)
         if existing is not None:
             return existing
@@ -105,7 +105,7 @@ class Simulations:
         calendar = self.court.calendar()
         petitions = {str(p.detail["id"]): p for p in self.court.month_petitions(calendar.data)}
         choices: list[dict[str, Any]] = [{**f.detail, "petition": petitions[f.detail["petition_id"]].detail}
-                   for f in self.court.petition_products(list(petitions), "choice")]
+                   for f in self.court.petition_products(list(petitions), "choice", date=None)]
         result: dict[str, Any]
         if len(petitions) == 1:
             petition = self.court.as_petition(next(iter(petitions.values())))

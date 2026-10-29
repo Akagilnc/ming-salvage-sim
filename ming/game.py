@@ -131,11 +131,10 @@ class Game:
             ):
                 self.start_background()
 
-    def recover_month(self, calendar: EntityView | None = None, *, ready: bool | None = None) -> bool:
+    def recover_month(self, calendar: EntityView, *, ready: bool | None = None) -> bool:
         """The one ledger-driven month gap-fill after a reopen, a recovery or a
         choice; the 请先退朝 gate only guards user clicks. Running or failed work
         keeps it from starting, so it never runs twice or silently retries."""
-        calendar = self.court.calendar() if calendar is None else calendar
         if not self.month.opened(calendar):
             return False
         if ready is None:
