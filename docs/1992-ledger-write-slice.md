@@ -481,3 +481,40 @@ PYTHONPATH=/tmp/1992-fixer-probes:$PWD .venv/bin/python -m pytest -q -s \
 - 撤销类从票面起点 `1f2d13220` 对工作区逐文件检查；指定检查与专属测试内容已删除。没有恢复旧缓存或偷加读侧吞错。
 
 本轮仅交修理，不宣称关票或最终验收。全量剖析、CPU 对照、CI、PR 对齐和独立评审仍按最终待合并状态执行；未 push、开 PR 或合并。
+
+## T-dup-runtime：运行时顺序调用与并行任务（基于 1e47f25d3）
+
+前轮 AST 扫描不能证明运行时同类已清；本轮按来件改用真实调用观察。runId 仍为 `01a184d9-e7ac-7cdf-879e-8e47f248aad4`。没有新增常驻测试／夹具，未修改测试文件。
+
+- `recover_month` 接受已取得的 calendar；`opened`、payload、interaction 共用它，failures／running 共用一次 interactions。choose 收尾的 pending_petitions 也传已知日期。
+- 原 `prompt` 的身份取材提到 `prompt_materials`，原读取删除；仍由同一函数获取、转换目录及 speakers，不造另一份规则。`speculate` 对本次真正需要启动的选项取一次 world 材料，传到 forecast／call／prompt。已完成或已有任务时不白取；正式重试仍按本次调用现取。
+- 密报启动前批取已完成产品，只为未完成密令准备材料；同承办人共用一次身份材料，然后仍用原 gather_or_raise 并发。不同身份不共用、独立 read_records 工具不共用。
+- 里程按本声明已知起点批读；新人物可先落第一处位置再出行，因此也纳入其声明中的位置。`journey_route` 只消费材料，校验所得 route 直接传给顺序回放，不在 move_person 再算。复扫发现落账同样逐人物读里程，dispatch 也改为批取；出发／到达算法与缺里程反馈不改。
+
+### 动态扫描与红绿
+
+临时 `runtime_probe` 原样调用 Ledger.read／commit、Game.execute、Court.presentation、translate.check。以动作、推送、单次声明校验为范围；编译 SQL、参数与未经过提交仅用于发现候选，再逐调用链判定是不是相同需求，不据此建立生产依赖规则。独立工具请求剔除；下面两种合法边界单列，不要求总 SQL 同文重复为零。
+
+基础命令前缀：`RUNTIME_REPORT=... RUNTIME_ASSERT=1 PYTHONPATH=/tmp/1992-fixer-probes:$PWD .venv/bin/python -m pytest -q -s -p runtime_probe --tb=line --show-capture=no`。
+
+修前运行 `test_declared_journey_dates_and_month_end_arrival[journeys]`、`test_month_advances_after_reopening`、`test_rejected_decree_is_forced_withdrawn_or_held`：原业务断言通过，探针 `7 failed, 1 passed in 31.76s`（toolCallId `call_d432bebe0df84e718451a1b7f6f41eb1`）。
+
+| 实际调用链重复候选 | 修前重复次数 | 修后 |
+| --- | ---: | ---: |
+| choose 收尾／recover_month 日期和 interactions | 19 | 0 |
+| 同轮 forecast 的 world 目录 | 6 | 0 |
+| 同承办人的密报实体、档案、任职、目录 | 12 | 0 |
+| check 内里程，包括校验后 move_person 重取 | 13 | 0 |
+| dispatch 落账逐人物里程 | 6 | 0 |
+| 模型输入身份读取之后的流式推送 hall | 1 | 1，独立推送 |
+| 失败 action 记录前重新确认日期 | 1 | 1，失败恢复契约 |
+
+反向变异重新让 recover_month 自读、forecast／report 不消费传入材料、check 在每条 fact 重新取里程，跑 journeys、deltas、rejected option=0 三个真实 HTTP 案：`3 failed in 11.83s`（`call_524c85ea30224aa6811b214a5907ff37`）。恢复后最终聚焦把全部五种行程边界加入同组：`12 passed in 31.87s`（`call_4567cc605632429da1563d706c464263`）；修复五项的重复均为零，仅剩表末两项合法边界。没有把装回重复查询后的业务正确误称为批量正确。
+
+扩展复扫：全部 travel／secrets，加御笔强推四分支、两夜落地及中断、resume、召对工具案：`20 passed in 64.53s`（`call_ab4118ba04f34091a7e8866df91ae68e`）。观察到的 34 个候选全为独立 get_hall 请求或流式推送；没有新的同操作重读。未重复整组 93 案，不将两组重叠的通过数相加。
+
+最后聚焦跑时 HEAD 为 `1e47f25d3ab9d11fad2c3c821cb4df68cd2179d0` 加本轮工作区。Ruff `All checks passed!`、显式 venv Pyright `0 errors, 0 warnings, 0 informations`、import-linter `4 kept, 0 broken`、diff --check 通过。以上带探针时长不作提速结论，不外推全量 CPU；仍由最终待合并验收测量。
+
+取材都只活在本次调用：world 目录一份、每个未完密报身份一份、里程仅按请求起点取；无跨操作缓存或失效机制。新增生产函数逐项自审为 `prompt_materials`、`journey_distances`、`Secrets.run`，分别拆出原获取工作及同身份批次装配，旧单项读取已删除；没有新增测试函数。入口及业务断言仍是原 HTTP／模型工具，未放宽断言。
+
+本轮将前轮遗留 `office_probe.py`、`operators.html` 与本轮 runtime 探针及输出一并清理；证据以本节和上述会话 toolCallId 为准。不派发角色、不推送或开 PR，交驱动席按原话送大理寺复审。

@@ -21,7 +21,7 @@ from ming.middle import queries
 from ming.middle.rules import field_values, money_amounts
 from ming.middle.fiscal import WAN, current_paid, has_obligation
 from ming.middle.appointments import APPOINTMENT_ROLES, cabinet_members, incumbency_record
-from ming.middle.travel import move_person
+from ming.middle.travel import journey_distances, journey_route, move_person
 
 def landing_entities(
     ledger: Ledger, result: Declaration | Unhandled, owner: Entity,
@@ -165,6 +165,7 @@ def dispatch(
             if (fact.create or fact.entity_type == "incumbency") and pair not in existing:
                 existing[pair] = known(fact.entity_type, fact.entity).snapshot()
         amounts, reasons = money_amounts(result.facts, existing)
+        distances = journey_distances(ledger, result.facts, {key: row["data"] for (kind, key), row in existing.items() if kind == "person"})
         for i, j, fact in landing_facts(result.facts):
             entity = known(fact.entity_type, fact.entity)
             association = (
@@ -180,12 +181,11 @@ def dispatch(
                 "discovered": fact.discovered,
                 **({"origin_ref": str(decrees[fact.decree])} if fact.decree is not None else {}),
             }
-            changes = detail["changes"]
             if entity.kind == "person":
-                move_person(entity, changes, ledger, record, date)
+                move_person(entity, detail["changes"], journey_route(distances, entity.data, detail["changes"]), record, date)
             if entity.kind == "incumbency":
-                displace(entity, changes, known, record, {**association, "text": fact.text})
-            record(entity, "changed", detail, changes)
+                displace(entity, detail["changes"], known, record, {**association, "text": fact.text})
+            record(entity, "changed", detail, detail["changes"])
             retire_chief(existing, known, record, {**association, "text": fact.text})
             if (i, j) in amounts:
                 record_receipts(fact, amounts[i, j], reasons[i, j], known, record)

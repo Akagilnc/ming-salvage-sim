@@ -11,7 +11,7 @@ from ming.middle.appointments import CATALOGUE_KINDS
 from ming.middle.declaration import Declaration, Fact
 from ming.middle.fiscal import WAN, current_paid, has_obligation, obligation
 from ming.middle.fields import FIELDS
-from ming.middle.travel import SPEEDS, journey_route, move_person
+from ming.middle.travel import SPEEDS, journey_distances, journey_route, move_person
 Names = dict[str, dict[str, list[str]]]
 
 
@@ -44,8 +44,9 @@ def check_rules(ledger: Ledger, out: Declaration, names: Names, date: Item) -> N
     if rows:
         rows.update((row["key"], row["data"]) for row in ledger.entities(kind="person", query=ENTITY_ROWS.where(E.key.in_(rows))))
     people = {key: Entity("person", key, "", dict(data)) for key, data in rows.items()}
+    distances = journey_distances(ledger, out.facts, rows)
     for i, fact in enumerate(out.facts):
-        person = check_journey(ledger, fact, f"facts[{i}]", names, people)
+        person, route = check_journey(distances, fact, f"facts[{i}]", names, people)
         if fact.affair is not None and fact.affair not in names.get("affair", {}):
             fail(f"facts[{i}].affair", fact.affair, name_expected("affair", fact.affair, names), names,
                  "事务正名查 expected 指向的输入目录，或在本份先 create 该事务，重交整份。")
@@ -67,25 +68,26 @@ def check_rules(ledger: Ledger, out: Declaration, names: Names, date: Item) -> N
         if person is not None:
             changes = field_values(fact, person.data, None)["changes"]
             # Replay landing's lifecycle on detached aggregates, without committing.
-            move_person(person, changes, ledger,
+            move_person(person, changes, route,
                         lambda entity, kind, detail, updates: entity.record(kind, "", detail, updates), date)
             person.record("changed", "", {}, changes)
 
 
-def check_journey(ledger: Ledger, fact: Fact, path: str, names: Names, people: dict[str, Entity]) -> Entity | None:
+def check_journey(distances: dict[str, Item], fact: Fact, path: str, names: Names,
+                  people: dict[str, Entity]) -> tuple[Entity | None, tuple[str, float] | None]:
     if fact.entity_type != "person":
-        return None
+        return None, None
     person = people[fact.entity]
     changes = {c.field: c.value for c in fact.changes}
     try:
-        route = journey_route(ledger, person.data, changes)
+        route = journey_route(distances, person.data, changes)
     except KeyError as exc:
         fail(path + ".location", exc.args[0], {"origin": person.data["location"], "distance": "required"}, names,
              "账本缺本程里程，无法计算到达日，重交整份。")
     if route is not None and "departure_day" not in changes:
         fail(path + ".departure_day", None, {"field": "departure_day", "type": "integer"}, names,
              "本条启程缺启程日；按戏文补交 departure_day 字段，重交整份。")
-    return person
+    return person, route
 
 
 def check_money(fact: Fact, names: Names, index: int) -> None:

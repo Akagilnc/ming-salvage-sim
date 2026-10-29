@@ -95,7 +95,7 @@ class Month:
             self.court.settle_journeys(calendar.data)
             await gather_or_raise(
                 self.gazette.run(calendar), self.sources.run(calendar, returned),
-                *(self.secrets.report(d, calendar) for d in secrets if d.data["secret"]),
+                self.secrets.run([d for d in secrets if d.data["secret"]], calendar),
             )
             return self.court.advance_month(calendar), ()
 

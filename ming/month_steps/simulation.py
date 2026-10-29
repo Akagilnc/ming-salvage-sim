@@ -13,7 +13,7 @@ from ming.middle.concepts import (
 )
 from ming.middle.declaration import PendingPetition
 from ming.middle.invoke import ModelSource, build_agent, enlist, invoke
-from ming.middle.month_work import MonthText, Simulation, prompt
+from ming.middle.month_work import MonthText, Simulation, prompt, prompt_materials
 from ming.middle.view import EntityView, FactView
 from ming.middle.records import Materials, read_records
 
@@ -49,10 +49,11 @@ class Simulations:
             ],
         }
 
-    async def call(self, context: dict[str, Any], calendar: EntityView, *, final: bool = False) -> dict[str, Any]:
+    async def call(self, context: dict[str, Any], calendar: EntityView, *, final: bool = False,
+                   materials: dict[str, Any] | None = None) -> dict[str, Any]:
         result = await invoke(
             self.final_agent if final else self.draft_agent,
-            prompt(self.court, "world", context, calendar.data), deps=Materials(self.court, "world"),
+            prompt(self.court, "world", context, calendar.data, materials), deps=Materials(self.court, "world"),
         )
         self.court.log.info("model output: %s", result.output.model_dump_json())
         return {"output": result.output.model_dump()}
@@ -87,12 +88,13 @@ class Simulations:
             for f in products if f.kind == "choice"
         ]
 
-    async def forecast(self, petition: PendingPetition, option: int, calendar: EntityView, context: dict[str, Any]) -> dict[str, Any]:
+    async def forecast(self, petition: PendingPetition, option: int, calendar: EntityView, context: dict[str, Any],
+                       materials: dict[str, Any] | None = None) -> dict[str, Any]:
         result = await self.call({
             **context,
             "choices": [{"petition": petition.model_dump(mode="json"),
                          "option": option, "text": petition.options[option]}],
-        }, calendar, final=True)
+        }, calendar, final=True, materials=materials)
         result.update(petition_id=str(petition.id), option=option)
         self.court.record(calendar.id, [("forecast", {**result, "date": petition.available})])
         return result
@@ -107,9 +109,12 @@ class Simulations:
             return
         petition = self.court.as_petition(petitions[0])
         finished = {f.detail["option"] for f in products if f.kind == "forecast"}
-        for option in range(len(petition.options)):
-            if option not in finished:
-                enlist(self.tasks, (petition.id, option), lambda option=option: self.forecast(petition, option, calendar, context), on_done=self.log_failure)
+        options = [option for option in range(len(petition.options))
+                   if option not in finished and (petition.id, option) not in self.tasks]
+        if options:
+            materials = prompt_materials(self.court, "world")
+            for option in options:
+                enlist(self.tasks, (petition.id, option), lambda option=option: self.forecast(petition, option, calendar, context, materials), on_done=self.log_failure)
 
     async def final(self, calendar: EntityView, draft: dict[str, Any], petitions: tuple[FactView, ...],
                     products: tuple[FactView, ...], context: dict[str, Any]) -> dict[str, Any]:

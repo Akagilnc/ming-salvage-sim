@@ -3,7 +3,8 @@
 from collections.abc import Callable
 from math import ceil
 
-from ming.ledger import Entity, Item, Ledger
+from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS, Entity, Item, Ledger
+from ming.middle.declaration import Fact
 
 SPEEDS = {"常速": 45, "加急": 85, "押运": 45}
 CLEARED_JOURNEY = {
@@ -15,25 +16,32 @@ CLEARED_JOURNEY = {
 }
 
 
-def journey_route(ledger: Ledger, data: Item, changes: Item) -> tuple[str, float] | None:
+def journey_distances(ledger: Ledger, facts: list[Fact], people: dict[str, Item]) -> dict[str, Item]:
+    # A new person's first location can become a later fact's departure point.
+    locations = {people.get(fact.entity, {}).get("location") or c.value
+                 for fact in facts if fact.entity_type == "person"
+                 for c in fact.changes if c.field == "location"}
+    return {row["key"]: row["data"] for row in ledger.entities(
+        kind="distance", query=ENTITY_ROWS.where(E.key.in_(locations)),
+    )} if locations else {}
+
+
+def journey_route(distances: dict[str, Item], data: Item, changes: Item) -> tuple[str, float] | None:
     """The sole departure decision and route lookup for validation and landing."""
     destination: str = changes.get("location", data.get("location", ""))
     if (not data.get("location") or data.get("transit_to")
             or changes.get("status") not in (None, "active") or destination == data["location"]):
         return None
-    rows = ledger.entities(kind="distance", key=data["location"])
-    distances: Item = rows[0]["data"] if rows else {}
-    return destination, distances[destination]
+    return destination, distances.get(data["location"], {})[destination]
 
 
 def move_person(
     person: Entity,
     changes: dict[str, object],
-    ledger: Ledger,
+    route: tuple[str, float] | None,
     record: Callable[[Entity, str, Item, Item], None],
     date: Item,
 ) -> None:
-    route = journey_route(ledger, person.data, changes)
     day = changes.pop("departure_day", None)
     pace = changes.pop("travel_speed", "常速")
     # A first location is a fact, not a journey from an invented origin.

@@ -30,19 +30,20 @@ class Simulation(MonthText):
     petitions: list[Petition] = Field(default_factory=list[Petition], description="本月岔路口奏疏列表，无岔路可省略；含义见岔路口。")
 
 
-def prompt(court: Court, identity: Identity, context: Any, date: dict[str, Any]) -> str:
+def prompt_materials(court: Court, identity: Identity) -> dict[str, Any]:
     speakers = {e.key: e.model_dump(mode="json") for e in court.entities(
         identity, kind="person", key=identity.people,
     )} if isinstance(identity, Officials) and identity.people else {}
-    return json.dumps(
-        character_input(
-            {
-                "date": date,
-                "context": context,
-                "catalogue": court.record_catalogue(identity),
-                **({"speakers": [speakers[name] for name in identity.people if name in speakers]}
-                   if isinstance(identity, Officials) else {}),
-            }
-        ),
-        ensure_ascii=False,
-    )
+    return character_input({
+        "catalogue": court.record_catalogue(identity),
+        **({"speakers": [speakers[name] for name in identity.people if name in speakers]}
+           if isinstance(identity, Officials) else {}),
+    })
+
+
+def prompt(court: Court, identity: Identity, context: Any, date: dict[str, Any],
+           materials: dict[str, Any] | None = None) -> str:
+    return json.dumps({
+        "date": date, "context": character_input(context),
+        **(materials if materials is not None else prompt_materials(court, identity)),
+    }, ensure_ascii=False)

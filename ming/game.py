@@ -106,18 +106,18 @@ class Game:
         elif self.court.pending_petitions():
             self.start_background()
 
-    def recover_month(self) -> None:
+    def recover_month(self, calendar: EntityView | None = None) -> None:
         """The one ledger-driven month gap-fill after a reopen, a recovery or a
         choice; the 请先退朝 gate only guards user clicks. Running or failed work
         keeps it from starting, so it never runs twice or silently retries."""
-        if (
-            not self.month.opened()
-            or self.court.failures()
-            or self.court.running()
-        ):
+        calendar = calendar if calendar is not None else self.court.calendar()
+        if not self.month.opened(calendar):
             return
-        payload = {"date": self.court.calendar().data}
-        self.interaction("month", "running", payload)
+        interactions = self.court.interactions()
+        if self.court.failures(interactions) or self.court.running(interactions):
+            return
+        payload = {"date": calendar.data}
+        self.interaction("month", "running", payload, calendar)
         self.active = asyncio.create_task(self.execute("month", payload))
         # Started from inside other work, it replaces the task a drain is already
         # awaiting; tracking it keeps every drain waiting for the gap-fill too.
@@ -306,8 +306,8 @@ class Game:
             self.interaction(action, "done", payload, calendar)
             # The choice is complete before shared month work resumes. Reuse the
             # normal month action so its waiting and failures cannot belong to it.
-            if action == "choose" and not self.court.pending_petitions():
-                self.recover_month()
+            if action == "choose" and not self.court.pending_petitions(calendar.data):
+                self.recover_month(calendar)
             return output
         except Exception as error:
             self.court.log.exception("action=%s", action)
