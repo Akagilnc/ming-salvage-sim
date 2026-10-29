@@ -22,16 +22,15 @@ from ming.middle.declaration import NightDeclaration
 from ming.middle.invoke import ModelSource, TextUpdate, build_agent, invoke, stream_text
 from ming.middle.opening import CONTENT
 from ming.middle.scene import HallResult
-from ming.middle.night import NightView
 from ming.middle.records import read_records
-from ming.middle.view import EntityView, Officials
+from ming.middle.view import Officials
 
 
 class Audience:
     def __init__(self, court: Court, model: ModelSource) -> None:
         self.court = court
         self._night_id: UUID | None = None
-        self._turn: asyncio.Task[tuple[str, bool]] | None = None
+        self._turn: asyncio.Task[str] | None = None
         self._dismiss_requested: UUID | None = None
         self.translation = court.translation_agent(
             NightDeclaration,
@@ -71,14 +70,14 @@ class Audience:
             raise ValueError("open an audience night first")
         return self._night_id
 
-    def open(self, night_id: UUID | None = None) -> NightView:
-        night = self.court.night(night_id or self.court.open_night())
+    def open(self, night_id: UUID | None = None) -> UUID:
+        night = self.court.entity(night_id or self.court.open_night())
         self._night_id = night.id
-        if not night.closed and self.court.facts(
+        if not night.data["closed"] and self.court.facts(
             "audit", entity_id=self.night_id, kind="dismiss_requested"
         ):
             self._dismiss_requested = self.night_id
-        return night
+        return self.night_id
 
     def dismiss(self) -> None:
         if (
@@ -91,44 +90,38 @@ class Audience:
         if self._turn is None or self._turn.done():
             self._finish_dismiss()
 
-    def _finish_dismiss(self) -> bool:
-        if self._dismiss_requested is None:
-            return False
-        self.court.dismiss(self._dismiss_requested)
-        self._dismiss_requested = None
-        return True
+    def _finish_dismiss(self) -> None:
+        if self._dismiss_requested is not None:
+            self.court.dismiss(self._dismiss_requested)
+            self._dismiss_requested = None
 
-    async def translate_pending(self, pending: tuple[UUID, ...], calendar: EntityView) -> None:
-        while pending:
-            for night_id in pending:
-                night = self.court.night(night_id)
-                if night.result is not None:
-                    continue
-                result, materials = await self.court.translate(
-                    self.translation, night.model_dump_json(), night, calendar=calendar,
-                )
-                self.court.land(result, night_id, calendar=calendar, materials=materials)
-            pending = self.court.pending_nights()
+    async def translate_pending(self) -> None:
+        while pending := self.court.pending_nights():
+            night_id = pending[0]
+            night = self.court.night(night_id)
+            result = await self.court.translate(
+                self.translation, night.model_dump_json(), night_id
+            )
+            self.court.land(result, night_id)
 
     async def say(
-        self, words: str, turn_id: str, on_delta: Callable[[TextUpdate], None] | None,
-        *, night: NightView, calendar: EntityView,
-    ) -> tuple[str, bool]:
+        self, words: str, turn_id: str, on_delta: Callable[[TextUpdate], None] | None = None
+    ) -> str:
+        night = self.court.night(self.night_id)
         for turn in night.turns:
             if turn.id == turn_id:
-                closed = self._finish_dismiss()
-                return turn.scene, night.closed or closed
+                self._finish_dismiss()
+                return turn.scene
         if night.closed:
             raise ValueError("night already closed")
-        self._turn = asyncio.create_task(self._generate(words, turn_id, on_delta, night=night, calendar=calendar))
+        self._turn = asyncio.create_task(self._generate(words, turn_id, on_delta))
         return await self._turn
 
     async def _generate(
-        self, words: str, turn_id: str, on_delta: Callable[[TextUpdate], None] | None,
-        *, night: NightView, calendar: EntityView,
-    ) -> tuple[str, bool]:
+        self, words: str, turn_id: str, on_delta: Callable[[TextUpdate], None] | None
+    ) -> str:
         history: list[ModelMessage] = []
-        for turn in night.turns:
+        for turn in self.court.night(self.night_id).turns:
             history.extend(
                 [
                     ModelRequest(parts=[UserPromptPart(turn.emperor_words)]),
@@ -138,7 +131,7 @@ class Audience:
         try:
             result = await invoke(
                 self.scene,
-                [json.dumps({**self.court.scene_material(calendar), "catalogue": self.court.record_catalogue(Officials(people=list(night.hall)))}, ensure_ascii=False), words],
+                [json.dumps({**self.court.scene_material(), "catalogue": self.court.record_catalogue(self.identity)}, ensure_ascii=False), words],
                 deps=self,
                 message_history=history,
                 event_stream_handler=partial(stream_text, on_delta)
@@ -150,6 +143,6 @@ class Audience:
                 [("turn", {"id": turn_id, "scene": result.output})],
                 words=words,
             )
+            return result.output
         finally:
-            closed = self._finish_dismiss()
-        return result.output, closed
+            self._finish_dismiss()

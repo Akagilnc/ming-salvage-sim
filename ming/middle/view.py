@@ -13,7 +13,7 @@ from ming.ledger import ENTITY_COLUMNS as E, FACT_COLUMNS as F, ENTITY_ROWS, FAC
 from ming.middle.queries import CALENDAR, available_on, public_decree
 from ming.middle.calendar import calendar_row
 from ming.middle.appointments import APPOINTMENT_ROLES, CATALOGUE_KINDS, held_by
-from ming.middle.night import known_people, read_nights, witnessed_nights
+from ming.middle.night import known_people, read_night, witnessed_nights
 from ming.middle.travel import travel_days
 
 OPENING_CONTROLS = {"interaction", "petition", "choice", "gazette", "secret_report"}
@@ -169,13 +169,12 @@ def person_projection(dossiers: Item, row: Item, identity: Identity, appointment
 
 def entities(
     ledger: Ledger, identity: Identity, selection: Item | None = None,
-    *, date: Item | None = None,
 ) -> tuple[EntityView, ...]:
     selection = dict(selection or {})
     keys = selection.pop("keys", None)
     catalogue = selection.pop("catalogue", False)
     if identity == "emperor" and (opening := next(iter(ledger.read(FACT_ROWS.where(
-        F.position == month_open(date if date is not None else calendar_row(ledger)["data"]),
+        F.position == month_open(calendar_row(ledger)["data"]),
     ))), None)):
         return tuple(
             EntityView.model_validate(e)
@@ -186,9 +185,9 @@ def entities(
     query = query.where(E.kind == selection["kind"]) if selection.get("kind") is not None else query
     query = query.where(E.key == selection["key"]) if selection.get("key") is not None else query
     query = query.where(E.key.in_(keys)) if keys is not None else query
-    query = query.with_only_columns(E.id, E.kind, E.key, E.source) if catalogue else query
     parameters = view_parameters(identity, selection.get("kind"))
-    rows = ledger.read(query, parameters)
+    rows = tuple({**ledger.get(row["id"]).snapshot(), "exposure": row["exposure"]}
+                 for row in ledger.read(query.with_only_columns(E.id, ENTITY_EXPOSURE[identity_key(identity)].label("exposure")), parameters))
     if catalogue:
         return tuple(EntityView.model_validate({**row, "data": {}}) for row in rows)
     appointments: Sequence[Item] = ledger.entities(
@@ -202,9 +201,6 @@ def entities(
     factions: set[Any] = {r["data"].get("faction") for r in ledger.entities(
         kind="person", query=ENTITY_ROWS.where(E.key.in_(own)),
     )} if any(row["exposure"] == "faction" for row in rows) else set()
-    nights = {night.id: night.model_dump(mode="json") for night in read_nights(
-        ledger, [], rows=[row for row in rows if row["exposure"] == "night"],
-    )} if identity not in ("audit", "world") else {}
     result: list[EntityView] = []
     for row in map(dict, rows):
         if row["kind"] == "person":
@@ -218,7 +214,7 @@ def entities(
             elif row["exposure"] == "account_name":
                 row["data"] = {"name": row["key"]}
             elif row["exposure"] == "night":
-                row["data"] = nights[row["id"]]
+                row["data"] = read_night(ledger, row["id"]).model_dump(mode="json")
             elif row["exposure"] == "decree":
                 row["data"] = {
                     k: v
@@ -364,7 +360,7 @@ def fact_exposure(
     )
 
 
-def fact_sources(ledger: Ledger, identity: Identity, date: Item | None = None) -> Select[Any]:
+def fact_sources(ledger: Ledger, identity: Identity) -> Select[Any]:
     """One query for live controls and immutable facts at the opening cutoff."""
     exposure = FACT_EXPOSURE[identity_key(identity)]
     query = FACT_ROWS.add_columns(exposure.label("exposure")).where(exposure.is_not(None))
@@ -372,7 +368,7 @@ def fact_sources(ledger: Ledger, identity: Identity, date: Item | None = None) -
         query = query.where(AVAILABLE)
     if identity == "emperor":
         live = F.kind.in_(OPENING_CONTROLS)
-        opening = month_open(date if date is not None else calendar_row(ledger)["data"])
+        opening = month_open(calendar_row(ledger)["data"])
         query = query.where(or_(opening.is_(None), live, F.position < opening)).order_by(None).order_by(
             case((opening.is_not(None), live), else_=False), ENTITY_ORDER, F.position,
         )

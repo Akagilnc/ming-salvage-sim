@@ -5,7 +5,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from ming.ledger import Ledger, ENTITY_COLUMNS as E, ENTITY_ROWS
+from ming.ledger import Ledger
 from ming.middle.calendar import CAPITAL
 from ming.middle.night import change_hall
 
@@ -22,8 +22,9 @@ def set_hall(
     night = ledger.get(night_id)
     people = {
         e["key"]: e
-        for e in ledger.entities(kind="person", query=ENTITY_ROWS.where(E.key.in_(tuple(dict.fromkeys(add)))))
-    } if add else {}
+        for name in dict.fromkeys(add)
+        for e in ledger.entities(kind="person", key=name)
+    }
     failures: list[dict[str, Any]] = []
     for name in add:
         person = people.get(name)

@@ -16,7 +16,6 @@ from starlette.testclient import TestClient
 from ming.middle.view import Officials
 from ming.web import create_app
 from tests.test_court import replaying
-from tests.test_read_budget import measure_reads
 
 RECORDED = Path(__file__).parent / "recorded"
 
@@ -100,7 +99,7 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
     tmp_path: Path, game_db: Path, steps
 ) -> None:
     case = json.loads((RECORDED / "night_tools.json").read_text())
-    received, sent = [], []
+    received = []
     case["offices"] = ["内阁首辅", "户部尚书"]
     steps["scene"] = replaying(
         [
@@ -110,10 +109,10 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
             ModelResponse(parts=[ToolCallPart("read_records", {"kind": "person", "key": "王体乾"}, tool_call_id="after")]),
             ModelResponse(parts=[ToolCallPart("set_hall", {"add": [], "remove": ["王体乾"]})]),
             *ModelMessagesTypeAdapter.validate_python(case["scene_responses"]),
-        ], received, sent=sent,
+        ], received,
     )
     steps["NightDeclaration"] = replaying(case["replies"])
-    with TestClient(create_app(tmp_path)) as client, measure_reads(sent) as reads:
+    with TestClient(create_app(tmp_path)) as client:
         client.post("/actions", json={"action": "load", "save": game_db.name})
         for turn, hall in zip(case["turns"], (
             {"王承恩", "杨嗣昌", "王绍徽"},
@@ -140,25 +139,14 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
             assert {
                 d.id for d in court.entities(Officials(people=[person]), kind="decree")
             } == known
-    actions = [action for action in reads["actions"] if action["action"] == "say"]
-    assert actions and all(action["calendar"] and action["night"] for action in actions)
-    assert all(count == 1 for action in actions for kind in ("calendar", "night") for count in action[kind].values()), actions
     returned = {
         part.tool_call_id: (part.tool_name, part.model_response_object())
         for message in received
         for part in message.parts
         if isinstance(part, ToolReturnPart)
     }
-    batches = [(operation, part.args_as_dict()["add"]) for operation, message in enumerate(sent, 1) for part in message.parts
-               if isinstance(part, ToolCallPart) and part.tool_name == "set_hall" and len(part.args_as_dict()["add"]) > 1]
-    assert batches
-    for operation, names in batches:
-        members = {("person", name) for name in names}
-        assert all(len(found & members) <= 1 for (current, _, _), found in reads["singletons"].items() if current == operation)
     assert [result["status"] for result in returned["offices"][1]["offices"]] == ["occupied", "occupied"]
     assert [result["appointments"][0]["holders"] for result in returned["offices"][1]["offices"]] == [["黄立极"], ["郭允厚"]]
-    assert all(len(found & {("office", name) for name in case["offices"]}) <= 1
-               for (_, _, call_id), found in reads["singletons"].items() if call_id == "offices"), reads["singletons"]
     before, after = (returned[key][1]["entities"][0] for key in ("before", "after"))
     assert before["key"] == after["key"] == "王体乾"
     for field in ("name", "location", "appointments"):

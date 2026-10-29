@@ -1,7 +1,5 @@
 """Monthly person movement settles before reports; the calendar advances last."""
 
-from uuid import UUID
-
 from ming.ledger import Entity, Item, Ledger
 from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS
 from ming.middle.travel import CLEARED_JOURNEY
@@ -21,8 +19,9 @@ def calendar_row(ledger: Ledger) -> Item:
     return ledger.entities(kind="calendar")[0]
 
 
-def journeys_due(ledger: Ledger, date: Item) -> tuple[Item, ...]:
+def journeys_due(ledger: Ledger) -> tuple[Item, ...]:
     """Stored journeys due this month, shared by the draft read and settlement."""
+    date = calendar_row(ledger)["data"]
     return ledger.entities(
         kind="person", query=ENTITY_ROWS.where(
             E.data["transit_to"].as_string() != "",
@@ -32,9 +31,9 @@ def journeys_due(ledger: Ledger, date: Item) -> tuple[Item, ...]:
     )
 
 
-def settle_journeys(ledger: Ledger, date: Item) -> None:
+def settle_journeys(ledger: Ledger) -> None:
     changed: list[Entity] = []
-    for row in journeys_due(ledger, date):
+    for row in journeys_due(ledger):
         person = ledger.get(row["id"])
         destination = person.data["transit_to"]
         changes: Item = {
@@ -47,8 +46,8 @@ def settle_journeys(ledger: Ledger, date: Item) -> None:
     ledger.commit(changed)
 
 
-def advance_month(ledger: Ledger, calendar_id: UUID) -> Item:
-    calendar = ledger.get(calendar_id)
+def advance_month(ledger: Ledger) -> None:
+    calendar = ledger.get(calendar_row(ledger)["id"])
     date = dict(calendar.data)
     calendar.record(
         "advanced",
@@ -57,4 +56,3 @@ def advance_month(ledger: Ledger, calendar_id: UUID) -> Item:
         next_month(date),
     )
     ledger.commit([calendar])
-    return calendar.snapshot()

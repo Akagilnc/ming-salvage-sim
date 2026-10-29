@@ -3,7 +3,7 @@
 import json
 from collections.abc import Callable, Sequence
 
-from sqlalchemy import JSON, and_, case, func, or_, select, type_coerce
+from sqlalchemy import JSON, case, func, literal, or_, select, type_coerce
 from sqlalchemy.sql.elements import BindParameter, ColumnElement
 
 from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS, Item, Ledger
@@ -29,77 +29,67 @@ def incumbency_record(pair: Sequence[str], holders: list[str]) -> tuple[str, Ite
 def named(ledger: Ledger, kind: str | None, value: str | list[str]) -> tuple[Item, ...]:
     values = [value] if isinstance(value, str) else value
     aliases = func.json_each(ALIASES).table_valued("value")
-    return ledger.entities(kind=kind, query=ENTITY_ROWS.add_columns(ALIASES.label("aliases")).where(or_(
+    return ledger.entities(kind=kind, query=ENTITY_ROWS.where(or_(
         E.key.in_(values),
         select(aliases.c.value).where(aliases.c.value.in_(values)).exists(),
     )))
 
 
 def office_pairs(
-    ledger: Ledger, values: list[str],
+    ledger: Ledger, value: str,
     visible: Callable[[Sequence[Item]], Sequence[Item]] | None = None,
-    *, include_cabinet: bool = False,
-) -> tuple[dict[str, tuple[list[tuple[str, str]], Item, Item]], tuple[Item, ...]]:
-    """Resolve the known batch and return its office/appointment material."""
-    requests = func.json_each(json.dumps(values, ensure_ascii=False)).table_valued("value")
-    aliases = func.json_each(ALIASES).table_valued("value")
-    known = E.id.table.alias("named_incumbency").c
-    offices = {row["key"]: row for row in ledger.entities(kind="office", query=ENTITY_ROWS.add_columns(ALIASES.label("aliases")).where(or_(
-        E.data["department"].as_string() == "内阁" if include_cabinet else False,
-        E.key.in_(select(known.data["office"].as_string()).where(known.kind == "incumbency", known.key.in_(values))),
-        select(requests.c.value).where(or_(
-            E.key == requests.c.value,
-            select(aliases.c.value).where(aliases.c.value == requests.c.value).correlate(E.id.table, requests).exists(),
-            and_(E.data["external"].as_boolean().is_(True), or_(
-                func.substr(requests.c.value, -func.length(E.key)) == E.key,
-                select(aliases.c.value).where(func.substr(requests.c.value, -func.length(aliases.c.value)) == aliases.c.value).correlate(E.id.table, requests).exists(),
-            )),
-        )).correlate(E.id.table).exists(),
-    )))}
-    exact = {value: [row for row in offices.values() if value == row["key"] or value in row["aliases"]] for value in values}
-    required = {value: {row["key"] for row in rows} for value, rows in exact.items() if any(row["data"]["external"] for row in rows)}
-    unresolved = [value for value in values if not exact[value]]
-    office_keys = {key for keys in required.values() for key in keys} | {
-        key for key, row in offices.items() if include_cabinet and row["data"]["department"] == "内阁"
+) -> tuple[list[tuple[str, str]], Item]:
+    """Resolve once for both queries and landing; candidates are caller-visible rows."""
+    exact = named(ledger, "office", value)
+    if exact and any(row["data"]["external"] for row in exact):
+        incumbencies = ledger.entities(kind="incumbency", query=ENTITY_ROWS.where(
+            E.data["office"].as_string().in_([row["key"] for row in exact])
+        ))
+        return [], {"status": "territory_required", "territories": sorted({
+            row["data"]["territory"] for row in (visible(incumbencies) if visible else incumbencies)
+        }), "pairs": []}
+    records = ledger.entities(kind="incumbency", key=value)
+    pairs: set[tuple[str, str]] = set()
+    if exact:
+        pairs.update((row["key"], "") for row in exact)
+    elif records:
+        pairs.update((row["data"]["office"], row["data"]["territory"]) for row in records)
+    else:
+        aliases = func.json_each(ALIASES).table_valued("value")
+        query = ENTITY_ROWS.where(E.data["external"].as_boolean().is_(True), or_(
+            func.substr(literal(value), -func.length(E.key)) == E.key,
+            select(aliases.c.value).where(func.substr(literal(value), -func.length(aliases.c.value)) == aliases.c.value).exists(),
+        ))
+        for office in ledger.entities(kind="office", query=query):
+            for title in [office["key"], office["data"].get("name", ""), *office["data"].get("aliases", [])]:
+                if title and value.endswith(title):
+                    for territory in named(ledger, "territory", value[:-len(title)]):
+                        pairs.add((office["key"], territory["key"]))
+    return sorted(pairs), {
+        "status": "resolved" if len(pairs) == 1 else "territory_required" if pairs else "office_not_found",
+        "territories": sorted({territory for _, territory in pairs}),
+        "pairs": [{"office": office, "territory": territory} for office, territory in sorted(pairs)],
     }
-    records = {row["key"]: row for row in ledger.entities(kind="incumbency", query=ENTITY_ROWS.where(or_(
-        E.key.in_(unresolved), E.data["office"].as_string().in_(office_keys),
-    )))} if unresolved or office_keys else {}
-    seen = visible(list(records.values())) if visible and required else list(records.values())
-    candidates = {value: [(row, value[:-len(title)]) for row in offices.values() if row["data"]["external"]
-                          for title in [row["key"], *row["aliases"]] if title and value.endswith(title)]
-                  for value in values if not exact[value] and value not in records}
-    prefixes = {prefix for rows in candidates.values() for _, prefix in rows}
-    territories = named(ledger, "territory", list(prefixes)) if prefixes else ()
-    results: dict[str, tuple[list[tuple[str, str]], Item, Item]] = {}
-    for value in values:
-        if value in required:
-            results[value] = [], {"status": "territory_required", "territories": sorted({
-                row["data"]["territory"] for row in seen if row["data"]["office"] in required[value]
-            }), "pairs": []}, {}
-            continue
-        if exact[value]:
-            pairs = sorted({(row["key"], "") for row in exact[value]})
-        elif value in records:
-            pairs = [(records[value]["data"]["office"], records[value]["data"]["territory"])]
-        else:
-            pairs = sorted({(office["key"], territory["key"]) for office, prefix in candidates[value] for territory in territories
-                            if prefix == territory["key"] or prefix in territory["aliases"]})
-        results[value] = pairs, {
-            "status": "resolved" if len(pairs) == 1 else "territory_required" if pairs else "office_not_found",
-            "territories": sorted({territory for _, territory in pairs}),
-            "pairs": [{"office": office, "territory": territory} for office, territory in pairs],
-        }, offices[pairs[0][0]] if len(pairs) == 1 else {}
-    return results, (*offices.values(), *records.values())
 
 
-def reference_key(kind: str, value: str, names: dict[str, dict[str, list[str]]],
-                  *, resolution: tuple[list[tuple[str, str]], Item, Item] | None = None) -> str:
-    if resolution is not None:
-        pairs, status, _ = resolution
-        return incumbency_record(pairs[0], [])[0] if status["status"] == "resolved" else value
-    matches = [key for key, aliases in names.get(kind, {}).items() if key == value or value in aliases]
+def reference_key(ledger: Ledger, kind: str, value: str) -> str:
+    if kind == "incumbency":
+        pairs, resolution = office_pairs(ledger, value)
+        matches = [incumbency_record(pair, [])[0] for pair in pairs] if resolution["status"] == "resolved" else []
+    else:
+        matches = [row["key"] for row in named(ledger, kind, value)]
     return matches[0] if len(matches) == 1 else value
+
+
+def cabinet_records(ledger: Ledger) -> dict[tuple[str, str], Item]:
+    """Load cabinet offices and appointments for validation and in-flight landing."""
+    offices = ledger.entities(kind="office", query=ENTITY_ROWS.where(
+        E.data["department"].as_string() == "内阁"
+    ))
+    appointments = ledger.entities(kind="incumbency", query=ENTITY_ROWS.where(
+        E.data["office"].as_string().in_([row["key"] for row in offices])
+    ))
+    return {(row["kind"], row["key"]): row for row in [*offices, *appointments]}
 
 
 def cabinet_members(records: dict[tuple[str, str], Item]) -> set[str]:

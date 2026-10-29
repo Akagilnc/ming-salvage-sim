@@ -10,7 +10,7 @@ from hypothesis.stateful import Bundle, RuleBasedStateMachine, invariant, rule
 from sqlalchemy import event
 from sqlalchemy.orm import Session
 
-from ming.ledger import Entity, Ledger
+from ming.ledger import ENTITY_ROWS, Entity, Ledger
 
 
 class LedgerReplay(RuleBasedStateMachine):
@@ -31,7 +31,9 @@ class LedgerReplay(RuleBasedStateMachine):
     @rule(entity_id=entities, value=values)
     def record_change(self, entity_id, value):
         entity = self.ledger.get(entity_id)
+        previous = dict(entity.data)
         entity.record("changed", "", {"value": value}, {"value": value})
+        assert self.ledger.get(entity_id).data == previous
         self.ledger.commit([entity])
 
     @rule(entity_id=entities, value=values)
@@ -70,9 +72,10 @@ class LedgerReplay(RuleBasedStateMachine):
 
     @invariant()
     def rebuild_matches_live(self):
-        assert tuple(self.ledger.get(row["id"]).snapshot() for row in self.ledger.entities()) == self.ledger.entities()
+        assert self.ledger.entities() == self.ledger.read(ENTITY_ROWS)
         with self.ledger.reading(replay=True) as rebuilt:
             assert rebuilt.entities() == self.ledger.entities()
+            assert rebuilt.read(ENTITY_ROWS) == self.ledger.read(ENTITY_ROWS)
             assert rebuilt.facts() == self.ledger.facts()
 
     def teardown(self):

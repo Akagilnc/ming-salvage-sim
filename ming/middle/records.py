@@ -1,15 +1,14 @@
 """The model's single identity-scoped record tool."""
 
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
+from uuid import UUID
 
 from pydantic import BaseModel
 from pydantic_ai import RunContext
 
 from ming.middle.rules import matching_names
-from ming.middle.view import EntityView, Identity, character_input
-from ming.middle.night import NightView
+from ming.middle.view import Identity, character_input
 
 if TYPE_CHECKING:
     from ming.middle.court import Court
@@ -24,15 +23,11 @@ class RecordMonth(BaseModel):
 class Materials:
     court: "Court"
     identity: Identity
-    names: dict[str, dict[str, list[str]]] = field(default_factory=dict[str, dict[str, list[str]]], kw_only=True)
 
 
 @dataclass
 class TranslationMaterials(Materials):
-    calendar: EntityView
-    decrees: tuple[dict[str, object], ...] = ()
-    night: NightView | None = None
-    appointments: tuple[dict[str, Any], ...] = ()
+    source: UUID
 
 
 async def read_records(
@@ -52,11 +47,12 @@ async def read_records(
     if kind is None and not key and date is None:
         return {"status": "query_required", "message": "须带类、正名或日期之一，目录见输入"}
     month = date.model_dump() if date is not None else None
-    identity = ctx.deps.identity
     if kind in {"office", "incumbency"} and key:
-        return ctx.deps.court.office_record(identity, key, month)
+        results = [ctx.deps.court.office_record(ctx.deps.identity, name, month)
+                   for name in ([key] if isinstance(key, str) else key)]
+        return results[0] if len(results) == 1 else {"offices": results}
     keys = ([key] if isinstance(key, str) else key) or None
-    catalogue = ctx.deps.court.record_catalogue(identity, month, kind, keys)
+    catalogue = ctx.deps.court.record_catalogue(ctx.deps.identity, month, kind, keys)
     selected = [e for e in catalogue if kind is None or e["kind"] == kind]
     names = ctx.deps.court.catalogue(selected)
     resolved = {
@@ -67,7 +63,7 @@ async def read_records(
     }
     if (kind is not None and not selected) or any(len(v) != 1 for v in resolved.values()):
         candidates = matching_names(
-            ctx.deps.court.catalogue(ctx.deps.court.record_catalogue(identity, month, kind)), keys or []
+            ctx.deps.court.catalogue(ctx.deps.court.record_catalogue(ctx.deps.identity, month, kind)), keys or []
         )
         return {
             "status": "not_found", "message": "未找到",
@@ -75,5 +71,5 @@ async def read_records(
         }
     if not keys:
         return {"catalogue": [e for e in selected if date is None or e["event_count"]]}
-    result = ctx.deps.court.read_records(identity, kind, [v[0] for v in resolved.values()], month)
+    result = ctx.deps.court.read_records(ctx.deps.identity, kind, [v[0] for v in resolved.values()], month)
     return result if isinstance(ctx.deps, TranslationMaterials) else character_input(result)

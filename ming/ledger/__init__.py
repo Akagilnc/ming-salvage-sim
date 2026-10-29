@@ -8,7 +8,6 @@ from uuid import UUID, uuid4
 
 from eventsourcing.application import Application, LocalNotificationLog
 from eventsourcing.persistence import Recording
-from eventsourcing.domain import CanMutateAggregate
 from eventsourcing_sqlalchemy.recorders import SQLAlchemyApplicationRecorder
 from sqlalchemy import Engine, Select
 from sqlalchemy.dialects.sqlite import insert
@@ -40,6 +39,7 @@ class Ledger:
             "AGGREGATE_CACHE_MAXSIZE": "10000",
             "AGGREGATE_CACHE_FASTFORWARD": "n",
         })
+        self.repository = self.events.repository
         self.sql = cast(SQLAlchemyApplicationRecorder, self.events.recorder)
         Base.metadata.create_all(cast(Engine, self.sql.datastore.engine))
         self.on_commit: Callable[[], None] | None = None
@@ -94,23 +94,18 @@ class Ledger:
             return
         rebuilt = Ledger(Path(f"file:{uuid4().hex}?mode=memory&cache=shared&uri=true"))
         try:
-            states: dict[UUID, Entity] = {}
+            rebuilt.repository = self.repository
             log = LocalNotificationLog(self.events.recorder, section_size=1000)
             start = 1
             # Read each source page outside the destination transaction: the
             # recorder's thread-scoped transaction otherwise selects that DB.
             while notifications := log.select(start=start, limit=1000):
-                recordings: list[Recording[UUID]] = []
-                for notification in notifications:
-                    domain_event = self.events.mapper.to_domain_event(notification)
-                    entity_id = domain_event.originator_id
-                    states[entity_id] = cast(Entity, cast(CanMutateAggregate[UUID], domain_event).mutate(states.get(entity_id)))
-                    recordings.append(Recording(domain_event, notification))
+                recordings = [Recording(self.events.mapper.to_domain_event(n), n) for n in notifications]
+                entities = [self.get(r.domain_event.originator_id) for r in recordings
+                            if isinstance(r.domain_event, Entity.Created)]
                 with rebuilt.sql.transaction() as session:
-                    rebuilt.write_rows(session, (), recordings)
+                    rebuilt.write_rows(session, entities, recordings)
                 start = notifications[-1].id + 1
-            with rebuilt.sql.transaction() as session:
-                rebuilt.write_rows(session, states.values(), ())
             yield rebuilt
         finally:
             rebuilt.close()
@@ -143,7 +138,8 @@ class Ledger:
                 if isinstance(entity_id, list)
                 else EntityRow.id == entity_id
             )
-        return self.read(query, parameters)
+        return tuple(self.get(row["id"]).snapshot()
+                     for row in self.read(query.with_only_columns(EntityRow.id), parameters))
 
     def facts(
         self,
@@ -171,4 +167,4 @@ class Ledger:
         return self.read(query, parameters)
 
     def get(self, entity_id: UUID) -> Entity:
-        return self.events.repository.get(entity_id)
+        return self.repository.get(entity_id)

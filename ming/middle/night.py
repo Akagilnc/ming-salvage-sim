@@ -1,6 +1,5 @@
 """Persistent audience records, owned by the same entity/event ledger."""
 
-from collections.abc import Sequence
 from operator import itemgetter
 from typing import Any, Literal
 from uuid import UUID, uuid4
@@ -9,9 +8,9 @@ from pydantic import BaseModel
 from sqlalchemy import JSON, CompoundSelect, FromClause, Select, case, func, literal, or_, select, true, union_all
 from sqlalchemy.sql.elements import BindParameter, ColumnElement
 
-from ming.ledger import ENTITY_COLUMNS as E, FACT_COLUMNS as F, FACT_ROWS, Entity, Item, Ledger
+from ming.ledger import ENTITY_COLUMNS as E, FACT_COLUMNS as F, FACT_ROWS, Entity, Ledger
 from ming.middle.calendar import calendar_row
-from ming.middle.queries import LATEST_NIGHT, NIGHT_ROWS, NIGHT_RESULT
+from ming.middle.queries import LATEST_NIGHT
 
 INITIAL_HALL = ("王承恩",)
 # Resolve the referenced-night domain in the permission query itself, rather
@@ -88,20 +87,17 @@ TURN_HALL = select(func.json_group_array(func.json_object(
 TURN_ROWS = FACT_ROWS.add_columns(TURN_HALL.label("hall"))
 
 
-def read_nights(ledger: Ledger, night_ids: list[UUID], *, rows: Sequence[Item] | None = None) -> tuple[NightView, ...]:
-    nights = {row["id"]: row for row in (rows if rows is not None else ledger.entities(entity_id=night_ids, query=NIGHT_ROWS))}
-    if missing := [key for key, row in nights.items() if "result" not in row]:
-        for row in ledger.read(select(E.id, NIGHT_RESULT.label("result")).where(E.id.in_(missing))):
-            nights[row["id"]] = {**nights[row["id"]], "result": row["result"]}
-    turns: dict[UUID, list[TurnView]] = {key: [] for key in nights}
-    if nights:
-        for item in ledger.facts(entity_id=list(nights), kind="turn", query=TURN_ROWS):
-            turns[item["entity_id"]].append(TurnView(
-                **item["detail"], emperor_words=item["emperor_words"],
-                hall=tuple(member["person"] for member in sorted(item["hall"], key=itemgetter("position", "ordinal"))),
-            ))
-    return tuple(NightView(id=key, **night["data"], turns=tuple(turns[key]), result=night["result"])
-                 for key, night in nights.items())
+def read_night(ledger: Ledger, night_id: UUID) -> NightView:
+    night = ledger.get(night_id)
+    turns = tuple(TurnView(
+        **item["detail"], emperor_words=item["emperor_words"],
+        hall=tuple(member["person"] for member in sorted(item["hall"], key=itemgetter("position", "ordinal"))),
+    ) for item in ledger.facts(entity_id=night_id, kind="turn", query=TURN_ROWS))
+    result = next(iter(ledger.facts(
+        entity_id=night_id, kind=("translated", "unhandled"),
+        query=FACT_ROWS.with_only_columns(F.kind).order_by(None).order_by(F.position.desc()).limit(1),
+    )), None)
+    return NightView(id=night.id, **night.data, turns=turns, result=result["kind"] if result else None)
 
 
 def witnessed_nights(people: list[str] | BindParameter[str], query: Select[Any]) -> Select[Any]:
@@ -145,7 +141,7 @@ def known_people(
 
 
 def open_night(ledger: Ledger) -> UUID:
-    for row in ledger.read(LATEST_NIGHT):
+    for row in ledger.entities(query=LATEST_NIGHT):
         if not row["data"]["closed"]:
             return row["id"]
     date = calendar_row(ledger)["data"]

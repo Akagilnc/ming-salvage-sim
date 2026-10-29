@@ -1,16 +1,15 @@
 """Per-decree verdict products; month drafts publish the initial forks together."""
 
 from typing import Any
-from uuid import UUID
 
 from pydantic_ai import PromptedOutput
 
 from ming.middle.court import Court
 from ming.middle.concepts import ACTING, IMPERIAL_PUSH, INTERIM, VERDICT
-from ming.middle.invoke import ModelSource, build_agent, gather_or_raise, invoke
-from ming.middle.month_work import Deliberation, prompt, prompt_materials
+from ming.middle.invoke import ModelSource, build_agent, invoke
+from ming.middle.month_work import Deliberation, prompt
 from ming.middle.records import Materials, read_records
-from ming.middle.view import EntityView, FactView, Officials
+from ming.middle.view import EntityView, Officials
 
 
 class Deliberations:
@@ -27,35 +26,14 @@ class Deliberations:
         )
 
     async def run(
-        self, requests: list[tuple[EntityView, dict[str, Any] | None]], date: dict[str, Any],
-    ) -> list[dict[str, Any]]:
-        """Read this batch once, then fill only its missing durable verdicts."""
-        if not requests:
-            return []
-        products: dict[UUID, list[FactView]] = {d.id: [] for d, _ in requests}
-        for fact in self.court.products(list(products), kind="deliberation", date=date):
-            products[fact.entity_id].append(fact)
-        verdicts: dict[int, dict[str, Any]] = {}
-        for index, (decree, decision) in enumerate(requests):
-            done = next((f.detail for f in products[decree.id] if f.detail["decision_key"] == decision), None)
-            if done is not None:
-                verdicts[index] = done
-        pending = [i for i in range(len(requests)) if i not in verdicts]
-        if pending:
-            prestige = self.court.entities("audit", kind="world")[0].data["imperial_prestige"]
-            materials = {people: prompt_materials(self.court, Officials(people=list(people), exclude_secrets=True))
-                         for people in dict.fromkeys(tuple(requests[i][0].data["people"]) for i in pending)}
-            verdicts.update(zip(pending, await gather_or_raise(*(
-                self.decide(requests[i][0], date, requests[i][1], prestige,
-                            materials[tuple(requests[i][0].data["people"])]) for i in pending
-            )), strict=True))
-        return [verdicts[i] for i in range(len(requests))]
-
-    async def decide(
-        self, decree: EntityView, date: dict[str, Any], decision: dict[str, Any] | None, prestige: float,
-        materials: dict[str, Any],
+        self, decree: EntityView, decision: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Initial verdict or next-month reconsideration of one selected push."""
+        done = next((f.detail for f in self.court.products(decree.id, kind="deliberation")
+                     if f.detail["decision_key"] == decision), None)
+        if done is not None:
+            return done
+        decree = self.court.entity(decree.id)
         identity = Officials(people=decree.data["people"], exclude_secrets=True)
         result = await invoke(
             self.agent,
@@ -63,8 +41,8 @@ class Deliberations:
                 self.court, identity,
                 {
                     "decree": decree.model_dump(mode="json"),
-                    "imperial_prestige": prestige,
-                }, date, materials,
+                    "imperial_prestige": self.court.entities("audit", kind="world")[0].data["imperial_prestige"],
+                },
             ),
             deps=Materials(self.court, identity),
         )
@@ -73,5 +51,5 @@ class Deliberations:
             **result.output.model_dump(),
             "decision_key": decision,
         }
-        self.court.record_product(decree.id, "deliberation", verdict, date=date)
+        self.court.record_product(decree.id, "deliberation", verdict)
         return verdict

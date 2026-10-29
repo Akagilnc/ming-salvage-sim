@@ -11,7 +11,6 @@ from starlette.testclient import TestClient
 from ming.web import create_app
 from tests.test_court import replaying
 from tests.test_month import GUOKU_ORDER
-from tests.test_read_budget import measure_reads
 from tests.test_secrets import _declaration_prompt
 
 RECORDED = Path(__file__).parent / "recorded"
@@ -272,12 +271,8 @@ def test_month_pays_affair_from_declaration_month(game_db, steps, audit, clock, 
             # Session nodes run the first month from the opening through HTTP;
             # every branch asserts that same immutable result.
             if index != 0 or not shared:
-                with measure_reads() as reads:
-                    client.post("/actions", json={"action": "month"})
-                    client.portal.call(client.app.state.web.game.drain)
-                actions = [a for a in reads["actions"] if a["action"] == "month"]
-                assert actions and all(a["calendar"] for a in actions)
-                assert all(count == 1 for action in actions for count in action["calendar"].values()), actions
+                client.post("/actions", json={"action": "month"})
+                client.portal.call(client.app.state.web.game.drain)
             if case == "resume" and index == 0:
                 state = client.get("/state").json()["game"]
                 assert state["failure"] is not None and state["date"]["month"] == 10

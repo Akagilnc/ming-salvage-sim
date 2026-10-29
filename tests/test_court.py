@@ -20,7 +20,6 @@ def replaying(
     | Callable[[list[ModelMessage]], str | ModelResponse | Exception],
     received: list[ModelMessage] | None = None,
     toolsets: list[list[str]] | None = None,
-    sent: list[ModelResponse] | None = None,
 ) -> FunctionModel:
     remaining = iter(replies) if not callable(replies) else iter(())
 
@@ -33,10 +32,7 @@ def replaying(
         result = replies(_messages) if callable(replies) else next(remaining)
         if isinstance(result, Exception):
             raise result
-        response = result if isinstance(result, ModelResponse) else ModelResponse(parts=[TextPart(result)])
-        if sent is not None:
-            sent.append(response)
-        return response
+        return result if isinstance(result, ModelResponse) else ModelResponse(parts=[TextPart(result)])
 
     async def stream_response(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
         for index, part in enumerate((await reply(messages, info)).parts):
@@ -67,20 +63,12 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
         ])
         case["reply"] = json.dumps(case["parsed"])
     received = []
-    from tests.test_read_budget import measure_reads
-
-    sent = []
-    steps["NightDeclaration"] = replaying([case["reply"], replacement["reply"], replacement["reply"]], received, sent=sent)
+    steps["NightDeclaration"] = replaying([case["reply"], replacement["reply"], replacement["reply"]], received)
     before = {e["key"]: e for e in audit(game_db)["entities"] if e["kind"] == "person"}
     with TestClient(create_app(game_db.parent)) as client:
         client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
-        with measure_reads(operations=sent) as reads:
-            client.post("/actions", json={"action": "dismiss"}).raise_for_status()
-            client.portal.call(client.app.state.web.game.drain)
-        assert any(reads["appointments"].values())
-        assert all(count == 1 for group in reads["appointments"].values() for count in group.values()), reads["appointments"]
-        assert all(len({key for kind, key in group if kind == wanted}) <= 1
-                   for group in reads["singletons"].values() for wanted in ("office", "territory"))
+        client.post("/actions", json={"action": "dismiss"}).raise_for_status()
+        client.portal.call(client.app.state.web.game.drain)
         state = client.get("/state").json()["game"]
         assert state["failure"] is None
         assert state["night"]["result"] == "translated"

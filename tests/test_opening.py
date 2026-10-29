@@ -3,6 +3,7 @@
 import json
 import shutil
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -163,25 +164,30 @@ def test_cli_new_games_never_overwrite_and_missing_game_is_not_created(
     for _ in range(2):
         with measure_reads() as reads:
             main(["read", "--db", first["db"], "--identity", "audit", "--replay"])
-        notifications = reads["notifications"]
         replay = json.loads(capsys.readouterr().out)
         assert replay == live
-        assert len(notifications) == len(set(notifications))
-        assert len(notifications) > 1000
-    for damage in ("missing", "extra"):
+        assert reads["entity_writes"] == len(live["entities"])
+    for damage in ("missing", "extra", "state"):
         corrupted = tmp_path / f"{damage}.sqlite"
         shutil.copyfile(first["db"], corrupted)
-        with sqlite3.connect(corrupted) as connection:
-            connection.execute(
-                "DELETE FROM facts WHERE position = (SELECT min(position) FROM facts)"
-                if damage == "missing" else
-                "INSERT INTO facts SELECT (SELECT max(position) + 1 FROM facts), "
-                "entity_id, kind, date, emperor_words, detail FROM facts LIMIT 1"
-            )
+        with closing(sqlite3.connect(corrupted)) as connection, connection:
+            connection.execute({
+                "missing": "DELETE FROM facts WHERE position = (SELECT min(position) FROM facts)",
+                "extra": "INSERT INTO facts SELECT (SELECT max(position) + 1 FROM facts), "
+                         "entity_id, kind, date, emperor_words, detail FROM facts LIMIT 1",
+                "state": "UPDATE entities SET data = json_set(data, '$.month', -1) WHERE kind = 'calendar'",
+            }[damage])
+            before = {table: connection.execute(f"SELECT * FROM {table} ORDER BY 1").fetchall()
+                      for table in ("ledger_events", "entities", "facts")}
         main(["read", "--db", str(corrupted), "--identity", "audit"])
-        assert json.loads(capsys.readouterr().out)["facts"] != live["facts"]
+        damaged = json.loads(capsys.readouterr().out)
+        assert damaged["entities"] == live["entities"]
+        assert (damaged["facts"] == live["facts"]) == (damage == "state")
         main(["read", "--db", str(corrupted), "--identity", "audit", "--replay"])
         assert json.loads(capsys.readouterr().out) == {**live, "db": str(corrupted)}
+        with closing(sqlite3.connect(corrupted)) as connection:
+            for table, rows in before.items():
+                assert connection.execute(f"SELECT * FROM {table} ORDER BY 1").fetchall() == rows
     assert (
         next(e["data"]["month"] for e in replay["entities"] if e["kind"] == "calendar")
         == 11

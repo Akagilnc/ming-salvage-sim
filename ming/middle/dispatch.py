@@ -5,10 +5,8 @@ from collections.abc import Callable, Iterator, Sequence
 from typing import cast
 from uuid import UUID
 
-from sqlalchemy import or_, tuple_
-
 from ming.ledger import Entity, Item, Ledger
-from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS, FACT_COLUMNS as F, FACT_ROWS, facts_in_month
+from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS
 from ming.middle.declaration import (
     Declaration,
     EntityRef,
@@ -20,12 +18,12 @@ from ming.middle.declaration import (
 from ming.middle import queries
 from ming.middle.rules import field_values, money_amounts
 from ming.middle.fiscal import WAN, current_paid, has_obligation
-from ming.middle.appointments import APPOINTMENT_ROLES, cabinet_members, incumbency_record
-from ming.middle.travel import journey_distances, journey_route, move_person
+from ming.middle.appointments import APPOINTMENT_ROLES, cabinet_members, cabinet_records, incumbency_record
+from ming.middle.travel import move_person
 
 def landing_entities(
     ledger: Ledger, result: Declaration | Unhandled, owner: Entity,
-    sources: Sequence[tuple[UUID, LandingMode | None]], existing: dict[tuple[str, str], Item],
+    sources: Sequence[tuple[UUID, LandingMode | None]] = (),
 ) -> dict[tuple[str, str], Item]:
     pairs = {("calendar", "world"), (owner.kind, owner.key)}
     if not isinstance(result, Unhandled):
@@ -45,21 +43,23 @@ def landing_entities(
     if isinstance(result, NightDeclaration):
         pairs.update(("person", p) for d in result.decrees for p in d.people)
         pairs.update(("person", e.endorser) for d in result.decrees for e in d.endorsements if e.endorser != "御笔")
-    found = {**existing, (owner.kind, owner.key): owner.snapshot()}
-    pairs.difference_update(found)
-    if pairs:
-        found.update(((e["kind"], e["key"]), e) for e in ledger.entities(
-            query=ENTITY_ROWS.where(tuple_(E.kind, E.key).in_(sorted(pairs))),
-        ))
+    found = {
+        (e["kind"], e["key"]): e
+        for kind, key in sorted(pairs)
+        for e in ledger.entities(kind=kind, key=key)
+    }
     # Fact origins need only IDs; decree events and dispositions need entities.
     references: set[int | None] = set() if isinstance(result, Unhandled) else {e.decree for e in result.decree_events}
-    ids = [source for index, (source, mode) in enumerate(sources) if mode is not None or index in references]
-    if ids:
-        found.update(((row["kind"], row["key"]), row) for row in ledger.entities(entity_id=ids))
+    found.update(((row["kind"], row["key"]), row) for row in ledger.entities(entity_id=[
+        source for index, (source, mode) in enumerate(sources)
+        if mode is not None or index in references
+    ]))
     if isinstance(result, Unhandled):
         return found
     if any(f.entity_type == "affair" and any(c.field == "monthly_funding" for c in f.changes) for f in result.facts):
         found.update(((e["kind"], e["key"]), e) for e in ledger.entities(kind="account"))
+    if any(f.entity_type == "incumbency" for f in result.facts):
+        found.update(cabinet_records(ledger))
     if any(
         c.counterpart
         and c.counterpart.entity_type == "fiscal"
@@ -72,53 +72,45 @@ def landing_entities(
             for e in ledger.entities(kind=("fiscal", "building"))
         )
     incumbents = {name for (kind, _), row in found.items() if kind == "incumbency" for field in APPOINTMENT_ROLES for name in row["data"][field]}
-    incumbents.difference_update(key for kind, key in found if kind == "person")
-    if incumbents:
-        found.update(((e["kind"], e["key"]), e) for e in ledger.entities(
-            kind="person", query=ENTITY_ROWS.where(E.key.in_(incumbents)),
-        ))
+    for e in ledger.entities(kind="person", query=ENTITY_ROWS.where(E.key.in_(incumbents))):
+        found.setdefault((e["kind"], e["key"]), e)
     return found
 
 
 def landing_sources(
-    ledger: Ledger, date: Item,
-) -> list[tuple[Item, LandingMode | None, list[Item]]]:
-    """Ordered decree references with the current verdicts used to derive their modes."""
+    ledger: Ledger, date: Item, *, include_history: bool = True,
+) -> list[tuple[Item, LandingMode | None]]:
+    """The ordered decree references shared by monthly input, validation and landing."""
     sources: dict[UUID, tuple[Item, LandingMode | None]] = {
-        row["id"]: (row, "landed") for row in ledger.read(queries.errands(date))
+        row["id"]: (row, "landed") for row in ledger.entities(query=queries.errands(date))
     }
-    deliberated = ledger.read(queries.decrees_with("deliberation", date))
-    for row in deliberated:
-        sources.setdefault(row["id"], (row, None))
-    for row in ledger.read(ENTITY_ROWS.where(queries.public_decree())):
-        sources.setdefault(row["id"], (row, None))
-    events: dict[UUID, list[Item]] = {entity_id: [] for entity_id in sources}
-    if events:
-        for fact in ledger.facts(entity_id=list(events), kind=("deliberation", "choice"), date=date):
-            events[fact["entity_id"]].append(fact)
-    for row in deliberated:
-        details = [(fact["kind"], fact["detail"]) for fact in events[row["id"]]]
-        verdict = latest_detail(details, "deliberation")
-        choice = latest_detail(details, "choice")
+    for row in ledger.entities(query=queries.decrees_with("deliberation", date)):
+        events = [(f["kind"], f["detail"]) for f in ledger.facts(
+            entity_id=row["id"], kind=("deliberation", "choice"), date=date,
+        )]
+        verdict = latest_detail(events, "deliberation")
+        choice = latest_detail(events, "choice")
         mode: LandingMode | None = None
         if verdict and (verdict["verdict"] == "准" or (choice and choice["text"] == "强颁")):
             mode = "landed"
         elif row["data"].get("interim"):
             mode = "attempted"
         sources[row["id"]] = (row, mode)
-    return [(row, mode, events[row["id"]]) for row, mode in sources.values()]
+    if include_history:
+        for row in ledger.entities(query=ENTITY_ROWS.where(queries.public_decree())):
+            sources.setdefault(row["id"], (row, None))
+    return list(sources.values())
 
 
 def dispatch(
     ledger: Ledger,
     result: Declaration | Unhandled,
     night_id: UUID,
+    monthly: LandingMode | None = None,
     sources: Sequence[tuple[UUID, LandingMode | None]] = (),
-    *, existing: dict[tuple[str, str], Item],
-) -> tuple[Item, ...]:
+) -> None:
     owner = ledger.get(night_id)
-    monthly = "landed" if night_id == existing[("calendar", "world")]["id"] else None
-    existing = landing_entities(ledger, result, owner, sources, existing)
+    existing = landing_entities(ledger, result, owner, sources)
     changed: dict[tuple[str, str], Entity] = {}
     fact_origin: Item = {}
     date = existing[("calendar", "world")]["data"]
@@ -165,7 +157,6 @@ def dispatch(
             if (fact.create or fact.entity_type == "incumbency") and pair not in existing:
                 existing[pair] = known(fact.entity_type, fact.entity).snapshot()
         amounts, reasons = money_amounts(result.facts, existing)
-        distances = journey_distances(ledger, result.facts, {key: row["data"] for (kind, key), row in existing.items() if kind == "person"})
         for i, j, fact in landing_facts(result.facts):
             entity = known(fact.entity_type, fact.entity)
             association = (
@@ -181,11 +172,12 @@ def dispatch(
                 "discovered": fact.discovered,
                 **({"origin_ref": str(decrees[fact.decree])} if fact.decree is not None else {}),
             }
+            changes = detail["changes"]
             if entity.kind == "person":
-                move_person(entity, detail["changes"], journey_route(distances, entity.data, detail["changes"]), record, date)
+                move_person(entity, changes, ledger, record, date)
             if entity.kind == "incumbency":
-                displace(entity, detail["changes"], known, record, {**association, "text": fact.text})
-            record(entity, "changed", detail, detail["changes"])
+                displace(entity, changes, known, record, {**association, "text": fact.text})
+            record(entity, "changed", detail, changes)
             retire_chief(existing, known, record, {**association, "text": fact.text})
             if (i, j) in amounts:
                 record_receipts(fact, amounts[i, j], reasons[i, j], known, record)
@@ -202,11 +194,10 @@ def dispatch(
             fact_origin = {"origin_ref": str(target.id)}
             record(target, event.kind, {"text": event.text})
         fact_origin = {}
-    for target, kind, detail in decree_disposition(
-        ledger, [(known("decree", decree_keys[source]), mode) for source, mode in sources if mode is not None],
-        date, not isinstance(result, Unhandled),
-    ):
-        record(target, kind, detail)
+    for index, mode in ((i, mode) for i, (_source, mode) in enumerate(sources) if mode is not None):
+        target = known("decree", decree_keys[decrees[index]])
+        for kind, detail in decree_disposition(ledger, target, cast(LandingMode, mode), date, not isinstance(result, Unhandled)):
+            record(target, kind, detail)
     record(
         known(owner.kind, owner.key),
         "unhandled"
@@ -215,7 +206,6 @@ def dispatch(
         {"result": result.model_dump(mode="json"), "monthly": monthly},
     )
     ledger.commit(list(changed.values()))
-    return tuple(existing[(entity.kind, entity.key)] for entity in changed.values() if entity.kind == "decree")
 
 
 def register_funding(
@@ -333,24 +323,17 @@ def latest_detail(events: Sequence[tuple[str, Item]], kind: str) -> Item | None:
 
 
 def decree_disposition(
-    ledger: Ledger, decrees: Sequence[tuple[Entity, LandingMode]], date: Item, translated: bool,
-) -> Iterator[tuple[Entity, str, Item]]:
-    events: dict[UUID, list[tuple[str, Item]]] = {decree.id: [] for decree, _ in decrees}
-    if events:
-        for fact in ledger.facts(
-            entity_id=list(events), kind=("deliberation", "choice", "interim"),
-            query=FACT_ROWS.where(or_(F.kind == "interim", facts_in_month(date))),
-        ):
-            events[fact["entity_id"]].append((fact["kind"], fact["detail"]))
-    for decree, mode in decrees:
-        choice = latest_detail(events[decree.id], "choice")
-        interim = decree.data.get("interim") or (
-            choice and choice["text"] == "强颁" and latest_detail(events[decree.id], "deliberation")
-        )
-        if interim and not any(kind == "interim" for kind, _ in events[decree.id]):
-            yield decree, "interim", {"text": decree.data["text"]}
-        if translated:
-            yield decree, mode, {"monthly": mode}
+    ledger: Ledger, decree: Entity, mode: LandingMode, date: Item, translated: bool,
+) -> list[tuple[str, Item]]:
+    events = [(row["kind"], row["detail"]) for row in ledger.facts(
+        entity_id=decree.id, kind=("deliberation", "choice"), date=date,
+    )]
+    choice = latest_detail(events, "choice")
+    interim = decree.data.get("interim") or (
+        choice and choice["text"] == "强颁" and latest_detail(events, "deliberation")
+    )
+    return ([('interim', {"text": decree.data["text"]})]
+            if interim and not ledger.facts(entity_id=decree.id, kind="interim") else []) + ([(mode, {"monthly": mode})] if translated else [])
 
 
 def retire_chief(

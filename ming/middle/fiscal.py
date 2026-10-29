@@ -3,9 +3,9 @@
 from copy import deepcopy
 from collections.abc import Sequence
 from typing import cast
-from uuid import UUID
 
 from ming.ledger import Entity, Item, Ledger
+from ming.middle.calendar import calendar_row
 from ming.middle.declaration import EntityRef, FiscalEnd, MonthlyFunding, PaymentPolicy
 from ming.middle.queries import FUNDED_AFFAIRS
 from ming.middle.fields import FIELDS
@@ -98,7 +98,8 @@ def obligation(pair: tuple[str, str], existing: dict[tuple[str, str], Item]) -> 
     return base * active_policy(data, existing[("calendar", "world")]["data"]).factor
 
 
-def due_levies(ledger: Ledger, date: Item) -> list[Item]:
+def due_levies(ledger: Ledger) -> list[Item]:
+    date = calendar_row(ledger)["data"]
     events = {row["data"]["id"]: row for row in ledger.entities(kind="historical_event")}
     return [
         {"entity": row["key"], "data": row["data"]}
@@ -116,13 +117,13 @@ def due_levies(ledger: Ledger, date: Item) -> list[Item]:
 
 
 class Accounts:
-    def __init__(self, ledger: Ledger, calendar_id: UUID) -> None:
+    def __init__(self, ledger: Ledger) -> None:
         self.ledger = ledger
-        self.calendar = ledger.get(calendar_id)
-        self.rows = [self.calendar, *[
+        self.rows = [
             ledger.get(row["id"])
-            for row in [*ledger.read(FUNDED_AFFAIRS), *ledger.entities(
+            for row in [*ledger.entities(query=FUNDED_AFFAIRS), *ledger.entities(
                 kind=(
+                    "calendar",
                     "account",
                     "fiscal",
                     "army",
@@ -132,7 +133,8 @@ class Accounts:
                     "historical_event",
                 )
             )]
-        ]]
+        ]
+        self.calendar = next(e for e in self.rows if e.kind == "calendar")
         self.date = self.calendar.data
         self.accounts = {e.key: e for e in self.rows if e.kind == "account"}
         self.config = {e.key: e for e in self.rows if e.kind == "fiscal"}
