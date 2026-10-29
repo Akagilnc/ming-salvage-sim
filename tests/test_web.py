@@ -60,6 +60,16 @@ def test_menu_creates_distinct_games_and_opens_only_existing_saves(
             == 404
         )
         first = client.post("/actions", json={"action": "new"}).json()["save"]
+        client.post("/actions", json={"action": "open"}).raise_for_status()
+        before = client.get("/records").json()
+        night = client.get("/state").json()["game"]["night"]
+        for _ in range(2):
+            client.post("/actions", json={"action": "menu"}).raise_for_status()
+            menu = client.get("/state").json()
+            assert (menu["save"], menu["game"]) == (None, None)
+        client.post("/actions", json={"action": "load", "save": first}).raise_for_status()
+        assert client.get("/state").json()["game"]["night"] == night
+        assert client.get("/records").json() == before
         second = client.post("/actions", json={"action": "new"}).json()["save"]
         assert first != second
         assert set(client.get("/state").json()["saves"]) == {first, second}
@@ -79,6 +89,7 @@ def test_menu_creates_distinct_games_and_opens_only_existing_saves(
             "calendar",
             "gazette",
             "incumbency",
+            "night",
         }
         assert all(
             set(e["data"]) <= {"name", "appointments", "location", "status", "identity_description", "transit_to", "waiting_audience", "departure_date", "arrival_date", "travel_speed"}
@@ -208,11 +219,11 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
 
                 steps["NightDeclaration"] = FunctionModel(retry_translation)
                 assert (
-                    client.post("/actions", json={"action": "retry"}).status_code == 200
+                    client.post("/actions", json={"action": "retry"}).status_code == 204
                 )
                 assert client.portal is not None
                 client.portal.call(app.state.web.game.drain)
-                assert received.pop("retry") == [(False, None, 200)]
+                assert received.pop("retry") == [(False, None, 204)]
                 steps["NightDeclaration"] = replaying([(RECORDED / "night_empty.txt").read_text()])
                 client.post("/actions", json={"action": "dismiss"}).raise_for_status()
                 client.portal.call(app.state.web.game.drain)

@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 
 from ming.audience import Audience
 from ming.middle.court import Court
-from ming.middle.invoke import ModelSource
+from ming.middle.invoke import ModelSource, build_agent
 from ming.month import Month
 
 
@@ -29,12 +29,12 @@ class Game:
         self,
         court: Court,
         model: ModelSource,
-        emit: Callable[[dict[str, Any]], None] | None = None,
         *,
         month_model: ModelSource | None = None,
     ) -> None:
         self.court = court
-        self.emit = emit
+        self.emit: Callable[[dict[str, Any]], None] | None = None
+        self.live: dict[str, str] = {}
         self.audience = Audience(court, model)
         self.month = Month(
             court, month_model if month_model is not None else model,
@@ -47,7 +47,26 @@ class Game:
         if nights:
             self.audience.open(nights[-1].id)
 
+    def configure(
+        self, model: ModelSource, *, month_model: ModelSource | None = None,
+    ) -> None:
+        self.court.model = model
+        for agent in (self.audience.scene, self.audience.translation):
+            build_agent(model, agent=agent)
+        month_model = month_model if month_model is not None else model
+        for agent in (
+            self.month.deliberations.agent, self.month.simulations.draft_agent,
+            self.month.simulations.final_agent, self.month.landing.agent,
+            self.month.gazette.agent, self.month.secrets.agent,
+        ):
+            build_agent(month_model, agent=agent)
+        self.month.sources.model = month_model
+
     def notify(self, event: str, data: Any) -> None:
+        self.live[event] = (
+            data["replace"] if isinstance(data, dict)
+            else self.live.get(event, "") + data
+        )
         if self.emit:
             self.emit({"event": event, "data": data})
 
@@ -55,6 +74,8 @@ class Game:
         self, action: str, status: str, payload: dict[str, Any],
     ) -> None:
         key = f"choose:{payload['petition']}" if action == "choose" else action
+        if status != "running" and action in {"say", "month"}:
+            self.live.pop("delta" if action == "say" else "gazette", None)
         calendar = self.court.calendar()
         self.court.record(
             calendar.id,
@@ -315,8 +336,6 @@ class Game:
                 },
             )
             return None
-        finally:
-            self.notify("done", None)
 
     async def work(self, action: str, payload: dict[str, Any]) -> str | None:
         if action == "say":
@@ -347,19 +366,26 @@ class Game:
         return None
 
     async def drain(self) -> None:
-        if self.active is not None:
-            await asyncio.shield(self.active)
-        while self.background:
-            tasks = list(self.background)
-            try:
-                await asyncio.gather(*tasks)
-            finally:
-                # Drain itself retires what it awaited: gather over finished tasks
-                # returns without yielding, so a done callback could never run.
-                self.background.difference_update(t for t in tasks if t.done())
-        if self.translation is not None:
-            await asyncio.shield(self.translation)
-        await self.month.simulations.drain()
+        while True:
+            if self.active is not None:
+                await asyncio.shield(self.active)
+            while self.background:
+                tasks = list(self.background)
+                try:
+                    await asyncio.gather(*tasks)
+                finally:
+                    # Drain itself retires what it awaited: gather over finished tasks
+                    # returns without yielding, so a done callback could never run.
+                    self.background.difference_update(t for t in tasks if t.done())
+            if self.translation is not None:
+                await asyncio.shield(self.translation)
+            await self.month.simulations.drain()
+            # Reentry can accept work in an earlier lane while a later one waits.
+            # No await separates this completion check from the caller's close.
+            if not self.busy() and not self.background and (
+                self.translation is None or self.translation.done()
+            ):
+                return
 
     async def close(self) -> None:
         try:
