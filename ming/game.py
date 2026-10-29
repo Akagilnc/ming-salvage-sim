@@ -127,7 +127,7 @@ class Game:
             calendar = self.court.calendar() if calendar is None else calendar
             # Recovery belongs to the ledger, not to the currently showing face.
             if not self.recover_month(calendar, ready=True) and (
-                self.court.pending_nights() or self.court.pending_petitions(calendar.data)
+                self.court.pending_nights() or self.court.has_pending_petitions(calendar.data)
             ):
                 self.start_background()
 
@@ -292,7 +292,9 @@ class Game:
             payload.update(night_id=str(self.audience.night_id), turn_id=str(uuid4()))
         elif action == "choose":
             try:
-                self.month.choose(UUID(str(payload["petition"])), payload["option"])
+                petition_id = str(UUID(str(payload["petition"])))
+                petition = next((p for p in state["petitions"] if p["id"] == petition_id), None)
+                self.month.choose(petition, payload["option"], calendar.data)
             except (ValueError, KeyError) as error:
                 raise InvalidAction("无效的批红选项", 400) from error
         elif action != "month":
@@ -347,7 +349,7 @@ class Game:
             calendar = self.interaction(action, "done", payload)
             # The choice is complete before shared month work resumes. Reuse the
             # normal month action so its waiting and failures cannot belong to it.
-            if resume_month or (action == "choose" and not self.court.pending_petitions(calendar.data)):
+            if resume_month or (action == "choose" and not self.court.has_pending_petitions(calendar.data)):
                 self.recover_month(calendar)
         except Exception as error:
             self.court.log.exception("action=%s", action)

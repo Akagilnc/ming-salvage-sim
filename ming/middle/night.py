@@ -147,8 +147,8 @@ def known_people(
 
 
 def open_night(ledger: Ledger) -> tuple[UUID, bool]:
-    for row in ledger.entities(query=LATEST_NIGHT):
-        if not row["data"]["closed"]:
+    for row in ledger.entities(query=LATEST_NIGHT.with_only_columns(E.id, E.data["closed"].as_boolean().label("closed"))):
+        if not row["closed"]:
             return row["id"], False
     date = calendar_row(ledger)["data"]
     night = Entity(

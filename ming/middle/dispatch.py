@@ -6,10 +6,10 @@ from collections.abc import Callable, Iterator, Sequence
 from typing import cast
 from uuid import UUID
 
-from sqlalchemy import case, false, or_, tuple_
+from sqlalchemy import tuple_
 
 from ming.ledger import Entity, Item, Ledger
-from ming.ledger import ENTITY_COLUMNS as E, FACT_COLUMNS as F, ENTITY_ORDER, ENTITY_ROWS, FACT_ROWS
+from ming.ledger import ENTITY_COLUMNS as E, FACT_COLUMNS as F, ENTITY_ROWS, FACT_ROWS
 from ming.middle.declaration import (
     Declaration,
     EntityRef,
@@ -22,7 +22,7 @@ from ming.middle import queries
 from ming.middle.rules import field_values, money_amounts
 from ming.middle.fiscal import WAN, current_paid, has_obligation
 from ming.middle.appointments import APPOINTMENT_ROLES, cabinet_members, cabinet_records, incumbency_record
-from ming.middle.travel import move_person
+from ming.middle.travel import journey_distances, journey_route, move_person
 
 def landing_entities(
     ledger: Ledger, result: Declaration | Unhandled, owner: Entity,
@@ -84,12 +84,7 @@ def landing_sources(
     ledger: Ledger, date: Item, *, include_history: bool = True,
 ) -> list[tuple[Item, LandingMode | None, list[Item]]]:
     """Ordered sources, retaining decisions already read while resolving their mode."""
-    errand = E.id.in_(queries.errands(date).with_only_columns(E.id).order_by(None)).label("errand")
-    deliberated = E.id.in_(queries.decrees_with("deliberation", date).with_only_columns(E.id).order_by(None)).label("deliberated")
-    rows = ENTITY_ROWS.add_columns(errand, deliberated).where(or_(
-        errand, deliberated, queries.public_decree() if include_history else false(),
-    )).order_by(None).order_by(case((errand, 0), (deliberated, 1), else_=2), ENTITY_ORDER)
-    records = ledger.entities(query=rows)
+    records = ledger.entities(query=queries.landing_rows(date, include_history=include_history))
     if not records:
         return []
     decisions: dict[UUID, list[Item]] = defaultdict(list)
@@ -160,10 +155,10 @@ def dispatch(
         (row["id"], row["key"]) for row, _mode, _events in sources
     ]
     if not isinstance(result, Unhandled):
+        distances = journey_distances(ledger, result.facts, {key: row["data"] for (kind, key), row in existing.items() if kind == "person"})
         for fact in result.facts:
-            pair = fact.entity_type, fact.entity
-            if (fact.create or fact.entity_type == "incumbency") and pair not in existing:
-                existing[pair] = known(fact.entity_type, fact.entity).snapshot()
+            if (fact.create or fact.entity_type == "incumbency") and (fact.entity_type, fact.entity) not in existing:
+                existing[fact.entity_type, fact.entity] = known(fact.entity_type, fact.entity).snapshot()
         amounts, reasons = money_amounts(result.facts, existing)
         for i, j, fact in landing_facts(result.facts):
             entity = known(fact.entity_type, fact.entity)
@@ -181,7 +176,7 @@ def dispatch(
                 **({"origin_ref": str(decrees[fact.decree][0])} if fact.decree is not None else {}),
             }
             if entity.kind == "person":
-                move_person(entity, detail["changes"], ledger, record, date)
+                move_person(entity, detail["changes"], journey_route(distances, entity.data, detail["changes"]), record, date)
             if entity.kind == "incumbency":
                 displace(entity, detail["changes"], known, record, {**association, "text": fact.text})
             record(entity, "changed", detail, detail["changes"])

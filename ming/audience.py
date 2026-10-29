@@ -77,9 +77,7 @@ class Audience:
             closed = False
         else:
             self._night_id, created, closed = night.id, False, night.closed
-        if not closed and not created and self.court.facts(
-            "audit", entity_id=self.night_id, kind="dismiss_requested"
-        ):
+        if not closed and not created and self.court.has_product(self.night_id, "dismiss_requested", current=False):
             self._dismiss_requested = self.night_id
         return created
 

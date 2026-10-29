@@ -4,7 +4,7 @@ from copy import deepcopy
 from collections.abc import Sequence
 from typing import cast
 
-from ming.ledger import Entity, Item, Ledger
+from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS, FACT_COLUMNS as F, FACT_ROWS, Entity, Item, Ledger
 from ming.middle.calendar import calendar_row
 from ming.middle.declaration import EntityRef, FiscalEnd, MonthlyFunding, PaymentPolicy
 from ming.middle.queries import FUNDED_AFFAIRS
@@ -98,8 +98,8 @@ def obligation(pair: tuple[str, str], existing: dict[tuple[str, str], Item]) -> 
     return base * active_policy(data, existing[("calendar", "world")]["data"]).factor
 
 
-def due_levies(ledger: Ledger) -> list[Item]:
-    date = calendar_row(ledger)["data"]
+def due_levies(ledger: Ledger, date: Item | None = None) -> list[Item]:
+    date = cast(Item, calendar_row(ledger)["data"]) if date is None else date
     events = {row["data"]["id"]: row for row in ledger.entities(kind="historical_event")}
     return [
         {"entity": row["key"], "data": row["data"]}
@@ -121,7 +121,7 @@ class Accounts:
         self.ledger = ledger
         self.rows = [
             ledger.get(row["id"])
-            for row in [*ledger.entities(query=FUNDED_AFFAIRS), *ledger.entities(
+            for row in [*ledger.entities(query=FUNDED_AFFAIRS.with_only_columns(E.id)), *ledger.entities(
                 kind=(
                     "calendar",
                     "account",
@@ -131,7 +131,7 @@ class Accounts:
                     "building",
                     "world",
                     "historical_event",
-                )
+                ), query=ENTITY_ROWS.with_only_columns(E.id),
             )]
         ]
         self.calendar = next(e for e in self.rows if e.kind == "calendar")
@@ -334,7 +334,8 @@ class Accounts:
 
     def run(self) -> None:
         if self.ledger.facts(
-            entity_id=self.calendar.id, kind="month_accounts", date=self.date
+            entity_id=self.calendar.id, kind="month_accounts", date=self.date,
+            query=FACT_ROWS.with_only_columns(F.position).order_by(None).limit(1),
         ):
             return
         self.taxes()

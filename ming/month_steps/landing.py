@@ -21,7 +21,7 @@ class Landing:
 
     async def run(self) -> None:
         calendar = self.court.calendar()
-        if self.court.products(calendar.id, kind=("landed", "unhandled"), date=calendar.data):
+        if self.court.has_product(calendar.id, ("landed", "unhandled"), date=calendar.data):
             return
         declarations = self.court.products(calendar.id, kind="declaration", date=calendar.data)
         if not declarations:
@@ -30,7 +30,7 @@ class Landing:
                 json.dumps({
                     "date": calendar.data, "scope": "month",
                     "month_final": self.court.products(calendar.id, kind="month_final", date=calendar.data)[0].detail["output"],
-                    "decrees": self.court.landing_materials(),
+                    "decrees": self.court.landing_materials(date=calendar.data),
                 }, ensure_ascii=False),
                 calendar.id,
             )

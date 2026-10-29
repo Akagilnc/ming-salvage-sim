@@ -52,7 +52,7 @@ class Sources:
             (calendar, "urgent", None),
             *((f, "impeachment", f.key) for f in self.court.entities("audit", kind="faction")),
         ]:
-            if self.court.products(source.id, kind=kind, date=calendar.data):
+            if self.court.has_product(source.id, kind, date=calendar.data):
                 continue
             people = list(self.court.petition_officials(faction))
             if kind == "urgent" and not people:
@@ -96,9 +96,7 @@ class Sources:
             if kind == "urgent":
                 allowed = identity.people
                 expected = allowed
-            originals: set[str] = {
-                str(f.detail["id"]) for f in ctx.deps.court.returned_petitions()
-            } if kind == "urgent" and any(isinstance(p, UrgentPetition) and p.revision_of is not None for p in output.petitions) else set()
+            originals: set[str] = ctx.deps.court.returned_petition_ids() if kind == "urgent" and any(isinstance(p, UrgentPetition) and p.revision_of is not None for p in output.petitions) else set()
             for index, item in enumerate(output.petitions):
                 refs = {"signer": item.signer}
                 if isinstance(item, ImpeachmentPetition):

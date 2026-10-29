@@ -4,7 +4,7 @@ Ledger executes selections; it has no night, inbox, identity or workflow modes.
 """
 
 from typing import Any
-from sqlalchemy import Select, and_, func, or_, select, true, tuple_
+from sqlalchemy import Select, and_, case, false, func, or_, select, true, tuple_
 from sqlalchemy.sql.base import ReadOnlyColumnCollection
 from sqlalchemy.sql.elements import ColumnElement, KeyedColumnElement
 from sqlalchemy.sql.functions import Function
@@ -135,7 +135,7 @@ def interactions() -> Select[Any]:
     )
 
 
-def decrees_with(kind: str, date: Item) -> Select[Any]:
+def decrees_with(kind: str, date: Item | ColumnElement[Any]) -> Select[Any]:
     return ENTITY_ROWS.where(
         E.kind == "decree",
         select(F.position)
@@ -158,13 +158,22 @@ SECRET_DECREES = ENTITY_ROWS.where(
 )
 
 
-def errands(date: Item) -> Select[Any]:
+def errands(date: Item | ColumnElement[Any]) -> Select[Any]:
     """Secret decrees still in hand: no completion landed before this month."""
     return SECRET_DECREES.where(
         ~select(F.position)
         .where(F.entity_id == E.id, F.kind == "completed", F.date != date)
         .exists()
     )
+
+
+def landing_rows(date: Item | ColumnElement[Any], *, include_history: bool = True) -> Select[Any]:
+    """One source set and order for complete materials, landing and reference counts."""
+    errand = E.id.in_(errands(date).with_only_columns(E.id).order_by(None)).label("errand")
+    deliberated = E.id.in_(decrees_with("deliberation", date).with_only_columns(E.id).order_by(None)).label("deliberated")
+    return ENTITY_ROWS.add_columns(errand, deliberated).where(or_(
+        errand, deliberated, public_decree() if include_history else false(),
+    )).order_by(None).order_by(case((errand, 0), (deliberated, 1), else_=2), ENTITY_ORDER)
 
 
 def public_decree(entity: ReadOnlyColumnCollection[str, KeyedColumnElement[Any]] = E) -> ColumnElement[bool]:

@@ -29,7 +29,8 @@ class Deliberations:
         self, decree: EntityView, decision: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Initial verdict or next-month reconsideration of one selected push."""
-        done = next((f.detail for f in self.court.products(decree.id, kind="deliberation")
+        date = self.court.calendar().data
+        done = next((f.detail for f in self.court.products(decree.id, kind="deliberation", date=date)
                      if f.detail["decision_key"] == decision), None)
         if done is not None:
             return done
@@ -42,7 +43,7 @@ class Deliberations:
                 {
                     "decree": decree.model_dump(mode="json"),
                     "imperial_prestige": self.court.entities("audit", kind="world")[0].data["imperial_prestige"],
-                },
+                }, date=date,
             ),
             deps=Materials(self.court, identity),
         )

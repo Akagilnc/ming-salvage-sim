@@ -21,7 +21,8 @@ class Secrets:
         )
 
     async def report(self, decree: EntityView) -> None:
-        if self.court.products(decree.id, kind="secret_report"):
+        date = self.court.calendar().data
+        if self.court.has_product(decree.id, "secret_report", date=date):
             return
         identity = Officials(people=[decree.data["handler"]])
         result = await invoke(
@@ -32,15 +33,15 @@ class Secrets:
                     "decree": decree.model_dump(mode="json"),
                     "facts": [
                         f.model_dump(mode="json", exclude={"emperor_words"})
-                        for f in self.court.consequences(decree.id)
+                        for f in self.court.consequences(decree.id, date)
                     ],
                     "products": [
                         f.model_dump(mode="json", exclude={"emperor_words"})
                         for f in self.court.products(
-                            decree.id, kind=("completed", "handled")
+                            decree.id, kind=("completed", "handled"), date=date
                         )
                     ],
-                },
+                }, date=date,
             ),
             deps=Materials(self.court, identity),
         )

@@ -1,9 +1,10 @@
 """Physical journey arithmetic; game months have thirty days (ADR 0163)."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from math import ceil
 
-from ming.ledger import Entity, Item, Ledger
+from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS, Entity, Item, Ledger
+from ming.middle.declaration import Fact
 
 SPEEDS = {"常速": 45, "加急": 85, "押运": 45}
 CLEARED_JOURNEY = {
@@ -15,25 +16,42 @@ CLEARED_JOURNEY = {
 }
 
 
-def journey_route(ledger: Ledger, data: Item, changes: Item) -> tuple[str, float] | None:
+def journey_distances(ledger: Ledger, facts: Sequence[Fact], people: Mapping[str, Item]) -> dict[str, Item]:
+    """Read the origins this declaration can use, separately for checking and landing."""
+    locations = {name: data.get("location") for name, data in people.items()}
+    origins: set[str] = set()
+    for fact in facts:
+        if fact.entity_type != "person":
+            continue
+        destination = next((change.value for change in reversed(fact.changes) if change.field == "location"), None)
+        if destination is not None:
+            # A departure keeps its physical origin; only a first location establishes one.
+            if origin := locations.get(fact.entity):
+                if destination != origin:
+                    origins.add(origin)
+            elif isinstance(destination, str):
+                locations[fact.entity] = destination
+    return {row["key"]: row["data"] for row in ledger.entities(
+        kind="distance", query=ENTITY_ROWS.with_only_columns(E.key, E.data).where(E.key.in_(origins)),
+    )} if origins else {}
+
+
+def journey_route(distances: Mapping[str, Item], data: Item, changes: Item) -> tuple[str, float] | None:
     """The sole departure decision and route lookup for validation and landing."""
     destination: str = changes.get("location", data.get("location", ""))
     if (not data.get("location") or data.get("transit_to")
             or changes.get("status") not in (None, "active") or destination == data["location"]):
         return None
-    rows = ledger.entities(kind="distance", key=data["location"])
-    distances: Item = rows[0]["data"] if rows else {}
-    return destination, distances[destination]
+    return destination, distances.get(data["location"], {})[destination]
 
 
 def move_person(
     person: Entity,
     changes: dict[str, object],
-    ledger: Ledger,
+    route: tuple[str, float] | None,
     record: Callable[[Entity, str, Item, Item], None],
     date: Item,
 ) -> None:
-    route = journey_route(ledger, person.data, changes)
     day = changes.pop("departure_day", None)
     pace = changes.pop("travel_speed", "常速")
     # A first location is a fact, not a journey from an invented origin.

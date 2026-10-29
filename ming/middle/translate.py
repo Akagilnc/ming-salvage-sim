@@ -7,7 +7,7 @@ from typing import Any, TypeVar, cast
 from uuid import UUID
 
 from pydantic import ValidationError
-from sqlalchemy import case
+from sqlalchemy import case, func
 from pydantic_ai import (
     Agent,
     PromptedOutput,
@@ -29,11 +29,9 @@ from ming.middle.declaration import (
     PaymentPolicy,
     Unhandled,
 )
-from ming.middle.queries import CATALOGUE
+from ming.middle.queries import CALENDAR, CATALOGUE, landing_rows
 from ming.middle.opening import REFERENCES
 from ming.middle.appointments import ALIASES, APPOINTMENT_ROLES, cabinet_members, incumbency_record, office_pairs, reference_key
-from ming.middle.calendar import calendar_row
-from ming.middle.dispatch import landing_sources
 from ming.middle.rules import Names, check_rules, fail, name_expected
 from ming.middle.records import TranslationMaterials, read_records
 from ming.middle.invoke import ModelSource, build_agent, invoke
@@ -147,13 +145,15 @@ def check_decrees(
         out.decree_events or any(f.decree is not None or f.discovered for f in out.facts)
     ):
         return
-    decrees = out.decrees if isinstance(out, NightDeclaration) else landing_sources(ledger, calendar_row(ledger)["data"])
+    count = len(out.decrees) if isinstance(out, NightDeclaration) else ledger.read(
+        landing_rows(CALENDAR).with_only_columns(func.count().label("count"), maintain_column_froms=True).order_by(None),
+    )[0]["count"]
     labeled = (("facts", out.facts), ("decree_events", out.decree_events))
     for label, items in labeled:
         for i, item in enumerate(items):
             ref = item.decree
             path = f"{label}[{i}].decree"
-            if (ref is None and (isinstance(item, DecreeEvent) or item.discovered)) or (ref is not None and not 0 <= ref < len(decrees)):
+            if (ref is None and (isinstance(item, DecreeEvent) or item.discovered)) or (ref is not None and not 0 <= ref < count):
                 fail(path, ref, "decrees 的零基下标", names, "使用所属旨意在 decrees 中的下标，重交整份。")
     if isinstance(out, NightDeclaration) and out.decrees:
         turns = ledger.facts(entity_id=source, kind="turn", query=FACT_ROWS.with_only_columns(

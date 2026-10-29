@@ -1,6 +1,6 @@
 """Identity-specific structured read boundary; no summaries of model prose."""
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from typing import Any, Literal, cast
 from uuid import UUID
 
@@ -144,7 +144,7 @@ def visible_appointments(ledger: Ledger, identity: Identity, rows: Sequence[Item
     return [r for r in rows if r["id"] in visible]
 
 
-def person_projection(dossiers: Item, row: Item, identity: Identity, appointments: Sequence[Item]) -> Item:
+def person_projection(dossiers: Item, row: Item, identity: Identity, appointments: Iterable[Item]) -> Item:
     """One current-office and character-material projection for UI and every model."""
     data = dict(row["data"])
     if identity == "audit":
@@ -187,24 +187,35 @@ def entities(
     query = query.where(E.key.in_(keys)) if keys is not None else query
     parameters = view_parameters(identity, selection.get("kind"))
     rows = ledger.read(query, parameters)
-    appointments: Sequence[Item] = ledger.entities(
-        kind="incumbency", query=ENTITY_ROWS.where(HELD_BY, APPOINTMENT_ACCESS[identity_key(identity)]),
-        parameters={**parameters, "appointed_people": people},
-    ) if (people := [row["key"] for row in rows if row["kind"] == "person" and identity != "audit"]) else []
+    people = [row["key"] for row in rows if row["kind"] == "person" and identity != "audit"]
+    appointments = {row["id"]: row for row in rows if row["kind"] == "incumbency"} if people else {}
+    if people and (selection or keys is not None):
+        # Keep database order for partial selections without returning bodies already acquired.
+        appointments = {row["id"]: appointments[row["id"]] if row["data"] is None else row for row in ledger.entities(
+            kind="incumbency", query=ENTITY_ROWS.with_only_columns(
+                E.id, case((E.id.in_(appointments), None), else_=E.data).label("data"),
+            ).where(HELD_BY, APPOINTMENT_ACCESS[identity_key(identity)]),
+            parameters={**parameters, "appointed_people": people},
+        )}
     own: set[str] = set(identity.people) if isinstance(identity, Officials) else set()
     dossiers = {r["key"]: r["data"] for r in ledger.entities(
         kind="dossier", query=ENTITY_ROWS.where(E.key.in_(own.intersection(people))),
     )} if own.intersection(people) else {}
-    factions: set[Any] = {r["faction"] for r in ledger.entities(
-        kind="person", query=ENTITY_ROWS.with_only_columns(E.data["faction"].as_string().label("faction")).where(E.key.in_(own)),
-    )} if any(row["exposure"] == "faction" for row in rows) else set()
+    factions: set[Any] = set()
+    if any(row["exposure"] == "faction" for row in rows):
+        factions.update(row["data"].get("faction") for row in rows if row["kind"] == "person" and row["key"] in own)
+        own.difference_update(row["key"] for row in rows if row["kind"] == "person")
+        if own:
+            factions.update(r["faction"] for r in ledger.entities(
+                kind="person", query=ENTITY_ROWS.with_only_columns(E.data["faction"].as_string().label("faction")).where(E.key.in_(own)),
+            ))
     nights = {night.id: night.model_dump(mode="json") for night in read_nights(
         ledger, [row for row in rows if row["exposure"] == "night"],
     )}
     result: list[EntityView] = []
     for row in map(dict, rows):
         if row["kind"] == "person":
-            row["data"] = person_projection(dossiers, row, identity, appointments)
+            row["data"] = person_projection(dossiers, row, identity, appointments.values())
         row["data"] = ({destination: travel_days(distance) for destination, distance in row["data"].items()}
                        if row["kind"] == "distance" and identity != "audit" else row["data"])
         if identity not in ("audit", "world"):

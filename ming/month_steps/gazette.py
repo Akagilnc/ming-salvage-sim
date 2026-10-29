@@ -25,11 +25,11 @@ class Gazette:
 
     async def run(self) -> None:
         calendar = self.court.calendar()
-        if self.court.products(calendar.id, kind="gazette", date=calendar.data):
+        if self.court.has_product(calendar.id, "gazette", date=calendar.data):
             return
         result = await invoke(
             self.agent,
-            prompt(self.court, "public", calendar.model_dump(mode="json")),
+            prompt(self.court, "public", calendar.model_dump(mode="json"), date=calendar.data),
             deps=Materials(self.court, "public"),
             event_stream_handler=partial(stream_text, self.on_delta)
             if self.on_delta
