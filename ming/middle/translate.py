@@ -262,19 +262,13 @@ def check_fiscal(ledger: Ledger, out: Declaration, names: Names) -> None:
         ("fiscal", "payment_policy"): list(expenses),
         ("account", "army_order"): ["国库"],
         ("region", "fiscal_surcharge"): [
-            r["key"] for r in ledger.entities(kind="region", query=ENTITY_ROWS.with_only_columns(
-                E.key, type_coerce(func.json_object("fiscal", func.json(case(
-                    (func.json_type(E.data, "$.fiscal.settle").is_not(None), '{"settle":null}'), else_="{}",
-                ))), JSON).label("data"),
-            )) if settling(r["data"])
+            r["key"] for r in ledger.entities(kind="region", query=ENTITY_ROWS.with_only_columns(E.key, E.data))
+            if settling(r["data"])
         ] if ("region", "fiscal_surcharge") in fields else [],
     }
     armies = [
-        r["key"] for r in ledger.entities(kind="army", query=ENTITY_ROWS.with_only_columns(
-            E.key, type_coerce(func.json_patch(func.json_object("owner_power", E.data["owner_power"].as_string()), case(
-                (func.json_type(E.data, "$.salary_rate").is_not(None), '{"salary_rate":0}'), else_="{}",
-            )), JSON).label("data"),
-        )) if payable_army(r["data"])
+        r["key"] for r in ledger.entities(kind="army", query=ENTITY_ROWS.with_only_columns(E.key, E.data))
+        if payable_army(r["data"])
     ] if ("account", "army_order") in fields else []
     endings: dict[str, list[str]] = {r["key"]: r["labels"] or [] for r in ledger.entities(kind="historical_event", query=ENTITY_ROWS.with_only_columns(
         E.key, E.data["terminal_reason_labels"].label("labels"),
