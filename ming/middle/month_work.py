@@ -1,6 +1,5 @@
 """Shared model input and persisted product types, not a second month driver."""
 
-import json
 from typing import Any, Literal
 
 from pydantic import Field
@@ -30,19 +29,14 @@ class Simulation(MonthText):
     petitions: list[Petition] = Field(default_factory=list[Petition], description="本月岔路口奏疏列表，无岔路可省略；含义见岔路口。")
 
 
-def prompt(court: Court, identity: Identity, context: Any) -> str:
+def prompt(court: Court, identity: Identity, context: Any, *, date: dict[str, Any]) -> dict[str, Any]:
     speakers = {e.key: e.model_dump(mode="json") for e in court.entities(
         identity, kind="person", key=identity.people,
     )} if isinstance(identity, Officials) and identity.people else {}
-    return json.dumps(
-        character_input(
-            {
-                "date": court.calendar().data,
-                "context": context,
-                "catalogue": court.record_catalogue(identity),
-                **({"speakers": [speakers[name] for name in identity.people if name in speakers]}
-                   if isinstance(identity, Officials) else {}),
-            }
-        ),
-        ensure_ascii=False,
-    )
+    return character_input({
+        "date": date,
+        "context": context,
+        "catalogue": court.record_catalogue(identity),
+        **({"speakers": [speakers[name] for name in identity.people if name in speakers]}
+           if isinstance(identity, Officials) else {}),
+    })

@@ -47,10 +47,12 @@ def test_every_model_call_reads_identity_scoped_records(game_db, steps, model_in
     for name in names:
         steps[name] = replaying(
             lambda messages, name=name: outputs[name] if any(isinstance(p, ToolReturnPart) for m in messages for p in m.parts)
-            else ModelResponse(parts=[ToolCallPart("read_records", {"kind": "person", "key": "王体乾"}, tool_call_id="person"),
-                                      ToolCallPart("read_records", {"kind": "incumbency", "key": "户部尚书"}, tool_call_id="office"),
-                                      ToolCallPart("read_records", {"kind": "account", "key": "国库"}, tool_call_id="treasury"),
-                                      ToolCallPart("read_records", {"kind": "faction", "key": ["阉党", "东林"]}, tool_call_id="factions")]),
+            else ModelResponse(parts=[ToolCallPart("read_records", {"kind": "incumbency", "key": "户部尚书"}, tool_call_id="office"),
+                                      *([] if name == "impeachment" else [
+                                          ToolCallPart("read_records", {"kind": "person", "key": "王体乾"}, tool_call_id="person"),
+                                          ToolCallPart("read_records", {"kind": "account", "key": "国库"}, tool_call_id="treasury"),
+                                          ToolCallPart("read_records", {"kind": "faction", "key": ["阉党", "东林"]}, tool_call_id="factions"),
+                                      ])]),
             received[name], tools[name],
         )
     with TestClient(create_app(game_db.parent)) as client:
@@ -83,7 +85,7 @@ def test_every_model_call_reads_identity_scoped_records(game_db, steps, model_in
             else:
                 assert all(isinstance(identity, Officials) and not identity.exclude_secrets for identity in model_invocations[name])
                 assert {frozenset(identity.people) for identity in model_invocations[name]} == {
-                    frozenset(p.key for p in court.petition_officials(faction.key))
+                    frozenset(court.petition_officials(faction.key))
                     for faction in court.entities("audit", kind="faction")
                 }
             assert tools[name]
@@ -146,10 +148,8 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
         steps["secret_report"] = replaying([ModelHTTPError(429, "recorded")])
     else:
         steps["secret_report"] = replaying(
-            [
-                ModelResponse(parts=[ToolCallPart("read_records", {"kind": "person", "key": ["毕自严", "徐光启"]})]),
-                (RECORDED / "secret_report.txt").read_text(),
-            ] * 2, material
+            ([ModelResponse(parts=[ToolCallPart("read_records", {"kind": "person", "key": ["毕自严", "徐光启"]})])]
+             if failure is None else []) + [(RECORDED / "secret_report.txt").read_text()] * 2, material
         )
     with TestClient(create_app(game_db.parent)) as client:
         client.post(
@@ -172,7 +172,6 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
         assert secret.data["handler"] == handler
         assert public.data.get("handler") is None
         assert not court.facts("audit", kind="unhandled")
-        assert court.known_people(secret) == {handler, "王承恩", "杨嗣昌"}
         assert "exposure" not in secret.data
         for person, expected in (
             (handler, {secret.id}),
@@ -250,7 +249,7 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
             assert {d.id for d in court.entities("public", kind="decree")} == (
                 set() if failure == "declaration" else {public.id}
             )
-            assert not court.products(secret.id, kind="exposure", current=False)
+            assert not court.products(secret.id, kind="exposure", date=None)
             assert "exposure" not in court.entity(secret.id).data
             assert {f.entity_id for f in court.facts("audit", kind="unhandled")} == (
                 {court.calendar().id} if failure == "declaration" else set()
@@ -261,6 +260,7 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
                 and (prompt := _declaration_prompt([r]))["scope"] == "month"
                 and prompt["date"] == court.facts("emperor", kind="secret_report")[-1].detail["date"]
             )
+            assert set(next(o["known_people"] for o in world["decrees"] if o["decree"]["id"] == str(secret.id))) == {handler, "王承恩", "杨嗣昌"}
             assert {o["decree"]["id"] for o in world["decrees"]} == {
                 str(d.id) for d in orders if month == 0 or d.id == secret.id or failure != "declaration"
             }
@@ -328,13 +328,13 @@ def test_discoveries_stay_private_and_completion_stops_only_reports(
             court = client.app.state.web.game.court
             done = month >= (quiet_month is not None)
             assert len(
-                court.products(secret.id, kind="completed", current=False)
+                court.products(secret.id, kind="completed", date=None)
             ) == int(done)
             for identity in ("emperor", Officials(people=["王承恩"])):
                 assert len(court.facts(identity, kind="secret_report")) == min(
                     month + 1, 1 + (quiet_month is not None)
                 )
-            assert not court.products(secret.id, kind="exposure", current=False)
+            assert not court.products(secret.id, kind="exposure", date=None)
             assert "exposure" not in court.entity(secret.id).data
             changed = [
                 f
@@ -375,7 +375,7 @@ def test_discoveries_stay_private_and_completion_stops_only_reports(
                 for order in json.loads(message.parts[0].content)["context"]["decrees"]:
                     if order["decree"]["data"]["secret"]:
                         assert "exposure" not in order["decree"]["data"]
-                        assert set(order["known_people"]) == court.known_people(secret)
+                        assert set(order["known_people"]) == {"王承恩", "杨嗣昌"}
         assert not json.loads(simulations[-1].parts[0].content)["context"]["decrees"]
 
 

@@ -2,6 +2,8 @@
 
 import asyncio
 import json
+import sqlite3
+from contextlib import closing
 from pathlib import Path
 from uuid import uuid4
 
@@ -24,6 +26,15 @@ from ming.web import create_app
 from tests.test_court import replaying
 
 RECORDED = Path(__file__).parent / "recorded"
+
+
+def state_updates(events: asyncio.Queue) -> list[dict]:
+    """Read the state payloads delivered to the existing stream subscriber."""
+    return [
+        event["data"]
+        for event in (events.get_nowait() for _ in range(events.qsize()))
+        if event["event"] == "state"
+    ]
 
 
 def record_queries(catalogue, date, *, dated_facts: bool):
@@ -49,7 +60,10 @@ def record_queries(catalogue, date, *, dated_facts: bool):
 def test_menu_creates_distinct_games_and_opens_only_existing_saves(
     tmp_path: Path,
 ) -> None:
-    with TestClient(create_app(tmp_path)) as client:
+    app = create_app(tmp_path)
+    events = asyncio.Queue()
+    app.state.web.listeners.add(events)
+    with TestClient(app) as client:
         menu = client.get("/state").json()
         assert (menu["saves"], menu["save"], menu["game"]) == ([], None, None)
         assert client.post("/actions", json={"action": "continue"}).status_code == 404
@@ -59,30 +73,42 @@ def test_menu_creates_distinct_games_and_opens_only_existing_saves(
             ).status_code
             == 404
         )
+        assert state_updates(events) == []
         first = client.post("/actions", json={"action": "new"}).json()["save"]
+        assert [state["save"] for state in state_updates(events)] == [first]
         client.post("/actions", json={"action": "open"}).raise_for_status()
+        assert [state["game"]["face"] for state in state_updates(events)] == ["audience"]
+        client.post("/actions", json={"action": "open"}).raise_for_status()
+        assert state_updates(events) == []
         before = client.get("/records").json()
         night = client.get("/state").json()["game"]["night"]
         for _ in range(2):
             client.post("/actions", json={"action": "menu"}).raise_for_status()
             menu = client.get("/state").json()
             assert (menu["save"], menu["game"]) == (None, None)
+            assert [(state["save"], state["game"]) for state in state_updates(events)] == (
+                [(None, None)] if _ == 0 else []
+            )
         client.post("/actions", json={"action": "load", "save": first}).raise_for_status()
+        assert [(state["save"], state["game"]["night"]["id"]) for state in state_updates(events)] == [(first, night["id"])]
         assert client.get("/state").json()["game"]["night"] == night
         assert client.get("/records").json() == before
         second = client.post("/actions", json={"action": "new"}).json()["save"]
+        assert [state["save"] for state in state_updates(events)] == [second]
         assert first != second
         assert set(client.get("/state").json()["saves"]) == {first, second}
         assert (
             client.post("/actions", json={"action": "continue"}).json()["save"]
             == second
         )
+        assert state_updates(events) == []
         assert (
             client.post("/actions", json={"action": "load", "save": first}).json()[
                 "save"
             ]
             == first
         )
+        assert [state["save"] for state in state_updates(events)] == [first]
         records = client.get("/records").json()
         assert {e["kind"] for e in records["entities"]} == {
             "person",
@@ -102,6 +128,7 @@ def test_menu_creates_distinct_games_and_opens_only_existing_saves(
             ).status_code
             == 400
         )
+        assert state_updates(events) == []
     with TestClient(create_app(tmp_path)) as client:
         assert set(client.get("/state").json()["saves"]) == {first, second}
         assert client.get("/state").json()["game"] is None
@@ -156,10 +183,10 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
             "precompute-structure",
             "translation-error",
         }:
-            for name in received:
+            for name in received if path == "decree" else ():
                 text = (RECORDED / f"{name}.txt").read_text()
                 steps[name] = replaying(
-                    lambda messages, text=text, dated_facts=path == "decree" and name == "simulation": (
+                    lambda messages, text=text, dated_facts=name == "simulation": (
                         ModelResponse(parts=[TextPart(text)])
                         if any(
                             isinstance(part, ToolReturnPart)
@@ -215,6 +242,13 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
                         state = (await http.get("/state")).json()["game"]
                         opened = await http.post("/actions", json={"action": "open"})
                         received["retry"].append((state["running"], state["pending"], opened.status_code))
+                        # Preserve the accepted old-night work, with the new
+                        # night already open, at the external model boundary.
+                        (game_db.parent / "recovery").mkdir()
+                        with closing(sqlite3.connect(game_db)) as source, closing(
+                            sqlite3.connect(game_db.parent / "recovery" / game_db.name)
+                        ) as target:
+                            source.backup(target)
                     return ModelResponse(parts=[TextPart(case["replies"][0])])
 
                 steps["NightDeclaration"] = FunctionModel(retry_translation)
@@ -224,6 +258,25 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
                 assert client.portal is not None
                 client.portal.call(app.state.web.game.drain)
                 assert received.pop("retry") == [(False, None, 204)]
+                steps["NightDeclaration"] = replaying(case["replies"])
+                with TestClient(create_app(game_db.parent / "recovery")) as restored:
+                    events = asyncio.Queue()
+                    restored.app.state.web.listeners.add(events)
+                    restored.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
+                    restored.portal.call(restored.app.state.web.game.drain)
+                    game = restored.get("/state").json()["game"]
+                    assert game["night"]["closed"] is False
+                    # Opening and finishing recovery each refresh once;
+                    # completion refreshes /records even with the same night.
+                    assert [
+                        (state["game"]["night"]["id"], state["game"]["running"], state["game"]["failure"])
+                        for state in state_updates(events)
+                    ] == [(game["night"]["id"], False, None)] * 2
+                    assert [
+                        entity["data"]["result"]
+                        for entity in restored.get("/records").json()["entities"]
+                        if entity["kind"] == "night" and entity["data"]["closed"]
+                    ] == ["translated"]
                 steps["NightDeclaration"] = replaying([(RECORDED / "night_empty.txt").read_text()])
                 client.post("/actions", json={"action": "dismiss"}).raise_for_status()
                 client.portal.call(app.state.web.game.drain)
@@ -247,6 +300,8 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
                 for f in audit(db)["facts"]
                 if f["kind"] == "interaction" and f["detail"]["status"] == "failed"
             } == ({"translation"} if path == "translation-error" else set())
+        events = asyncio.Queue()
+        app.state.web.listeners.add(events)
         before = audit(db)
         assert [
             client.post("/actions", json={"action": "choose", **parameters}).status_code
@@ -254,14 +309,29 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
         ] == [400, 400, 400]
         assert client.get("/state").json()["game"]["failure"] is None
         assert audit(db) == before
+        assert state_updates(events) == []  # Rejected choices do not transition.
         assert client.post("/actions", json={"action": "month"}).status_code == 204
         game = client.get("/state").json()["game"]
+        # One acceptance and one completion, regardless of monthly writes.
+        assert [
+            (state["game"]["running"], state["game"]["date"]["month"],
+             state["game"]["failure"] and state["game"]["failure"]["action"])
+            for state in state_updates(events)
+        ] == [
+            (True, 10, None),
+            (False, game["date"]["month"],
+             "month" if path == "precompute-structure" else None),
+        ]
         if path == "precompute-structure":
             assert game["date"]["month"] == 10
             assert game["failure"]["payload"]["type"] == "UnexpectedModelBehavior"
             assert not [f for f in audit(db)["facts"] if f["kind"] == "unhandled"]
             client.post("/actions", json={"action": "retry"})
             game = client.get("/state").json()["game"]
+            assert [
+                (state["game"]["running"], state["game"]["failure"])
+                for state in state_updates(events)
+            ] == [(True, None), (False, None)]
         if path in {"multiple-petitions", "choice-error"}:
             client.portal.call(app.state.web.game.drain)
             assert (game["date"]["month"], game["face"], game["running"]) == (
@@ -285,9 +355,25 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
                 game["petitions"].remove(petition)
                 if game["petitions"]:
                     assert not [f for f in audit(db)["facts"] if f["kind"] == "month_final"]
+                client.portal.call(app.state.web.game.drain)
                 assert {
                     p["id"] for p in client.get("/state").json()["game"]["petitions"]
                 } == {p["id"] for p in game["petitions"]}
+                # The last choice completes and starts the month in ONE frame;
+                # rejected duplicate choices add none, monthly commits add none.
+                assert [
+                    (state["game"]["running"],
+                     state["game"]["pending"] and state["game"]["pending"]["action"],
+                     state["game"]["date"]["month"],
+                     {p["id"] for p in state["game"]["petitions"]})
+                    for state in state_updates(events)
+                ] == [
+                    (True, "choose", 10, {p["id"] for p in game["petitions"]}),
+                    (not game["petitions"], "month" if not game["petitions"] else None,
+                     10, {p["id"] for p in game["petitions"]}),
+                    *([(False, None, 10 if path == "choice-error" else 11, set())]
+                      if not game["petitions"] else []),
+                ]
         # Choice completion no longer waits for the shared month action.
         client.portal.call(app.state.web.game.drain)
         if path == "choice-error":
@@ -297,7 +383,12 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
             before = audit(db)
             assert not [f for f in before["facts"] if f["kind"] == "month_final"]
             client.post("/actions", json={"action": "load", "save": save}).raise_for_status()
+            assert state_updates(events) == []  # Selecting the current save is a no-op.
             client.post("/actions", json={"action": "retry"}).raise_for_status()
+            assert [
+                (state["game"]["running"], state["game"]["failure"], state["game"]["date"]["month"])
+                for state in state_updates(events)
+            ] == [(True, None, 10), (False, None, 11)]
             assert len([f for f in audit(db)["facts"] if f["kind"] == "month_draft"]) == 1
         game = client.get("/state").json()["game"]
         assert (
@@ -406,6 +497,7 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
         client.get("/state")
         client.get("/records")
         assert audit(db) == before
+        assert state_updates(events) == []
 
 
 @pytest.mark.parametrize(
@@ -462,6 +554,8 @@ def test_settings_survive_reopening_and_failed_scene_retries_in_place(
         save = client.post(
             "/actions", json={"action": "load", "save": game_db.name}
         ).json()["save"]
+        events = asyncio.Queue()
+        client.app.state.web.listeners.add(events)
         if step == "month":
             client.post("/actions", json={"action": "month"})
         elif step == "say":
@@ -474,6 +568,15 @@ def test_settings_survive_reopening_and_failed_scene_retries_in_place(
             if step == "month-translation":
                 client.post("/actions", json={"action": "month"})
         game = client.get("/state").json()["game"]
+        assert [
+            (state["game"]["running"],
+             state["game"]["failure"] and state["game"]["failure"]["action"])
+            for state in state_updates(events)
+        ] == [
+            (step in {"say", "month"}, None),
+            (False, "translation" if "translation" in step else step),
+            *([(True, None), (False, "translation")] if step == "month-translation" else []),
+        ]
         if step == "translation-then-month":
             assert game["failure"]["action"] == "translation"
             steps[name] = working
@@ -482,6 +585,12 @@ def test_settings_survive_reopening_and_failed_scene_retries_in_place(
             assert state["failure"] is None
             assert state["date"]["month"] == 11
             assert state["running"] is False
+            assert [
+                (update["game"]["running"], update["game"]["failure"],
+                 update["game"]["date"]["month"], update["game"]["night"]["result"])
+                for update in state_updates(events)
+            ] == [(True, None, 10, None), (True, None, 10, "unhandled"),
+                  (False, None, 11, "unhandled")]
             return
         assert game["failure"]["action"] == (
             "translation" if step.endswith("translation") else step
@@ -497,14 +606,29 @@ def test_settings_survive_reopening_and_failed_scene_retries_in_place(
             assert game["night"]["turns"] == []
     steps[name] = working
     with TestClient(create_app(tmp_path)) as client:
+        events = asyncio.Queue()
+        client.app.state.web.listeners.add(events)
         assert client.get("/state").json()["settings"] == settings.model_dump()
         client.post("/actions", json={"action": "continue"})
+        assert [
+            (state["save"], state["game"]["running"], state["game"]["failure"]["action"])
+            for state in state_updates(events)
+        ] == [(save, False, game["failure"]["action"])]
         assert client.get("/state").json()["game"]["failure"] == game["failure"]
         client.post("/actions", json={"action": "retry"})
         if step == "translation":
             client.portal.call(client.app.state.web.game.drain)
         game = client.get("/state").json()["game"]
         assert game["failure"] is None
+        assert [
+            (state["game"]["running"], state["game"]["failure"], state["game"]["date"]["month"],
+             state["game"]["night"] and state["game"]["night"]["result"])
+            for state in state_updates(events)
+        ] == [
+            (step != "translation", None, 10, None),
+            *([(True, None, 10, "unhandled")] if step == "month-translation" else []),
+            (False, None, game["date"]["month"], game["night"] and game["night"]["result"]),
+        ]
         if step == "say":
             assert len(game["night"]["turns"]) == 1
         elif step == "translation":

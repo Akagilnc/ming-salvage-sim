@@ -1,5 +1,6 @@
 """Medium: audience behavior through the HTTP boundary and CLI ledger reads."""
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from starlette.testclient import TestClient
 from ming.middle.view import Officials
 from ming.web import create_app
 from tests.test_court import replaying
+from tests.test_web import state_updates
 
 RECORDED = Path(__file__).parent / "recorded"
 
@@ -27,10 +29,17 @@ def test_nights_are_persistent_and_translate_only_after_dismissal(
 ) -> None:
     case = json.loads((RECORDED / f"night_{recording}.json").read_text())
     with TestClient(create_app(tmp_path)) as client:
+        events = asyncio.Queue()
+        client.app.state.web.listeners.add(events)
         save = client.post(
             "/actions", json={"action": "load", "save": game_db.name}
         ).json()["save"]
+        assert [state["game"]["face"] for state in state_updates(events)] == ["audience"]
         client.post("/actions", json={"action": "say", "words": case["words"][0]})
+        assert [
+            (state["game"]["running"], len(state["game"]["night"]["turns"]))
+            for state in state_updates(events)
+        ] == [(True, 0), (False, 1)]
         first = client.get("/state").json()["game"]["night"]
         assert first["closed"] is False
         assert first["result"] is None
@@ -38,12 +47,31 @@ def test_nights_are_persistent_and_translate_only_after_dismissal(
             e for e in audit(tmp_path / save)["entities"] if e["kind"] == "decree"
         ]
     with TestClient(create_app(tmp_path)) as client:
+        events = asyncio.Queue()
+        client.app.state.web.listeners.add(events)
         client.post("/actions", json={"action": "continue"})
+        assert [(state["game"]["night"]["id"], len(state["game"]["night"]["turns"]))
+                for state in state_updates(events)] == [(first["id"], 1)]
         assert client.get("/state").json()["game"]["night"] == first
-        for words in case["words"][1:]:
+        for index, words in enumerate(case["words"][1:], start=1):
             client.post("/actions", json={"action": "say", "words": words})
+            client.portal.call(client.app.state.web.game.drain)
+            assert [
+                (state["game"]["running"], len(state["game"]["night"]["turns"]),
+                 state["game"]["night"]["result"])
+                for state in state_updates(events)
+            ] == [
+                (True, index, None), (False, index + 1, None),
+                *([(False, index + 1, "translated")]
+                  if recording == "approved" and index == len(case["words"]) - 1 else []),
+            ]
         if recording == "new_office":
             client.post("/actions", json={"action": "dismiss"}).raise_for_status()
+            client.portal.call(client.app.state.web.game.drain)
+            assert [(state["game"]["night"]["closed"], state["game"]["night"]["result"])
+                    for state in state_updates(events)] == [(True, None), (True, "translated")]
+            client.post("/actions", json={"action": "dismiss"}).raise_for_status()
+            assert state_updates(events) == []
         client.post("/actions", json={"action": "load", "save": save})
         night = client.get("/state").json()["game"]["night"]
         assert night["closed"] is True
@@ -51,6 +79,11 @@ def test_nights_are_persistent_and_translate_only_after_dismissal(
         ledger = audit(tmp_path / save)
         orders = [e for e in ledger["entities"] if e["kind"] == "decree"]
         assert orders
+        if recording == "approved":
+            steps["Declaration"] = replaying([json.dumps({"facts": [{
+                "entity_type": "decree", "entity": orders[0]["key"], "create": False,
+                "changes": [{"field": "people", "value": []}], "text": "",
+            }]})])
         assert all(e["data"]["night_id"] == first["id"] for e in orders)
         assert all(e["data"].get("secret") is False for e in orders)
         assert all(e["data"]["turn"] == {"approved": 4, "new_office": 2}[recording] for e in orders)
@@ -79,7 +112,10 @@ def test_nights_are_persistent_and_translate_only_after_dismissal(
         assert client.get("/state").json()["game"]["petitions"] == []
         client.post("/actions", json={"action": "month"}).raise_for_status()
         assert client.get("/state").json()["game"]["date"]["month"] == 11
-        assert {f["entity_id"] for f in audit(tmp_path / save)["facts"] if f["kind"] == "landed" and f["entity_id"] in {e["id"] for e in orders}} == {e["id"] for e in orders}
+        ledger = audit(tmp_path / save)
+        assert {f["entity_id"] for f in ledger["facts"] if f["kind"] == "landed" and f["entity_id"] in {e["id"] for e in orders}} == {e["id"] for e in orders}
+        if recording == "approved":
+            assert next(e["data"]["people"] for e in ledger["entities"] if e["id"] == orders[0]["id"]) == []
         client.post("/actions", json={"action": "open"})
         second = client.get("/state").json()["game"]["night"]
         assert first["id"] != second["id"]
@@ -92,8 +128,10 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
 ) -> None:
     case = json.loads((RECORDED / "night_tools.json").read_text())
     received = []
+    case["offices"] = ["内阁首辅", "户部尚书"]
     steps["scene"] = replaying(
         [
+            ModelResponse(parts=[ToolCallPart("read_records", {"kind": "office", "key": case["offices"]}, tool_call_id="offices")]),
             ModelResponse(parts=[ToolCallPart("read_records", {"kind": "person", "key": "王体乾"}, tool_call_id="before")]),
             ModelResponse(parts=[ToolCallPart("set_hall", {"add": ["王体乾"], "remove": []})]),
             ModelResponse(parts=[ToolCallPart("read_records", {"kind": "person", "key": "王体乾"}, tool_call_id="after")]),
@@ -135,6 +173,8 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
         for part in message.parts
         if isinstance(part, ToolReturnPart)
     }
+    assert [result["status"] for result in returned["offices"][1]["offices"]] == ["occupied", "occupied"]
+    assert [result["appointments"][0]["holders"] for result in returned["offices"][1]["offices"]] == [["黄立极"], ["郭允厚"]]
     before, after = (returned[key][1]["entities"][0] for key in ("before", "after"))
     assert before["key"] == after["key"] == "王体乾"
     for field in ("name", "location", "appointments"):
@@ -145,7 +185,7 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
     assert {(f["name"], f["found"]) for f in absent["failures"]} == {("徐光启", True), ("张三", False)}
     assert set(absent["hall"]) == {"王承恩", "杨嗣昌", "王绍徽"}
     dossier = next(value["entities"][0]["data"] for name, value in returned.values()
-                   if name == "read_records" and value["entities"][0]["key"] == "徐光启")
+                   if name == "read_records" and value.get("entities") and value["entities"][0]["key"] == "徐光启")
     assert dossier["location"] == "南直隶 / 南京"
     assert dossier["status"] == "offstage"
     assert not {"loyalty", "ability", "integrity", "courage", "intrigue"}.intersection(dossier)
@@ -206,9 +246,12 @@ def test_backing_follows_its_decree_and_signers(game_db, steps, audit, case, rec
                 assert set(failure) == {"field", "current", "expected", "action"}
             assert len([f for f in audit(game_db)["facts"] if f["kind"] == "unhandled"]) == 1
             assert [f["detail"] for f in client.get("/records").json()["facts"] if f["kind"] == "unhandled"] == [{}]
-            client.post("/actions", json={"action": "month"}).raise_for_status()
-            state = client.get("/state").json()["game"]
-            assert (state["face"], state["failure"], state["unhandled_monthly"]) == ("desk", None, [])
+            # One terminal night failure proves month handoff; the other
+            # invalid fields still prove rejection and opening the next night.
+            if case == "source":
+                client.post("/actions", json={"action": "month"}).raise_for_status()
+                state = client.get("/state").json()["game"]
+                assert (state["face"], state["failure"], state["unhandled_monthly"], state["date"]["month"]) == ("desk", None, [], 11)
             client.post("/actions", json={"action": "open"}).raise_for_status()
             assert client.get("/state").json()["game"]["night"]["turns"] == []
             return
@@ -261,7 +304,7 @@ def test_failed_night_translation_is_terminal_and_reaches_following_nights(
     cases = recording["cases"]
     steps["scene"] = replaying([case["scene"] for case in cases.values()])
     steps["NightDeclaration"] = replaying(
-        [case["reply"] for case in cases.values() for _ in range(2)]
+        [case["reply"] for case in cases.values() for _ in range(2)],
     )
     with TestClient(create_app(tmp_path)) as client:
         save = client.post(
@@ -269,7 +312,7 @@ def test_failed_night_translation_is_terminal_and_reaches_following_nights(
         ).json()["save"]
         before = audit(tmp_path / save)["entities"]
         nights = []
-        for _ in cases:
+        for case in cases:
             assert client.post("/actions", json={"action": "open"}).status_code == 204
             assert (
                 client.post(
@@ -290,9 +333,10 @@ def test_failed_night_translation_is_terminal_and_reaches_following_nights(
             assert state["face"] == "desk"
             assert state["night"]["result"] == "unhandled"
             assert state["failure"] is None
+            ledger = audit(tmp_path / save)
             nights.append(state["night"]["id"])
             assert [
-                e for e in audit(tmp_path / save)["entities"] if e["kind"] != "night"
+                e for e in ledger["entities"] if e["kind"] != "night"
             ] == before
         assert {
             f["entity_id"]

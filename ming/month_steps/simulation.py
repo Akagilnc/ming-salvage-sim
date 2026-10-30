@@ -12,9 +12,9 @@ from ming.middle.concepts import (
     INTERIM, MONTH_DRAFT, MONTH_FINAL, PEOPLE, PREVIEW, SECRET, VERDICT,
 )
 from ming.middle.declaration import PendingPetition
-from ming.middle.invoke import ModelSource, build_agent, enlist, invoke
+from ming.middle.invoke import ModelSource, build_agent, invoke
 from ming.middle.month_work import MonthText, Simulation, prompt
-from ming.middle.view import EntityView
+from ming.middle.view import EntityView, character_input
 from ming.middle.records import Materials, read_records
 
 
@@ -34,31 +34,27 @@ class Simulations:
             instructions=instructions + "\n" + PREVIEW,
         )
 
-    def context(self) -> dict[str, Any]:
-        returned = {str(f.detail["id"]) for f in self.court.returned_petitions()}
-        return {
-            "decrees": self.court.landing_materials(include_history=False),
-            "arrivals": self.court.arrivals_this_month(),
-            "fiscal_events": self.court.fiscal_events(),
-            "prior_choices": [
-                {**f.detail, "petition": petition.detail}
-                for f in self.court.facts("audit", kind="choice", date=self.court.calendar().data)
-                if f.detail["petition_id"] not in returned
-                and (petition := self.court.petition(f.detail["petition_id"])).detail["source"] in {"urgent", "impeachment"}
-            ],
+    def context(self, calendar: EntityView, *, final: bool = False) -> dict[str, Any]:
+        context = {
+            "decrees": self.court.landing_materials(include_history=False, date=calendar.data),
+            "arrivals": self.court.arrivals_this_month(calendar.data),
+            "fiscal_events": self.court.fiscal_events(calendar.data),
+            "prior_choices": self.court.prior_choices(calendar.data),
         }
+        if final:
+            context["draft"] = self.court.products(calendar.id, kind="month_draft", date=calendar.data)[0].detail["output"]
+        return prompt(self.court, "world", context, date=calendar.data)
 
-    async def call(self, context: dict[str, Any], *, final: bool = False) -> dict[str, Any]:
+    async def call(self, inputs: dict[str, Any], *, final: bool = False) -> dict[str, Any]:
         result = await invoke(
             self.final_agent if final else self.draft_agent,
-            prompt(self.court, "world", context), deps=Materials(self.court, "world"),
+            inputs, deps=Materials(self.court, "world"),
         )
         self.court.log.info("model output: %s", result.output.model_dump_json())
         return {"output": result.output.model_dump()}
 
-    async def draft(self, verdicts: list[tuple[EntityView, dict[str, Any]]]) -> None:
-        calendar = self.court.calendar()
-        product = await self.call(self.context())
+    async def draft(self, verdicts: list[tuple[EntityView, dict[str, Any]]], calendar: EntityView) -> None:
+        product = await self.call(self.context(calendar))
         petitions = [
             PendingPetition(
                 **item, id=uuid4(), entity_id=calendar.id, available=calendar.data,
@@ -78,25 +74,23 @@ class Simulations:
             ))
         self.court.record_product(calendar.id, "month_draft", product, petitions=petitions)
 
-    def choices(self) -> list[dict[str, Any]]:
-        petitions = self.court.month_petitions()
-        return [
-            {**f.detail, "petition": self.court.petition(f.detail["petition_id"]).detail}
-            for f in self.court.petition_products([str(p.detail["id"]) for p in petitions], "choice")
-        ]
-
-    async def forecast(self, petition: PendingPetition, option: int) -> dict[str, Any]:
-        existing = next((f.detail for f in self.court.petition_products(
-            [str(petition.id)], "forecast", current=True,
-        ) if f.detail["option"] == option), None)
-        if existing is not None:
-            return existing
-        calendar = self.court.calendar()
-        draft = self.court.products(calendar.id, kind="month_draft")[0].detail
+    async def forecast(
+        self, petition: PendingPetition, option: int, calendar: EntityView,
+        inputs: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if inputs is None:
+            existing = next((f.detail for f in self.court.petition_products(
+                [str(petition.id)], "forecast", date=calendar.data,
+            ) if f.detail["option"] == option), None)
+            if existing is not None:
+                return existing
+            inputs = self.context(calendar, final=True)
         result = await self.call({
-            **self.context(), "draft": draft["output"],
-            "choices": [{"petition": petition.model_dump(mode="json"),
-                         "option": option, "text": petition.options[option]}],
+            **inputs, "context": {
+                **inputs["context"],
+                "choices": [{"petition": character_input(petition.model_dump(mode="json")),
+                             "option": option, "text": petition.options[option]}],
+            },
         }, final=True)
         result.update(petition_id=str(petition.id), option=option)
         self.court.record(calendar.id, [("forecast", {**result, "date": petition.available})])
@@ -106,24 +100,35 @@ class Simulations:
         if not task.cancelled() and (error := task.exception()) is not None:
             self.court.log.error("month candidate failed", exc_info=error)
 
-    def speculate(self) -> None:
-        petitions = self.court.month_petitions()
-        if len(petitions) != 1 or self.court.petition_products([str(petitions[0].detail["id"])], "choice"):
+    def speculate(self, calendar: EntityView) -> None:
+        petitions = self.court.month_petitions(calendar.data, single_pending=True)
+        if not petitions:
             return
         petition = self.court.as_petition(petitions[0])
-        for option in range(len(petition.options)):
-            enlist(self.tasks, (petition.id, option), lambda option=option: self.forecast(petition, option), on_done=self.log_failure)
+        options = [option for option in range(len(petition.options)) if (petition.id, option) not in self.tasks]
+        if not options:
+            return
+        try:
+            existing = {f.detail["option"] for f in self.court.petition_products([str(petition.id)], "forecast", date=calendar.data)}
+            options = [option for option in options if option not in existing]
+            if not options:
+                return
+            inputs = self.context(calendar, final=True)
+        except Exception:
+            # Preparing optional candidates has the same failure contract as running them.
+            self.court.log.exception("month candidate preparation failed")
+            return
+        for option in options:
+            task = self.tasks[petition.id, option] = asyncio.create_task(self.forecast(petition, option, calendar, inputs))
+            task.add_done_callback(self.log_failure)
 
-    async def final(self) -> None:
-        calendar = self.court.calendar()
-        draft = self.court.products(calendar.id, kind="month_draft")[0].detail
-        petitions = self.court.month_petitions()
-        choices = self.choices()
+    async def final(self, calendar: EntityView) -> None:
+        petitions = {str(p.detail["id"]): p for p in self.court.month_petitions(calendar.data)}
+        choices: list[dict[str, Any]] = [{**f.detail, "petition": petitions[f.detail["petition_id"]].detail}
+                   for f in self.court.petition_products(list(petitions), "choice", date=None)]
         result: dict[str, Any]
-        if not petitions:
-            result = {**draft, "output": {"text": draft["output"]["text"]}}
-        elif len(petitions) == 1:
-            petition = self.court.as_petition(petitions[0])
+        if len(petitions) == 1:
+            petition = self.court.as_petition(next(iter(petitions.values())))
             choice = choices[0]
             task = self.tasks.get((petition.id, choice["option"]))
             if task is not None:
@@ -131,11 +136,15 @@ class Simulations:
                     result = await asyncio.shield(task)
                 except Exception:
                     # Speculation is optional; selected work is a formal call with normal recovery.
-                    result = await self.forecast(petition, choice["option"])
+                    result = await self.forecast(petition, choice["option"], calendar)
             else:
-                result = await self.forecast(petition, choice["option"])
+                result = await self.forecast(petition, choice["option"], calendar)
+        elif petitions:
+            inputs = self.context(calendar, final=True)
+            result = await self.call({**inputs, "context": {**inputs["context"], "choices": character_input(choices)}}, final=True)
         else:
-            result = await self.call({**self.context(), "draft": draft["output"], "choices": choices}, final=True)
+            draft = self.court.products(calendar.id, kind="month_draft", date=calendar.data)[0].detail
+            result = {**draft, "output": {"text": draft["output"]["text"]}}
         self.court.record_product(calendar.id, "month_final", result)
 
     async def drain(self) -> None:

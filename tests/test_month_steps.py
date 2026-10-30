@@ -272,6 +272,7 @@ def test_month_pays_affair_from_declaration_month(game_db, steps, audit, clock, 
             # every branch asserts that same immutable result.
             if index != 0 or not shared:
                 client.post("/actions", json={"action": "month"})
+                client.portal.call(client.app.state.web.game.drain)
             if case == "resume" and index == 0:
                 state = client.get("/state").json()["game"]
                 assert state["failure"] is not None and state["date"]["month"] == 10

@@ -1,4 +1,4 @@
-"""Derived query schema. Only the projection policy writes these rows."""
+"""Derived query schema, private to the ledger's transactional row writer."""
 
 from uuid import UUID
 from sqlalchemy import JSON, ColumnElement, Index, Integer, Uuid, literal_column, select

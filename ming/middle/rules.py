@@ -2,17 +2,18 @@
 
 import json
 import math
-from typing import Any, Never
+from difflib import get_close_matches
+from typing import Any, Never, cast
 
 from pydantic_ai import ModelRetry
 
-from ming.ledger import Entity, Ledger
+from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS, Entity, Item, Ledger
 from ming.middle.appointments import CATALOGUE_KINDS
 from ming.middle.calendar import calendar_row
 from ming.middle.declaration import Declaration, Fact
 from ming.middle.fiscal import WAN, current_paid, has_obligation, obligation
 from ming.middle.fields import FIELDS
-from ming.middle.travel import SPEEDS, journey_route, move_person
+from ming.middle.travel import SPEEDS, journey_distances, journey_route, move_person
 Names = dict[str, dict[str, list[str]]]
 
 
@@ -24,6 +25,18 @@ def matching_names(names: Names, queries: list[str]) -> Names:
                         if any(query and any(query in label for label in [name, *aliases])
                                for query in queries)})
     }
+
+
+def matching_offices(names: Names, key: str) -> Names:
+    candidates = matching_names({"office": names.get("office", {})}, [key])
+    if candidates:
+        return candidates
+    prefix = max((label for name, aliases in names.get("territory", {}).items()
+                  for label in [name, *aliases] if key.startswith(label)), key=len, default="")
+    candidates = {name: names["office"][name] for name in get_close_matches(
+        key[len(prefix):], list(names.get("office", {})), n=len(names.get("office", {})) + 1, cutoff=0.5,
+    )}
+    return {"office": candidates} if candidates else {}
 
 
 def name_expected(
@@ -41,10 +54,15 @@ def fail(field: str, value: object, expected: object, names: Names, how: str) ->
 
 
 def check_rules(ledger: Ledger, out: Declaration, names: Names) -> None:
-    people: dict[str, Entity] = {}
-    date = calendar_row(ledger)["data"]
+    person_names = {fact.entity for fact in out.facts if fact.entity_type == "person"
+                    if any(change.field in {"location", "status"} for change in fact.changes)}
+    people: dict[str, Entity] = {row["key"]: Entity("person", row["key"], "", dict(row["data"]))
+                               for row in ledger.entities(kind="person", query=ENTITY_ROWS.where(E.key.in_(person_names)))} if person_names else {}
+    people.update({name: Entity("person", name, "", {}) for name in person_names - people.keys()})
+    distances = journey_distances(ledger, out.facts, {name: person.data for name, person in people.items()})
+    date: Item | None = None
     for i, fact in enumerate(out.facts):
-        person = check_journey(ledger, fact, f"facts[{i}]", names, people)
+        journey = check_journey(distances, fact, f"facts[{i}]", names, people)
         if fact.affair is not None and fact.affair not in names.get("affair", {}):
             fail(f"facts[{i}].affair", fact.affair, name_expected("affair", fact.affair, names), names,
                  "事务正名查 expected 指向的输入目录，或在本份先 create 该事务，重交整份。")
@@ -63,31 +81,31 @@ def check_rules(ledger: Ledger, out: Declaration, names: Names) -> None:
             if (fact.entity_type, change.field) == ("person", "travel_speed") and change.value not in list(SPEEDS):
                 fail(f"facts[{i}].changes[{j}].value", change.value, list(SPEEDS), names, "行速用 expected 中的档名，重交整份。")
         check_money(fact, names, i)
-        if person is not None:
+        if journey is not None:
+            person, route = journey
+            if route is not None and date is None:
+                date = cast(Item, calendar_row(ledger)["data"])
             changes = field_values(fact, person.data, None)["changes"]
             # Replay landing's lifecycle on detached aggregates, without committing.
-            move_person(person, changes, ledger,
-                        lambda entity, kind, detail, updates: entity.record(kind, "", detail, updates), date)
+            move_person(person, changes, route,
+                        lambda entity, kind, detail, updates: entity.record(kind, "", detail, updates), date or {})
             person.record("changed", "", {}, changes)
 
 
-def check_journey(ledger: Ledger, fact: Fact, path: str, names: Names, people: dict[str, Entity]) -> Entity | None:
-    if fact.entity_type != "person":
+def check_journey(distances: dict[str, Item], fact: Fact, path: str, names: Names, people: dict[str, Entity]) -> tuple[Entity, tuple[str, float] | None] | None:
+    if fact.entity_type != "person" or fact.entity not in people:
         return None
-    if fact.entity not in people:
-        rows = ledger.entities(kind="person", key=fact.entity)
-        people[fact.entity] = Entity("person", fact.entity, "", dict(rows[0]["data"]) if rows else {})
     person = people[fact.entity]
     changes = {c.field: c.value for c in fact.changes}
     try:
-        route = journey_route(ledger, person.data, changes)
+        route = journey_route(distances, person.data, changes)
     except KeyError as exc:
         fail(path + ".location", exc.args[0], {"origin": person.data["location"], "distance": "required"}, names,
              "账本缺本程里程，无法计算到达日，重交整份。")
     if route is not None and "departure_day" not in changes:
         fail(path + ".departure_day", None, {"field": "departure_day", "type": "integer"}, names,
              "本条启程缺启程日；按戏文补交 departure_day 字段，重交整份。")
-    return person
+    return person, route
 
 
 def check_money(fact: Fact, names: Names, index: int) -> None:
@@ -122,6 +140,8 @@ def money_amounts(
 ) -> tuple[dict[tuple[int, int], float], dict[tuple[int, int], str | None]]:
     amounts: dict[tuple[int, int], float] = {}
     reasons: dict[tuple[int, int], str | None] = {}
+    if not any(f.entity_type == "account" and any(c.field == "taels" for c in f.changes) for f in facts):
+        return amounts, reasons
     balances = {key: row["data"].get("taels", 0) for key, row in existing.items()}
     # Caps use the declared post-values of policy, manpower and rates.
     projected = {key: {**row, "data": dict(row["data"])} for key, row in existing.items()}

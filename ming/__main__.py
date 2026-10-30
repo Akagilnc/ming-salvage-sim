@@ -62,11 +62,12 @@ async def conversation(court: Court, settings: Configuration) -> None:
     game.resume()
     await game.drain()
     state = court.presentation()
+    night = state["night"]["id"] if state["night"] else None
     if state["face"] != "month" and not state["failure"]:
         game.start("open")
+        night = str(game.audience.night_id)
     try:
-        night = court.presentation()["night"]
-        print(json.dumps({"night": night["id"] if night else None}), flush=True)
+        print(json.dumps({"night": night}), flush=True)
         while line := await asyncio.to_thread(sys.stdin.readline):
             request = json.loads(line)
             action = request.pop("action")
@@ -74,7 +75,7 @@ async def conversation(court: Court, settings: Configuration) -> None:
             if action == "drain":
                 await game.drain()
             elif action != "state":
-                task = game.start(action, request, repeat=True)
+                task = game.start(action, request, failures=court.failures())
                 if task is not None and action != "month":
                     scene = await asyncio.shield(task)
             state = court.presentation()
@@ -147,18 +148,7 @@ def main(argv: list[str] | None = None) -> None:
             json.dumps(
                 {
                     "db": str(court.db_path),
-                    "entities": [
-                        e.model_dump(mode="json")
-                        for e in court.entities(
-                            args.identity, getattr(args, "replay", False)
-                        )
-                    ],
-                    "facts": [
-                        f.model_dump(mode="json")
-                        for f in court.facts(
-                            args.identity, getattr(args, "replay", False)
-                        )
-                    ],
+                    **court.read_records(args.identity, replay=getattr(args, "replay", False)),
                 },
                 ensure_ascii=False,
                 indent=2,

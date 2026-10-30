@@ -20,6 +20,7 @@ from ming.middle.concepts import ACTING, AUDIENCE, DECREE, DECREE_EVENT, DISCOVE
 from ming.middle.translate import INSTRUCTIONS
 from ming.middle.declaration import NightDeclaration
 from ming.middle.invoke import ModelSource, TextUpdate, build_agent, invoke, stream_text
+from ming.middle.night import NightView
 from ming.middle.opening import CONTENT
 from ming.middle.scene import HallResult
 from ming.middle.records import read_records
@@ -39,7 +40,7 @@ class Audience:
 
         async def get_hall(ctx: RunContext[Audience]) -> tuple[str, ...]:
             """看今夜殿上名单。"""
-            return ctx.deps.court.night(ctx.deps.night_id).hall
+            return tuple(ctx.deps.identity.people)
 
         async def set_hall(
             ctx: RunContext[Audience], add: list[str], remove: list[str]
@@ -62,7 +63,7 @@ class Audience:
 
     @property
     def identity(self) -> Officials:
-        return Officials(people=list(self.court.night(self.night_id).hall))
+        return Officials(people=self.court.entity(self.night_id).data["hall"])
 
     @property
     def night_id(self) -> UUID:
@@ -70,14 +71,15 @@ class Audience:
             raise ValueError("open an audience night first")
         return self._night_id
 
-    def open(self, night_id: UUID | None = None) -> UUID:
-        night = self.court.night(night_id or self.court.open_night())
-        self._night_id = night.id
-        if not night.closed and self.court.facts(
-            "audit", entity_id=self.night_id, kind="dismiss_requested"
-        ):
+    def open(self, night: NightView | None = None) -> bool:
+        if night is None:
+            self._night_id, created = self.court.open_night()
+            closed = False
+        else:
+            self._night_id, created, closed = night.id, False, night.closed
+        if not closed and not created and self.court.has_product(self.night_id, "dismiss_requested", date=None):
             self._dismiss_requested = self.night_id
-        return self.night_id
+        return created
 
     def dismiss(self) -> None:
         if (
@@ -105,23 +107,23 @@ class Audience:
             self.court.land(result, night_id)
 
     async def say(
-        self, words: str, turn_id: str, on_delta: Callable[[TextUpdate], None] | None = None
+        self, night: NightView, words: str, turn_id: str, on_delta: Callable[[TextUpdate], None] | None = None
     ) -> str:
-        night = self.court.night(self.night_id)
         for turn in night.turns:
             if turn.id == turn_id:
                 self._finish_dismiss()
                 return turn.scene
         if night.closed:
             raise ValueError("night already closed")
-        self._turn = asyncio.create_task(self._generate(words, turn_id, on_delta))
+        self._turn = asyncio.create_task(self._generate(words, turn_id, on_delta, night))
         return await self._turn
 
     async def _generate(
-        self, words: str, turn_id: str, on_delta: Callable[[TextUpdate], None] | None
+        self, words: str, turn_id: str, on_delta: Callable[[TextUpdate], None] | None,
+        night: NightView,
     ) -> str:
         history: list[ModelMessage] = []
-        for turn in self.court.night(self.night_id).turns:
+        for turn in night.turns:
             history.extend(
                 [
                     ModelRequest(parts=[UserPromptPart(turn.emperor_words)]),
@@ -131,7 +133,7 @@ class Audience:
         try:
             result = await invoke(
                 self.scene,
-                [json.dumps({**self.court.scene_material(), "catalogue": self.court.record_catalogue(self.identity)}, ensure_ascii=False), words],
+                [json.dumps({**self.court.scene_material(), "catalogue": self.court.record_catalogue(Officials(people=list(night.hall)))}, ensure_ascii=False), words],
                 deps=self,
                 message_history=history,
                 event_stream_handler=partial(stream_text, on_delta)

@@ -1,27 +1,19 @@
-"""The event store and its synchronous, rebuildable query projection.
+"""Events and derived rows commit atomically; explicit replay shares the row writer."""
 
-Calendar/night callers demonstrate the pattern: commit aggregates, then read only
-matching rows/facts. No caller refreshes tables or carries a parallel event list.
-"""
-
-from collections.abc import Callable, Generator, Mapping
+from collections.abc import Generator, Iterable, Mapping
 from contextlib import contextmanager, suppress
-from functools import wraps
-from inspect import signature
 from pathlib import Path
-from threading import RLock
-from typing import Any, ParamSpec, TypeVar, cast
+from typing import Any, cast
 from uuid import UUID, uuid4
 
-from eventsourcing.system import SingleThreadedRunner, System
+from eventsourcing.application import Application, LocalNotificationLog
+from eventsourcing.persistence import Recording
 from eventsourcing_sqlalchemy.recorders import SQLAlchemyApplicationRecorder
 from sqlalchemy import Engine, Select
-from sqlalchemy.sql.cache_key import CacheKey
-from frozendict import deepfreeze, frozendict
-from pydantic import BaseModel
+from sqlalchemy.dialects.sqlite import insert
+from sqlalchemy.orm import Session
 
 from ming.ledger.domain import Entity as Entity, Item as Item
-from ming.ledger.projection import Events, ReadModel
 from ming.ledger.tables import Base, EntityRow, FactRow
 from ming.ledger.tables import (
     ENTITY_ROWS as ENTITY_ROWS,
@@ -33,126 +25,91 @@ from ming.ledger.tables import (
 # Native SQLAlchemy columns for read expressions, not ORM constructors/sessions.
 ENTITY_COLUMNS = EntityRow.__table__.c
 FACT_COLUMNS = FactRow.__table__.c
-EMPTY_PARAMETERS = frozendict[str, Any]()
 
 
-P = ParamSpec("P")
-R = TypeVar("R")
-
-
-def read_key(value: Any) -> Any:
-    """Keep immutable inputs; use native SQL identity and freeze only mutable keys."""
-    if isinstance(value, Select):
-        key = cast(CacheKey, cast(Any, value)._generate_cache_key())
-        return key.key, deepfreeze(tuple(p.value for p in key.bindparams))
-    try:
-        hash(value)
-    except TypeError:
-        return deepfreeze(value.model_dump() if isinstance(value, BaseModel) else value)
-    return value
-
-
-def read_once(reader: Callable[P, R]) -> Callable[P, R]:
-    """Reuse immutable reads in the ledger's single commit-invalidated result map."""
-    parameters = signature(reader)
-
-    @wraps(reader)
-    def reuse(owner: Any, *args: Any, **kwargs: Any) -> R:
-        ledger: Ledger = getattr(owner, "_ledger", owner)
-        bound = parameters.bind(owner, *args, **kwargs)
-        bound.apply_defaults()
-        key = (reader, tuple(read_key(value) for value in tuple(bound.arguments.values())[1:]))
-        with ledger.read_lock:
-            if key not in ledger.read_results:
-                ledger.read_results[key] = cast(Any, reader)(owner, *args, **kwargs)
-            return cast(R, ledger.read_results[key])
-    return cast(Callable[P, R], reuse)
+class Events(Application[UUID]):
+    name = "Ledger"
 
 
 class Ledger:
     def __init__(self, db_path: Path) -> None:
-        self.runner: SingleThreadedRunner[UUID] = SingleThreadedRunner(
-            System([[Events, ReadModel]]),
-            env={
-                "PERSISTENCE_MODULE": "eventsourcing_sqlalchemy",
-                "SQLALCHEMY_URL": f"sqlite:///{db_path}",
-                "AGGREGATE_CACHE_MAXSIZE": "10000",
-            },
-        )
-        self.events = self.runner.get(Events)
-        self.read_model = self.runner.get(ReadModel)
-        self.read_model.source = self.events
+        self.events = Events(env={
+            "PERSISTENCE_MODULE": "eventsourcing_sqlalchemy",
+            "SQLALCHEMY_URL": f"sqlite:///{db_path}",
+            "AGGREGATE_CACHE_MAXSIZE": "10000",
+            "AGGREGATE_CACHE_FASTFORWARD": "n",
+        })
         self.sql = cast(SQLAlchemyApplicationRecorder, self.events.recorder)
         Base.metadata.create_all(cast(Engine, self.sql.datastore.engine))
-        self.on_commit: Callable[[], None] | None = None
-        self.read_results: dict[Any, Any] = {}
-        self.read_lock = RLock()
-        self.runner.start()
-        # Follower uses tracking to catch up; row writes and tracking share this
-        # outer transaction, including when opening an existing save.
-        with self.sql.transaction():
-            self.read_model.pull_and_process(self.events.name)
 
     def close(self) -> None:
-        engines = [
-            cast(
-                Engine,
-                cast(SQLAlchemyApplicationRecorder, app.recorder).datastore.engine,
-            )
-            for app in self.runner.apps.values()
-        ]
-        self.runner.stop()
-        for engine in engines:
-            engine.dispose()
+        self.events.close()
+        cast(Engine, self.sql.datastore.engine).dispose()
+
+    def write_rows(
+        self, session: Session, entities: Iterable[Entity], recordings: Iterable[Recording[UUID]],
+    ) -> None:
+        rows = [entity.snapshot() for entity in entities]
+        if rows:
+            statement = insert(EntityRow)
+            session.execute(statement.on_conflict_do_update(
+                index_elements=[EntityRow.id],
+                set_={c: getattr(statement.excluded, c) for c in ("kind", "key", "source", "data")},
+            ), rows)
+        session.add_all(FactRow(
+            position=recording.notification.id,
+            entity_id=recording.domain_event.originator_id,
+            kind=recording.domain_event.kind,
+            date=recording.domain_event.detail.get("date"),
+            emperor_words=recording.domain_event.emperor_words,
+            detail=recording.domain_event.detail,
+        ) for recording in recordings if isinstance(recording.domain_event, Entity.Recorded))
 
     def commit(self, entities: list[Entity]) -> None:
-        # Readers include worker-thread validators. Keep SQL, derived results
-        # and invalidation in one state; nested read_once calls reenter this lock.
-        with self.read_lock:
-            try:
-                # eventsourcing-sqlalchemy's module ContextVar reuses this session
-                # in the Leader, Follower policy, and tracking insert.
-                with self.sql.transaction():
-                    recordings = self.events.save(*entities)
-            except Exception:
-                # A rollback must not leave uncommitted aggregate state in the cache:
-                # the policy cached each saved aggregate at its uncommitted version.
-                # LRUCache.clear() resets only its recency list, so evict each one.
-                cache = self.events.repository.cache
-                if cache is not None:
-                    for entity in entities:
-                        with suppress(KeyError):
-                            cache.get(entity.id, evict=True)
-                raise
-            if recordings:
-                # Empty saves and rollbacks leave prior reads valid.
-                self.read_results.clear()
-        if self.on_commit is not None:
-            self.on_commit()
+        try:
+            # The recorder's documented outer transaction includes ORM rows.
+            with self.sql.transaction() as session:
+                recordings = self.events.save(*entities)
+                saved = {r.domain_event.originator_id for r in recordings}
+                self.write_rows(session, (e for e in entities if e.id in saved), recordings)
+                session.flush()
+        except Exception:
+            # save() has already cached these aggregates. Evict rolled-back
+            # versions so a retry reconstructs committed state.
+            cache = self.events.repository.cache
+            if cache is not None:
+                for entity in entities:
+                    with suppress(KeyError):
+                        cache.get(entity.id, evict=True)
+            raise
 
     @contextmanager
     def reading(self, replay: bool) -> Generator["Ledger"]:
         if not replay:
             yield self
             return
-        # Existing --replay seam, with empty derived tables and the very same
-        # policy pulling the original notification log. No alternate projector.
         rebuilt = Ledger(Path(f"file:{uuid4().hex}?mode=memory&cache=shared&uri=true"))
         try:
-            rebuilt.read_model.source = self.events
-            rebuilt.read_model.follow(self.events.name, self.events.notification_log)
-            rebuilt.read_model.pull_and_process(self.events.name)
+            log = LocalNotificationLog(self.events.recorder, section_size=1000)
+            start = 1
+            # Read each source page outside the destination transaction: the
+            # recorder's thread-scoped transaction otherwise selects that DB.
+            while notifications := log.select(start=start, limit=1000):
+                recordings = [Recording(self.events.mapper.to_domain_event(n), n) for n in notifications]
+                entities = [self.get(r.domain_event.originator_id) for r in recordings
+                            if isinstance(r.domain_event, Entity.Created)]
+                with rebuilt.sql.transaction() as session:
+                    rebuilt.write_rows(session, entities, recordings)
+                start = notifications[-1].id + 1
             yield rebuilt
         finally:
             rebuilt.close()
 
-    @read_once
-    def read(self, query: Select[Any], parameters: Mapping[str, Any] = EMPTY_PARAMETERS) -> tuple[Item, ...]:
-        """Rows are deeply immutable; consumers project without editing the source."""
+    def read(self, query: Select[Any], parameters: Mapping[str, Any] | None = None) -> tuple[Item, ...]:
+        """Query the committed read tables for this request."""
         with self.sql.transaction(commit=False) as session:
-            return deepfreeze([dict(row) for row in session.execute(query, parameters).mappings()])
+            return tuple(dict(row) for row in session.execute(query, parameters).mappings())
 
-    @read_once
     def entities(
         self,
         *,
@@ -176,9 +133,8 @@ class Ledger:
                 if isinstance(entity_id, list)
                 else EntityRow.id == entity_id
             )
-        return self.read(query, parameters or EMPTY_PARAMETERS)
+        return self.read(query, parameters)
 
-    @read_once
     def facts(
         self,
         *,
@@ -202,7 +158,7 @@ class Ledger:
             )
         if date is not None:
             query = query.where(facts_in_month(date))
-        return self.read(query, parameters or EMPTY_PARAMETERS)
+        return self.read(query, parameters)
 
     def get(self, entity_id: UUID) -> Entity:
         return self.events.repository.get(entity_id)

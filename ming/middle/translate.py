@@ -1,12 +1,13 @@
 """One retry owner for declarations. Exhaustion alone becomes an unhandled fact."""
 
 import json
+from collections.abc import Sequence
 from dataclasses import asdict
 from typing import Any, TypeVar, cast
 from uuid import UUID
 
 from pydantic import ValidationError
-from sqlalchemy import Select
+from sqlalchemy import JSON, case, func, type_coerce
 from pydantic_ai import (
     Agent,
     PromptedOutput,
@@ -16,7 +17,7 @@ from pydantic_ai import (
 from pydantic_ai.exceptions import ToolRetryError, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelResponse
 
-from ming.ledger import ENTITY_COLUMNS as E, Item, Ledger
+from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS, FACT_COLUMNS as F, FACT_ROWS, Item, Ledger
 from ming.middle.fiscal import OUTPUT_METRICS, levers, payable_army, settling
 from ming.middle.declaration import (
     Declaration,
@@ -28,12 +29,9 @@ from ming.middle.declaration import (
     PaymentPolicy,
     Unhandled,
 )
-from ming.middle.queries import CATALOGUE, FUNDED_AFFAIRS
-from ming.middle.night import read_night
+from ming.middle.queries import CALENDAR, CATALOGUE, landing_rows
 from ming.middle.opening import REFERENCES
-from ming.middle.appointments import ALIASES, APPOINTMENT_ROLES, cabinet_members, cabinet_records, incumbency_record, office_pairs, reference_key
-from ming.middle.calendar import calendar_row
-from ming.middle.dispatch import landing_sources
+from ming.middle.appointments import ALIASES, APPOINTMENT_ROLES, cabinet_members, incumbency_record, office_pairs, reference_key
 from ming.middle.rules import Names, check_rules, fail, name_expected
 from ming.middle.records import TranslationMaterials, read_records
 from ming.middle.invoke import ModelSource, build_agent, invoke
@@ -61,13 +59,9 @@ text 保留圣旨定稿全文，不改写、不摘要。origin、people、endors
 """
 
 
-def catalogue(
-    ledger: Ledger, query: Select[Any] = CATALOGUE,
-) -> dict[str, dict[str, list[str]]]:
+def catalogue(records: Sequence[Item]) -> dict[str, dict[str, list[str]]]:
     result: dict[str, dict[str, list[str]]] = {}
-    for row in ledger.read(query.with_only_columns(
-        E.kind, E.key, ALIASES.label("aliases"),
-    )):
+    for row in records:
         result.setdefault(row["kind"], {})[row["key"]] = row["aliases"]
     return result
 
@@ -80,13 +74,23 @@ CATALOGUES = {"historical_event", "fiscal", "account", "office", "territory", "i
 def check(ledger: Ledger, out: Declaration, source: UUID) -> None:
     if not (out.facts or out.reports or out.decree_events or isinstance(out, NightDeclaration) and out.decrees):
         return
-    names = catalogue(ledger)
+    appointment_kinds = ("office", "incumbency") if any(f.entity_type == "incumbency" for f in out.facts) else ()
+    records = ledger.read(CATALOGUE.with_only_columns(
+        E.kind, E.key, ALIASES, E.data["external"].as_boolean().label("external"),
+        type_coerce(case((E.kind.in_(appointment_kinds), func.json_object(
+            "multiple", E.data["multiple"].as_boolean(), "department", E.data["department"].as_string(),
+            "office", E.data["office"].as_string(), "territory", E.data["territory"].as_string(),
+            "holders", E.data["holders"], "acting", E.data["acting"],
+        )), else_="{}"), JSON).label("data"),
+    ))
+    names = catalogue(records)
     fields = FIELDS_BY_KIND
-    cabinet = cabinet_records(ledger) if any(f.entity_type == "incumbency" for f in out.facts) else {}
+    appointments = {(row["kind"], row["key"]): row for row in records
+                    if row["kind"] in {"office", "territory", "incumbency"}} if appointment_kinds else {}
     for i, fact in enumerate(out.facts):
         path = f"facts[{i}]"
         if fact.entity_type != "incumbency":
-            fact.entity = reference_key(ledger, fact.entity_type, fact.entity)
+            fact.entity = reference_key(ledger, fact.entity_type, fact.entity, names)
         known = names.setdefault(fact.entity_type, {})
         if fact.entity_type not in fields:
             fail(
@@ -105,7 +109,7 @@ def check(ledger: Ledger, out: Declaration, source: UUID) -> None:
                 "这类实体不能新建。create 改 false，参照 expected 的输入目录指针或候选核对 entity，重交整份。",
             )
         if fact.entity_type == "incumbency":
-            check_appointment(ledger, fact, path, names, cabinet)
+            check_appointment(ledger, fact, path, names, appointments)
         elif (fact.entity in known) == fact.create:
             fail(
                 path + ".entity",
@@ -118,7 +122,7 @@ def check(ledger: Ledger, out: Declaration, source: UUID) -> None:
             known[fact.entity] = []
         for j, change in enumerate(fact.changes):
             if change.counterpart:
-                change.counterpart.entity = reference_key(ledger, change.counterpart.entity_type, change.counterpart.entity)
+                change.counterpart.entity = reference_key(ledger, change.counterpart.entity_type, change.counterpart.entity, names)
             if change.field not in fields[fact.entity_type]:
                 fail(
                     f"{path}.changes[{j}].field",
@@ -144,19 +148,23 @@ def check_decrees(
         out.decree_events or any(f.decree is not None or f.discovered for f in out.facts)
     ):
         return
-    decrees = out.decrees if isinstance(out, NightDeclaration) else landing_sources(ledger, calendar_row(ledger)["data"])
+    count = len(out.decrees) if isinstance(out, NightDeclaration) else ledger.read(
+        landing_rows(CALENDAR).with_only_columns(func.count().label("count"), maintain_column_froms=True).order_by(None),
+    )[0]["count"]
     labeled = (("facts", out.facts), ("decree_events", out.decree_events))
     for label, items in labeled:
         for i, item in enumerate(items):
             ref = item.decree
             path = f"{label}[{i}].decree"
-            if (ref is None and (isinstance(item, DecreeEvent) or item.discovered)) or (ref is not None and not 0 <= ref < len(decrees)):
+            if (ref is None and (isinstance(item, DecreeEvent) or item.discovered)) or (ref is not None and not 0 <= ref < count):
                 fail(path, ref, "decrees 的零基下标", names, "使用所属旨意在 decrees 中的下标，重交整份。")
     if isinstance(out, NightDeclaration) and out.decrees:
-        turns = read_night(ledger, source).turns
+        turns = ledger.facts(entity_id=source, kind="turn", query=FACT_ROWS.with_only_columns(
+            F.detail["id"].as_string().label("turn_id"),
+        ))
         for i, decree in enumerate(out.decrees):
             if decree.secret:
-                decree.handler = reference_key(ledger, "person", decree.handler) if decree.handler is not None else None
+                decree.handler = reference_key(ledger, "person", decree.handler, names) if decree.handler is not None else None
                 if decree.handler not in names.get("person", {}):
                     fail(
                         f"decrees[{i}].handler", decree.handler,
@@ -171,17 +179,15 @@ def check_decrees(
                     names,
                     "turn 改成 expected 里的本夜轮次，重交整份。",
                 )
-    if isinstance(out, NightDeclaration):
-        check_endorsements(ledger, out, source, names)
+        check_endorsements(ledger, out, {row["turn_id"] for row in turns}, names)
 
 
 def check_endorsements(
     ledger: Ledger,
     out: NightDeclaration,
-    source: UUID,
+    turn_ids: set[str],
     names: dict[str, dict[str, list[str]]],
 ) -> None:
-    turn_ids = {f["detail"]["id"] for f in ledger.facts(entity_id=source, kind="turn")}
     for i, decree in enumerate(out.decrees):
         for j, endorsement in enumerate(decree.endorsements):
             path = f"decrees[{i}].endorsements[{j}]"
@@ -196,7 +202,7 @@ def check_endorsements(
             allowed: list[str] | dict[str, list[str]] = ["御笔"]
             expected: object = allowed
             if endorsement.form != "御笔手敕":
-                endorsement.endorser = reference_key(ledger, "person", endorsement.endorser)
+                endorsement.endorser = reference_key(ledger, "person", endorsement.endorser, names)
                 allowed = names.get("person", {})
                 expected = name_expected("person", endorsement.endorser, names)
             if endorsement.endorser not in allowed:
@@ -210,7 +216,11 @@ def check_endorsements(
 
 
 def check_funding(ledger: Ledger, out: Declaration, names: Names) -> dict[str, Item]:
-    funding = {r["key"]: r["data"]["monthly_funding"] for r in ledger.read(FUNDED_AFFAIRS)}
+    accounts = {f.entity for f in out.facts if f.entity_type == "account"
+                and any(c.field == "payment_order" for c in f.changes)}
+    funding = {r["key"]: r["funding"] for r in ledger.entities(kind="affair", query=ENTITY_ROWS.with_only_columns(
+        E.key, E.data["monthly_funding"].label("funding"),
+    ).where(E.data["monthly_funding"]["account"].as_string().in_(accounts)))} if accounts else {}
     for i, fact in enumerate(out.facts):
         if fact.entity_type != "affair":
             continue
@@ -235,7 +245,11 @@ def check_fiscal(ledger: Ledger, out: Declaration, names: Names) -> None:
         except ValidationError:
             fail(f"facts[{i}].changes[{j}].value", change.value, schemas[change.field].model_json_schema(), names,
                  f"按 expected 的 schema 修正 {change.field}，重交整份。")
-    config = ledger.entities(kind="fiscal")
+    fields = {(f.entity_type, c.field) for f in out.facts for c in f.changes}
+    config: Sequence[Item] = ledger.entities(kind="fiscal", query=ENTITY_ROWS.with_only_columns(E.key, type_coerce(func.json_object(
+        "budget_role", E.data["budget_role"].as_string(),
+        "direction", E.data["direction"].as_string(), "account", E.data["account"].as_string(),
+    ), JSON).label("data"))) if fields & {("fiscal", "value"), ("fiscal", "payment_policy"), ("account", "payment_order")} else []
     expenses = {
         r["key"]: r["data"]["account"]
         for r in config
@@ -244,15 +258,22 @@ def check_fiscal(ledger: Ledger, out: Declaration, names: Names) -> None:
     funding = check_funding(ledger, out, names)
     # A fiscal lever only on an entity the month accounts read it from.
     targets = {
-        ("fiscal", "value"): levers(config),
+        ("fiscal", "value"): levers(config) if ("fiscal", "value") in fields else [],
         ("fiscal", "payment_policy"): list(expenses),
         ("account", "army_order"): ["国库"],
         ("region", "fiscal_surcharge"): [
-            r["key"]
-            for r in ledger.entities(kind="region")
+            r["key"] for r in ledger.entities(kind="region", query=ENTITY_ROWS.with_only_columns(E.key, E.data))
             if settling(r["data"])
-        ],
+        ] if ("region", "fiscal_surcharge") in fields else [],
     }
+    armies = [
+        r["key"] for r in ledger.entities(kind="army", query=ENTITY_ROWS.with_only_columns(E.key, E.data))
+        if payable_army(r["data"])
+    ] if ("account", "army_order") in fields else []
+    endings: dict[str, list[str]] = {r["key"]: r["labels"] or [] for r in ledger.entities(kind="historical_event", query=ENTITY_ROWS.with_only_columns(
+        E.key, E.data["terminal_reason_labels"].label("labels"),
+    ).where(E.key.in_([f.entity for f in out.facts if f.entity_type == "historical_event"
+                      and any(c.field == "terminal_reason" for c in f.changes)])))} if ("historical_event", "terminal_reason") in fields else {}
     for i, fact in enumerate(out.facts):
         for j, change in enumerate(fact.changes):
             path = f"facts[{i}].changes[{j}]"
@@ -275,16 +296,12 @@ def check_fiscal(ledger: Ledger, out: Declaration, names: Names) -> None:
                         "output_metric 改成 expected 里的计量，重交整份。",
                     )
             if (fact.entity_type, change.field) == ("historical_event", "terminal_reason"):
-                labels = [
-                    label
-                    for row in ledger.entities(kind="historical_event", key=fact.entity)
-                    for label in row["data"].get("terminal_reason_labels", [])
-                ]
-                if change.value not in labels:
+                allowed = endings.get(fact.entity, [])
+                if change.value not in allowed:
                     fail(
                         path + ".value",
                         change.value,
-                        labels,
+                        allowed,
                         names,
                         "terminal_reason 改成 expected 里的结局标签，重交整份。",
                     )
@@ -293,12 +310,7 @@ def check_fiscal(ledger: Ledger, out: Declaration, names: Names) -> None:
                 "army_order",
             }:
                 choices = (
-                    [
-                        r["key"]
-                        for r in ledger.entities(kind="army")
-                        if payable_army(r["data"])
-                    ]
-                    if change.field == "army_order"
+                    armies if change.field == "army_order"
                     else [
                         key
                         for key, account in expenses.items()
@@ -324,12 +336,15 @@ def check_fiscal(ledger: Ledger, out: Declaration, names: Names) -> None:
                     )
 
 
-def check_appointment(ledger: Ledger, fact: Fact, path: str, names: Names, cabinet: dict[tuple[str, str], Item]) -> None:
-    pairs, resolution = office_pairs(ledger, fact.entity)
+def check_appointment(
+    ledger: Ledger, fact: Fact, path: str, names: Names,
+    appointments: dict[tuple[str, str], Item],
+) -> None:
+    pairs, resolution = office_pairs(ledger, fact.entity, records=appointments)
     if resolution["status"] != "resolved":
         fail(path + ".entity", fact.entity, resolution,
              names, "按 expected 核对官名与属地；用 read_records 查询，须带属地时写候选属地全名，重交整份。")
-    office = ledger.entities(kind="office", key=pairs[0][0])[0]
+    office = appointments["office", pairs[0][0]]
     fact.entity = incumbency_record(pairs[0], [])[0]
     for j, change in enumerate(fact.changes):
         if change.field not in APPOINTMENT_ROLES:
@@ -338,7 +353,7 @@ def check_appointment(ledger: Ledger, fact: Fact, path: str, names: Names, cabin
         value: Any = change.value
         if not isinstance(value, list) or not all(isinstance(p, str) for p in cast(list[Any], value)):
             fail(field, change.value, {"type": "array", "items": {"type": "string"}}, names, "holders 写完整人名名单，重交整份。")
-        holders = [reference_key(ledger, "person", person) for person in cast(list[str], value)]
+        holders = [reference_key(ledger, "person", person, names) for person in cast(list[str], value)]
         change.value = holders
         if not office["data"]["multiple"] and len(holders) > 1:
             fail(field, holders, {"maxItems": 1}, names, "一员只能任一人，重交整份。")
@@ -346,14 +361,14 @@ def check_appointment(ledger: Ledger, fact: Fact, path: str, names: Names, cabin
             if person not in names.get("person", {}):
                 fail(f"{field}[{k}]", person, name_expected("person", person, names), names, "在任者用 expected 指向的输入人物目录中的正名，重交整份。")
         if office["key"] == "内阁首辅":
-            eligible = sorted(cabinet_members(cabinet))
+            eligible = sorted(cabinet_members(appointments))
             for k, person in enumerate(holders):
                 if person not in eligible:
                     fail(f"{field}[{k}]", person, eligible, names, "首辅须为在任阁臣；可在同份声明中先任大学士，再任首辅。重交整份。")
-        appointment = cabinet.setdefault(("incumbency", fact.entity), {
+        appointment = appointments.setdefault(("incumbency", fact.entity), {
             "kind": "incumbency", "data": incumbency_record(pairs[0], [])[1],
         })
-        cabinet[("incumbency", fact.entity)] = {
+        appointments[("incumbency", fact.entity)] = {
             **appointment, "data": {**appointment["data"], change.field: holders},
         }
 
@@ -364,7 +379,7 @@ def check_references(ledger: Ledger, out: Declaration, names: Names) -> None:
         for j, change in enumerate(fact.changes):
             kind = REFERENCES.get((fact.entity_type, change.field))
             if kind is not None and (change.field == "location" or change.value != ""):
-                change.value = reference_key(ledger, kind, change.value) if isinstance(change.value, str) else change.value
+                change.value = reference_key(ledger, kind, change.value, names) if isinstance(change.value, str) else change.value
                 known = isinstance(change.value, str) and (
                     change.value in names.get(kind, {})
                 )
@@ -379,7 +394,7 @@ def check_references(ledger: Ledger, out: Declaration, names: Names) -> None:
             if (fact.entity_type, change.field) == ("decree", "people"):
                 people.append((f"facts[{i}].changes[{j}].value", change.value))
     for i, report in enumerate(out.reports):
-        report.entity = reference_key(ledger, report.entity_type, report.entity)
+        report.entity = reference_key(ledger, report.entity_type, report.entity, names)
         if report.entity not in names.get(report.entity_type, {}):
             fail(
                 f"reports[{i}].entity",
@@ -401,7 +416,7 @@ def check_references(ledger: Ledger, out: Declaration, names: Names) -> None:
             )
         members = cast(list[Any], value)
         for i, person in enumerate(members):
-            members[i] = person = reference_key(ledger, "person", person) if isinstance(person, str) else person
+            members[i] = person = reference_key(ledger, "person", person, names) if isinstance(person, str) else person
             if not isinstance(person, str) or person not in names.get("person", {}):
                 fail(f"{path}[{i}]", person, name_expected("person", str(person), names), names,
                      "people 里的名字用 expected 指向的输入人物目录中的正名，重交整份。确无此人不得换成另一人。")

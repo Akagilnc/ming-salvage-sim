@@ -2,6 +2,8 @@
 
 import json
 import shutil
+import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -11,6 +13,7 @@ from starlette.testclient import TestClient
 from ming.__main__ import main
 from ming.middle.court import Court
 from ming.web import create_app
+from tests.test_read_budget import measure_reads
 
 CONTENT = Path(__file__).parents[1] / "content"
 
@@ -129,7 +132,7 @@ def test_new_game_imports_complete_world_records_and_separates_identities(
     court = Court(path, TestModel())
     assert court.facts("audit") == ()
     assert court.entities("audit", replay=True) == court.entities("audit")
-    assert court.night(court.open_night()).closed is False
+    assert court.night(court.open_night()[0]).closed is False
     court.close()
 
 
@@ -141,6 +144,8 @@ def test_cli_new_games_never_overwrite_and_missing_game_is_not_created(
     first = json.loads(capsys.readouterr().out)
     main(["read", "--db", first["db"], "--identity", "audit"])
     saved = json.loads(capsys.readouterr().out)
+    main(["read", "--db", first["db"], "--identity", "audit", "--replay"])
+    assert json.loads(capsys.readouterr().out) == saved
     main(args)
     second = json.loads(capsys.readouterr().out)
     assert first["db"] != second["db"]
@@ -154,8 +159,39 @@ def test_cli_new_games_never_overwrite_and_missing_game_is_not_created(
     )
     month = json.loads(capsys.readouterr().out)
     assert month["date"]["month"] == 11
-    main(["read", "--db", first["db"], "--identity", "audit", "--replay"])
-    replay = json.loads(capsys.readouterr().out)
+    main(["read", "--db", first["db"], "--identity", "audit"])
+    live = json.loads(capsys.readouterr().out)
+    for _ in range(2):
+        with measure_reads() as reads:
+            main(["read", "--db", first["db"], "--identity", "audit", "--replay"])
+        replay = json.loads(capsys.readouterr().out)
+        assert replay == live
+        assert reads["entity_writes"] == len(live["entities"])
+    for damage in ("missing", "extra"):
+        corrupted = tmp_path / f"{damage}.sqlite"
+        shutil.copyfile(first["db"], corrupted)
+        with closing(sqlite3.connect(corrupted)) as connection, connection:
+            connection.execute({
+                "missing": "DELETE FROM facts WHERE position = (SELECT min(position) FROM facts)",
+                "extra": "INSERT INTO facts SELECT (SELECT max(position) + 1 FROM facts), "
+                         "entity_id, kind, date, emperor_words, detail FROM facts LIMIT 1",
+            }[damage])
+            connection.execute({
+                "missing": "DELETE FROM entities WHERE rowid = (SELECT min(rowid) FROM entities)",
+                "extra": "INSERT INTO entities SELECT lower(hex(randomblob(16))), "
+                         "kind, key, source, data FROM entities LIMIT 1",
+            }[damage])
+            before = {table: connection.execute(f"SELECT * FROM {table} ORDER BY 1").fetchall()
+                      for table in ("ledger_events", "entities", "facts")}
+        main(["read", "--db", str(corrupted), "--identity", "audit"])
+        damaged = json.loads(capsys.readouterr().out)
+        assert damaged["entities"] != live["entities"]
+        assert damaged["facts"] != live["facts"]
+        main(["read", "--db", str(corrupted), "--identity", "audit", "--replay"])
+        assert json.loads(capsys.readouterr().out) == {**live, "db": str(corrupted)}
+        with closing(sqlite3.connect(corrupted)) as connection:
+            for table, rows in before.items():
+                assert connection.execute(f"SELECT * FROM {table} ORDER BY 1").fetchall() == rows
     assert (
         next(e["data"]["month"] for e in replay["entities"] if e["kind"] == "calendar")
         == 11
@@ -244,5 +280,5 @@ def test_bad_opening_data_leaves_no_partial_world(
     assert list(tmp_path.glob("*.sqlite")) == [template]
     court = Court.new_game(tmp_path / "games", TestModel(), template)
     assert court.calendar().data["month"] == 10
-    assert court.night(court.open_night()).closed is False
+    assert court.night(court.open_night()[0]).closed is False
     court.close()

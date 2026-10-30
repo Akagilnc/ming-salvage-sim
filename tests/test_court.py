@@ -147,21 +147,33 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
             assert returned["户部尚书"]["status"] == "occupied"
             assert returned["户部尚书"]["appointments"][0]["acting"] == ["毕自严"]
             return
-        case = (
-            json.loads((RECORDED / "cabinet_wei.json").read_text())["cases"]
-            | json.loads((RECORDED / "border_appointments.json").read_text())["cases"]
-        )
-        for name, expected in (("chief_swap", ["施凤来"]), ("chief_exit", []), ("chief_join", ["崔呈秀"]), ("chief_invalid", ["崔呈秀"]), ("chief_vacancy", []), ("wei", []), ("wei_replace", [])):
+        # Income is a one-month contract, independent of the appointment matrix.
+        ledger = audit(game_db)
+        for name, amount in (("节慎库", 3), ("常盈库", 5)):
+            assert [f["detail"]["amount"] for f in ledger["facts"] if f["kind"] == "monthly_income" and f["detail"]["account"] == name] == [amount]
+            assert next(e["data"]["taels"] for e in ledger["entities"] if e["kind"] == "account" and e["key"] == name) == {"节慎库": 600000, "常盈库": 1200000}[name] + amount * 10000
+        case = json.loads((RECORDED / "cabinet_wei.json").read_text())["cases"]
+        # Month boundaries exercise new chief, seal-holder alone, failed landing,
+        # and neither holder. Joining the cabinet is a local prerequisite only.
+        for name, expected, month in (("chief_swap", ["施凤来"], 12), ("chief_exit", [], 1), ("chief_join", ["崔呈秀"], 1), ("chief_invalid", ["崔呈秀"], 2), ("chief_vacancy", [], 3)):
             received = []
-            steps["Declaration"] = replaying([json.dumps(case[name], ensure_ascii=False)] * 2, received)
             urgent = []
             steps["urgent"] = replaying([(RECORDED / "sources_empty.txt").read_text()], urgent)
-            client.post("/actions", json={"action": "month"}).raise_for_status()
-            assert client.get("/state").json()["game"]["failure"] is None
+            if name == "chief_join":
+                steps["NightDeclaration"] = replaying([json.dumps({"decrees": [], **case[name]}, ensure_ascii=False)], received)
+                client.post("/actions", json={"action": "open"}).raise_for_status()
+                client.post("/actions", json={"action": "dismiss"}).raise_for_status()
+                client.portal.call(client.app.state.web.game.drain)
+                assert client.get("/state").json()["game"]["night"]["result"] == "translated"
+            else:
+                steps["Declaration"] = replaying([json.dumps(case[name], ensure_ascii=False)] * 2, received)
+                client.post("/actions", json={"action": "month"}).raise_for_status()
+                assert (not urgent) == (name == "chief_vacancy")
+            state = client.get("/state").json()["game"]
+            assert (state["failure"], state["date"]["month"]) == (None, month)
             ledger = audit(game_db)
             held = {(e["data"]["office"], e["data"]["territory"]): e["data"]["holders"] for e in ledger["entities"] if e["kind"] == "incumbency"}
             assert held[("内阁首辅", "")] == expected
-            assert (not urgent) == (name in {"chief_vacancy", "wei", "wei_replace"})
             if urgent:
                 assert {p["key"] for p in json.loads(urgent[0].parts[0].content)["speakers"]} == {*expected, "王体乾"}
             if name == "chief_swap":
@@ -175,8 +187,18 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
                 assert held[("兵部尚书", "")] == ["崔呈秀"]
             elif name == "chief_invalid":
                 assert json.loads(next(p.content for m in received for p in m.parts if p.part_kind == "retry-prompt"))["field"] == "facts[0].changes[0].value[0]"
-                assert len([f for f in ledger["facts"] if f["kind"] == "unhandled"]) == 1
-            assert len([f for f in ledger["facts"] if f["kind"] == "unhandled"]) == int(name in {"chief_invalid", "chief_vacancy", "wei", "wei_replace"})
+            assert len([f for f in ledger["facts"] if f["kind"] == "unhandled"]) == int(name in {"chief_invalid", "chief_vacancy"})
+        # Border appointments and replacement have ordering, but no month clock.
+        case = json.loads((RECORDED / "border_appointments.json").read_text())["cases"]
+        for name in ("wei", "wei_replace"):
+            steps["NightDeclaration"] = replaying([json.dumps({"decrees": [], **case[name]}, ensure_ascii=False)])
+            client.post("/actions", json={"action": "open"}).raise_for_status()
+            client.post("/actions", json={"action": "dismiss"}).raise_for_status()
+            client.portal.call(client.app.state.web.game.drain)
+            state = client.get("/state").json()["game"]
+            assert (state["failure"], state["night"]["result"], state["date"]["month"]) == (None, "translated", 3)
+        ledger = audit(game_db)
+        held = {(e["data"]["office"], e["data"]["territory"]): e["data"]["holders"] for e in ledger["entities"] if e["kind"] == "incumbency"}
         assert held[("正千户", "北直隶兴和千户所")] == ["杨嗣昌"]
         assert held[("卫指挥使", "辽东宁远卫")] == ["练国事"]
         assert held[("卫指挥使", "北直隶延庆卫")] == ["郭允厚"]
@@ -193,9 +215,6 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
             (people["卢象升"]["id"], "卫指挥使", "山西天成卫"),
         }
         assert {e["key"]: e["data"] for e in ledger["entities"] if e["kind"] == "person"} == {k: e["data"] for k, e in before.items()}
-        for name, amount in (("节慎库", 3), ("常盈库", 5)):
-            assert all(f["detail"]["amount"] == amount for f in ledger["facts"] if f["kind"] == "monthly_income" and f["detail"]["account"] == name)
-            assert next(e["data"]["taels"] for e in ledger["entities"] if e["kind"] == "account" and e["key"] == name) == {"节慎库": 600000, "常盈库": 1200000}[name] + amount * 10000 * 8
 
 
 @pytest.mark.parametrize("case,game_db", [
@@ -245,40 +264,44 @@ def test_recorded_r2_reply_lands(game_db, steps, audit, case):
         reply["facts"] += ([{**reply["facts"][0], "changes": [{"field": "acting", "value": []}]}]
                            if case == "acting_withdraw" else [])
         reply = json.dumps(reply, ensure_ascii=False)
-    steps["Declaration"] = replaying(
+    # Keep month-specific sources, full world translation and fiscal settlement.
+    # The remaining field/appointment matrix needs only the real night landing.
+    monthly = case in {"provincial_county", "bad_territory_retry", "scale_recorded", "fiscal_recorded"}
+    reply = reply if monthly else json.dumps({"decrees": [], **json.loads(reply)}, ensure_ascii=False)
+    steps["Declaration" if monthly else "NightDeclaration"] = replaying(
         ModelMessagesTypeAdapter.validate_python(json.loads((RECORDED / "declarations_1972.json").read_text())["cases"][case])
         if case == "bad_territory_retry" else
         [reply.replace('["毕自严"]', '["毕自严", "徐光启"]'), reply] if case == "acting_invalid" else [reply, reply], received,
     )
     with TestClient(create_app(game_db.parent)) as client:
         client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
-        client.post("/actions", json={"action": "month"}).raise_for_status()
+        for action in (("month",) if monthly else ("open", "dismiss")):
+            client.post("/actions", json={"action": action}).raise_for_status()
+        client.portal.call(client.app.state.web.game.drain)
         state = client.get("/state").json()["game"]
         assert state["failure"] is None
-        assert state["date"]["month"] == 11
-        material = json.loads(received[0].parts[0].content.split("\n", 1)[1])
-        assert "entities" not in material
+        assert state["date"]["month"] == (11 if monthly else 10)
+        assert "entities" not in json.loads(received[0].parts[0].content.split("\n", 1)[1])
         ledger = audit(game_db)
         assert bool([f for f in ledger["facts"] if f["kind"] == "unhandled"]) == (case in {"unqualified", "capital_territory", "scale_invalid", "salary_invalid", "maintenance_invalid"})
         rows = {(e["kind"], e["key"]): e for e in ledger["entities"]}
-        if case in numeric_cases:
-            for kind, name, field, _, expected in numeric_cases[case]:
-                assert rows[(kind, name)]["data"][field] == expected
-            if case == "fiscal_recorded":
-                assert [f["detail"]["actual"]["value"] for f in ledger["facts"]
-                        if f["entity_id"] == rows[("fiscal", "工程_rate")]["id"] and f["kind"] == "changed"] == [3, 3.5]
-                payment = next(f["detail"] for f in ledger["facts"]
-                               if f["kind"] == "monthly_payment" and f["detail"]["recipient"] == "工程_base")
-                assert payment["due"] == pytest.approx(8 * 3.5 / 100)
-                assert payment["paid"] == payment["due"]
-                donations = [f["detail"] for f in ledger["facts"]
-                             if f["kind"] == "changed" and "taels" in f["detail"]["actual"]]
-                assert [(f["nominal"]["taels"], f["actual"]["taels"], f.get("counterpart"))
-                        for f in donations] == [(123456, 123456, None)]
-                assert not [f for f in ledger["facts"] if f["kind"] == "received"]
-            if case.endswith("invalid"):
-                assert json.loads(next(p.content for m in received for p in m.parts if p.part_kind == "retry-prompt"))["field"] == "facts[0].changes[0].value"
-                assert not [f for f in ledger["facts"] if f["kind"] == "changed"]
+        for kind, name, field, _, expected in numeric_cases.get(case, ()):
+            assert rows[(kind, name)]["data"][field] == expected
+        if case == "fiscal_recorded":
+            assert [f["detail"]["actual"]["value"] for f in ledger["facts"]
+                    if f["entity_id"] == rows[("fiscal", "工程_rate")]["id"] and f["kind"] == "changed"] == [3, 3.5]
+            payment = next(f["detail"] for f in ledger["facts"]
+                           if f["kind"] == "monthly_payment" and f["detail"]["recipient"] == "工程_base")
+            assert payment["due"] == pytest.approx(8 * 3.5 / 100)
+            assert payment["paid"] == payment["due"]
+            donations = [f["detail"] for f in ledger["facts"]
+                         if f["kind"] == "changed" and "taels" in f["detail"]["actual"]]
+            assert [(f["nominal"]["taels"], f["actual"]["taels"], f.get("counterpart"))
+                    for f in donations] == [(123456, 123456, None)]
+            assert not [f for f in ledger["facts"] if f["kind"] == "received"]
+        elif case in numeric_cases and case.endswith("invalid"):
+            assert json.loads(next(p.content for m in received for p in m.parts if p.part_kind == "retry-prompt"))["field"] == "facts[0].changes[0].value"
+            assert not [f for f in ledger["facts"] if f["kind"] == "changed"]
         elif case.startswith("acting"):
             appointment = next(e["data"] for e in ledger["entities"] if e["kind"] == "incumbency" and e["data"]["office"] == "巡抚" and e["data"]["territory"] == "陕西")
             assert appointment["holders"] == (["洪承畴"] if case == "acting_coexist" else [])
@@ -323,7 +346,7 @@ def test_recorded_r2_reply_lands(game_db, steps, audit, case):
             assert set(json.loads(next(p.content for m in received for p in m.parts if p.part_kind == "retry-prompt"))["expected"]["territory"]) == {
                 "保定府新城县", "济南府新城县", "建昌府新城县", "杭州府新城县",
             }
-        else:
+        elif case == "purpose_region":
             assert [(f["detail"]["actual"], f["detail"]["purpose"]) for f in ledger["facts"]
                     if f["entity_id"] == rows[("region", "陕西")]["id"] and f["kind"] == "received"] == [(10000, "专项")]
             assert "arrears" not in rows[("region", "陕西")]["data"]
@@ -336,10 +359,12 @@ def test_recorded_r2_reply_lands(game_db, steps, audit, case):
 def test_translation_queries_preserve_two_table_permissions(game_db, steps, stage):
     recording = json.loads((RECORDED / "declarations_1972.json").read_text())["cases"]
     received = []
+    offices = ["陕西巡抚", "巡抚", "新城知县", "西安知府", "内阁大学士", "陕西巡府", "不存在的官职", "内阁大学士"]
     steps["NightDeclaration"] = replaying([(RECORDED / "night_empty.txt").read_text()])
     steps["NightDeclaration" if stage == "night" else "Declaration"] = replaying(
-        [ModelResponse(parts=[ToolCallPart("read_records", {"kind": "incumbency", "key": name}, tool_call_id=name)
-                              for name in ("陕西巡抚", "巡抚", "新城知县", "西安知府", "内阁大学士", "陕西巡府", "不存在的官职")]),
+        [ModelResponse(parts=[ToolCallPart("read_records", {"kind": "incumbency", "key": offices}, tool_call_id="batch"),
+                              *(ToolCallPart("read_records", {"kind": "incumbency", "key": name}, tool_call_id=name)
+                                for name in dict.fromkeys(offices))]),
          *ModelMessagesTypeAdapter.validate_python(recording["night_catalogue_queries" if stage == "night" else "catalogue_queries"])], received,
     )
     with TestClient(create_app(game_db.parent)) as client:
@@ -351,6 +376,13 @@ def test_translation_queries_preserve_two_table_permissions(game_db, steps, stag
         assert client.get("/state").json()["game"]["failure"] is None
     queries = {p.tool_call_id: p.args_as_dict() for m in received for p in m.parts if isinstance(p, ToolCallPart)}
     results = {p.tool_call_id: p.model_response_object() for m in received for p in m.parts if isinstance(p, ToolReturnPart)}
+    batches = [[(
+        {field: result.get(field) for field in ("status", "appointments", "territories", "pairs", "names_and_aliases")},
+        [e["id"] for e in result.get("entities", [])],
+        [(f["entity_id"], f["kind"]) for f in result.get("facts", [])],
+    ) for result in batch] for batch in (results.pop("batch")["offices"], [results[name] for name in offices])]
+    assert batches[0] == batches[1]
+    queries.pop("batch")
     for call_id, query in queries.items():
         result = results[call_id]
         if query.get("kind") == "incumbency":

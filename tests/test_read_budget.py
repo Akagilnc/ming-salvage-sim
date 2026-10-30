@@ -9,6 +9,7 @@ measurement; the measured month request resumes an already open month.
 """
 
 import json
+from contextlib import contextmanager
 from pathlib import Path
 from shutil import copyfile
 
@@ -19,6 +20,33 @@ from starlette.testclient import TestClient
 from ming.web import create_app
 
 RECORDED = Path(__file__).parent / "recorded"
+
+
+@contextmanager
+def measure_reads():
+    """Observe SQL without consuming or replacing its real cursor."""
+    result = {"budget": [0, 0], "entity_writes": 0}
+
+    def count_reads(**query):
+        compiled = query["context"].compiled
+        if compiled is None:
+            return
+        if compiled.statement.is_insert and compiled.statement.table.name == "entities":
+            result["entity_writes"] += len(query["parameters"]) if query["executemany"] else 1
+        if compiled.statement.is_select:
+            probe = query["conn"].connection.cursor()
+            try:
+                probe.execute(query["statement"], query["parameters"])
+                result["budget"][0] += 1
+                result["budget"][1] += len(probe.fetchall())
+            finally:
+                probe.close()
+
+    event.listen(Engine, "after_cursor_execute", count_reads, named=True)
+    try:
+        yield result
+    finally:
+        event.remove(Engine, "after_cursor_execute", count_reads)
 
 
 @pytest.mark.parametrize(
@@ -49,42 +77,20 @@ def test_http_read_work_ignores_unrelated_history(
                 petition = client.get("/state").json()["game"]["petitions"][0]
                 payload.update(petition=petition["id"], option=0)
 
-            budget = [0, 0]
-
-            def count_reads(**query):
-                statement, parameters = query["statement"], query["parameters"]
-                if statement.lstrip().upper().startswith("SELECT"):
-                    # Count returned rows without consuming or replacing the real
-                    # cursor; the probe bypasses SQLAlchemy's event listeners.
-                    probe = query["conn"].connection.cursor()
-                    try:
-                        probe.execute(
-                            "SELECT count(*) FROM (" + statement + ")", parameters
-                        )
-                        budget[0] += 1
-                        budget[1] += probe.fetchone()[0]
-                    finally:
-                        probe.close()
-
-            event.listen(Engine, "after_cursor_execute", count_reads, named=True)
-            try:
+            with measure_reads() as reads:
                 response = (
                     client.get("/state")
                     if action == "state"
                     else client.post("/actions", json=payload)
                 )
                 client.portal.call(app.state.web.game.drain)
-            finally:
-                event.remove(Engine, "after_cursor_execute", count_reads)
             assert response.status_code == (200 if action == "state" else 204)
             assert client.get("/state").json()["game"]["failure"] is None
             if action == "choose":
-                # Other questions remain; no world read for final gazette work
-                # is falsely classified as unrelated to this measured request.
                 assert (
                     len(client.get("/state").json()["game"]["petitions"])
                     == len(json.loads(petitions)["petitions"]) - 1
                 )
-            budgets.append(tuple(budget))
+            budgets.append(tuple(reads["budget"]))
 
     assert budgets[0] == budgets[1] == budgets[2]

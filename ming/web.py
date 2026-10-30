@@ -161,13 +161,12 @@ class Web:
                 court = Court(self.directory / save, model)
             game = Game(court, model, month_model=model.month_model)
             game.emit = partial(self.emit, source=game)
-            court.observe(partial(self.emit, source=game))
         self.menu()
         self.game = game
         self.navigation += 1
-        self.emit(saves=saves)
         if opening:
             game.resume()
+        self.emit(saves=saves)
         return {"save": game.court.db_path.name, "navigation": self.navigation}
 
     async def state(self, request: Request) -> JSONResponse:
@@ -176,7 +175,7 @@ class Web:
     async def records(self, request: Request) -> JSONResponse:
         if self.game is None:
             raise HTTPException(409, "请先打开一局")
-        return JSONResponse(await self.game.court.read_records("emperor"))
+        return JSONResponse(self.game.court.read_records("emperor"))
 
     async def stream(self, request: Request) -> EventSourceResponse:
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
@@ -207,8 +206,9 @@ class Web:
         if action.action in {"new", "load", "continue"}:
             return JSONResponse(await self.select(action.action, action.save))
         if action.action == "menu":
-            self.menu()
-            self.emit()
+            if self.game is not None:
+                self.menu()
+                self.emit()
             return Response(status_code=204)
         if action.action == "settings":
             return self.configure(action)

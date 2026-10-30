@@ -4,8 +4,7 @@ from copy import deepcopy
 from collections.abc import Sequence
 from typing import cast
 
-from ming.ledger import Entity, Item, Ledger
-from ming.middle.calendar import calendar_row
+from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS, FACT_COLUMNS as F, FACT_ROWS, Entity, Item, Ledger
 from ming.middle.declaration import EntityRef, FiscalEnd, MonthlyFunding, PaymentPolicy
 from ming.middle.queries import FUNDED_AFFAIRS
 from ming.middle.fields import FIELDS
@@ -71,6 +70,11 @@ def current_paid(data: Item, date: Item) -> float:
     return payment.get("amount", 0) if payment.get("date") == date else 0
 
 
+def expense_rate(key: str) -> str:
+    """The rate paired with a fixed fiscal base, for reading and calculation."""
+    return key.removesuffix("_base") + "_rate"
+
+
 def obligation(pair: tuple[str, str], existing: dict[tuple[str, str], Item]) -> float:
     """The same monthly obligation caps appropriations and monthly payment."""
     data = existing[pair]["data"]
@@ -91,15 +95,14 @@ def obligation(pair: tuple[str, str], existing: dict[tuple[str, str], Item]) -> 
             if kind == "building"
         )
     else:
-        rate = existing[("fiscal", pair[1].removesuffix("_base") + "_rate")]["data"][
+        rate = existing[("fiscal", expense_rate(pair[1]))]["data"][
             "value"
         ]
         base = data["value"] * rate / 100
     return base * active_policy(data, existing[("calendar", "world")]["data"]).factor
 
 
-def due_levies(ledger: Ledger) -> list[Item]:
-    date = calendar_row(ledger)["data"]
+def due_levies(ledger: Ledger, date: Item) -> list[Item]:
     events = {row["data"]["id"]: row for row in ledger.entities(kind="historical_event")}
     return [
         {"entity": row["key"], "data": row["data"]}
@@ -121,7 +124,7 @@ class Accounts:
         self.ledger = ledger
         self.rows = [
             ledger.get(row["id"])
-            for row in [*ledger.read(FUNDED_AFFAIRS), *ledger.entities(
+            for row in [*ledger.entities(query=FUNDED_AFFAIRS.with_only_columns(E.id)), *ledger.entities(
                 kind=(
                     "calendar",
                     "account",
@@ -131,7 +134,7 @@ class Accounts:
                     "building",
                     "world",
                     "historical_event",
-                )
+                ), query=ENTITY_ROWS.with_only_columns(E.id),
             )]
         ]
         self.calendar = next(e for e in self.rows if e.kind == "calendar")
@@ -334,7 +337,8 @@ class Accounts:
 
     def run(self) -> None:
         if self.ledger.facts(
-            entity_id=self.calendar.id, kind="month_accounts", date=self.date
+            entity_id=self.calendar.id, kind="month_accounts", date=self.date,
+            query=FACT_ROWS.with_only_columns(F.position).order_by(None).limit(1),
         ):
             return
         self.taxes()

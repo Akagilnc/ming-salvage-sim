@@ -31,7 +31,9 @@ class LedgerReplay(RuleBasedStateMachine):
     @rule(entity_id=entities, value=values)
     def record_change(self, entity_id, value):
         entity = self.ledger.get(entity_id)
+        previous = dict(entity.data)
         entity.record("changed", "", {"value": value}, {"value": value})
+        assert self.ledger.get(entity_id).data == previous
         self.ledger.commit([entity])
 
     @rule(entity_id=entities, value=values)
@@ -50,7 +52,7 @@ class LedgerReplay(RuleBasedStateMachine):
     @rule(entity_id=entities)
     def rollback_and_retry(self, entity_id):
         value = self.ledger.get(entity_id).data["value"] + 1
-        # Fail at the database commit boundary, after the real projection ran.
+        # Fail at the database commit boundary, after event and read-row writes.
         interrupt = Mock(side_effect=RuntimeError("injected pre-commit failure"))
         event.listen(Session, "before_commit", interrupt)
         try:
@@ -58,6 +60,13 @@ class LedgerReplay(RuleBasedStateMachine):
                 self.record_change(entity_id, value)
         finally:
             event.remove(Session, "before_commit", interrupt)
+        reopened = Ledger(Path(self.directory.name) / "ledger.db")
+        try:
+            assert reopened.entities() == self.ledger.entities()
+            assert reopened.facts() == self.ledger.facts()
+            assert reopened.get(entity_id).data["value"] == value - 1
+        finally:
+            reopened.close()
         self.rebuild_matches_live()
         self.record_change(entity_id, value)
 

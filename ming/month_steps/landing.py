@@ -8,6 +8,7 @@ from ming.middle.invoke import ModelSource
 from ming.middle.declaration import Declaration, Unhandled
 from ming.middle.opening import CONTENT
 from ming.middle.month_work import COST_RULES
+from ming.middle.view import EntityView
 
 
 class Landing:
@@ -19,18 +20,17 @@ class Landing:
             model=model,
         )
 
-    async def run(self) -> None:
-        calendar = self.court.calendar()
-        if self.court.products(calendar.id, kind=("landed", "unhandled")):
+    async def run(self, calendar: EntityView) -> None:
+        if self.court.has_product(calendar.id, ("landed", "unhandled"), date=calendar.data):
             return
-        declarations = self.court.products(calendar.id, kind="declaration")
+        declarations = self.court.products(calendar.id, kind="declaration", date=calendar.data)
         if not declarations:
             result = await self.court.translate(
                 self.agent,
                 json.dumps({
                     "date": calendar.data, "scope": "month",
-                    "month_final": self.court.products(calendar.id, kind="month_final")[0].detail["output"],
-                    "decrees": self.court.landing_materials(),
+                    "month_final": self.court.products(calendar.id, kind="month_final", date=calendar.data)[0].detail["output"],
+                    "decrees": self.court.landing_materials(date=calendar.data),
                 }, ensure_ascii=False),
                 calendar.id,
             )

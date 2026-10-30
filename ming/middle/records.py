@@ -47,14 +47,13 @@ async def read_records(
     if kind is None and not key and date is None:
         return {"status": "query_required", "message": "须带类、正名或日期之一，目录见输入"}
     month = date.model_dump() if date is not None else None
+    identity = ctx.deps.identity
     if kind in {"office", "incumbency"} and key:
-        results = [ctx.deps.court.office_record(ctx.deps.identity, name, month)
-                   for name in ([key] if isinstance(key, str) else key)]
-        return results[0] if len(results) == 1 else {"offices": results}
+        return ctx.deps.court.office_record(identity, key, month)
     keys = ([key] if isinstance(key, str) else key) or None
-    catalogue = ctx.deps.court.record_catalogue(ctx.deps.identity, month, kind, keys)
+    catalogue = ctx.deps.court.record_catalogue(identity, month, kind, keys)
     selected = [e for e in catalogue if kind is None or e["kind"] == kind]
-    names = ctx.deps.court.catalogue(selected)
+    names = ctx.deps.court.catalogue(selected) if keys else {}
     resolved = {
         value: ([value] if any(value in entries for entries in names.values()) else
                 list(dict.fromkeys(name for entries in names.values() for name, aliases in entries.items()
@@ -63,13 +62,13 @@ async def read_records(
     }
     if (kind is not None and not selected) or any(len(v) != 1 for v in resolved.values()):
         candidates = matching_names(
-            ctx.deps.court.catalogue(ctx.deps.court.record_catalogue(ctx.deps.identity, month, kind)), keys or []
-        )
+            ctx.deps.court.catalogue(ctx.deps.court.record_catalogue(identity, month, kind)), keys
+        ) if keys else {}
         return {
             "status": "not_found", "message": "未找到",
             **({"names_and_aliases": candidates} if candidates else {}),
         }
     if not keys:
         return {"catalogue": [e for e in selected if date is None or e["event_count"]]}
-    result = await ctx.deps.court.read_records(ctx.deps.identity, kind, [v[0] for v in resolved.values()], month)
+    result = ctx.deps.court.read_records(identity, kind, [v[0] for v in resolved.values()], month)
     return result if isinstance(ctx.deps, TranslationMaterials) else character_input(result)
