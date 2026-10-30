@@ -1,14 +1,14 @@
 # Ming_LLM — 项目 CLAUDE.md
 
 ## 📚 工作手册（每回合开始前必查，别凭"我以为"）
-- **[docs/adr/0159-ledger-entities-events-and-landing.md](docs/adr/0159-ledger-entities-events-and-landing.md)** — 重写后的四层架构、技术栈、账本（实体＋事件）、落账与重交。**动任何代码前查。**
+- **[docs/adr/0164-four-layers.md](docs/adr/0164-four-layers.md)** — 四层分工、四条规矩、中间层边界。**[0165](docs/adr/0165-unhandled-definition.md)** 接不住。**[0166](docs/adr/0166-stack-and-code-shapes.md)** 技术栈与合法代码形状。**[0159](docs/adr/0159-ledger-entities-events-and-landing.md)** 账本（实体＋事件）、落账与重交。**动任何代码前查。**
 - **[docs/AUDIENCE_NORTH_STAR.md](docs/AUDIENCE_NORTH_STAR.md)** — 召对体验**北极星案例**（单场·越次召对·杨嗣昌 + 连场·乾清宫一夜）：召对记录全文 + 海报 html + 王承恩递话旁白层 + 召对流程用词。**做 / 评召对时对着它比。**
 - **[M11「北极星·召对效果」总计划/进度 = issue #486](https://github.com/Akagilnc/ming-salvage-sim/issues/486)** 大方向执行顺序 
 
-## 架构（#1943 重写，已 grill 定）
+## 架构（#1943 重写，已 grill 定；真源 ADR 0164、0165、0166，此处只是摘要）
 - **四层，自上而下**：前端 → 使用者（召对、过月）→ 中间层 → 账本。依赖只向下；账本只有一个门＝中间层；使用者之间只经账本交接；前端读走中间层往外的口（身份＝皇帝），写与动作走使用者。代码不判断。
 - **技术栈**：Python；`eventsourcing`（只用 Aggregate＋`@event`）＋ `eventsourcing-sqlalchemy` 落 SQLite（一局一个文件），普通 ORM 表与事件同一事务更新；Pydantic AI `output_type` 声明；ruff（P8 规则、`TID251` 禁正则）、import-linter、pyright，CI 禁 `# noqa`；PyInstaller＋pywebview 打包。
-- 账本、落账、重交、接不住、皇帝视图的全部决定 → **ADR 0159**（真源，此处不复述）。
+- 账本、落账、重交、皇帝视图的全部决定 → **ADR 0159**（真源，此处不复述）；接不住 → **ADR 0165**。
 
 ## 探针设计铁律
 
