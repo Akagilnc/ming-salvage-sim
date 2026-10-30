@@ -70,6 +70,11 @@ def current_paid(data: Item, date: Item) -> float:
     return payment.get("amount", 0) if payment.get("date") == date else 0
 
 
+def expense_rate(key: str) -> str:
+    """The rate paired with a fixed fiscal base, for reading and calculation."""
+    return key.removesuffix("_base") + "_rate"
+
+
 def obligation(pair: tuple[str, str], existing: dict[tuple[str, str], Item]) -> float:
     """The same monthly obligation caps appropriations and monthly payment."""
     data = existing[pair]["data"]
@@ -90,7 +95,7 @@ def obligation(pair: tuple[str, str], existing: dict[tuple[str, str], Item]) -> 
             if kind == "building"
         )
     else:
-        rate = existing[("fiscal", pair[1].removesuffix("_base") + "_rate")]["data"][
+        rate = existing[("fiscal", expense_rate(pair[1]))]["data"][
             "value"
         ]
         base = data["value"] * rate / 100

@@ -7,7 +7,7 @@ from typing import Any, TypeVar, cast
 from uuid import UUID
 
 from pydantic import ValidationError
-from sqlalchemy import case, func
+from sqlalchemy import JSON, case, func, type_coerce
 from pydantic_ai import (
     Agent,
     PromptedOutput,
@@ -17,7 +17,7 @@ from pydantic_ai import (
 from pydantic_ai.exceptions import ToolRetryError, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelResponse
 
-from ming.ledger import ENTITY_COLUMNS as E, FACT_COLUMNS as F, FACT_ROWS, Item, Ledger
+from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS, FACT_COLUMNS as F, FACT_ROWS, Item, Ledger
 from ming.middle.fiscal import OUTPUT_METRICS, levers, payable_army, settling
 from ming.middle.declaration import (
     Declaration,
@@ -77,8 +77,11 @@ def check(ledger: Ledger, out: Declaration, source: UUID) -> None:
     appointment_kinds = ("office", "incumbency") if any(f.entity_type == "incumbency" for f in out.facts) else ()
     records = ledger.read(CATALOGUE.with_only_columns(
         E.kind, E.key, ALIASES, E.data["external"].as_boolean().label("external"),
-        case((E.kind.in_((*appointment_kinds, "fiscal", "affair", "region", "historical_event", "army")), E.data),
-             else_="{}").label("data"),
+        type_coerce(case((E.kind.in_(appointment_kinds), func.json_object(
+            "multiple", E.data["multiple"].as_boolean(), "department", E.data["department"].as_string(),
+            "office", E.data["office"].as_string(), "territory", E.data["territory"].as_string(),
+            "holders", E.data["holders"], "acting", E.data["acting"],
+        )), else_="{}"), JSON).label("data"),
     ))
     names = catalogue(records)
     fields = FIELDS_BY_KIND
@@ -128,7 +131,7 @@ def check(ledger: Ledger, out: Declaration, source: UUID) -> None:
                     names,
                     "field 改成 expected 里的字段名，重交整份。",
                 )
-    check_fiscal(records, out, names)
+    check_fiscal(ledger, out, names)
     check_references(ledger, out, names)
     check_rules(ledger, out, names)
     check_decrees(ledger, out, source, names)
@@ -212,9 +215,12 @@ def check_endorsements(
                 )
 
 
-def check_funding(records: Sequence[Item], out: Declaration, names: Names) -> dict[str, Item]:
-    funding = {r["key"]: r["data"]["monthly_funding"] for r in records
-               if r["kind"] == "affair" and r["data"].get("monthly_funding", {}).get("account") is not None}
+def check_funding(ledger: Ledger, out: Declaration, names: Names) -> dict[str, Item]:
+    accounts = {f.entity for f in out.facts if f.entity_type == "account"
+                and any(c.field == "payment_order" for c in f.changes)}
+    funding = {r["key"]: r["funding"] for r in ledger.entities(kind="affair", query=ENTITY_ROWS.with_only_columns(
+        E.key, E.data["monthly_funding"].label("funding"),
+    ).where(E.data["monthly_funding"]["account"].as_string().in_(accounts)))} if accounts else {}
     for i, fact in enumerate(out.facts):
         if fact.entity_type != "affair":
             continue
@@ -228,7 +234,7 @@ def check_funding(records: Sequence[Item], out: Declaration, names: Names) -> di
     return funding
 
 
-def check_fiscal(records: Sequence[Item], out: Declaration, names: Names) -> None:
+def check_fiscal(ledger: Ledger, out: Declaration, names: Names) -> None:
     schemas = {"payment_policy": PaymentPolicy, "monthly_funding": MonthlyFunding}
     for i, j, change in (
         (i, j, change) for i, fact in enumerate(out.facts)
@@ -239,24 +245,41 @@ def check_fiscal(records: Sequence[Item], out: Declaration, names: Names) -> Non
         except ValidationError:
             fail(f"facts[{i}].changes[{j}].value", change.value, schemas[change.field].model_json_schema(), names,
                  f"按 expected 的 schema 修正 {change.field}，重交整份。")
-    config = [row for row in records if row["kind"] == "fiscal"]
+    fields = {(f.entity_type, c.field) for f in out.facts for c in f.changes}
+    config: Sequence[Item] = ledger.entities(kind="fiscal", query=ENTITY_ROWS.with_only_columns(E.key, type_coerce(func.json_object(
+        "budget_role", E.data["budget_role"].as_string(),
+        "direction", E.data["direction"].as_string(), "account", E.data["account"].as_string(),
+    ), JSON).label("data"))) if fields & {("fiscal", "value"), ("fiscal", "payment_policy"), ("account", "payment_order")} else []
     expenses = {
         r["key"]: r["data"]["account"]
         for r in config
         if r["data"].get("direction") == "expense"
     }
-    funding = check_funding(records, out, names)
+    funding = check_funding(ledger, out, names)
     # A fiscal lever only on an entity the month accounts read it from.
     targets = {
-        ("fiscal", "value"): levers(config),
+        ("fiscal", "value"): levers(config) if ("fiscal", "value") in fields else [],
         ("fiscal", "payment_policy"): list(expenses),
         ("account", "army_order"): ["国库"],
         ("region", "fiscal_surcharge"): [
-            r["key"]
-            for r in records
-            if r["kind"] == "region" and settling(r["data"])
-        ],
+            r["key"] for r in ledger.entities(kind="region", query=ENTITY_ROWS.with_only_columns(
+                E.key, type_coerce(func.json_object("fiscal", func.json(case(
+                    (func.json_type(E.data, "$.fiscal.settle").is_not(None), '{"settle":null}'), else_="{}",
+                ))), JSON).label("data"),
+            )) if settling(r["data"])
+        ] if ("region", "fiscal_surcharge") in fields else [],
     }
+    armies = [
+        r["key"] for r in ledger.entities(kind="army", query=ENTITY_ROWS.with_only_columns(
+            E.key, type_coerce(func.json_patch(func.json_object("owner_power", E.data["owner_power"].as_string()), case(
+                (func.json_type(E.data, "$.salary_rate").is_not(None), '{"salary_rate":0}'), else_="{}",
+            )), JSON).label("data"),
+        )) if payable_army(r["data"])
+    ] if ("account", "army_order") in fields else []
+    endings: dict[str, list[str]] = {r["key"]: r["labels"] or [] for r in ledger.entities(kind="historical_event", query=ENTITY_ROWS.with_only_columns(
+        E.key, E.data["terminal_reason_labels"].label("labels"),
+    ).where(E.key.in_([f.entity for f in out.facts if f.entity_type == "historical_event"
+                      and any(c.field == "terminal_reason" for c in f.changes)])))} if ("historical_event", "terminal_reason") in fields else {}
     for i, fact in enumerate(out.facts):
         for j, change in enumerate(fact.changes):
             path = f"facts[{i}].changes[{j}]"
@@ -279,16 +302,12 @@ def check_fiscal(records: Sequence[Item], out: Declaration, names: Names) -> Non
                         "output_metric 改成 expected 里的计量，重交整份。",
                     )
             if (fact.entity_type, change.field) == ("historical_event", "terminal_reason"):
-                labels = [
-                    label
-                    for row in records if row["kind"] == "historical_event" and row["key"] == fact.entity
-                    for label in row["data"].get("terminal_reason_labels", [])
-                ]
-                if change.value not in labels:
+                allowed = endings.get(fact.entity, [])
+                if change.value not in allowed:
                     fail(
                         path + ".value",
                         change.value,
-                        labels,
+                        allowed,
                         names,
                         "terminal_reason 改成 expected 里的结局标签，重交整份。",
                     )
@@ -297,12 +316,7 @@ def check_fiscal(records: Sequence[Item], out: Declaration, names: Names) -> Non
                 "army_order",
             }:
                 choices = (
-                    [
-                        r["key"]
-                        for r in records
-                        if r["kind"] == "army" and payable_army(r["data"])
-                    ]
-                    if change.field == "army_order"
+                    armies if change.field == "army_order"
                     else [
                         key
                         for key, account in expenses.items()

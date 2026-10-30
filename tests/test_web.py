@@ -183,10 +183,10 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
             "precompute-structure",
             "translation-error",
         }:
-            for name in received:
+            for name in received if path == "decree" else ():
                 text = (RECORDED / f"{name}.txt").read_text()
                 steps[name] = replaying(
-                    lambda messages, text=text, dated_facts=path == "decree" and name == "simulation": (
+                    lambda messages, text=text, dated_facts=name == "simulation": (
                         ModelResponse(parts=[TextPart(text)])
                         if any(
                             isinstance(part, ToolReturnPart)

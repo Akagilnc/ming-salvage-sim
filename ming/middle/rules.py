@@ -54,9 +54,11 @@ def fail(field: str, value: object, expected: object, names: Names, how: str) ->
 
 
 def check_rules(ledger: Ledger, out: Declaration, names: Names) -> None:
-    person_names = {fact.entity for fact in out.facts if fact.entity_type == "person"}
+    person_names = {fact.entity for fact in out.facts if fact.entity_type == "person"
+                    if any(change.field in {"location", "status"} for change in fact.changes)}
     people: dict[str, Entity] = {row["key"]: Entity("person", row["key"], "", dict(row["data"]))
                                for row in ledger.entities(kind="person", query=ENTITY_ROWS.where(E.key.in_(person_names)))} if person_names else {}
+    people.update({name: Entity("person", name, "", {}) for name in person_names - people.keys()})
     distances = journey_distances(ledger, out.facts, {name: person.data for name, person in people.items()})
     date: Item | None = None
     for i, fact in enumerate(out.facts):
@@ -81,20 +83,18 @@ def check_rules(ledger: Ledger, out: Declaration, names: Names) -> None:
         check_money(fact, names, i)
         if journey is not None:
             person, route = journey
-            if date is None:
+            if route is not None and date is None:
                 date = cast(Item, calendar_row(ledger)["data"])
             changes = field_values(fact, person.data, None)["changes"]
             # Replay landing's lifecycle on detached aggregates, without committing.
             move_person(person, changes, route,
-                        lambda entity, kind, detail, updates: entity.record(kind, "", detail, updates), date)
+                        lambda entity, kind, detail, updates: entity.record(kind, "", detail, updates), date or {})
             person.record("changed", "", {}, changes)
 
 
 def check_journey(distances: dict[str, Item], fact: Fact, path: str, names: Names, people: dict[str, Entity]) -> tuple[Entity, tuple[str, float] | None] | None:
-    if fact.entity_type != "person":
+    if fact.entity_type != "person" or fact.entity not in people:
         return None
-    if fact.entity not in people:
-        people[fact.entity] = Entity("person", fact.entity, "", {})
     person = people[fact.entity]
     changes = {c.field: c.value for c in fact.changes}
     try:
@@ -140,6 +140,8 @@ def money_amounts(
 ) -> tuple[dict[tuple[int, int], float], dict[tuple[int, int], str | None]]:
     amounts: dict[tuple[int, int], float] = {}
     reasons: dict[tuple[int, int], str | None] = {}
+    if not any(f.entity_type == "account" and any(c.field == "taels" for c in f.changes) for f in facts):
+        return amounts, reasons
     balances = {key: row["data"].get("taels", 0) for key, row in existing.items()}
     # Caps use the declared post-values of policy, manpower and rates.
     projected = {key: {**row, "data": dict(row["data"])} for key, row in existing.items()}

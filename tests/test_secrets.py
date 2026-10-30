@@ -47,10 +47,12 @@ def test_every_model_call_reads_identity_scoped_records(game_db, steps, model_in
     for name in names:
         steps[name] = replaying(
             lambda messages, name=name: outputs[name] if any(isinstance(p, ToolReturnPart) for m in messages for p in m.parts)
-            else ModelResponse(parts=[ToolCallPart("read_records", {"kind": "person", "key": "王体乾"}, tool_call_id="person"),
-                                      ToolCallPart("read_records", {"kind": "incumbency", "key": "户部尚书"}, tool_call_id="office"),
-                                      ToolCallPart("read_records", {"kind": "account", "key": "国库"}, tool_call_id="treasury"),
-                                      ToolCallPart("read_records", {"kind": "faction", "key": ["阉党", "东林"]}, tool_call_id="factions")]),
+            else ModelResponse(parts=[ToolCallPart("read_records", {"kind": "incumbency", "key": "户部尚书"}, tool_call_id="office"),
+                                      *([] if name == "impeachment" else [
+                                          ToolCallPart("read_records", {"kind": "person", "key": "王体乾"}, tool_call_id="person"),
+                                          ToolCallPart("read_records", {"kind": "account", "key": "国库"}, tool_call_id="treasury"),
+                                          ToolCallPart("read_records", {"kind": "faction", "key": ["阉党", "东林"]}, tool_call_id="factions"),
+                                      ])]),
             received[name], tools[name],
         )
     with TestClient(create_app(game_db.parent)) as client:
@@ -146,10 +148,8 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
         steps["secret_report"] = replaying([ModelHTTPError(429, "recorded")])
     else:
         steps["secret_report"] = replaying(
-            [
-                ModelResponse(parts=[ToolCallPart("read_records", {"kind": "person", "key": ["毕自严", "徐光启"]})]),
-                (RECORDED / "secret_report.txt").read_text(),
-            ] * 2, material
+            ([ModelResponse(parts=[ToolCallPart("read_records", {"kind": "person", "key": ["毕自严", "徐光启"]})])]
+             if failure is None else []) + [(RECORDED / "secret_report.txt").read_text()] * 2, material
         )
     with TestClient(create_app(game_db.parent)) as client:
         client.post(

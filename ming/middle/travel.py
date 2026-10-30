@@ -18,8 +18,9 @@ CLEARED_JOURNEY = {
 
 def journey_distances(ledger: Ledger, facts: Sequence[Fact], people: Mapping[str, Item]) -> dict[str, Item]:
     """Read current and declared places without simulating the journey lifecycle."""
-    origins = {location for fact in facts if fact.entity_type == "person"
-               if (location := people.get(fact.entity, {}).get("location"))}
+    moving = {fact.entity for fact in facts if fact.entity_type == "person"
+              if any(change.field == "location" for change in fact.changes)}
+    origins = {location for name in moving if (location := people.get(name, {}).get("location"))}
     origins.update(change.value for fact in facts if fact.entity_type == "person"
                    for change in fact.changes if change.field == "location" and isinstance(change.value, str))
     return {row["key"]: row["data"] for row in ledger.entities(

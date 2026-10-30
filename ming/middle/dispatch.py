@@ -6,7 +6,7 @@ from collections.abc import Callable, Iterator, Sequence
 from typing import cast
 from uuid import UUID
 
-from sqlalchemy import tuple_
+from sqlalchemy import case, func, or_, select, tuple_
 
 from ming.ledger import Entity, Item, Ledger
 from ming.ledger import ENTITY_COLUMNS as E, FACT_COLUMNS as F, ENTITY_ROWS, FACT_ROWS
@@ -20,7 +20,7 @@ from ming.middle.declaration import (
 )
 from ming.middle import queries
 from ming.middle.rules import field_values, money_amounts
-from ming.middle.fiscal import WAN, current_paid, has_obligation
+from ming.middle.fiscal import WAN, current_paid, expense_rate, has_obligation
 from ming.middle.appointments import APPOINTMENT_ROLES, cabinet_members, cabinet_records, incumbency_record
 from ming.middle.travel import journey_distances, journey_route, move_person
 
@@ -29,14 +29,21 @@ def landing_entities(
     sources: Sequence[tuple[Item, LandingMode | None, list[Item]]] = (),
 ) -> dict[tuple[str, str], Item]:
     pairs = {("calendar", "world"), (owner.kind, owner.key)}
+    details = {("calendar", "world")}
+    expenses: set[str] = set()
     if not isinstance(result, Unhandled):
+        details.update((f.entity_type, f.entity) for f in result.facts if any(
+            (f.entity_type, c.field) in {("account", "taels"), ("person", "location")} for c in f.changes
+        ))
+        details.update((c.counterpart.entity_type, c.counterpart.entity)
+                       for f in result.facts for c in f.changes if c.counterpart)
+        expenses = {c.counterpart.entity for f in result.facts for c in f.changes
+                    if c.counterpart and c.counterpart.entity_type == "fiscal" and c.purpose == "当月饷"}
+        details.update(("fiscal", expense_rate(key)) for key in expenses if key != "建筑维护_base")
+        pairs.update(details)
         pairs.update(
             (f.entity_type, f.entity)
             for f in [*result.facts, *result.reports]
-        )
-        pairs.update(
-            (c.counterpart.entity_type, c.counterpart.entity)
-            for f in result.facts for c in f.changes if c.counterpart
         )
         pairs.update(
             ("person", name) for f in result.facts if f.entity_type == "incumbency"
@@ -46,35 +53,42 @@ def landing_entities(
     if isinstance(result, NightDeclaration):
         pairs.update(("person", p) for d in result.decrees for p in d.people)
         pairs.update(("person", e.endorser) for d in result.decrees for e in d.endorsements if e.endorser != "御笔")
+    # Only money projection, journey origins and appointment relationships need data;
+    # other targets need IDs, since modifications restore their native aggregates.
+    rows = ENTITY_ROWS.with_only_columns(E.id, E.kind, E.key, case(
+        (tuple_(E.kind, E.key).in_(sorted(details)) | (E.kind == "incumbency"), E.data), else_="{}",
+    ).label("data"))
     # Reuse the owner and source rows already acquired by this dispatch.
     found = {(owner.kind, owner.key): owner.snapshot()}
     references: set[int | None] = set() if isinstance(result, Unhandled) else {e.decree for e in result.decree_events}
     found.update(((row["kind"], row["key"]), row) for index, (row, mode, _events) in enumerate(sources)
                  if mode is not None or index in references)
     if not isinstance(result, Unhandled):
-        if any(f.entity_type == "affair" and any(c.field == "monthly_funding" for c in f.changes) for f in result.facts):
-            found.update(((e["kind"], e["key"]), e) for e in ledger.entities(kind="account"))
+        grants = {f.entity: c.value["account"] for f in result.facts if f.entity_type == "affair"
+                  for c in f.changes if c.field == "monthly_funding"}
+        if grants:
+            orders = func.json_each(E.data["payment_order"]).table_valued("value", "type")
+            order = case((orders.c.type == "object", orders.c.value), else_="{}")
+            found.update(((e["kind"], e["key"]), e) for e in ledger.entities(kind="account", query=rows.where(or_(
+                E.key.in_(grants.values()), select(orders.c.value).where(
+                    func.json_extract(order, "$.entity_type") == "affair",
+                    func.json_extract(order, "$.entity").in_(grants),
+                ).exists(),
+            ))))
         if any(f.entity_type == "incumbency" for f in result.facts):
             found.update(cabinet_records(ledger))
-        if any(
-            c.counterpart
-            and c.counterpart.entity_type == "fiscal"
-            and c.purpose == "当月饷"
-            for f in result.facts
-            for c in f.changes
-        ):
-            found.update(
-                ((e["kind"], e["key"]), e)
-                for e in ledger.entities(kind=("fiscal", "building"))
-            )
+        if "建筑维护_base" in expenses:
+            found.update(((e["kind"], e["key"]), e) for e in ledger.entities(kind="building"))
     if missing := sorted(pairs - found.keys()):
         found.update({
             (e["kind"], e["key"]): e
-            for e in ledger.entities(query=ENTITY_ROWS.where(tuple_(E.kind, E.key).in_(missing)))
+            for e in ledger.entities(query=rows.where(tuple_(E.kind, E.key).in_(missing)))
         })
-    incumbents = {name for (kind, _), row in found.items() if kind == "incumbency" for field in APPOINTMENT_ROLES for name in row["data"][field]}
+    incumbents = {name for pair, row in found.items() if pair[0] == "incumbency"
+                  and (pair in pairs or row["data"]["office"] == "内阁首辅")
+                  for field in APPOINTMENT_ROLES for name in row["data"][field]}
     incumbents.difference_update(key for kind, key in found if kind == "person")
-    for e in (ledger.entities(kind="person", query=ENTITY_ROWS.where(E.key.in_(incumbents))) if incumbents else ()):
+    for e in (ledger.entities(kind="person", query=rows.where(E.key.in_(incumbents))) if incumbents else ()):
         found[e["kind"], e["key"]] = e
     # Keep the original keyed-target order before supplemental rows.
     return {**{pair: found[pair] for pair in sorted(pairs) if pair in found}, **found}
