@@ -169,11 +169,11 @@ class Court:
             for row in journeys_due(self._ledger, date)
         ]
 
-    def settle_journeys(self) -> None:
-        settle_journeys(self._ledger)
+    def settle_journeys(self, date: Item) -> None:
+        settle_journeys(self._ledger, date)
 
-    def advance_month(self) -> None:
-        advance_month(self._ledger)
+    def advance_month(self, calendar_id: UUID) -> None:
+        advance_month(self._ledger, calendar_id)
 
     def calendar(self) -> EntityView:
         return EntityView.model_validate(calendar_row(self._ledger))
@@ -230,6 +230,7 @@ class Court:
         detail: dict[str, object],
         *,
         petitions: Sequence[PendingPetition] = (),
+        date: Item | None = None,
     ) -> None:
         """Commit a complete product and its petitions in the same transaction."""
         targets = {
@@ -237,7 +238,8 @@ class Court:
             for key in {entity_id, *(p.entity_id for p in petitions)}
         }
         source = targets[entity_id]
-        date = source.data if source.kind == "calendar" else self.calendar().data
+        if date is None:
+            date = source.data if source.kind == "calendar" else self.calendar().data
         for petition in petitions:
             targets[petition.entity_id].record(
                 "petition", "", {**petition.model_dump(mode="json"), "date": date}
@@ -495,8 +497,8 @@ class Court:
             )
         )
 
-    def month_petitions(self, date: Item | None = None, *, single_pending: bool = False) -> tuple[FactView, ...]:
-        query = FACT_ROWS.where(F.kind == "petition", facts_in_month(self.calendar().data if date is None else date),
+    def month_petitions(self, date: Item, *, single_pending: bool = False) -> tuple[FactView, ...]:
+        query = FACT_ROWS.where(F.kind == "petition", facts_in_month(date),
                                F.detail["blocking"].as_boolean().is_(True))
         if single_pending:
             query = query.where(

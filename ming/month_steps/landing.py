@@ -8,6 +8,7 @@ from ming.middle.invoke import ModelSource
 from ming.middle.declaration import Declaration, Unhandled
 from ming.middle.opening import CONTENT
 from ming.middle.month_work import COST_RULES
+from ming.middle.view import EntityView
 
 
 class Landing:
@@ -19,8 +20,7 @@ class Landing:
             model=model,
         )
 
-    async def run(self) -> None:
-        calendar = self.court.calendar()
+    async def run(self, calendar: EntityView) -> None:
         if self.court.has_product(calendar.id, ("landed", "unhandled"), date=calendar.data):
             return
         declarations = self.court.products(calendar.id, kind="declaration", date=calendar.data)

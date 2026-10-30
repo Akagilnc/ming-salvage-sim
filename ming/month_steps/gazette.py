@@ -7,6 +7,7 @@ from ming.middle.court import Court
 from ming.middle.invoke import ModelSource, TextUpdate, build_agent, invoke, stream_text
 from ming.middle.month_work import prompt
 from ming.middle.records import Materials, read_records
+from ming.middle.view import EntityView
 
 
 class Gazette:
@@ -23,8 +24,7 @@ class Gazette:
             instructions="按输入本月日期，以朝廷公开口径写本月邸报。按输入 catalogue 的正名与事件数，用 read_records 带本月日期先列有事件的实体，再点正名并带本月日期取各衙门奏报全文；不空参读全账，保留官员奏报说法，不套模板。",
         )
 
-    async def run(self) -> None:
-        calendar = self.court.calendar()
+    async def run(self, calendar: EntityView) -> None:
         if self.court.has_product(calendar.id, "gazette", date=calendar.data):
             return
         result = await invoke(

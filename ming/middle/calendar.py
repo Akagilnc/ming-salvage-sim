@@ -1,6 +1,7 @@
 """Monthly person movement settles before reports; the calendar advances last."""
 
-from typing import Any, cast
+from typing import Any
+from uuid import UUID
 
 from sqlalchemy import Select
 
@@ -23,9 +24,8 @@ def calendar_row(ledger: Ledger) -> Item:
     return ledger.entities(kind="calendar")[0]
 
 
-def journeys_due(ledger: Ledger, date: Item | None = None, *, query: Select[Any] = ENTITY_ROWS) -> tuple[Item, ...]:
+def journeys_due(ledger: Ledger, date: Item, *, query: Select[Any] = ENTITY_ROWS) -> tuple[Item, ...]:
     """Stored journeys due this month, shared by the draft read and settlement."""
-    date = cast(Item, calendar_row(ledger)["data"]) if date is None else date
     return ledger.entities(
         kind="person", query=query.where(
             E.data["transit_to"].as_string() != "",
@@ -35,9 +35,9 @@ def journeys_due(ledger: Ledger, date: Item | None = None, *, query: Select[Any]
     )
 
 
-def settle_journeys(ledger: Ledger) -> None:
+def settle_journeys(ledger: Ledger, date: Item) -> None:
     changed: list[Entity] = []
-    for row in journeys_due(ledger, query=ENTITY_ROWS.with_only_columns(E.id)):
+    for row in journeys_due(ledger, date, query=ENTITY_ROWS.with_only_columns(E.id)):
         person = ledger.get(row["id"])
         destination = person.data["transit_to"]
         changes: Item = {
@@ -50,8 +50,8 @@ def settle_journeys(ledger: Ledger) -> None:
     ledger.commit(changed)
 
 
-def advance_month(ledger: Ledger) -> None:
-    calendar = ledger.get(ledger.entities(kind="calendar", query=ENTITY_ROWS.with_only_columns(E.id))[0]["id"])
+def advance_month(ledger: Ledger, calendar_id: UUID) -> None:
+    calendar = ledger.get(calendar_id)
     date = dict(calendar.data)
     calendar.record(
         "advanced",

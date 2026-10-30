@@ -1,15 +1,16 @@
 """Per-decree verdict products; month drafts publish the initial forks together."""
 
+from collections.abc import Awaitable, Sequence
 from typing import Any
 
 from pydantic_ai import PromptedOutput
 
 from ming.middle.court import Court
 from ming.middle.concepts import ACTING, IMPERIAL_PUSH, INTERIM, VERDICT
-from ming.middle.invoke import ModelSource, build_agent, invoke
+from ming.middle.invoke import ModelSource, build_agent, gather_or_raise, invoke
 from ming.middle.month_work import Deliberation, prompt
 from ming.middle.records import Materials, read_records
-from ming.middle.view import EntityView, Officials
+from ming.middle.view import EntityView, Officials, character_input
 
 
 class Deliberations:
@@ -26,25 +27,40 @@ class Deliberations:
         )
 
     async def run(
-        self, decree: EntityView, decision: dict[str, Any] | None = None,
+        self, decrees: Sequence[tuple[EntityView, dict[str, Any] | None]], date: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """Prepare unchanged inputs before starting independent verdict calls."""
+        done: dict[int, dict[str, Any]] = {}
+        pending: dict[tuple[str, ...], list[int]] = {}
+        products = {key: self.court.products(key, kind="deliberation", date=date)
+                    for key in dict.fromkeys(d.id for d, _ in decrees)}
+        for index, (decree, decision) in enumerate(decrees):
+            product = next((f.detail for f in products[decree.id]
+                            if f.detail["decision_key"] == decision), None)
+            if product is not None:
+                done[index] = product
+            else:
+                pending.setdefault(tuple(decree.data["people"]), []).append(index)
+        calls: dict[int, Awaitable[dict[str, Any]]] = {}
+        if pending:
+            prestige = self.court.entities("audit", kind="world")[0].data["imperial_prestige"]
+            for people, indices in pending.items():
+                identity = Officials(people=list(people), exclude_secrets=True)
+                inputs = prompt(self.court, identity, {"imperial_prestige": prestige}, date=date)
+                for index in indices:
+                    decree, decision = decrees[index]
+                    calls[index] = self.call(decree, decision, identity, inputs)
+        indices = sorted(calls)
+        done.update(zip(indices, await gather_or_raise(*(calls[index] for index in indices)), strict=True))
+        return [done[index] for index in range(len(decrees))]
+
+    async def call(
+        self, decree: EntityView, decision: dict[str, Any] | None,
+        identity: Officials, inputs: dict[str, Any],
     ) -> dict[str, Any]:
-        """Initial verdict or next-month reconsideration of one selected push."""
-        date = self.court.calendar().data
-        done = next((f.detail for f in self.court.products(decree.id, kind="deliberation", date=date)
-                     if f.detail["decision_key"] == decision), None)
-        if done is not None:
-            return done
-        decree = self.court.entity(decree.id)
-        identity = Officials(people=decree.data["people"], exclude_secrets=True)
         result = await invoke(
             self.agent,
-            prompt(
-                self.court, identity,
-                {
-                    "decree": decree.model_dump(mode="json"),
-                    "imperial_prestige": self.court.entities("audit", kind="world")[0].data["imperial_prestige"],
-                }, date=date,
-            ),
+            {**inputs, "context": {"decree": character_input(decree.model_dump(mode="json")), **inputs["context"]}},
             deps=Materials(self.court, identity),
         )
         self.court.log.info("model output: %s", result.output.model_dump_json())

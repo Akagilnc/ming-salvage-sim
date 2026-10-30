@@ -1,7 +1,8 @@
 """One transport retry policy, independent of declaration validation retries."""
 
 import asyncio
-from collections.abc import AsyncIterable, Awaitable, Callable, Coroutine, Sequence
+import json
+from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from typing import Any, Literal, TypeVar, cast
 
 from httpx2 import TimeoutException
@@ -148,8 +149,10 @@ async def stream_text(
 
 
 async def invoke(
-    agent: Agent[D, T], prompt: str | list[str], **kwargs: Any
+    agent: Agent[D, T], prompt: str | list[str] | dict[str, Any], **kwargs: Any
 ) -> AgentRunResult[T]:
+    if isinstance(prompt, dict):
+        prompt = json.dumps(prompt, ensure_ascii=False)
     async for attempt in AsyncRetrying(
         stop=stop_after_attempt(3),
         wait=wait_fixed(5),
@@ -168,23 +171,3 @@ async def gather_or_raise(*awaitables: Awaitable[T]) -> list[T]:
         if isinstance(result, BaseException):
             raise result
     return cast(list[T], results)
-
-
-K = TypeVar("K")
-
-
-def enlist(
-    tasks: dict[K, asyncio.Task[T]],
-    key: K,
-    start: Callable[[], Coroutine[Any, Any, T]],
-    *,
-    replace: bool = False,
-    on_done: Callable[[asyncio.Task[T]], object] | None = None,
-) -> asyncio.Task[T]:
-    """One in-flight task per key. A done task is replaced only when asked."""
-    current = tasks.get(key)
-    if current is None or (replace and current.done()):
-        current = tasks[key] = asyncio.create_task(start())
-        if on_done is not None:
-            current.add_done_callback(on_done)
-    return current
