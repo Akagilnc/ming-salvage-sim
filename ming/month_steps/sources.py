@@ -14,7 +14,7 @@ from ming.middle.invoke import ModelSource, build_agent, gather_or_raise, invoke
 from ming.month_steps.materials import Petition, PendingPetition, next_month, petition_officials, prompt
 from ming.middle.records import Materials, read_records
 from ming.middle.view import EntityView, Officials, character_input
-from ming.middle.rules import fail, name_expected
+from ming.middle.rules import Names, fail, name_expected
 from ming.month_steps.products import record_product
 
 
@@ -67,11 +67,14 @@ class Sources:
                 "instruction": "以本派在朝人物的身份看本月见闻和本派、对手势力，自行决定劾不劾、劾谁、如何归因，可以交空。灾难真而归因可夹私货。署名人及被劾人用账本正名。每折三项：顺水推舟办人、压下、查实再办，措辞自拟。",
             }
             pending.setdefault(tuple(people), []).append((index, source, kind, context))
+        if not pending:
+            return
+        catalogue = self.court.read.catalogue()
         calls: dict[int, Awaitable[None]] = {}
         for names, requests in pending.items():
             identity = Officials(people=list(names))
             inputs = prompt(self.court, identity, {}, date=calendar.data)
-            calls.update((index, self.call(source, kind, identity, {**inputs, "context": character_input(context)}))
+            calls.update((index, self.call(source, kind, identity, {**inputs, "context": character_input(context)}, catalogue))
                          for index, source, kind, context in requests)
         await gather_or_raise(*(calls[index] for index in sorted(calls)))
 
@@ -81,6 +84,7 @@ class Sources:
         kind: str,
         identity: Officials,
         inputs: dict[str, Any],
+        catalogue: Names,
     ) -> None:
         agent = build_agent(
             self.model,
@@ -96,7 +100,6 @@ class Sources:
         def names(ctx: RunContext[Materials], output: Urgencies | Impeachments):
             if not output.petitions:
                 return output
-            catalogue = ctx.deps.court.read.catalogue()
             allowed: dict[str, list[str]] | list[str] = catalogue["person"]
             expected: object = name_expected("person", "", catalogue)
             if kind == "urgent":

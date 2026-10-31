@@ -81,19 +81,19 @@ class Month:
             )
             if speculative or not (opened or self.opened(calendar)):
                 return pending_petitions(self.court)
-            # Opening urgent petitions must be answered before drafting, since
-            # their choices are inputs to this month's single timeline.
-            pending = pending_petitions(self.court)
-            drafted = self.court.read.has_facts(calendar.id, "month_draft", date=calendar.data)
-            if pending and not drafted:
-                return pending
-            produced = None
-            if not drafted:
-                # Reuse only this invocation's already committed complete product.
-                produced = await self.simulations.draft(list(zip(public, verdicts[:len(public)], strict=True)), calendar)
-                pending = produced
             final = None
             if not self.court.read.has_facts(calendar.id, "month_final", date=calendar.data):
+                # Opening urgent petitions must be answered before drafting, since
+                # their choices are inputs to this month's single timeline.
+                pending = pending_petitions(self.court)
+                drafted = self.court.read.has_facts(calendar.id, "month_draft", date=calendar.data)
+                if pending and not drafted:
+                    return pending
+                produced = None
+                if not drafted:
+                    # Reuse only this invocation's already committed complete product.
+                    produced = await self.simulations.draft(list(zip(public, verdicts[:len(public)], strict=True)), calendar)
+                    pending = produced
                 if pending:
                     self.simulations.speculate(calendar, pending, produced)
                     return pending
