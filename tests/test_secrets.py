@@ -85,7 +85,7 @@ def test_every_model_call_reads_identity_scoped_records(game_db, steps, model_in
             else:
                 assert all(isinstance(identity, Officials) and not identity.exclude_secrets for identity in model_invocations[name])
                 assert {frozenset(identity.people) for identity in model_invocations[name]} == {
-                    frozenset(client.app.state.web.game.court.petition_officials(faction.key))
+                    frozenset(client.app.state.web.game.court.read.office_holders(faction=faction.key))
                     for faction in court.entities("audit", kind="faction")
                 }
             assert tools[name]
@@ -261,7 +261,7 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
                 set() if failure == "declaration" else {public.id}
             )
             assert not court.facts("audit", entity_id=secret.id, kind="exposure", date=None)
-            assert "exposure" not in court.entity(secret.id).data
+            assert "exposure" not in court.entities("audit", ids=[secret.id])[0].data
             assert {f.entity_id for f in court.facts("audit", kind="unhandled")} == (
                 {court.calendar().id} if failure == "declaration" else set()
             )
@@ -346,7 +346,7 @@ def test_discoveries_stay_private_and_completion_stops_only_reports(
                     month + 1, 1 + (quiet_month is not None)
                 )
             assert not court.facts("audit", entity_id=secret.id, kind="exposure", date=None)
-            assert "exposure" not in court.entity(secret.id).data
+            assert "exposure" not in court.entities("audit", ids=[secret.id])[0].data
             changed = [
                 f
                 for f in court.facts("audit", kind="changed")

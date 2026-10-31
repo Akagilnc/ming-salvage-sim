@@ -11,6 +11,7 @@ from ming.middle.court import Court
 from ming.middle.invoke import ModelSource, build_agent
 from ming.middle.view import EntityView
 from ming.month import Month
+from ming.month_steps.materials import has_pending_petitions
 
 
 def same_call(item: dict[str, Any], action: str, payload: dict[str, Any]) -> bool:
@@ -127,7 +128,7 @@ class Game:
             calendar = self.court.read.calendar() if calendar is None else calendar
             # Recovery belongs to the ledger, not to the currently showing face.
             if not self.recover_month(calendar, ready=True) and (
-                self.court.pending_nights() or self.court.has_pending_petitions(calendar.data)
+                self.court.pending_nights() or has_pending_petitions(self.court)
             ):
                 self.start_background()
 
@@ -221,7 +222,7 @@ class Game:
             action = "retry"
         if action == "retry":
             calendar = self.court.read.calendar() if calendar is None else calendar
-            state = self.court.presentation(calendar)
+            state = self.month.presentation(calendar)
             failure = failure or state["failure"]
             if not failure:
                 raise InvalidAction("没有待重试的动作")
@@ -276,7 +277,7 @@ class Game:
         self, action: str, payload: dict[str, Any], *, calendar: EntityView | None = None,
     ) -> dict[str, Any]:
         calendar = self.court.read.calendar() if calendar is None else calendar
-        state = self.court.presentation(calendar)
+        state = self.month.presentation(calendar)
         if (
             state["failure"]
             and action != "choose"
@@ -348,7 +349,7 @@ class Game:
             calendar = self.interaction(action, "done", payload)
             # The choice is complete before shared month work resumes. Reuse the
             # normal month action so its waiting and failures cannot belong to it.
-            if resume_month or (action == "choose" and not self.court.has_pending_petitions(calendar.data)):
+            if resume_month or (action == "choose" and not has_pending_petitions(self.court)):
                 self.recover_month(calendar)
         except Exception as error:
             self.court.log.exception("action=%s", action)
@@ -375,7 +376,7 @@ class Game:
                 payload["turn_id"],
                 partial(self.notify, "delta"),
             )
-            if self.court.read.entity(self.audience.night_id).data["closed"]:
+            if self.court.read.entities("audit", ids=[self.audience.night_id])[0].data["closed"]:
                 self.start_background()
             return output
         if action == "translation":

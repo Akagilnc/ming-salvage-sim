@@ -5,7 +5,7 @@ from functools import partial
 
 from ming.middle.court import Court
 from ming.middle.invoke import ModelSource, TextUpdate, build_agent, invoke, stream_text
-from ming.middle.month_work import prompt
+from ming.month_steps.materials import prompt
 from ming.middle.records import Materials, read_records
 from ming.middle.view import EntityView
 from ming.month_steps.products import record_product

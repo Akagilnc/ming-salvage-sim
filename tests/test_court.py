@@ -355,25 +355,28 @@ def test_recorded_r2_reply_lands(game_db, steps, audit, case):
 
 
 @pytest.mark.parametrize("game_db", ["first_night"], indirect=True)
-@pytest.mark.parametrize("stage", ["night", "month"])
+@pytest.mark.parametrize("stage", ["night", "month", "simulation"])
 def test_translation_queries_preserve_two_table_permissions(game_db, steps, stage):
     recording = json.loads((RECORDED / "declarations_1972.json").read_text())["cases"]
     received = []
     offices = ["陕西巡抚", "巡抚", "新城知县", "西安知府", "内阁大学士", "陕西巡府", "不存在的官职", "内阁大学士"]
     steps["NightDeclaration"] = replaying([(RECORDED / "night_empty.txt").read_text()])
-    steps["NightDeclaration" if stage == "night" else "Declaration"] = replaying(
+    steps[{"night": "NightDeclaration", "month": "Declaration", "simulation": "simulation"}[stage]] = replaying(
         [ModelResponse(parts=[ToolCallPart("read_records", {"kind": "incumbency", "key": offices}, tool_call_id="batch"),
                               ToolCallPart("read_records", {"kind": "person", "key": ["郭允厚", "郭允厚"], "date": {"year": 1600, "month": 1}}, tool_call_id="people"),
                               ToolCallPart("read_records", {}, tool_call_id="empty"),
+                              *(ToolCallPart("read_records", {"key": key}, tool_call_id=f"names-{i}")
+                                for i, key in enumerate(["郭允厚", "郭尚书", "毕自严", "南户部", ["郭允厚", "毕自严"], ["郭尚书", "毕尚书"]])),
                               *(ToolCallPart("read_records", {"kind": "incumbency", "key": name}, tool_call_id=name)
                                 for name in dict.fromkeys(offices))]),
-         *ModelMessagesTypeAdapter.validate_python(recording["night_catalogue_queries" if stage == "night" else "catalogue_queries"])], received,
+         *([(RECORDED / "simulation.txt").read_text()] if stage == "simulation" else
+           ModelMessagesTypeAdapter.validate_python(recording["night_catalogue_queries" if stage == "night" else "catalogue_queries"]))], received,
     )
     with TestClient(create_app(game_db.parent)) as client:
         client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
         client.post("/actions", json={"action": "dismiss"}).raise_for_status()
         client.portal.call(client.app.state.web.game.drain)
-        if stage == "month":
+        if stage != "night":
             client.post("/actions", json={"action": "month"}).raise_for_status()
         assert client.get("/state").json()["game"]["failure"] is None
     queries = {p.tool_call_id: p.args_as_dict() for m in received for p in m.parts if isinstance(p, ToolCallPart)}
@@ -392,6 +395,8 @@ def test_translation_queries_preserve_two_table_permissions(game_db, steps, stag
     assert [(e["kind"], e["key"]) for e in people["entities"]] == [("person", "郭允厚")]
     assert people["facts"] == []
     assert people["entities"][0]["data"]["appointments"][0]["office"] == "户部尚书"
+    assert [results.pop(f"names-{i}") for i in (0, 2, 4)] == [results.pop(f"names-{i}") for i in (1, 3, 5)]
+    queries = {call_id: query for call_id, query in queries.items() if not call_id.startswith("names-")}
     for call_id, query in queries.items():
         result = results[call_id]
         if query.get("kind") == "incumbency":

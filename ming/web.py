@@ -79,7 +79,7 @@ class Web:
             "settings": self.configuration.model_dump(),
             "required_settings": REQUIRED_SETTINGS,
             "save": self.game.court.db_path.name if self.game else None,
-            "game": {**self.game.court.presentation(), "live": dict(self.game.live)}
+            "game": {**self.game.month.presentation(), "live": dict(self.game.live)}
             if self.game else None,
         }
 
@@ -97,7 +97,7 @@ class Web:
                 "data": {
                     "text": event["data"],
                     "hall": list(
-                        self.game.court.read.entity(self.game.audience.night_id).data["hall"]
+                        self.game.court.read.entities("audit", ids=[self.game.audience.night_id])[0].data["hall"]
                     ),
                 },
             }

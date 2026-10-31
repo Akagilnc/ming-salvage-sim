@@ -1,7 +1,6 @@
-"""Monthly person movement settles before reports; the calendar advances last."""
+"""Deterministic arrival settlement against stored journey dates."""
 
 from typing import Any
-from uuid import UUID
 
 from sqlalchemy import Select
 
@@ -11,13 +10,6 @@ from ming.middle.travel import CLEARED_JOURNEY
 
 
 CAPITAL = "北直隶 / 京师"
-
-
-def next_month(date: Item) -> Item:
-    return {
-        "year": date["year"] + (date["month"] == 12),
-        "month": date["month"] % 12 + 1,
-    }
 
 
 def calendar_row(ledger: Ledger) -> Item:
@@ -48,15 +40,3 @@ def settle_journeys(ledger: Ledger, date: Item) -> None:
         person.record("arrived", "", {"date": person.data["arrival_date"], **changes}, changes)
         changed.append(person)
     ledger.commit(changed)
-
-
-def advance_month(ledger: Ledger, calendar_id: UUID) -> None:
-    calendar = ledger.get(calendar_id)
-    date = dict(calendar.data)
-    calendar.record(
-        "advanced",
-        "",
-        {"date": date},
-        next_month(date),
-    )
-    ledger.commit([calendar])

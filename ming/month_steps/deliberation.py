@@ -8,7 +8,7 @@ from pydantic_ai import PromptedOutput
 from ming.middle.court import Court
 from ming.middle.concepts import ACTING, IMPERIAL_PUSH, INTERIM, VERDICT
 from ming.middle.invoke import ModelSource, build_agent, gather_or_raise, invoke
-from ming.middle.month_work import Deliberation, prompt
+from ming.month_steps.materials import Deliberation, prompt
 from ming.middle.records import Materials, read_records
 from ming.middle.view import EntityView, Officials, character_input
 from ming.month_steps.products import record_product

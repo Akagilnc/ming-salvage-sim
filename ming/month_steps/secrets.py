@@ -6,7 +6,7 @@ from typing import Any
 from ming.middle.court import Court
 from ming.middle.concepts import HANDLER, PEOPLE, SECRET
 from ming.middle.invoke import ModelSource, build_agent, gather_or_raise, invoke
-from ming.middle.month_work import prompt
+from ming.month_steps.materials import prompt
 from ming.middle.records import Materials, read_records
 from ming.middle.view import EntityView, Officials, character_input
 from ming.month_steps.products import record_product
@@ -43,7 +43,10 @@ class Secrets:
                 "decree": decree.model_dump(mode="json"),
                 "facts": [
                     f.model_dump(mode="json", exclude={"emperor_words"})
-                    for f in self.court.consequences(decree.id, inputs["date"])
+                    for f in self.court.read.facts(
+                        "audit", kind=("changed", "received", "reported", "unhandled"),
+                        date=inputs["date"], detail={"origin_ref": str(decree.id)},
+                    )
                 ],
                 "products": [
                     f.model_dump(mode="json", exclude={"emperor_words"})

@@ -131,7 +131,7 @@ def test_new_game_imports_complete_world_records_and_separates_identities(
     assert not any({"office", "office_type", "office_region", "appointments"} & e["data"].keys() for e in entities if e["kind"] == "person")
     court = Court(path, TestModel())
     assert court.read.facts("audit") == ()
-    assert court.read.entities("audit", replay=True) == court.read.entities("audit")
+    assert audit(path, replay=True) == audit(path)
     assert court.night(court.open_night()[0]).closed is False
     court.close()
 

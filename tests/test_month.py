@@ -74,7 +74,6 @@ LANDING = (
     ("first", "steps"),
     [
         ("simulation.txt", None),
-        ("sources", None),
         ("sources-write", None),
         ("deltas", None),
     ],
@@ -89,7 +88,7 @@ def test_month_advances_after_reopening(
         [(RECORDED / "month_empty.txt").read_text()] * 6,
         declarations,
     )
-    if first in {"sources", "sources-write"}:
+    if first == "sources-write":
         for name in ("urgent", "impeachment"):
             steps[name] = TestModel(
                 call_tools=[],
@@ -146,7 +145,7 @@ def test_month_advances_after_reopening(
                 assert next(e["data"]["satisfaction"] for e in audit(game_db)["entities"] if e["kind"] == "faction" and e["key"] == "阉党") == [72, 97, 0][index]
                 material = _declaration_prompt(declarations)
                 assert "entities" not in material
-            if first in {"sources", "sources-write"}:
+            if first == "sources-write":
                 urgent = [p for p in state["petitions"] if p["source"] == "urgent"]
                 assert [p["signer"] for p in urgent] == ["王体乾", "黄立极"]
                 assert all(not p["blocking"] for p in state["petitions"])

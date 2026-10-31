@@ -63,7 +63,7 @@ class Audience:
 
     @property
     def identity(self) -> Officials:
-        return Officials(people=self.court.read.entity(self.night_id).data["hall"])
+        return Officials(people=self.court.read.entities("audit", ids=[self.night_id])[0].data["hall"])
 
     @property
     def night_id(self) -> UUID:
