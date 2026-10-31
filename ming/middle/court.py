@@ -174,10 +174,10 @@ class Court:
             ],
         }
 
-    def settle_accounts(self) -> None:
-        accounts = Accounts(self._ledger)
-        if self.read.has_facts(accounts.calendar.id, "month_accounts", date=accounts.date):
+    def settle_accounts(self, calendar: EntityView) -> None:
+        if self.read.has_facts(calendar.id, "month_accounts", date=calendar.data):
             return
+        accounts = Accounts(self._ledger)
         accounts.taxes()
         accounts.revenues()
         accounts.production()

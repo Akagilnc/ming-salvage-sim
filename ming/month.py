@@ -99,7 +99,7 @@ class Month:
                     return pending
                 final = await self.simulations.final(calendar)
             await self.landing.run(calendar, final)
-            self.court.settle_accounts()
+            self.court.settle_accounts(calendar)
             self.court.settle_journeys(calendar.data)
             await gather_or_raise(
                 self.gazette.run(calendar), self.sources.run(calendar),
