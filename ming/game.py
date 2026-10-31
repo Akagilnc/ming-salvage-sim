@@ -63,7 +63,7 @@ class Game:
         self.court = court
         self.emit: Callable[[dict[str, Any]], None] | None = None
         self.live: dict[str, str] = {}
-        self.audience = Audience(court, model)
+        self.audience = Audience(court, model, self.start_background)
         self.month = Month(
             court, month_model if month_model is not None else model,
             partial(self.notify, "gazette"),
@@ -144,7 +144,7 @@ class Game:
         night = latest.model_dump(mode="json") if latest else None
         petitions = self.court.pending_petitions(calendar.data)
         opened = self.month.opened(calendar)
-        running = self.running(interactions, waiting=self.month.waiting(calendar, opened=opened, petitions=petitions))
+        running = self.running(interactions, waiting=self.month.waiting(calendar, opened=opened, has_petitions=bool(petitions)))
         pending = next((i for i in running if i["action"] == "month"), next(iter(running), None))
         failures = self.failures(interactions)
         failure = next(iter(failures), None)
@@ -164,18 +164,23 @@ class Game:
             ],
         }
 
-    def reopen(self, facts: ActionFacts | None = None) -> None:
+    def reopen(self, facts: ActionFacts | None = None) -> ActionFacts:
         facts = self.actions() if facts is None else facts
-        self.resume(facts)
-        self.start_background(facts)
+        has_petitions = self.court.has_pending_petitions(facts.calendar.data)
+        if not has_petitions and facts.pending_nights is None:
+            facts = facts._replace(pending_nights=self.court.pending_nights())
+        self.resume(facts, has_petitions=has_petitions)
+        if has_petitions or facts.pending_nights:
+            self.start_background(facts)
+        return facts
 
-    def resume(self, facts: ActionFacts | None = None) -> None:
+    def resume(self, facts: ActionFacts | None = None, *, has_petitions: bool | None = None) -> None:
         if self.busy():
             return
         facts = self.actions() if facts is None else facts
         calendar, _, interactions, _ = facts
         failures = self.failures(interactions)
-        waiting = "month" in interactions and self.month.waiting(calendar)
+        waiting = "month" in interactions and self.month.waiting(calendar, has_petitions=has_petitions)
         pending = [i for i in self.running(interactions, waiting=waiting) if not failures or i["action"] == "choose"]
         if pending:
             self.active = asyncio.create_task(self._resume(pending, facts))
@@ -210,7 +215,7 @@ class Game:
         facts = self.actions()
         accepted = any(item["status"] != "failed" and same_call(item, action, payload)
                        for item in facts.interactions.values())
-        self.reopen(facts)
+        facts = self.reopen(facts)
         # Choices never wait for unrelated work. Other commands can consume the
         # recovery they just started instead of accepting the same action twice.
         if accepted or action != "choose":
@@ -282,7 +287,6 @@ class Game:
             self.audience.open(night)
             self.audience.dismiss()
             self.resume()
-            self.start_background()
             if not self.busy():
                 self.notify("state", None)
         else:
@@ -391,14 +395,11 @@ class Game:
         if action == "say":
             night = self.court.night(UUID(payload["night_id"]))
             self.audience.open(night)
-            output = await self.audience.say(
+            return await self.audience.say(
                 night, payload["words"],
                 payload["turn_id"],
                 partial(self.notify, "delta"),
             )
-            if self.court.entity(night.id).data["closed"]:
-                self.start_background()
-            return output
         if action == "translation":
             await self.audience.translate_pending(tuple(UUID(n) for n in payload["nights"]))
             return True

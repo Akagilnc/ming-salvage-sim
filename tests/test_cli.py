@@ -167,25 +167,27 @@ def test_cli_preserves_jsonl_and_resumes_failed_month(
     assert rows[-1]["date"]["year"] == rows[5]["date"]["year"] + (
         rows[5]["date"]["month"] == 12
     )
-    steps["simulation"] = replaying(
-        [RuntimeError("backend unavailable"), (RECORDED / "simulation.txt").read_text()]
-    )
-    with pytest.raises(SystemExit) as stopped:
-        main(["month", "--db", db, "--backend", "claude-cli"])
-    assert stopped.value.code == 1
-    failed_date = json.loads(capsys.readouterr().out)["date"]
-    main(["read", "--db", db, "--identity", "audit"])
-    ledger = json.loads(capsys.readouterr().out)
-    assert any(
-        f["kind"] == "interaction" and f["detail"]["status"] == "failed"
-        for f in ledger["facts"]
-    )
-    monkeypatch.setattr("sys.stdin", io.StringIO('{"action":"month"}\n{"action":"drain"}\n{"action":"state"}\n'))
-    main(["audience", "--db", db, "--backend", "claude-cli"])
-    resumed = json.loads(capsys.readouterr().out.splitlines()[-1])
-    assert resumed["date"]["month"] == failed_date["month"] % 12 + 1
-    assert resumed["date"]["year"] == failed_date["year"] + (failed_date["month"] == 12)
-    assert resumed["petitions"] == []
+    for entry in ("month", "audience"):
+        steps["simulation"] = replaying(
+            [RuntimeError("backend unavailable"), (RECORDED / "simulation.txt").read_text()]
+        )
+        with pytest.raises(SystemExit) as stopped:
+            main(["month", "--db", db, "--backend", "claude-cli"])
+        assert stopped.value.code == 1
+        failed_date = json.loads(capsys.readouterr().out)["date"]
+        main(["read", "--db", db, "--identity", "audit"])
+        ledger = json.loads(capsys.readouterr().out)
+        assert any(
+            f["kind"] == "interaction" and f["detail"]["status"] == "failed"
+            for f in ledger["facts"]
+        )
+        if entry == "audience":
+            monkeypatch.setattr("sys.stdin", io.StringIO('{"action":"month"}\n{"action":"drain"}\n{"action":"state"}\n'))
+        main([entry, "--db", db, "--backend", "claude-cli"])
+        resumed = json.loads(capsys.readouterr().out.splitlines()[-1])
+        assert resumed["date"]["month"] == failed_date["month"] % 12 + 1
+        assert resumed["date"]["year"] == failed_date["year"] + (failed_date["month"] == 12)
+        assert resumed["petitions"] == []
     main(["read", "--db", db, "--identity", "audit"])
     ledger = json.loads(capsys.readouterr().out)
     assert not {"words", "petition", "option"}.intersection(next(

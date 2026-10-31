@@ -29,8 +29,9 @@ from ming.middle.view import Officials
 
 
 class Audience:
-    def __init__(self, court: Court, model: ModelSource) -> None:
+    def __init__(self, court: Court, model: ModelSource, on_dismiss: Callable[[], None]) -> None:
         self.court = court
+        self.on_dismiss = on_dismiss
         self._night_id: UUID | None = None
         self._turn: asyncio.Task[str] | None = None
         self._dismiss_requested: UUID | None = None
@@ -112,6 +113,7 @@ class Audience:
         if self._dismiss_requested is not None:
             self.court.dismiss(self._dismiss_requested)
             self._dismiss_requested = None
+            self.on_dismiss()
 
     async def translate_pending(self, pending: tuple[UUID, ...]) -> None:
         for night_id in pending:

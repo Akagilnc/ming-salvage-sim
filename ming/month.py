@@ -46,10 +46,10 @@ class Month:
 
     def waiting(
         self, calendar: EntityView, *, opened: bool | None = None,
-        petitions: tuple[PendingPetition, ...] | None = None,
+        has_petitions: bool | None = None,
     ) -> bool:
         opened = self.opened(calendar) if opened is None else opened
-        return opened and (bool(petitions) if petitions is not None else self.court.has_pending_petitions(calendar.data))
+        return opened and (has_petitions if has_petitions is not None else self.court.has_pending_petitions(calendar.data))
 
     def pending_actions(self, items: dict[str, Any]) -> dict[str, Any]:
         choices = [i["payload"]["petition"] for i in items.values() if i["action"] == "choose"]
