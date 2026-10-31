@@ -7,7 +7,6 @@ from contextlib import closing
 from pathlib import Path
 
 import pytest
-from pydantic_ai.models.test import TestModel
 from starlette.testclient import TestClient
 
 from ming.__main__ import main
@@ -129,9 +128,9 @@ def test_new_game_imports_complete_world_records_and_separates_identities(
     assert shown["卢象升"]["location"] == "北直隶 / 京师"
     assert shown["卢象升"]["appointments"] == [{"office": "知府", "territory": "北直隶大名府", "holders": ["卢象升"], "acting": [], "role": "holders"}]
     assert not any({"office", "office_type", "office_region", "appointments"} & e["data"].keys() for e in entities if e["kind"] == "person")
-    court = Court(path, TestModel())
-    assert court.facts("audit") == ()
-    assert court.entities("audit", replay=True) == court.entities("audit")
+    court = Court(path)
+    assert court.read.facts("audit") == ()
+    assert audit(path, replay=True) == audit(path)
     assert court.night(court.open_night()[0]).closed is False
     court.close()
 
@@ -225,14 +224,14 @@ def test_build_is_explicit_and_new_games_copy_the_last_successful_template(
             main(["build-opening", "--content", str(content)])
             capsys.readouterr()
         main(["new", "--directory", str(games)])
-        court = Court(Path(json.loads(capsys.readouterr().out)["db"]), TestModel())
-        calendar = court.calendar()
+        court = Court(Path(json.loads(capsys.readouterr().out)["db"]))
+        calendar = court.read.calendar()
         assert calendar.data["year"] == (1628 if rebuild else 1627)
         assert calendar.id != previous_id
         previous_id = calendar.id
         before_record = audit(template)
         court.record(calendar.id, [("observation", {"year": 1629})], {"year": 1629})
-        assert court.calendar().data["year"] == 1629
+        assert court.read.calendar().data["year"] == 1629
         assert audit(template) == before_record
         court.close()
         if not rebuild:
@@ -278,7 +277,7 @@ def test_bad_opening_data_leaves_no_partial_world(
         main(["build-opening", "--content", str(content), "--output", str(template)])
     assert audit(template) == original
     assert list(tmp_path.glob("*.sqlite")) == [template]
-    court = Court.new_game(tmp_path / "games", TestModel(), template)
-    assert court.calendar().data["month"] == 10
+    court = Court.new_game(tmp_path / "games", template)
+    assert court.read.calendar().data["month"] == 10
     assert court.night(court.open_night()[0]).closed is False
     court.close()

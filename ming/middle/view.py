@@ -9,9 +9,8 @@ from sqlalchemy import Select, bindparam, case, func, literal, or_, select
 from sqlalchemy.sql.elements import BindParameter, ColumnElement
 
 from ming.ledger import Item, Ledger
-from ming.ledger import ENTITY_COLUMNS as E, FACT_COLUMNS as F, ENTITY_ROWS, FACT_ROWS, ENTITY_ORDER, facts_in_month
+from ming.ledger import ENTITY_COLUMNS as E, FACT_COLUMNS as F, ENTITY_ROWS, FACT_ROWS, ENTITY_ORDER
 from ming.middle.queries import CALENDAR, available_on, public_decree
-from ming.middle.calendar import calendar_row
 from ming.middle.appointments import APPOINTMENT_ROLES, CATALOGUE_KINDS, held_by
 from ming.middle.night import known_people, read_nights, witnessed_nights
 from ming.middle.travel import travel_days
@@ -101,11 +100,6 @@ def identity_key(identity: Identity) -> str:
     return "official" if isinstance(identity, Officials) else identity
 
 
-def month_open(date: Item) -> ColumnElement[int]:
-    """One opening cutoff expression, with the current calendar bound explicitly."""
-    return MONTH_OPEN_QUERY.where(facts_in_month(date)).scalar_subquery()
-
-
 def decree_access(identity: Identity, reference: ColumnElement[Any]) -> dict[str, ColumnElement[bool]]:
     """Correlated permission predicates, never an eager collection of decrees."""
     decree = E.id.table.alias().c
@@ -169,27 +163,29 @@ def person_projection(dossiers: Item, row: Item, identity: Identity, appointment
 
 def entities(
     ledger: Ledger, identity: Identity, selection: Item | None = None,
-    *, cutoff: ColumnElement[int] | None = None,
+    *, opening: Item | None = None,
 ) -> tuple[EntityView, ...]:
     selection = dict(selection or {})
     keys = selection.pop("keys", None)
-    if identity == "emperor" and (opening := next(iter(ledger.read(FACT_ROWS.where(
-        F.position == (month_open(calendar_row(ledger)["data"]) if cutoff is None else cutoff),
-    ))), None)):
+    ids = selection.pop("ids", None)
+    if opening is not None:
         return tuple(
             EntityView.model_validate(e)
             for e in opening["detail"]["entities"]
-            if all(e[k] == v for k, v in (selection or {}).items()) and (keys is None or e["key"] in keys)
+            if all(e[k] == v for k, v in selection.items())
+            and (keys is None or e["key"] in keys)
+            and (ids is None or UUID(e["id"]) in ids)
         )
     query = ENTITY_SOURCES[identity_key(identity)]
     query = query.where(E.kind == selection["kind"]) if selection.get("kind") is not None else query
     query = query.where(E.key == selection["key"]) if selection.get("key") is not None else query
     query = query.where(E.key.in_(keys)) if keys is not None else query
+    query = query.where(E.id.in_(ids)) if ids is not None else query
     parameters = view_parameters(identity, selection.get("kind"))
     rows = ledger.read(query, parameters)
     people = [row["key"] for row in rows if row["kind"] == "person" and identity != "audit"]
     appointments = {row["id"]: row for row in rows if row["kind"] == "incumbency"} if people else {}
-    if people and (selection or keys is not None):
+    if people and (selection or keys is not None or ids is not None):
         # Keep database order for partial selections without returning bodies already acquired.
         appointments = {row["id"]: appointments[row["id"]] if row["data"] is None else row for row in ledger.entities(
             kind="incumbency", query=ENTITY_ROWS.with_only_columns(
@@ -372,28 +368,24 @@ def fact_exposure(
 
 
 def fact_sources(
-    ledger: Ledger, identity: Identity, *, cutoff: ColumnElement[int] | None = None,
+    identity: Identity, *, cutoff: int | None = None,
 ) -> Select[Any]:
     """One query for live controls and immutable facts at the opening cutoff."""
     exposure = FACT_EXPOSURE[identity_key(identity)]
     query = FACT_ROWS.add_columns(exposure.label("exposure")).where(exposure.is_not(None))
     if identity != "audit":
         query = query.where(AVAILABLE)
-    if identity == "emperor":
+    if identity == "emperor" and cutoff is not None:
         live = F.kind.in_(OPENING_CONTROLS)
-        opening = month_open(calendar_row(ledger)["data"]) if cutoff is None else cutoff
-        query = query.where(or_(opening.is_(None), live, F.position < opening)).order_by(None).order_by(
-            case((opening.is_not(None), live), else_=False), ENTITY_ORDER, F.position,
+        query = query.where(or_(live, F.position < cutoff)).order_by(None).order_by(
+            live, ENTITY_ORDER, F.position,
         )
     return query
 
 
 def project(
-    ledger: Ledger, identity: Identity, selection: Item | None = None,
-    query: Select[Any] | None = None,
+    ledger: Ledger, identity: Identity, selection: Item, query: Select[Any],
 ) -> tuple[FactView, ...]:
-    selection = selection or {}
-    query = fact_sources(ledger, identity) if query is None else query
     result: list[FactView] = []
     for item in ledger.facts(**selection, query=query, parameters=view_parameters(identity)):
         detail = item["detail"]
@@ -430,6 +422,7 @@ ACCOUNTS = {key: owned_accounts(identity) for key, identity in IDENTITIES.items(
 ENTITY_EXPOSURE = {key: entity_exposure(identity, ACCOUNTS[key]) for key, identity in IDENTITIES.items()}
 ENTITY_SOURCES = {key: ENTITY_ROWS.add_columns(exposure.label("exposure")).where(exposure.is_not(None))
                   for key, exposure in ENTITY_EXPOSURE.items()}
+VISIBLE_IDS = {key: source.with_only_columns(E.id).order_by(None) for key, source in ENTITY_SOURCES.items()}
 FACT_EXPOSURE = {key: fact_exposure(identity, ACCOUNTS[key]) for key, identity in IDENTITIES.items()}
 AVAILABLE = or_(CALENDAR.is_(None), available_on({
     "year": CALENDAR["year"].as_integer(), "month": CALENDAR["month"].as_integer(),

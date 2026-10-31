@@ -2,14 +2,16 @@
 
 import json
 from pathlib import Path
+from shutil import copyfile
+from uuid import UUID, uuid4
 
 import pytest
-from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelResponse, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelResponse, RetryPromptPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.test import TestModel
 from starlette.testclient import TestClient
 
 from ming.web import create_app
-from tests.test_court import replaying
+from tests.test_court import reopening, replaying
 from tests.test_month import GUOKU_ORDER
 from tests.test_secrets import _declaration_prompt
 
@@ -20,9 +22,117 @@ FUNDED_AFFAIRS = (
 )
 
 
+@pytest.mark.parametrize("valid_revision", [True, False])
+def test_returned_urgent_waits_through_vacancy(
+    game_db: Path, steps, monkeypatch, valid_revision: bool, audit
+) -> None:
+    revision = (RECORDED / "sources_revision.txt").read_text()
+    other_save = game_db.with_name("other.sqlite")
+    copyfile(game_db, other_save)
+    received = []
+    steps["simulation"] = replaying(
+        [(RECORDED / "simulation.txt").read_text()] * 5, received
+    )
+    steps["urgent"] = replaying([(RECORDED / "sources_urgent.txt").read_text()])
+    drafting = []
+    with reopening(game_db.parent) as reopen:
+        client = reopen()
+        client.post("/actions", json={"action": "load", "save": game_db.name})
+        if valid_revision:
+            # Fix only randomness; both recorded petitions use the real constructor.
+            monkeypatch.setattr("ming.month_steps.sources.uuid4", iter([
+                UUID(json.loads(revision)["petitions"][0]["revision_of"]), uuid4(),
+            ]).__next__)
+        client.post("/actions", json={"action": "month"})
+        monkeypatch.undo()
+        petitions = client.get("/state").json()["game"]["petitions"]
+        original = petitions[0]
+        for index, petition in enumerate(petitions):
+            client.post(
+                "/actions",
+                json={
+                    "action": "choose",
+                    "petition": petition["id"],
+                    "option": len(petition["options"]) - 1 if index == 0 else 0,
+                },
+            ).raise_for_status()
+        assert client.get("/state").json()["game"]["returned_petitions"] == []
+        assert {f["detail"]["petition_id"]: f["detail"]["disposition"]
+                for f in audit(game_db)["facts"] if f["kind"] == "choice"} == {
+            original["id"]: "returned", petitions[1]["id"]: None,
+        }
+        for phase, month in (("vacancy", 12), ("appointment", 1)):
+            case = json.loads((RECORDED / f"sources_{phase}.json").read_text())
+            steps["scene"] = replaying(ModelMessagesTypeAdapter.validate_python(case["scene_responses"]))
+            steps["NightDeclaration"] = replaying([case["declaration"]])
+            if phase == "appointment":
+                # The accepted immediate appointment takes effect during the night.
+                steps["urgent"] = replaying([revision] * 2, drafting)
+            client.post("/actions", json={"action": "open"})
+            for words in case["words"]:
+                client.post("/actions", json={"action": "say", "words": words})
+            client.post("/actions", json={"action": "dismiss"})
+            client.post("/actions", json={"action": "month"})
+            state = client.get("/state").json()["game"]
+            if phase == "appointment" and not valid_revision:
+                assert state["failure"] is not None
+                assert state["failure"]["payload"]["type"] == "UnexpectedModelBehavior"
+                assert state["date"]["month"] == 12
+                assert state["petitions"] == []
+                assert [p["petition"]["id"] for p in state["returned_petitions"]] == [
+                    original["id"]
+                ]
+                assert [
+                    (json.loads(p.content)["field"], json.loads(p.content)["expected"])
+                    for m in drafting
+                    for p in m.parts
+                    if isinstance(p, RetryPromptPart)
+                ] == [("petitions[0].revision_of", [original["id"]])]
+            else:
+                assert state["failure"] is None
+                assert state["date"]["month"] == month
+                if phase == "vacancy":
+                    assert state["petitions"] == []
+                    assert [
+                        (p["petition"]["id"], p["awaiting_drafter"])
+                        for p in state["returned_petitions"]
+                    ] == [(original["id"], True)]
+                else:
+                    assert [
+                        (p["signer"], p["revision_of"])
+                        for p in state["petitions"]
+                        if p["revision_of"]
+                    ] == [("曹化淳", original["id"])]
+                    assert state["returned_petitions"] == []
+            material = json.loads(received[-1].parts[0].content)["context"]
+            assert {p["petition_id"] for p in material["prior_choices"]} == (
+                {petitions[1]["id"]} if phase == "vacancy" else set()
+            )
+            client = reopen()
+            client.post("/actions", json={"action": "load", "save": game_db.name})
+            assert client.get("/state").json()["game"] == state
+        material = json.loads(drafting[0].parts[0].content)
+        assert [p["key"] for p in material["speakers"]] == ["曹化淳"]
+        assert [p["id"] for p in material["context"]["returned"]] == [original["id"]]
+        drafting.clear()
+        steps["urgent"] = replaying([
+            ModelResponse(parts=[ToolCallPart("read_records", {"kind": "office", "key": "司礼监掌印太监"})]),
+            (RECORDED / "sources_urgent.txt").read_text(),
+        ], drafting)
+        with TestClient(create_app(game_db.parent)) as other:
+            other.post("/actions", json={"action": "load", "save": other_save.name}).raise_for_status()
+            other.post("/actions", json={"action": "month"}).raise_for_status()
+            other_state = other.get("/state").json()["game"]
+            assert (other_state["failure"], other_state["date"]["month"]) == (None, 11)
+            assert {p["signer"] for p in other_state["petitions"]} == {"黄立极", "王体乾"}
+            assert [p.model_response_object()["appointments"][0]["holders"]
+                    for m in drafting for p in m.parts if isinstance(p, ToolReturnPart)] == [["王体乾"]]
+            assert client.get("/state").json()["game"] == state
+
+
 @pytest.mark.parametrize("steps", ["approved"], indirect=True)
 @pytest.mark.parametrize("option,forecast_failure,game_db", [
-    (0, False, "rejected_night"), (1, False, "rejected_month"),
+    (0, False, "rejected_month"), (1, False, "rejected_month"),
     (2, False, "rejected_month"), (0, True, "rejected_night"),
 ], indirect=["game_db"])
 def test_rejected_decree_is_forced_withdrawn_or_held(game_db, steps, audit, option, forecast_failure):
@@ -30,10 +140,11 @@ def test_rejected_decree_is_forced_withdrawn_or_held(game_db, steps, audit, opti
     if forecast_failure:
         steps["month_final"] = replaying([RuntimeError("candidate unavailable")] * 5 + [(RECORDED / "simulation.txt").read_text()] * 4, received)
         steps["gazette"] = replaying([RuntimeError("gazette unavailable"), *[(RECORDED / "gazette.txt").read_text()] * 2])
-    with TestClient(create_app(game_db.parent)) as client:
+    with reopening(game_db.parent) as reopen:
+        client = reopen()
         client.post("/actions", json={"action": "load", "save": game_db.name})
         before = audit(game_db)
-        if option == 0:
+        if forecast_failure:
             assert client.get("/state").json()["game"]["petitions"] == []
             assert not [f for f in before["facts"] if f["kind"] in {"month_draft", "month_final", "simulation"}]
             client.post("/actions", json={"action": "month"}).raise_for_status()
@@ -43,7 +154,7 @@ def test_rejected_decree_is_forced_withdrawn_or_held(game_db, steps, audit, opti
         assert state["date"]["month"] == 10
         assert len(state["petitions"]) == 1
         petition = state["petitions"][0]
-        assert petition["options"] == ["强颁", "收回", "留中", "御笔强推"]
+        assert len(petition["options"]) == 4
         ledger = audit(game_db)
         assert len([f for f in ledger["facts"] if f["kind"] == "forecast"]) == (0 if forecast_failure else 4)
         assert not [f for f in ledger["facts"] if f["kind"] in {"endorsed", "month_final"}]
@@ -53,6 +164,7 @@ def test_rejected_decree_is_forced_withdrawn_or_held(game_db, steps, audit, opti
             assert client.get("/state").json()["game"]["failure"]["payload"]["type"] == "RuntimeError"
             for final_exists in (False, True):
                 assert bool([f for f in audit(game_db)["facts"] if f["kind"] == "month_final"]) == final_exists
+                client = reopen()
                 client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
                 client.post("/actions", json={"action": "retry"}).raise_for_status()
                 client.portal.call(client.app.state.web.game.drain)
@@ -62,6 +174,9 @@ def test_rejected_decree_is_forced_withdrawn_or_held(game_db, steps, audit, opti
         assert client.post("/actions", json={"action": "choose", "petition": petition["id"], "option": option}).status_code == 400
         ledger = audit(game_db)
         decree = next(e for e in ledger["entities"] if e["kind"] == "decree")
+        assert [f["detail"]["disposition"] for f in ledger["facts"] if f["kind"] == "choice"] == [
+            ("forced", "withdrawn", "held")[option]
+        ]
         assert len([f for f in ledger["facts"] if f["kind"] == "declaration"]) == 1
         assert len([f for f in ledger["facts"] if f["kind"] == "landed" and f["entity_id"] == decree["id"]]) == int(option == 0)
         assert len([f for f in ledger["facts"] if f["kind"] == "interim"]) == int(option == 0)
@@ -80,19 +195,22 @@ def test_imperial_backing_reconsiders_the_original_decree(game_db, steps, audit,
         ([TimeoutError()] * 3 if case in {"retry", "reopen"} else [])
         + [(RECORDED / verdict).read_text()], received,
     )
-    with TestClient(create_app(game_db.parent)) as client:
+    with reopening(game_db.parent) as reopen:
+        client = reopen()
         client.post("/actions", json={"action": "load", "save": game_db.name})
         ledger = audit(game_db)
         petition = {"id": next(f["detail"]["decision_key"]["petition_id"] for f in ledger["facts"] if f["kind"] == "endorsed")}
         decree = next(e for e in ledger["entities"] if e["kind"] == "decree")
         assert len([f for f in ledger["facts"] if f["kind"] == "deliberation"]) == 1
         assert len([f for f in ledger["facts"] if f["kind"] == "endorsed"]) == 1
+        assert [f["detail"]["disposition"] for f in ledger["facts"] if f["kind"] == "choice"] == ["endorsed"]
         assert decree["data"]["endorsements"] == [{
             "endorser": "御笔", "form": "御笔手敕",
             "decision_key": {"petition_id": petition["id"], "option": 3},
         }]
         assert not [f for f in ledger["facts"] if f["kind"] == "landed" and f["entity_id"] == decree["id"]]
         assert (client.get("/state").json()["game"]["date"]["month"], received) == (11, [])
+        client = reopen()
         client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
         client.post("/actions", json={"action": "month"}).raise_for_status()
         if case in {"retry", "reopen"}:
@@ -101,6 +219,7 @@ def test_imperial_backing_reconsiders_the_original_decree(game_db, steps, audit,
             assert stopped["failure"]["payload"]["type"] == "TimeoutError"
             assert len([f for f in audit(game_db)["facts"] if f["kind"] == "month_draft"]) == 1
             if case == "reopen":
+                client = reopen()
                 client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
             client.post("/actions", json={"action": "retry"}).raise_for_status()
         client.portal.call(client.app.state.web.game.drain)
@@ -115,6 +234,7 @@ def test_imperial_backing_reconsiders_the_original_decree(game_db, steps, audit,
         assert len([f for f in ledger["facts"] if f["kind"] == "landed" and f["entity_id"] == decree["id"]]) == int(case != "rejected")
         assert len([f for f in ledger["facts"] if f["kind"] == "endorsed"]) == 1
         assert json.loads(received[-1].parts[0].content)["context"]["decree"]["data"]["endorsements"] == decree["data"]["endorsements"]
+        client = reopen()
         client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
         client.post("/actions", json={"action": "month"}).raise_for_status()
         assert len([f for f in audit(game_db)["facts"] if f["kind"] == "deliberation"]) == 2
@@ -136,7 +256,7 @@ def test_interim_costs_follow_promulgation_not_backing(game_db, steps, audit, ca
         client.post("/actions", json={"action": "month"}).raise_for_status()
         if rejected:
             petition = client.get("/state").json()["game"]["petitions"][0]
-            assert petition["options"] == (["收回", "留中"] if case == "vital" else ["强颁", "收回", "留中"])
+            assert len(petition["options"]) == (2 if case == "vital" else 3)
             client.post("/actions", json={"action": "choose", "petition": petition["id"], "option": 0 if case == "vital" else 2 if case == "held" else 1}).raise_for_status()
         client.portal.call(client.app.state.web.game.drain)
         state = client.get("/state").json()["game"]
@@ -146,6 +266,9 @@ def test_interim_costs_follow_promulgation_not_backing(game_db, steps, audit, ca
         assert len([f for f in ledger["facts"] if f["kind"] == "interim" and f["entity_id"] == decree["id"]]) == 1
         assert len([f for f in ledger["facts"] if f["kind"] == "landed" and f["entity_id"] == decree["id"]]) == int(not rejected)
         assert len([f for f in ledger["facts"] if f["kind"] == "attempted" and f["entity_id"] == decree["id"]]) == int(rejected)
+        assert [f["detail"]["disposition"] for f in ledger["facts"] if f["kind"] == "choice"] == (
+            ["held" if case == "held" else "withdrawn"] if rejected else []
+        )
         effects = [f for f in ledger["facts"] if f["kind"] == "changed" and f["detail"].get("origin_ref") == decree["id"]]
         assert len([f for f in effects if "imperial_prestige" in f["detail"]["actual"]]) == int(not rejected)
         assert any("satisfaction" in f["detail"]["actual"] for f in effects)
@@ -165,7 +288,8 @@ def test_two_nights_feed_world_and_arrivals_wait_for_audience(tmp_path, game_db,
     steps["simulation"] = replaying([(RECORDED / "simulation.txt").read_text()] * 2, received)
     declarations = []
     steps["Declaration"] = replaying([(RECORDED / "month_journey_dates.json").read_text(), (RECORDED / "month_decree_money.txt").read_text()], declarations)
-    with TestClient(create_app(tmp_path)) as client:
+    with reopening(tmp_path) as reopen:
+        client = reopen()
         save = client.post("/actions", json={"action": "load", "save": game_db.name}).json()["save"]
         ledger = audit(tmp_path / save)
         nights = {e["id"] for e in ledger["entities"] if e["kind"] == "night"}
@@ -178,6 +302,7 @@ def test_two_nights_feed_world_and_arrivals_wait_for_audience(tmp_path, game_db,
             if interrupt and month == 11:
                 stopped = client.get("/state").json()["game"]
                 assert stopped["failure"] is not None and stopped["date"]["month"] == 10
+                client = reopen()
                 client.post("/actions", json={"action": "load", "save": save})
                 client.post("/actions", json={"action": "retry"})
             state = client.get("/state").json()["game"]
@@ -221,6 +346,7 @@ def test_two_nights_feed_world_and_arrivals_wait_for_audience(tmp_path, game_db,
                 )
                 assert person["data"]["waiting_audience"] == (person["key"] == "毕自严" or month == 12)
                 assert person["key"] not in state["night"]["hall"]
+            client = reopen()
             client.post("/actions", json={"action": "load", "save": save})
             assert audit(tmp_path / save) == ledger
         prior = [e for e in ledger["entities"] if e["kind"] == "night"]
@@ -265,7 +391,8 @@ def test_month_pays_affair_from_declaration_month(game_db, steps, audit, clock, 
     )
     if case == "resume":
         steps["gazette"] = replaying([TimeoutError()] * 3 + [(RECORDED / "gazette.txt").read_text()])
-    with TestClient(create_app(game_db.parent)) as client:
+    with reopening(game_db.parent) as reopen:
+        client = reopen()
         client.post("/actions", json={"action": "load", "save": game_db.name})
         for index in range(1 if case == "invalid_account" else 2 if name != "陕西专款" else 3):
             # Session nodes run the first month from the opening through HTTP;
@@ -276,6 +403,7 @@ def test_month_pays_affair_from_declaration_month(game_db, steps, audit, clock, 
             if case == "resume" and index == 0:
                 state = client.get("/state").json()["game"]
                 assert state["failure"] is not None and state["date"]["month"] == 10
+                client = reopen()
                 client.post("/actions", json={"action": "load", "save": game_db.name})
                 client.post("/actions", json={"action": "retry"})
                 steps["gazette"] = TestModel(call_tools=[], custom_output_text=(RECORDED / "gazette.txt").read_text())

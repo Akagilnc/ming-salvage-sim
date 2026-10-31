@@ -42,7 +42,8 @@ layers = ["ming.desktop", "ming.web | ming.__main__", "ming.game", "ming.audienc
 [[tool.importlinter.contracts]]
 name = "month steps communicate only through the ledger door"
 type = "independence"
-modules = ["ming.month_steps.deliberation", "ming.month_steps.simulation", "ming.month_steps.petitions", "ming.month_steps.landing", "ming.month_steps.gazette", "ming.month_steps.sources", "ming.month_steps.secrets"]
+# Petition rules are shared by drafting and choosing, not an independent step.
+modules = ["ming.month_steps.deliberation", "ming.month_steps.simulation", "ming.month_steps.landing", "ming.month_steps.gazette", "ming.month_steps.sources", "ming.month_steps.secrets"]
 
 # 账本只有一个门：只被中间层导入。
 [[tool.importlinter.contracts]]

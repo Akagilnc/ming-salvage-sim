@@ -7,7 +7,6 @@ from typing import Any
 from sqlalchemy import Select, and_, case, false, func, or_, select, true, tuple_
 from sqlalchemy.sql.base import ReadOnlyColumnCollection
 from sqlalchemy.sql.elements import ColumnElement, KeyedColumnElement
-from sqlalchemy.sql.functions import Function
 from ming.ledger import (
     Item,
     ENTITY_COLUMNS as E,
@@ -15,6 +14,7 @@ from ming.ledger import (
     FACT_COLUMNS as F,
     ENTITY_ROWS,
     FACT_ROWS,
+    facts_in_month,
 )
 from ming.middle.appointments import APPOINTMENT_ROLES
 
@@ -50,7 +50,7 @@ IN_OFFICE = CURRENT_APPOINTMENT.exists()
 
 
 def available_on(date: Item) -> ColumnElement[bool]:
-    """A petition's availability, shared by identity reads and the inbox."""
+    """Identity visibility follows each petition's recorded availability."""
     if not date:
         return true()
     return or_(
@@ -63,27 +63,17 @@ def available_on(date: Item) -> ColumnElement[bool]:
     )
 
 
-def pending_petitions(date: Item) -> Select[Any]:
-    choice = F.position.table.alias().c
-    return (
-        FACT_ROWS.where(
-            F.kind == "petition",
-            available_on(date),
-            ~select(choice.position)
-            .where(
-                choice.kind == "choice",
-                choice.detail["petition_id"].as_string() == F.detail["id"].as_string(),
-            )
-            .exists(),
-        )
-        .order_by(None)
-        .order_by(
-            F.detail["available"]["year"].as_integer(),
-            F.detail["available"]["month"].as_integer(),
-            F.detail["ordinal"].as_integer(),
-            F.position,
-        )
-    )
+def matching_details(column: ColumnElement[Any], detail: Item) -> tuple[ColumnElement[bool], ...]:
+    return tuple(column[field].as_string().in_(values if isinstance(values, list) else [values])
+                 for field, values in detail.items())
+
+
+def unmatched(kind: str, response: str, link: tuple[str, str]) -> ColumnElement[bool]:
+    answer = F.position.table.alias("answer").c
+    return and_(F.kind == kind, F.detail[link[0]].as_string().is_not(None), ~select(answer.position).where(
+        answer.kind == response,
+        answer.detail[link[1]].as_string() == F.detail[link[0]].as_string(),
+    ).exists())
 
 
 def returned_petitions(date: Item | None = None) -> Select[Any]:
@@ -96,8 +86,7 @@ def returned_petitions(date: Item | None = None) -> Select[Any]:
         .where(
             choice.kind == "choice",
             choice.detail["petition_id"].as_string() == F.detail["id"].as_string(),
-            choice.detail["option"].as_integer()
-            == Function("json_array_length", F.detail["options"]) - 1,
+            choice.detail["disposition"].as_string() == "returned",
             *([choice.date != date] if date is not None else []),
         )
         .exists(),
@@ -110,26 +99,20 @@ def returned_petitions(date: Item | None = None) -> Select[Any]:
     )
 
 
-def interactions() -> Select[Any]:
-    """Latest work states in first-key order; audit reads retain completed choices."""
+def interactions(date: Item) -> Select[Any]:
+    """Latest acceptance or failure for each key in this month."""
     positions = (
         select(
             F.detail["key"].as_string().label("key"),
             func.min(F.position).label("first"),
             func.max(F.position).label("last"),
         )
-        .where(F.kind == "interaction")
+        .where(F.kind == "interaction", facts_in_month(date))
         .group_by(F.detail["key"].as_string())
         .subquery()
     )
     return (
         FACT_ROWS.join(positions, F.position == positions.c.last)
-        .where(
-            or_(
-                F.detail["action"].as_string() != "choose",
-                F.detail["status"].as_string() != "done",
-            )
-        )
         .order_by(None)
         .order_by(positions.c.first)
     )
@@ -153,23 +136,18 @@ FUNDED_AFFAIRS = ENTITY_ROWS.where(
 )
 
 
-SECRET_DECREES = ENTITY_ROWS.where(
-    E.kind == "decree", E.data["secret"].as_boolean().is_(True)
-)
-
-
-def errands(date: Item | ColumnElement[Any]) -> Select[Any]:
-    """Secret decrees still in hand: no completion landed before this month."""
-    return SECRET_DECREES.where(
-        ~select(F.position)
-        .where(F.entity_id == E.id, F.kind == "completed", F.date != date)
-        .exists()
-    )
+def without_events(kind: str, data: Item, event: str, date: Item | ColumnElement[Any]) -> Select[Any]:
+    query = ENTITY_ROWS.where(E.kind == kind, ~select(F.position).where(
+        F.entity_id == E.id, F.kind == event, F.date != date,
+    ).exists())
+    for field, value in data.items():
+        query = query.where(E.data[field].as_string() == value)
+    return query
 
 
 def landing_rows(date: Item | ColumnElement[Any], *, include_history: bool = True) -> Select[Any]:
     """One source set and order for complete materials, landing and reference counts."""
-    errand = E.id.in_(errands(date).with_only_columns(E.id).order_by(None)).label("errand")
+    errand = E.id.in_(without_events("decree", {"secret": True}, "completed", date).with_only_columns(E.id).order_by(None)).label("errand")
     deliberated = E.id.in_(decrees_with("deliberation", date).with_only_columns(E.id).order_by(None)).label("deliberated")
     return ENTITY_ROWS.add_columns(errand, deliberated).where(or_(
         errand, deliberated, public_decree() if include_history else false(),
