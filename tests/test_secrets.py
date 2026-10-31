@@ -277,12 +277,7 @@ def test_month_retries_only_failed_source(game_db, steps, audit):
         }
 
 
-@pytest.mark.parametrize("game_db", ["first_night"], indirect=True)
-@pytest.mark.parametrize("handler,failure", [("毕尚书", None), ("徐光启", "declaration"), ("徐光启", "report")], ids=["alias", "absent-handler", "report-retry"])
-def test_secret_orders_keep_their_readers_and_monthly_products(
-    game_db: Path, steps, audit, failure, handler
-) -> None:
-    case = json.loads((RECORDED / "night_secret.json").read_text())
+def configure_secret_order_retries(steps, case, handler, failure):
     declaration = json.loads(case["replies"][0])
     declaration["decrees"][0]["people"] = ["毕自严", "王承恩"] if handler == "毕尚书" else [] if failure == "declaration" else ["王承恩"]
     declaration["decrees"][0].pop("handler")
@@ -291,6 +286,15 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
     declaration["decrees"][0]["handler"] = handler
     steps["scene"] = replaying([m for m in ModelMessagesTypeAdapter.validate_python(case["scene_responses"]) if isinstance(m, ModelResponse)])
     steps["NightDeclaration"] = replaying([invalid, json.dumps(declaration, ensure_ascii=False)])
+
+
+@pytest.mark.parametrize("game_db", ["first_night"], indirect=True)
+@pytest.mark.parametrize("handler,failure", [("毕尚书", None), ("徐光启", "declaration"), ("徐光启", "report")], ids=["alias", "absent-handler", "report-retry"])
+def test_secret_orders_keep_their_readers_and_monthly_products(
+    game_db: Path, steps, audit, failure, handler
+) -> None:
+    case = json.loads((RECORDED / "night_secret.json").read_text())
+    configure_secret_order_retries(steps, case, handler, failure)
     handler = "毕自严" if handler == "毕尚书" else handler
     material = []
     declarations = []
@@ -354,7 +358,7 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
         assert {f.entity_id for f in court.facts("audit", kind="deliberation")} == {
             public.id
         }
-        case["views"] = [client.get("/records").json()]
+        views = [client.get("/records").json()]
         client.post("/actions", json={"action": "month"}).raise_for_status()
         client.portal.call(client.app.state.web.game.drain)
         if failure == "report":
@@ -363,34 +367,30 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
                 == "ModelHTTPError"
             )
             before = audit(game_db)
-            case["views"].append(client.get("/records").json())
+            views.append(client.get("/records").json())
             assert any(f["kind"] == "arrived" for f in before["facts"])
             client = reopen()
             client.post(
                 "/actions", json={"action": "load", "save": game_db.name}
             ).raise_for_status()
             client.portal.call(client.app.state.web.game.drain)
-            case["views"].append(client.get("/records").json())
-            assert all(value == views[0] for views in (
+            views.append(client.get("/records").json())
+            assert all(value == values[0] for values in (
                 [[(e["id"], e["data"].get("location"), e["data"].get("transit_to"))
-                  for e in view["entities"] if e["kind"] == "person"] for view in case["views"]],
+                  for e in view["entities"] if e["kind"] == "person"] for view in views],
                 [[(f["entity_id"], f["kind"], f["detail"].get("date"))
-                  for f in view["facts"] if f["kind"] in {"changed", "arrived", "departed"}] for view in case["views"]],
-            ) for value in views[1:])
-            case["selected_id"] = UUID(next(
-                e["id"] for e in case["views"][0]["entities"]
-                if e["kind"] == "person" and e["key"] == "郭允厚"
-            ))
+                  for f in view["facts"] if f["kind"] in {"changed", "arrived", "departed"}] for view in views],
+            ) for value in values[1:])
             assert all(
                 {e.id for e in client.app.state.web.game.court.read.entities("emperor", **selection)} == expected
                 for selection, expected in (
-                    ({"ids": [case["selected_id"]]}, {case["selected_id"]}),
+                    ({"ids": [secret.id]}, {secret.id}),
                     ({"ids": [UUID(int=0)]}, set()),
                     ({"ids": []}, set()),
-                    ({"ids": [case["selected_id"]], "kind": "person"}, {case["selected_id"]}),
-                    ({"ids": [case["selected_id"]], "kind": "calendar"}, set()),
-                    ({"ids": [case["selected_id"]], "key": "徐光启"}, set()),
-                    ({"ids": [case["selected_id"]], "key": ["郭允厚", "徐光启"]}, {case["selected_id"]}),
+                    ({"ids": [secret.id], "kind": "decree"}, {secret.id}),
+                    ({"ids": [secret.id], "kind": "calendar"}, set()),
+                    ({"ids": [secret.id], "key": public.key}, set()),
+                    ({"ids": [secret.id], "key": [secret.key, public.key]}, {secret.id}),
                 )
             )
             assert audit(game_db) == before
