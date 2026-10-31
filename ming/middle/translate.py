@@ -193,16 +193,14 @@ def check_endorsements(
                     "source_chat_turn_id 改成 expected 里的本夜轮次 id，重交整份。",
                 )
             allowed: list[str] | dict[str, list[str]] = ["御笔"]
-            expected: object = allowed
             if endorsement.form != "御笔手敕":
                 endorsement.endorser = reference_key(ledger, "person", endorsement.endorser, names)
                 allowed = names.get("person", {})
-                expected = name_expected("person", endorsement.endorser, names)
             if endorsement.endorser not in allowed:
                 fail(
                     path + ".endorser",
                     endorsement.endorser,
-                    expected,
+                    allowed if endorsement.form == "御笔手敕" else name_expected("person", endorsement.endorser, names),
                     names,
                     "参照 expected 的正名清单或输入目录指针核对 endorser，重交整份。",
                 )

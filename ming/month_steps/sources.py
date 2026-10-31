@@ -101,10 +101,8 @@ class Sources:
             if not output.petitions:
                 return output
             allowed: dict[str, list[str]] | list[str] = catalogue["person"]
-            expected: object = name_expected("person", "", catalogue)
             if kind == "urgent":
                 allowed = identity.people
-                expected = allowed
             originals: set[str] = ctx.deps.court.returned_petition_ids() if kind == "urgent" and any(isinstance(p, UrgentPetition) and p.revision_of is not None for p in output.petitions) else set()
             for index, item in enumerate(output.petitions):
                 refs = {"signer": item.signer}
@@ -115,7 +113,7 @@ class Sources:
                         fail(
                             f"petitions[{index}].{field}",
                             name,
-                            expected,
+                            allowed if kind == "urgent" else name_expected("person", "", catalogue),
                             catalogue,
                             "参照 expected 的正名清单或输入目录指针核对人名，重交整份。确无此人不得换成另一人。",
                         )
