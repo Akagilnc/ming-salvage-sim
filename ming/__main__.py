@@ -5,10 +5,10 @@ import asyncio
 import json
 import sys
 from pathlib import Path
-from typing import get_args
+from typing import Literal, get_args
 from uuid import UUID
 
-from ming.game import Game
+from ming.game import Action, ActionName, Game, InvalidAction
 from ming.middle.invoke import Configuration, Settings
 from ming.middle.court import Court
 from ming.middle.opening import CONTENT, build_opening
@@ -59,9 +59,9 @@ def parser() -> argparse.ArgumentParser:
 
 async def conversation(court: Court, settings: Configuration) -> None:
     game = Game(court, settings, month_model=settings.month_model)
-    game.resume()
+    game.reopen()
     await game.drain()
-    state = court.presentation()
+    state = game.presentation()
     night = state["night"]["id"] if state["night"] else None
     if state["face"] != "month" and not state["failure"]:
         game.start("open")
@@ -69,16 +69,22 @@ async def conversation(court: Court, settings: Configuration) -> None:
     try:
         print(json.dumps({"night": night}), flush=True)
         while line := await asyncio.to_thread(sys.stdin.readline):
-            request = json.loads(line)
-            action = request.pop("action")
             scene = None
-            if action == "drain":
-                await game.drain()
-            elif action != "state":
-                task = game.start(action, request, failures=court.failures())
-                if task is not None and action != "month":
-                    scene = await asyncio.shield(task)
-            state = court.presentation()
+            try:
+                request = Action[ActionName | Literal["drain", "state"]].parse(line)
+                if request.action == "drain":
+                    await game.drain()
+                elif request.action != "state":
+                    task = game.start(
+                        request.action, request.model_dump(mode="json", exclude={"action"}, exclude_unset=True),
+                        retry_same=True,
+                    )
+                    if task is not None and request.action != "month":
+                        scene = await asyncio.shield(task)
+            except InvalidAction as error:
+                print(json.dumps({"error": {"status": error.status, "message": str(error)}}, ensure_ascii=False), flush=True)
+                continue
+            state = game.presentation()
             failure = state["failure"]
             print(
                 json.dumps(
@@ -105,14 +111,14 @@ async def conversation(court: Court, settings: Configuration) -> None:
 
 
 async def month_action(court: Court, args: argparse.Namespace) -> None:
-    game = Game(court, court.model, month_model=args.settings.month_model)
+    game = Game(court, args.settings, month_model=args.settings.month_model)
     await game.command(
         args.command,
         {"petition": str(args.petition), "option": args.option}
         if args.command == "choose"
         else {},
     )
-    state = court.presentation()
+    state = game.presentation()
     print(
         json.dumps(
             {"date": state["date"], "petitions": state["petitions"]}, ensure_ascii=False
@@ -131,24 +137,23 @@ def main(argv: list[str] | None = None) -> None:
         **{key: getattr(args, key) for key in Settings.model_fields},
         "month_model": {key: getattr(args, f"month_{key}") for key in Settings.model_fields},
     })
-    model = args.settings
     court = (
-        Court.new_game(args.directory, model)
+        Court.new_game(args.directory)
         if args.command == "new"
-        else Court(args.db, model)
+        else Court(args.db)
     )
     try:
         if args.command in {"month", "choose"}:
             asyncio.run(month_action(court, args))
             return
         if args.command == "audience":
-            asyncio.run(conversation(court, model))
+            asyncio.run(conversation(court, args.settings))
             return
         print(
             json.dumps(
                 {
                     "db": str(court.db_path),
-                    **court.read_records(args.identity, replay=getattr(args, "replay", False)),
+                    **court.read.read_records(args.identity, replay=getattr(args, "replay", False)),
                 },
                 ensure_ascii=False,
                 indent=2,

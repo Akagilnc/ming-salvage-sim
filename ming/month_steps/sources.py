@@ -1,21 +1,29 @@
 """Month-end urgent drafting and faction petitions; choices act next month."""
 
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, cast
 from uuid import UUID, uuid4
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 
 from pydantic import Field
-from pydantic_ai import PromptedOutput, RunContext
+from pydantic_ai import Agent, PromptedOutput, RunContext
+from pydantic_ai.models import Model
 
-from ming.middle.calendar import next_month
 from ming.middle.court import Court
 from ming.middle.concepts import ACTING
-from ming.middle.declaration import Petition, PendingPetition, StrictModel
-from ming.middle.invoke import ModelSource, build_agent, gather_or_raise, invoke
-from ming.middle.month_work import prompt
+from ming.middle.declaration import StrictModel
+from ming.middle.invoke import gather_or_raise, invoke
+from ming.month_steps.materials import Petition, PendingPetition, next_month, petition_officials, prompt
 from ming.middle.records import Materials, read_records
 from ming.middle.view import EntityView, Officials, character_input
-from ming.middle.rules import fail, name_expected
+from ming.middle.rules import Names, fail, name_expected
+from ming.month_steps.products import record_product
+
+
+@dataclass
+class SourceMaterials(Materials):
+    """One month-end run's name catalogue, shared by every source's validation."""
+    catalogue: Names
 
 
 class UrgentPetition(Petition):
@@ -42,21 +50,28 @@ class Impeachments(StrictModel):
 
 
 class Sources:
-    def __init__(self, court: Court, model: ModelSource) -> None:
-        self.court = court
-        self.model = model
+    urgent, impeachment = (
+        Agent(
+            name=kind, output_type=PromptedOutput(output),
+            deps_type=SourceMaterials, tools=[read_records], retries=1,
+            instructions="你演上奏的官员。按输入 catalogue 用 read_records 按需查本人所知见闻；按输入人物立场写下月开局的奏折。正文与选项用奏报口吻，人物才具、操守以言行呈现。" + "\n" + ACTING,
+        ) for kind, output in (("urgent", Urgencies), ("impeachment", Impeachments))
+    )
+
+    def __init__(self, court: Court, model: Callable[[], Model]) -> None:
+        self.court, self.model = court, model
 
     async def run(self, calendar: EntityView) -> None:
         pending: dict[tuple[str, ...], list[tuple[int, EntityView, str, dict[str, object]]]] = {}
         for index, (source, kind, faction) in enumerate([
             (calendar, "urgent", None),
-            *((f, "impeachment", f.key) for f in self.court.entities("audit", kind="faction")),
+            *((f, "impeachment", f.key) for f in self.court.read.entities("audit", kind="faction")),
         ]):
-            if self.court.has_product(source.id, kind, date=calendar.data):
+            if self.court.read.has_facts(source.id, kind, date=calendar.data):
                 continue
-            people = list(self.court.petition_officials(faction))
+            people = list(petition_officials(self.court, faction))
             if kind == "urgent" and not people:
-                self.court.record_product(source.id, kind, {"petitions": []})
+                record_product(self.court, source.id, kind, {"petitions": [], "date": calendar.data})
                 continue
             context: dict[str, object] = {
                 "returned": [f.detail for f in self.court.returned_petitions()],
@@ -67,11 +82,14 @@ class Sources:
                 "instruction": "以本派在朝人物的身份看本月见闻和本派、对手势力，自行决定劾不劾、劾谁、如何归因，可以交空。灾难真而归因可夹私货。署名人及被劾人用账本正名。每折三项：顺水推舟办人、压下、查实再办，措辞自拟。",
             }
             pending.setdefault(tuple(people), []).append((index, source, kind, context))
+        if not pending:
+            return
+        catalogue = self.court.read.catalogue()
         calls: dict[int, Awaitable[None]] = {}
         for names, requests in pending.items():
             identity = Officials(people=list(names))
             inputs = prompt(self.court, identity, {}, date=calendar.data)
-            calls.update((index, self.call(source, kind, identity, {**inputs, "context": character_input(context)}))
+            calls.update((index, self.call(source, kind, identity, {**inputs, "context": character_input(context)}, catalogue))
                          for index, source, kind, context in requests)
         await gather_or_raise(*(calls[index] for index in sorted(calls)))
 
@@ -81,61 +99,17 @@ class Sources:
         kind: str,
         identity: Officials,
         inputs: dict[str, Any],
+        catalogue: Names,
     ) -> None:
-        agent = build_agent(
-            self.model,
-            name=kind,
-            output_type=PromptedOutput(Urgencies if kind == "urgent" else Impeachments),
-            deps_type=Materials,
-            tools=[read_records],
-            retries=1,
-            instructions="你演上奏的官员。按输入 catalogue 用 read_records 按需查本人所知见闻；按输入人物立场写下月开局的奏折。正文与选项用奏报口吻，人物才具、操守以言行呈现。" + "\n" + ACTING,
-        )
-
-        @agent.output_validator
-        def names(ctx: RunContext[Materials], output: Urgencies | Impeachments):
-            if not output.petitions:
-                return output
-            catalogue = ctx.deps.court.catalogue()
-            allowed: dict[str, list[str]] | list[str] = catalogue["person"]
-            expected: object = name_expected("person", "", catalogue)
-            if kind == "urgent":
-                allowed = identity.people
-                expected = allowed
-            originals: set[str] = ctx.deps.court.returned_petition_ids() if kind == "urgent" and any(isinstance(p, UrgentPetition) and p.revision_of is not None for p in output.petitions) else set()
-            for index, item in enumerate(output.petitions):
-                refs = {"signer": item.signer}
-                if isinstance(item, ImpeachmentPetition):
-                    refs["target"] = item.target
-                for field, name in refs.items():
-                    if name not in allowed:
-                        fail(
-                            f"petitions[{index}].{field}",
-                            name,
-                            expected,
-                            catalogue,
-                            "参照 expected 的正名清单或输入目录指针核对人名，重交整份。确无此人不得换成另一人。",
-                        )
-                if isinstance(item, UrgentPetition) and item.revision_of is not None:
-                    if str(item.revision_of) not in originals:
-                        fail(
-                            f"petitions[{index}].revision_of",
-                            str(item.revision_of),
-                            sorted(originals),
-                            catalogue,
-                            "revision_of 改成 expected 里的原奏疏 id，或省略，重交整份。",
-                        )
-            return output
-
         result = await invoke(
-            agent,
+            self.urgent if kind == "urgent" else self.impeachment,
             inputs,
-            deps=Materials(self.court, identity),
+            deps=SourceMaterials(self.court, identity, catalogue), model=self.model(),
         )
         self.court.log.info("%s output: %s", kind, result.output.model_dump_json())
-        date = self.court.calendar().data
+        date = inputs["date"]
         available = {**date, **next_month(date)}
-        people = {e.key: e.id for e in self.court.entities(
+        people = {e.key: e.id for e in self.court.read.entities(
             "audit", kind="person", key=[p.signer for p in result.output.petitions],
         )} if result.output.petitions else {}
         petitions = [
@@ -153,9 +127,39 @@ class Sources:
             )
             for index, item in enumerate(result.output.petitions)
         ]
-        self.court.record_product(
-            source.id,
-            kind,
-            {"petitions": [str(p.id) for p in petitions]},
-            petitions=petitions, date=date,
+        record_product(
+            self.court, source.id, kind,
+            {"petitions": [str(p.id) for p in petitions], "date": date},
+            petitions=petitions,
         )
+
+
+@Sources.urgent.output_validator
+@Sources.impeachment.output_validator
+def names(ctx: RunContext[SourceMaterials], output: Urgencies | Impeachments):
+    if not output.petitions:
+        return output
+    catalogue = ctx.deps.catalogue
+    allowed: dict[str, list[str]] | list[str] = catalogue["person"]
+    if isinstance(output, Urgencies):
+        allowed = cast(Officials, ctx.deps.identity).people
+    originals: set[str] = ctx.deps.court.returned_petition_ids() if isinstance(output, Urgencies) and any(p.revision_of is not None for p in output.petitions) else set()
+    for index, item in enumerate(output.petitions):
+        refs = {"signer": item.signer}
+        if isinstance(item, ImpeachmentPetition):
+            refs["target"] = item.target
+        for field, name in refs.items():
+            if name not in allowed:
+                fail(
+                    f"petitions[{index}].{field}", name,
+                    allowed if isinstance(output, Urgencies) else name_expected("person", "", catalogue), catalogue,
+                    "参照 expected 的正名清单或输入目录指针核对人名，重交整份。确无此人不得换成另一人。",
+                )
+        if isinstance(item, UrgentPetition) and item.revision_of is not None:
+            if str(item.revision_of) not in originals:
+                fail(
+                    f"petitions[{index}].revision_of", str(item.revision_of),
+                    sorted(originals), catalogue,
+                    "revision_of 改成 expected 里的原奏疏 id，或省略，重交整份。",
+                )
+    return output

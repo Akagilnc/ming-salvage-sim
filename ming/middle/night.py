@@ -4,15 +4,14 @@ from collections import defaultdict
 from collections.abc import Sequence
 from operator import itemgetter
 from typing import Any, Literal
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from pydantic import BaseModel
 from sqlalchemy import JSON, CompoundSelect, FromClause, Select, case, func, literal, or_, select, true, union_all
 from sqlalchemy.sql.elements import BindParameter, ColumnElement
 
-from ming.ledger import ENTITY_COLUMNS as E, FACT_COLUMNS as F, FACT_ROWS, Entity, Item, Ledger
-from ming.middle.calendar import calendar_row
-from ming.middle.queries import LATEST_NIGHT, NIGHT_RESULT
+from ming.ledger import ENTITY_COLUMNS as E, FACT_COLUMNS as F, FACT_ROWS, Item, Ledger
+from ming.middle.queries import NIGHT_RESULT
 
 INITIAL_HALL = ("王承恩",)
 # Resolve the referenced-night domain in the permission query itself, rather
@@ -32,11 +31,14 @@ class TurnView(BaseModel):
     hall: tuple[str, ...]
 
 
-class NightView(BaseModel):
+class NightHeader(BaseModel):
     id: UUID
     closed: bool
     hall: tuple[str, ...]
     date: dict[str, int]
+
+
+class NightView(NightHeader):
     turns: tuple[TurnView, ...] = ()
     result: Literal["translated", "unhandled"] | None = None
 
@@ -144,22 +146,3 @@ def known_people(
         declared = declared.where(assigned.c.value.in_(people))
         attendees = attendees.where(attendees.selected_columns.person.in_(people))
     return declared.union(attendees)
-
-
-def open_night(ledger: Ledger) -> tuple[UUID, bool]:
-    for row in ledger.entities(query=LATEST_NIGHT.with_only_columns(E.id, E.data["closed"].as_boolean().label("closed"))):
-        if not row["closed"]:
-            return row["id"], False
-    date = calendar_row(ledger)["data"]
-    night = Entity(
-        "night", str(uuid4()), "", {"closed": False, "hall": list(INITIAL_HALL), "date": {k: date[k] for k in ("year", "month")}}
-    )
-    ledger.commit([night])
-    return night.id, True
-
-
-def dismiss(ledger: Ledger, night_id: UUID) -> None:
-    night = ledger.get(night_id)
-    if not night.data["closed"]:
-        night.record("dismissed", "", {}, {"closed": True})
-        ledger.commit([night])

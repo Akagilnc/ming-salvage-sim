@@ -4,7 +4,7 @@ from copy import deepcopy
 from collections.abc import Sequence
 from typing import cast
 
-from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS, FACT_COLUMNS as F, FACT_ROWS, Entity, Item, Ledger
+from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS, Entity, Item, Ledger
 from ming.middle.declaration import EntityRef, FiscalEnd, MonthlyFunding, PaymentPolicy
 from ming.middle.queries import FUNDED_AFFAIRS
 from ming.middle.fields import FIELDS
@@ -102,26 +102,8 @@ def obligation(pair: tuple[str, str], existing: dict[tuple[str, str], Item]) -> 
     return base * active_policy(data, existing[("calendar", "world")]["data"]).factor
 
 
-def due_levies(ledger: Ledger, date: Item) -> list[Item]:
-    events = {row["data"]["id"]: row for row in ledger.entities(kind="historical_event")}
-    return [
-        {"entity": row["key"], "data": row["data"]}
-        for row in events.values()
-        if row["data"].get("category") == "fiscal_levy"
-        and (row["data"]["trigger_year"], row["data"]["trigger_month"])
-        == (date["year"], date["month"])
-        and row["data"].get("terminal_reason") is None
-        and all(
-            events[subject.split(".")[1]]["data"].get("terminal_reason")
-            == required.removeprefix("==")
-            for subject, required in row["data"]["trigger_gate"].items()
-        )
-    ]
-
-
 class Accounts:
     def __init__(self, ledger: Ledger) -> None:
-        self.ledger = ledger
         self.rows = [
             ledger.get(row["id"])
             for row in [*ledger.entities(query=FUNDED_AFFAIRS.with_only_columns(E.id)), *ledger.entities(
@@ -334,16 +316,3 @@ class Accounts:
                 "month_paid": {"date": self.date, "amount": prior + paid},
             },
         )
-
-    def run(self) -> None:
-        if self.ledger.facts(
-            entity_id=self.calendar.id, kind="month_accounts", date=self.date,
-            query=FACT_ROWS.with_only_columns(F.position).order_by(None).limit(1),
-        ):
-            return
-        self.taxes()
-        self.revenues()
-        self.production()
-        self.expenses()
-        self.calendar.record("month_accounts", "", {"date": self.date})
-        self.ledger.commit(self.rows)
