@@ -31,25 +31,54 @@ def declaration_reply(messages, response_file, quiet_month=None):
     return (RECORDED / name).read_text()
 
 
-def assert_model_read_tools(name, messages, tools, identity):
-    assert tools
-    assert all("read_records" in available and "read_person" not in available for available in tools)
-    returns = [p.model_response_object() for m in messages for p in m.parts
-               if isinstance(p, ToolReturnPart) and p.tool_call_id == "office"]
-    assert returns and all(r["appointments"][0]["holders"] == ["郭允厚"] for r in returns)
-    responses = {p.tool_call_id: p.model_response_object() for m in messages for p in m.parts
-                 if isinstance(p, ToolReturnPart)}
-    if name != "impeachment":
-        assert ("dossier" in responses["person"]["entities"][0]["data"]) == (
-            isinstance(identity, Officials) and "王体乾" in identity.people
-        )
-        assert ("taels" in next(iter(responses["treasury"].get("entities", [])), {"data": {}})["data"]) == (
-            name in {"NightDeclaration", "Declaration", "simulation", "deliberation", "urgent"}
-        )
-    if isinstance(identity, Officials) and name != "impeachment":
-        factions = {e["key"]: e["data"] for e in responses["factions"]["entities"]}
-        assert ("satisfaction" in factions["阉党"]) == (name in {"deliberation", "urgent"})
-        assert factions["东林"] == {"name": "东林"}
+def assert_model_read_tools(received, tools, model_invocations, court):
+    expected = {
+        "scene": Officials(people=["王承恩"]),
+        "NightDeclaration": "world", "Declaration": "world", "simulation": "world", "gazette": "public",
+        "deliberation": Officials(people=["王体乾"], exclude_secrets=True),
+        "urgent": Officials(people=["黄立极", "王体乾"]),
+        "secret_report": Officials(people=["王承恩"]),
+    }
+    for name, messages in received.items():
+        assert model_invocations[name]
+        if name != "impeachment":
+            assert all(identity == expected[name] for identity in model_invocations[name])
+        else:
+            people = court.entities("world", kind="person")
+            assert all(isinstance(identity, Officials) and not identity.exclude_secrets for identity in model_invocations[name])
+            assert {tuple(identity.people) for identity in model_invocations[name]} == {
+                tuple(p.key for p in people if p.data["appointments"] and p.data.get("faction") == faction.key)
+                for faction in court.entities("audit", kind="faction")
+            }
+        identity = model_invocations[name][0]
+        assert tools[name]
+        assert all("read_records" in available and "read_person" not in available for available in tools[name])
+        returns = [p.model_response_object() for m in messages for p in m.parts
+                   if isinstance(p, ToolReturnPart) and p.tool_call_id == "office"]
+        assert returns and all(r["appointments"][0]["holders"] == ["郭允厚"] for r in returns)
+        responses = {p.tool_call_id: p.model_response_object() for m in messages for p in m.parts
+                     if isinstance(p, ToolReturnPart)}
+        if name != "impeachment":
+            assert ("dossier" in responses["person"]["entities"][0]["data"]) == (
+                isinstance(identity, Officials) and "王体乾" in identity.people
+            )
+            assert ("taels" in next(iter(responses["treasury"].get("entities", [])), {"data": {}})["data"]) == (
+                name in {"NightDeclaration", "Declaration", "simulation", "deliberation", "urgent"}
+            )
+        if isinstance(identity, Officials) and name != "impeachment":
+            factions = {e["key"]: e["data"] for e in responses["factions"]["entities"]}
+            assert ("satisfaction" in factions["阉党"]) == (name in {"deliberation", "urgent"})
+            assert factions["东林"] == {"name": "东林"}
+        if name in {"urgent", "impeachment", "deliberation", "secret_report"}:
+            for identity, message in zip(model_invocations[name], (
+                m for m in messages if m.kind == "request" and m.parts[0].part_kind == "user-prompt"
+            ), strict=True):
+                data = json.loads(message.parts[0].content)
+                # Check speakers against the task identities, not inferred prompt visibility.
+                assert data["speakers"] == [e.model_dump(mode="json") for person in identity.people
+                                            for e in court.entities(identity, kind="person", key=person)]
+                assert all({"seed_guilt", "dossier"}.issubset(e["data"]) for e in data["speakers"])
+                assert "factions" not in data["context"]
 
 
 @pytest.mark.parametrize("game_db", ["secret_night"], indirect=True)
@@ -157,36 +186,7 @@ def test_every_model_call_reads_identity_scoped_records(game_db, steps):
         }
         assert not court.facts("public", kind="reported")
         assert not court.facts("emperor", kind="reported")
-        expected = {
-            "scene": Officials(people=["王承恩"]),
-            "NightDeclaration": "world", "Declaration": "world", "simulation": "world", "gazette": "public",
-            "deliberation": Officials(people=["王体乾"], exclude_secrets=True),
-            "urgent": Officials(people=["黄立极", "王体乾"]),
-            "secret_report": Officials(people=["王承恩"]),
-            "impeachment": court.entities("world", kind="person"),
-        }
-        for name in received:
-            assert model_invocations[name]
-            if name != "impeachment":
-                assert all(identity == expected[name] for identity in model_invocations[name])
-            else:
-                assert all(isinstance(identity, Officials) and not identity.exclude_secrets for identity in model_invocations[name])
-                assert {tuple(identity.people) for identity in model_invocations[name]} == {
-                    tuple(p.key for p in expected[name] if p.data["appointments"] and p.data.get("faction") == faction.key)
-                    for faction in court.entities("audit", kind="faction")
-                }
-            assert_model_read_tools(name, received[name], tools[name], model_invocations[name][0])
-            if name in {"urgent", "impeachment", "deliberation", "secret_report"}:
-                for identity, message in zip(model_invocations[name], (
-                    m for m in received[name] if m.kind == "request" and m.parts[0].part_kind == "user-prompt"
-                ), strict=True):
-                    data = json.loads(message.parts[0].content)
-                    # deps identities are checked above against the declared tasks,
-                    # never inferred from the very input whose visibility we test.
-                    assert data["speakers"] == [e.model_dump(mode="json") for person in identity.people
-                                                for e in court.entities(identity, kind="person", key=person)]
-                    assert all({"seed_guilt", "dossier"}.issubset(e["data"]) for e in data["speakers"])
-                    assert "factions" not in data["context"]
+        assert_model_read_tools(received, tools, model_invocations, court)
 
 
 @pytest.mark.parametrize("game_db", ["secret_night"], indirect=True)
