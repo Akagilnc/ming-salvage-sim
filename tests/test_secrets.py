@@ -111,8 +111,10 @@ def assert_model_read_tools(received, tools, model_invocations, court):
                 assert next(e["event_count"] for e in responses["class-date"]["catalogue"] if e["key"] == "王承恩") == len(responses["dated"]["facts"])
                 assert responses["prior"]["facts"] == []
                 assert responses["prior-class"]["catalogue"] == []
-                assert all(isinstance(next(e["data"] for e in responses["many"]["entities"] if e["key"] == "杨嗣昌")[field], str)
-                           for field in ("loyalty", "ability", "integrity", "courage", "identity", "intrigue"))
+                assert next(e["data"] for e in responses["many"]["entities"] if e["key"] == "杨嗣昌").items() >= {
+                    "loyalty": "颇知向背", "ability": "足任大事", "integrity": "操守平常",
+                    "courage": "敢任其事", "identity": "党色极深", "intrigue": "善藏行迹",
+                }.items()
                 assert next(e.data["loyalty"] for e in court.entities("world", kind="person", key="杨嗣昌")) == 75
                 assert {(e["key"], field): e["data"][field] for e in responses["many"]["entities"] if e["kind"] == "army"
                         for field in ("firearm_equipment", "cannon_equipment")} == {

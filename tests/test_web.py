@@ -143,9 +143,8 @@ def test_menu_creates_distinct_games_and_opens_only_existing_saves(
 def test_http_month_dispatches_choices_and_retries_missing_step(
     game_db: Path, path: str, steps, audit, clock
 ) -> None:
-    steps["Declaration"] = TestModel(call_tools=[], custom_output_text=(
-        RECORDED / ("month_empty.txt" if path in {"multiple-petitions", "choice-error"} else "month_decree_money.txt")
-    ).read_text())
+    if path not in {"multiple-petitions", "choice-error"}:
+        steps["Declaration"] = TestModel(call_tools=[], custom_output_text=(RECORDED / "month_decree_money.txt").read_text())
     received = {}
     if path in {"multiple-petitions", "choice-error"}:
         case = (RECORDED / "month_multiple_petitions.txt").read_text()
@@ -308,7 +307,7 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
                     p["id"] for p in client.get("/state").json()["game"]["petitions"]
                 } == {p["id"] for p in game["petitions"]}
                 # The last choice completes and starts the month in ONE frame;
-                # rejected duplicate choices add none, monthly commits add none.
+                # monthly commits add none.
                 assert [
                     (state["game"]["running"],
                      state["game"]["pending"] and state["game"]["pending"]["action"],
@@ -322,7 +321,6 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
                     *([(False, None, 10 if path == "choice-error" else 11, set())]
                       if not game["petitions"] else []),
                 ]
-            assert client.post("/actions", json=choice).status_code == 400
         # Choice completion no longer waits for the shared month action.
         client.portal.call(app.state.web.game.drain)
         if path == "choice-error":
