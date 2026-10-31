@@ -7,9 +7,6 @@ from contextlib import asynccontextmanager
 from functools import partial
 from pathlib import Path
 from typing import Any, Literal
-from uuid import UUID
-
-from pydantic import BaseModel, ValidationError
 from starlette.applications import Starlette
 from starlette.exceptions import HTTPException
 from starlette.requests import Request
@@ -18,29 +15,13 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from ming.game import Game, InvalidAction
+from ming.game import Action as PlayerAction, ActionName, Game, InvalidAction
 from ming.middle.court import Court
 from ming.middle.invoke import Configuration, REQUIRED_SETTINGS
 
 
-class Action(BaseModel):
-    action: Literal[
-        "new",
-        "load",
-        "continue",
-        "menu",
-        "settings",
-        "open",
-        "say",
-        "dismiss",
-        "month",
-        "choose",
-        "retry",
-    ]
+class Action(PlayerAction[ActionName | Literal["new", "load", "continue", "menu", "settings"]]):
     save: str = ""
-    words: str = ""
-    petition: UUID | None = None
-    option: int = -1
     settings: Configuration | None = None
 
 
@@ -79,7 +60,7 @@ class Web:
             "settings": self.configuration.model_dump(),
             "required_settings": REQUIRED_SETTINGS,
             "save": self.game.court.db_path.name if self.game else None,
-            "game": {**self.game.court.presentation(), "live": dict(self.game.live)}
+            "game": {**self.game.presentation(), "live": dict(self.game.live)}
             if self.game else None,
         }
 
@@ -165,7 +146,7 @@ class Web:
         self.game = game
         self.navigation += 1
         if opening:
-            game.resume()
+            game.reopen()
         self.emit(saves=saves)
         return {"save": game.court.db_path.name, "navigation": self.navigation}
 
@@ -200,9 +181,9 @@ class Web:
 
     async def actions(self, request: Request) -> Response:
         try:
-            action = Action.model_validate(await request.json())
-        except (ValidationError, ValueError) as error:
-            raise HTTPException(400, "无效的动作") from error
+            action = Action.parse(await request.body())
+        except InvalidAction as error:
+            raise HTTPException(error.status, str(error)) from error
         if action.action in {"new", "load", "continue"}:
             return JSONResponse(await self.select(action.action, action.save))
         if action.action == "menu":

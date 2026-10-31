@@ -32,11 +32,14 @@ class TurnView(BaseModel):
     hall: tuple[str, ...]
 
 
-class NightView(BaseModel):
+class NightHeader(BaseModel):
     id: UUID
     closed: bool
     hall: tuple[str, ...]
     date: dict[str, int]
+
+
+class NightView(NightHeader):
     turns: tuple[TurnView, ...] = ()
     result: Literal["translated", "unhandled"] | None = None
 

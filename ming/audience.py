@@ -4,6 +4,7 @@ import asyncio
 import json
 from collections.abc import Callable
 from functools import partial
+from typing import Any
 from uuid import UUID
 
 from pydantic_ai import Agent, RunContext
@@ -21,7 +22,7 @@ from ming.middle.concepts import ACTING, AUDIENCE, DECREE, DECREE_EVENT, DISCOVE
 from ming.middle.translate import INSTRUCTIONS, declaration_agent
 from ming.middle.declaration import NightDeclaration
 from ming.middle.invoke import TextUpdate, invoke, stream_text
-from ming.middle.night import NightView
+from ming.middle.night import NightHeader, NightView
 from ming.middle.opening import CONTENT
 from ming.middle.scene import HallResult
 from ming.middle.records import read_records
@@ -34,8 +35,9 @@ class Audience:
         "\n".join((INSTRUCTIONS, DECREE, SECRET, HANDLER, PEOPLE, ACTING, INTERIM, DISCOVERED, AUDIENCE, DECREE_EVENT, HELD)),
     )
 
-    def __init__(self, court: Court) -> None:
+    def __init__(self, court: Court, on_dismiss: Callable[[], None]) -> None:
         self.court = court
+        self.on_dismiss = on_dismiss
         self.model: Model
         self._night_id: UUID | None = None
         self._turn: asyncio.Task[str] | None = None
@@ -51,7 +53,22 @@ class Audience:
             raise ValueError("open an audience night first")
         return self._night_id
 
-    def open(self, night: NightView | None = None) -> bool:
+    def pending_actions(
+        self, items: dict[str, Any], night: NightHeader | None, *, pending_nights: tuple[UUID, ...],
+    ) -> dict[str, Any]:
+        pending: dict[str, Any] = {}
+        if item := items.get("say"):
+            payload = item["payload"]
+            if night and not night.closed and str(night.id) == payload["night_id"]:
+                said = self.court.has_product(night.id, "turn", date=None, detail={"id": payload["turn_id"]})
+                if not said or self.court.has_product(night.id, "dismiss_requested", date=None):
+                    pending["say"] = item
+        if item := items.get("translation"):
+            if set(item["payload"]["nights"]) & {str(n) for n in pending_nights}:
+                pending["translation"] = item
+        return pending
+
+    def open(self, night: NightHeader | None = None) -> bool:
         if night is None:
             self._night_id, created = self.court.open_night()
             closed = False
@@ -76,10 +93,10 @@ class Audience:
         if self._dismiss_requested is not None:
             self.court.dismiss(self._dismiss_requested)
             self._dismiss_requested = None
+            self.on_dismiss()
 
     async def translate_pending(self) -> None:
-        while pending := self.court.pending_nights():
-            night_id = pending[0]
+        for night_id in self.court.pending_nights():
             night = self.court.night(night_id)
             result = await self.court.translate(
                 self.translation, night.model_dump_json(), night_id,

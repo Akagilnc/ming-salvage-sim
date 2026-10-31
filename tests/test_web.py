@@ -3,7 +3,8 @@
 import asyncio
 import json
 import sqlite3
-from contextlib import closing
+from collections import defaultdict
+from contextlib import asynccontextmanager, closing
 from pathlib import Path
 from uuid import uuid4
 
@@ -17,8 +18,11 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.function import FunctionModel
+from pydantic_ai.models.wrapper import WrapperModel
 from httpx import ASGITransport, AsyncClient
 from starlette.testclient import TestClient
+from sqlalchemy import event
+from sqlalchemy.orm import Session
 
 from ming.middle.court import Court
 from ming.middle.invoke import Configuration
@@ -637,6 +641,121 @@ def test_settings_survive_reopening_and_failed_scene_retries_in_place(
         else:
             assert game["date"]["month"] == 11
         assert game["running"] is False
+
+
+class CountedModel(WrapperModel):
+    """Counts requests at the model seam; the wrapped reply still runs."""
+
+    def __init__(self, wrapped, name, invocations):
+        super().__init__(wrapped)
+        self.name = name
+        self.invocations = invocations
+
+    async def request(self, *args, **kwargs):
+        self.invocations[self.name].append(args[0])
+        return await super().request(*args, **kwargs)
+
+    @asynccontextmanager
+    async def request_stream(self, *args, **kwargs):
+        self.invocations[self.name].append(args[0])
+        async with super().request_stream(*args, **kwargs) as stream:
+            yield stream
+
+
+def counted(steps):
+    invocations = defaultdict(list)
+    for name, model in list(steps.items()):
+        steps[name] = CountedModel(model, name, invocations)
+    return invocations
+
+
+@pytest.mark.parametrize("case,game_db", [
+    (("say", "turn", False), "first_night"),
+    (("say", "turn", True), "first_night"),
+    (("translation", "unhandled", False), "spoken_night"),
+    (("month", "advanced", False), "opening_db"),
+    (("choose", "choice", False), "rejected_month"),
+    (("month", "month_draft", False), "opening_db"),
+    (("choose", "advanced", False), "rejected_month"),
+], indirect=["game_db"])
+def test_http_reopens_committed_action_gaps(game_db, case, audit, steps):
+    """Freeze real commits, not a normally drained save or hand-written events."""
+    action, product, dismiss = case
+    preparing = product == "month_draft" or (action == "choose" and product == "advanced")
+    if dismiss or preparing:
+        steps["scene" if dismiss else "simulation" if product == "month_draft" else "urgent"] = TestModel(
+            call_tools=["dismiss"] if dismiss else [],
+            custom_output_text=(json.loads((RECORDED / "night_invalid.json").read_text())["cases"]["missing_fields"]["scene"]
+                                if dismiss else (RECORDED / ("month_petition.txt" if product == "month_draft" else "sources_urgent.txt")).read_text()),
+        )
+    snapshots = {stage: game_db.parent / stage / game_db.name for stage in ("accepted", "product")}
+    for path in snapshots.values():
+        path.parent.mkdir()
+
+    def committed(session):
+        with closing(sqlite3.connect(game_db)) as source:
+            kind, detail = source.execute(
+                "SELECT kind, detail FROM facts WHERE kind IN ('interaction', ?) ORDER BY position DESC LIMIT 1", (product,),
+            ).fetchone()
+            detail = json.loads(detail)
+            stage = "product" if kind == product else "accepted" if (
+                kind == "interaction" and detail["action"] == action and detail["status"] != "failed"
+            ) else None
+            if stage is not None and not snapshots[stage].exists():
+                with closing(sqlite3.connect(snapshots[stage])) as target:
+                    source.backup(target)
+
+    with TestClient(create_app(game_db.parent)) as client:
+        client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
+        request = {"action": "dismiss" if action == "translation" else action}
+        if action == "say":
+            request["words"] = json.loads((RECORDED / "night_invalid.json").read_text())["emperor_words"]
+        if action == "choose":
+            request.update(petition=client.get("/state").json()["game"]["petitions"][0]["id"],
+                           option=3 if product == "advanced" else 0)
+        event.listen(Session, "after_commit", committed)
+        try:
+            client.post("/actions", json=request).raise_for_status()
+            client.portal.call(client.app.state.web.game.drain)
+        finally:
+            event.remove(Session, "after_commit", committed)
+        assert client.get("/state").json()["game"]["failure"] is None
+    model_invocations = counted(steps)
+    for stage, path in snapshots.items():
+        before = audit(path)
+        assert len([f for f in before["facts"] if f["kind"] == product]) == int(stage == "product")
+        model_invocations.clear()
+        with TestClient(create_app(path.parent)) as client:
+            client.post("/actions", json={"action": "load", "save": path.name}).raise_for_status()
+            client.portal.call(client.app.state.web.game.drain)
+            state = client.get("/state").json()["game"]
+            assert (state["failure"], state["running"]) == (None, False)
+            assert state["date"]["month"] == (11 if action in {"month", "choose"} and product != "month_draft" else 10)
+            if action == "say":
+                assert len(state["night"]["turns"]) == 1
+                assert state["night"]["turns"][0]["emperor_words"] == request["words"]
+            after = audit(path)
+            assert len([f for f in after["facts"] if f["kind"] == product]) == 1
+            assert all(f in after["facts"] for f in before["facts"])
+            if dismiss:
+                assert state["night"]["closed"] is True
+                assert state["night"]["result"] == "unhandled"
+                if stage == "product":
+                    assert not model_invocations["scene"]
+            elif stage == "product" and action != "choose" and product != "month_draft":
+                assert not model_invocations
+                assert after == before
+            if action == "choose":
+                assert [f["detail"]["option"] for f in after["facts"] if f["kind"] == "choice"] == [request["option"]]
+        if preparing:
+            assert (len([f for f in after["facts"] if f["kind"] == "forecast"]) if product == "month_draft"
+                    else len(model_invocations["deliberation"])) == (len(state["petitions"][0]["options"]) if product == "month_draft" else 1)
+            model_invocations.clear()
+            with TestClient(create_app(path.parent)) as client:
+                client.post("/actions", json={"action": "load", "save": path.name}).raise_for_status()
+                client.portal.call(client.app.state.web.game.drain)
+            assert not model_invocations
+            assert audit(path) == after
 
 
 @pytest.mark.parametrize(

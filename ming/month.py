@@ -49,8 +49,24 @@ class Month:
             })
         return calendar
 
-    def choose(self, petition: dict[str, Any] | None, option: int, date: dict[str, Any]) -> None:
-        self.inbox.choose(petition, option, date)
+    def waiting(
+        self, calendar: EntityView, *, opened: bool | None = None,
+        has_petitions: bool | None = None,
+    ) -> bool:
+        opened = self.opened(calendar) if opened is None else opened
+        return opened and (has_petitions if has_petitions is not None else self.court.has_pending_petitions(calendar.data))
+
+    def pending_actions(self, items: dict[str, Any]) -> dict[str, Any]:
+        choices = [i["payload"]["petition"] for i in items.values() if i["action"] == "choose"]
+        chosen = {f.detail["petition_id"] for f in self.court.petition_products(choices, "choice", date=None)}
+        return {
+            key: item for key, item in items.items()
+            if item["action"] in {"month", "choose"}
+            and (item["action"] == "month" or item["payload"]["petition"] not in chosen)
+        }
+
+    def choose(self, payload: dict[str, Any], *, accept: bool = False) -> None:
+        self.inbox.choose(payload, accept=accept)
 
     async def resume(self, *, speculative: bool = False, date: dict[str, Any] | None = None) -> tuple[PendingPetition, ...]:
         date = self.court.calendar().data if date is None else date
@@ -63,7 +79,10 @@ class Month:
                 [(d, None) for d in public] + list(self.court.pending_pushes(calendar.data)), calendar.data,
             )
             if speculative or not self.opened(calendar):
-                return self.court.pending_petitions(calendar.data)
+                pending = self.court.pending_petitions(calendar.data)
+                if pending and self.court.has_product(calendar.id, "month_draft", date=calendar.data):
+                    self.simulations.speculate(calendar)
+                return pending
             # Opening urgent petitions must be answered before drafting, since
             # their choices are inputs to this month's single timeline.
             pending = self.court.pending_petitions(calendar.data)
