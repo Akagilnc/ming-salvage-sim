@@ -61,18 +61,19 @@ def test_cli_preserves_jsonl_and_resumes_failed_month(
     rejected = [
         "not json", "1", ' {"words":"x"}', "[]", '{"action":["x"]}',
         '{"action":"say","words":5}',
-        json.dumps({"action": "choose", "petition": petition["id"], "option": -1}),
+        *(json.dumps({"action": "choose", "petition": petition["id"], "option": option})
+          for option in (-1, len(petition["options"]), "0", 0.5, True)),
         '{"action":"choose","petition":"00000000-0000-0000-0000-000000000000","option":0}',
         '{"action":"say","words":"退朝后说话"}',
     ]
     with TestClient(create_app(game_db.parent)) as client:
         client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
         client.portal.call(client.app.state.web.game.drain)
-        assert [client.post("/actions", content=line).status_code for line in rejected] == [400] * 8 + [409]
+        assert [client.post("/actions", content=line).status_code for line in rejected] == [400] * 12 + [409]
     monkeypatch.setattr("sys.stdin", io.StringIO("\n".join([*rejected, '{"action":"state"}'])))
     main(["audience", "--db", db, "--backend", "claude-cli"])
     refused = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
-    assert [r["error"]["status"] for r in refused[1:-1]] == [400] * 8 + [409]
+    assert [r["error"]["status"] for r in refused[1:-1]] == [400] * 12 + [409]
     assert refused[-1]["month_error"] is None
     main(["read", "--db", db, "--identity", "audit"])
     assert json.loads(capsys.readouterr().out) == before

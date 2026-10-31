@@ -119,6 +119,20 @@ def landing_materials(court: Court, *, include_history: bool = True, date: dict[
     return tuple(materials)
 
 
+def prepare(
+    court: Court, pending: dict[int, Officials], context: Any, *, date: dict[str, Any],
+) -> dict[int, tuple[Officials, dict[str, Any]]]:
+    """Share unchanged inputs by complete identity only within this pending batch."""
+    inputs: dict[str, dict[str, Any]] = {}
+    prepared: dict[int, tuple[Officials, dict[str, Any]]] = {}
+    for index, identity in pending.items():
+        key = identity.model_dump_json()
+        if key not in inputs:
+            inputs[key] = prompt(court, identity, context, date=date)
+        prepared[index] = identity, inputs[key]
+    return prepared
+
+
 def prompt(court: Court, identity: Identity, context: Any, *, date: dict[str, Any]) -> dict[str, Any]:
     speakers = {e.key: e.model_dump(mode="json") for e in court.read.entities(
         identity, kind="person", key=identity.people,

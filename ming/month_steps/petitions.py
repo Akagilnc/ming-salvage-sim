@@ -1,10 +1,28 @@
-"""Source-blind petition inbox: only petitions and emperor choices."""
+"""Fixed petition options and their recorded dispositions belong to Month."""
 
 from typing import Any
 from uuid import UUID
 
 from ming.middle.court import Court
+from ming.middle.view import EntityView
 from ming.month_steps.materials import pending_petitions
+
+
+DELIBERATION_OPTIONS = {
+    "forced": "强颁", "withdrawn": "收回", "held": "留中", "endorsed": "御笔强推",
+}
+URGENT_OPTIONS = {"returned": "发回改票"}
+
+
+def deliberation_options(decree: EntityView, verdict: dict[str, Any]) -> list[str]:
+    dispositions = (["forced"] if verdict["verdict"] == "驳" else []) + ["withdrawn", "held"]
+    if verdict["verdict"] == "驳" and not decree.data.get("endorsements"):
+        dispositions.append("endorsed")
+    return [DELIBERATION_OPTIONS[disposition] for disposition in dispositions]
+
+
+def urgent_options(proposed: list[str]) -> list[str]:
+    return [*proposed, *URGENT_OPTIONS.values()]
 
 
 class Inbox:
@@ -25,9 +43,12 @@ class Inbox:
             return
         entity_id = UUID(petition["entity_id"])
         decision = {"petition_id": petition["id"], "option": option}
-        events = [("choice", {**decision, "text": petition["options"][option], "date": date})]
+        text = petition["options"][option]
+        fixed = {"deliberation": DELIBERATION_OPTIONS, "urgent": URGENT_OPTIONS}.get(petition["source"], {})
+        disposition = next((key for key, label in fixed.items() if label == text), None)
+        events = [("choice", {**decision, "text": text, "date": date, "disposition": disposition})]
         changes = None
-        if petition["source"] == "deliberation" and petition["options"][option] == "御笔强推":
+        if disposition == "endorsed":
             endorsement = {"endorser": "御笔", "form": "御笔手敕", "decision_key": decision}
             events.append(("endorsed", {**endorsement, "date": date}))
             changes = {"endorsements": [*self.court.read.entities("audit", ids=[entity_id])[0].data.get("endorsements", []), endorsement]}

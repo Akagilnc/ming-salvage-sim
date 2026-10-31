@@ -369,7 +369,7 @@ def decree_disposition(
 ) -> list[tuple[str, Item]]:
     choice = latest_detail(events, "choice")
     interim = decree.data.get("interim") or (
-        choice and choice["text"] == "强颁" and latest_detail(events, "deliberation")
+        choice and choice.get("disposition") == "forced"
     )
     return ([('interim', {"text": decree.data["text"]})]
             if interim and not prior_interim else []) + ([(mode, {"monthly": mode})] if translated else [])

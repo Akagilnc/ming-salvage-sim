@@ -2,7 +2,8 @@
 
 import json
 from pathlib import Path
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from inspect import isawaitable
 
 import pytest
 from pydantic_ai._run_context import get_current_run_context
@@ -18,7 +19,7 @@ RECORDED = Path(__file__).parent / "recorded"
 
 def replaying(
     replies: Sequence[str | ModelResponse | Exception]
-    | Callable[[list[ModelMessage]], str | ModelResponse | Exception],
+    | Callable[[list[ModelMessage]], str | ModelResponse | Exception | Awaitable[str | ModelResponse | Exception]],
     received: list[ModelMessage] | None = None,
     toolsets: list[list[str]] | None = None,
     identities: list | None = None,
@@ -34,6 +35,8 @@ def replaying(
         if toolsets is not None:
             toolsets.append([tool.name for tool in _info.function_tools])
         result = replies(_messages) if callable(replies) else next(remaining)
+        if isawaitable(result):
+            result = await result
         if isinstance(result, Exception):
             raise result
         return result if isinstance(result, ModelResponse) else ModelResponse(parts=[TextPart(result)])

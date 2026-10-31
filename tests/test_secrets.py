@@ -1,5 +1,6 @@
 """Medium: one recorded mixed night through HTTP actions and identity read doors."""
 
+import asyncio
 import json
 from functools import partial
 from pathlib import Path
@@ -28,34 +29,50 @@ def declaration_reply(messages, response_file, quiet_month=None):
 
 
 @pytest.mark.parametrize("game_db", ["secret_night"], indirect=True)
-def test_every_model_call_reads_identity_scoped_records(game_db, steps):
+@pytest.mark.parametrize("source_failure", [False, True])
+def test_every_model_call_reads_identity_scoped_records(game_db, steps, audit, source_failure):
     names = ("scene", "NightDeclaration", "Declaration", "simulation", "deliberation", "urgent", "impeachment", "secret_report", "gazette")
     received = {name: [] for name in names}
     tools = {name: [] for name in names}
     model_invocations = {name: [] for name in names}
-    declaration = {"facts": [], "decree_events": [], "reports": [{
-        "entity_type": "incumbency", "entity": "户部尚书",
-        "text": "官报：户部实存银若干。", "audience": "official",
-    }]}
     outputs = {
         "scene": "done",
-        "NightDeclaration": json.dumps({"facts": [], "decrees": [{"text": "", "origin": "emperor", "secret": False, "turn": 1, "people": ["王体乾"]}]}),
-        "Declaration": json.dumps(declaration),
+        # Spec boundary: two public tasks share readers, and a second secret task
+        # shares the recorded night's handler. No production grouping is replaced.
+        "NightDeclaration": json.dumps({"facts": [], "decrees": [
+            *[{"text": "", "origin": "emperor", "secret": False, "turn": 1, "people": ["王体乾"]} for _ in range(2)],
+            {"text": "", "origin": "emperor", "secret": True, "turn": 1, "people": ["王承恩"], "handler": "王承恩"},
+        ]}),
+        "Declaration": json.dumps({"facts": [], "decree_events": [], "reports": [{
+            "entity_type": "incumbency", "entity": "户部尚书",
+            "text": "官报：户部实存银若干。", "audience": "official",
+        }]}),
         "urgent": (RECORDED / "sources_empty.txt").read_text(),
         "impeachment": (RECORDED / "sources_empty.txt").read_text(),
         **{name: (RECORDED / f"{name}.txt").read_text() for name in ("simulation", "deliberation", "secret_report", "gazette")},
     }
+    active = {"running": dict.fromkeys(names, 0), "overlap": set(), "failed": False}
     for name in names:
-        steps[name] = replaying(
-            lambda messages, name=name: outputs[name] if any(isinstance(p, ToolReturnPart) for m in messages for p in m.parts)
-            else ModelResponse(parts=[ToolCallPart("read_records", {"kind": "incumbency", "key": "户部尚书"}, tool_call_id="office"),
-                                      *([] if name == "impeachment" else [
-                                          ToolCallPart("read_records", {"kind": "person", "key": "王体乾"}, tool_call_id="person"),
-                                          ToolCallPart("read_records", {"kind": "account", "key": "国库"}, tool_call_id="treasury"),
-                                          ToolCallPart("read_records", {"kind": "faction", "key": ["阉党", "东林"]}, tool_call_id="factions"),
-                                      ])]),
-            received[name], tools[name], model_invocations[name],
-        )
+        async def respond(messages, name=name):
+            if name in {"deliberation", "impeachment", "secret_report"}:
+                active["running"][name] += 1
+                if active["running"][name] > 1:
+                    active["overlap"].add(name)
+                await asyncio.sleep(0)  # Yield at the model boundary, never wait on a wall clock.
+                active["running"][name] -= 1
+                if name == "impeachment" and source_failure and not active["failed"]:
+                    active["failed"] = True
+                    return ModelHTTPError(429, "recorded")
+            return outputs[name] if any(isinstance(p, ToolReturnPart) for m in messages for p in m.parts) else ModelResponse(parts=[
+                ToolCallPart("read_records", {"kind": "incumbency", "key": "户部尚书"}, tool_call_id="office"),
+                *([] if name == "impeachment" else [
+                    ToolCallPart("read_records", {"kind": "person", "key": "王体乾"}, tool_call_id="person"),
+                    ToolCallPart("read_records", {"kind": "account", "key": "国库"}, tool_call_id="treasury"),
+                    ToolCallPart("read_records", {"kind": "faction", "key": ["阉党", "东林"]}, tool_call_id="factions"),
+                ]),
+            ])
+
+        steps[name] = replaying(respond, received[name], tools[name], model_invocations[name])
     with TestClient(create_app(game_db.parent)) as client:
         client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
         client.post("/actions", json={"action": "open"}).raise_for_status()
@@ -63,6 +80,22 @@ def test_every_model_call_reads_identity_scoped_records(game_db, steps):
         client.post("/actions", json={"action": "dismiss"}).raise_for_status()
         client.portal.call(client.app.state.web.game.drain)
         client.post("/actions", json={"action": "month"}).raise_for_status()
+        if source_failure:
+            assert client.get("/state").json()["game"]["failure"]["payload"]["type"] == "ModelHTTPError"
+            active["ledger"] = audit(game_db)
+            active["completed"] = {(f["entity_id"], f["kind"]) for f in active["ledger"]["facts"]
+                                   if f["kind"] in {"urgent", "impeachment", "secret_report", "gazette"}}
+            assert sum(kind == "impeachment" for _, kind in active["completed"]) == sum(e["kind"] == "faction" for e in active["ledger"]["entities"]) - 1
+            active["calls"] = {name: len(values) for name, values in model_invocations.items()}
+            client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
+            client.post("/actions", json={"action": "retry"}).raise_for_status()
+            active["ledger"] = audit(game_db)
+            assert all(sum((f["entity_id"], f["kind"]) == key for f in active["ledger"]["facts"]) == 1
+                       for key in active["completed"])
+            assert {name: len(values) - active["calls"][name] for name, values in model_invocations.items()} == {
+                name: 2 if name == "impeachment" else 0 for name in names
+            }
+        assert active["overlap"] == {"deliberation", "impeachment", "secret_report"}
         assert client.get("/state").json()["game"]["failure"] is None
         court = client.app.state.web.game.court.read
         reports = court.facts(Officials(people=["郭允厚"]), kind="reported")

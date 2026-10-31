@@ -9,7 +9,7 @@ from pydantic_ai.models import Model
 from ming.middle.court import Court
 from ming.middle.concepts import ACTING, IMPERIAL_PUSH, INTERIM, VERDICT
 from ming.middle.invoke import gather_or_raise, invoke
-from ming.month_steps.materials import Deliberation, prompt
+from ming.month_steps.materials import Deliberation, prepare
 from ming.middle.records import Materials, read_records
 from ming.middle.view import EntityView, Officials, character_input
 from ming.month_steps.products import record_product
@@ -33,7 +33,7 @@ class Deliberations:
     ) -> list[dict[str, Any]]:
         """Prepare unchanged inputs before starting independent verdict calls."""
         done: dict[int, dict[str, Any]] = {}
-        pending: dict[tuple[str, ...], list[int]] = {}
+        pending: dict[int, Officials] = {}
         products = {key: self.court.read.facts("audit", entity_id=key, kind="deliberation", date=date)
                     for key in dict.fromkeys(d.id for d, _ in decrees)}
         for index, (decree, decision) in enumerate(decrees):
@@ -42,16 +42,13 @@ class Deliberations:
             if product is not None:
                 done[index] = product
             else:
-                pending.setdefault(tuple(decree.data["people"]), []).append(index)
+                pending[index] = Officials(people=decree.data["people"], exclude_secrets=True)
         calls: dict[int, Awaitable[dict[str, Any]]] = {}
         if pending:
             prestige = self.court.read.entities("audit", kind="world")[0].data["imperial_prestige"]
-            for people, indices in pending.items():
-                identity = Officials(people=list(people), exclude_secrets=True)
-                inputs = prompt(self.court, identity, {"imperial_prestige": prestige}, date=date)
-                for index in indices:
-                    decree, decision = decrees[index]
-                    calls[index] = self.call(decree, decision, identity, inputs)
+            for index, (identity, inputs) in prepare(self.court, pending, {"imperial_prestige": prestige}, date=date).items():
+                decree, decision = decrees[index]
+                calls[index] = self.call(decree, decision, identity, inputs)
         indices = sorted(calls)
         done.update(zip(indices, await gather_or_raise(*(calls[index] for index in indices)), strict=True))
         return [done[index] for index in range(len(decrees))]

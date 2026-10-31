@@ -313,7 +313,7 @@ class Records:
                 verdict = latest_detail(events, "deliberation")
                 choice = latest_detail(events, "choice")
                 mode = None
-                if verdict and (verdict["verdict"] == "准" or (choice and choice["text"] == "强颁")):
+                if verdict and (verdict["verdict"] == "准" or (choice and choice.get("disposition") == "forced")):
                     mode = "landed"
                 elif row["data"].get("interim"):
                     mode = "attempted"

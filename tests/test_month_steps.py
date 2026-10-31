@@ -3,14 +3,13 @@
 import json
 from pathlib import Path
 from shutil import copyfile
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelResponse, RetryPromptPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.test import TestModel
 from starlette.testclient import TestClient
 
-from ming.month_steps.materials import PendingPetition
 from ming.web import create_app
 from tests.test_court import replaying
 from tests.test_month import GUOKU_ORDER
@@ -25,7 +24,7 @@ FUNDED_AFFAIRS = (
 
 @pytest.mark.parametrize("valid_revision", [True, False])
 def test_returned_urgent_waits_through_vacancy(
-    game_db: Path, steps, monkeypatch, valid_revision: bool
+    game_db: Path, steps, monkeypatch, valid_revision: bool, audit
 ) -> None:
     revision = (RECORDED / "sources_revision.txt").read_text()
     other_save = game_db.with_name("other.sqlite")
@@ -39,18 +38,10 @@ def test_returned_urgent_waits_through_vacancy(
     with TestClient(create_app(game_db.parent)) as client:
         client.post("/actions", json={"action": "load", "save": game_db.name})
         if valid_revision:
-
-            def identify_original(**fields):
-                # Align only this original's generated ID, regardless of scheduling.
-                if fields["source"] == "urgent" and fields["ordinal"] == 0:
-                    fields["id"] = UUID(
-                        json.loads(revision)["petitions"][0]["revision_of"]
-                    )
-                return PendingPetition(**fields)
-
-            monkeypatch.setattr(
-                "ming.month_steps.sources.PendingPetition", identify_original
-            )
+            # Fix only randomness; both recorded petitions use the real constructor.
+            monkeypatch.setattr("ming.month_steps.sources.uuid4", iter([
+                UUID(json.loads(revision)["petitions"][0]["revision_of"]), uuid4(),
+            ]).__next__)
         client.post("/actions", json={"action": "month"})
         monkeypatch.undo()
         petitions = client.get("/state").json()["game"]["petitions"]
@@ -65,6 +56,10 @@ def test_returned_urgent_waits_through_vacancy(
                 },
             ).raise_for_status()
         assert client.get("/state").json()["game"]["returned_petitions"] == []
+        assert {f["detail"]["petition_id"]: f["detail"]["disposition"]
+                for f in audit(game_db)["facts"] if f["kind"] == "choice"} == {
+            original["id"]: "returned", petitions[1]["id"]: None,
+        }
         for phase, month in (("vacancy", 12), ("appointment", 1)):
             case = json.loads((RECORDED / f"sources_{phase}.json").read_text())
             steps["scene"] = replaying(ModelMessagesTypeAdapter.validate_python(case["scene_responses"]))
@@ -156,7 +151,7 @@ def test_rejected_decree_is_forced_withdrawn_or_held(game_db, steps, audit, opti
         assert state["date"]["month"] == 10
         assert len(state["petitions"]) == 1
         petition = state["petitions"][0]
-        assert petition["options"] == ["强颁", "收回", "留中", "御笔强推"]
+        assert len(petition["options"]) == 4
         ledger = audit(game_db)
         assert len([f for f in ledger["facts"] if f["kind"] == "forecast"]) == (0 if forecast_failure else 4)
         assert not [f for f in ledger["facts"] if f["kind"] in {"endorsed", "month_final"}]
@@ -175,6 +170,9 @@ def test_rejected_decree_is_forced_withdrawn_or_held(game_db, steps, audit, opti
         assert client.post("/actions", json={"action": "choose", "petition": petition["id"], "option": option}).status_code == 400
         ledger = audit(game_db)
         decree = next(e for e in ledger["entities"] if e["kind"] == "decree")
+        assert [f["detail"]["disposition"] for f in ledger["facts"] if f["kind"] == "choice"] == [
+            ("forced", "withdrawn", "held")[option]
+        ]
         assert len([f for f in ledger["facts"] if f["kind"] == "declaration"]) == 1
         assert len([f for f in ledger["facts"] if f["kind"] == "landed" and f["entity_id"] == decree["id"]]) == int(option == 0)
         assert len([f for f in ledger["facts"] if f["kind"] == "interim"]) == int(option == 0)
@@ -200,6 +198,7 @@ def test_imperial_backing_reconsiders_the_original_decree(game_db, steps, audit,
         decree = next(e for e in ledger["entities"] if e["kind"] == "decree")
         assert len([f for f in ledger["facts"] if f["kind"] == "deliberation"]) == 1
         assert len([f for f in ledger["facts"] if f["kind"] == "endorsed"]) == 1
+        assert [f["detail"]["disposition"] for f in ledger["facts"] if f["kind"] == "choice"] == ["endorsed"]
         assert decree["data"]["endorsements"] == [{
             "endorser": "御笔", "form": "御笔手敕",
             "decision_key": {"petition_id": petition["id"], "option": 3},
@@ -249,7 +248,7 @@ def test_interim_costs_follow_promulgation_not_backing(game_db, steps, audit, ca
         client.post("/actions", json={"action": "month"}).raise_for_status()
         if rejected:
             petition = client.get("/state").json()["game"]["petitions"][0]
-            assert petition["options"] == (["收回", "留中"] if case == "vital" else ["强颁", "收回", "留中"])
+            assert len(petition["options"]) == (2 if case == "vital" else 3)
             client.post("/actions", json={"action": "choose", "petition": petition["id"], "option": 0 if case == "vital" else 2 if case == "held" else 1}).raise_for_status()
         client.portal.call(client.app.state.web.game.drain)
         state = client.get("/state").json()["game"]
@@ -259,6 +258,9 @@ def test_interim_costs_follow_promulgation_not_backing(game_db, steps, audit, ca
         assert len([f for f in ledger["facts"] if f["kind"] == "interim" and f["entity_id"] == decree["id"]]) == 1
         assert len([f for f in ledger["facts"] if f["kind"] == "landed" and f["entity_id"] == decree["id"]]) == int(not rejected)
         assert len([f for f in ledger["facts"] if f["kind"] == "attempted" and f["entity_id"] == decree["id"]]) == int(rejected)
+        assert [f["detail"]["disposition"] for f in ledger["facts"] if f["kind"] == "choice"] == (
+            ["held" if case == "held" else "withdrawn"] if rejected else []
+        )
         effects = [f for f in ledger["facts"] if f["kind"] == "changed" and f["detail"].get("origin_ref") == decree["id"]]
         assert len([f for f in effects if "imperial_prestige" in f["detail"]["actual"]]) == int(not rejected)
         assert any("satisfaction" in f["detail"]["actual"] for f in effects)

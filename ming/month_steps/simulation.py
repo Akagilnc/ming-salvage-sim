@@ -18,6 +18,7 @@ from ming.month_steps.materials import MonthText, PendingPetition, Simulation, a
 from ming.middle.view import EntityView, character_input
 from ming.middle.records import Materials, read_records
 from ming.month_steps.products import record_product
+from ming.month_steps.petitions import deliberation_options
 
 
 class Draft(NamedTuple):
@@ -77,9 +78,7 @@ class Simulations:
                 continue
             petitions.append(PendingPetition(
                 text=verdict["text"],
-                options=(["强颁"] if verdict["verdict"] == "驳" else [])
-                + ["收回", "留中"]
-                + (["御笔强推"] if verdict["verdict"] == "驳" and not decree.data.get("endorsements") else []),
+                options=deliberation_options(decree, verdict),
                 id=uuid4(), entity_id=decree.id, available=calendar.data,
                 blocking=True, source="deliberation",
             ))
