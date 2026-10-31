@@ -115,8 +115,8 @@ class Audience:
             self._dismiss_requested = None
             self.on_dismiss()
 
-    async def translate_pending(self, pending: tuple[UUID, ...]) -> None:
-        for night_id in pending:
+    async def translate_pending(self) -> None:
+        for night_id in self.court.pending_nights():
             night = self.court.night(night_id)
             result = await self.court.translate(
                 self.translation, night.model_dump_json(), night_id

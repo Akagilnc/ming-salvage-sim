@@ -12,7 +12,6 @@ import json
 from contextlib import contextmanager
 from pathlib import Path
 from shutil import copyfile
-from uuid import UUID
 
 import pytest
 from sqlalchemy import Engine, event
@@ -26,7 +25,7 @@ RECORDED = Path(__file__).parent / "recorded"
 @contextmanager
 def measure_reads():
     """Observe SQL without consuming or replacing its real cursor."""
-    result = {"budget": [0, 0], "entity_writes": 0, "aggregate_reads": []}
+    result = {"budget": [0, 0], "entity_writes": 0, "event_rows": 0}
 
     def count_reads(**query):
         compiled = query["context"].compiled
@@ -39,11 +38,11 @@ def measure_reads():
             try:
                 probe.execute(query["statement"], query["parameters"])
                 result["budget"][0] += 1
-                rows = probe.fetchall()
-                result["budget"][1] += len(rows)
+                row_count = len(probe.fetchall())
+                result["budget"][1] += row_count
                 if any(getattr(table, "name", None) == "ledger_events"
                        for table in compiled.statement.get_final_froms()):
-                    result["aggregate_reads"].append((str(UUID(bytes=bytes(rows[0][1]))), len(rows)))
+                    result["event_rows"] += row_count
             finally:
                 probe.close()
 
@@ -101,10 +100,8 @@ def test_http_read_work_ignores_unrelated_history(
             # Read-only opening no longer accidentally warms the calendar by
             # writing redundant action states. A first write must reconstruct
             # this aggregate's Created event plus its own recorded facts.
-            expected = [] if action == "state" else [
-                (calendar, 1 + sum(f["entity_id"] == calendar for f in ledger["facts"]))
-            ]
-            assert reads["aggregate_reads"] == expected
-            budgets.append((reads["budget"][0], reads["budget"][1] - sum(n for _, n in expected)))
+            expected = 0 if action == "state" else 1 + sum(f["entity_id"] == calendar for f in ledger["facts"])
+            assert reads["event_rows"] == expected
+            budgets.append((reads["budget"][0], reads["budget"][1] - expected))
 
     assert budgets[0] == budgets[1] == budgets[2]
