@@ -93,11 +93,11 @@ class Month:
                 if not drafted:
                     # Reuse only this invocation's already committed complete product.
                     produced = await self.simulations.draft(list(zip(public, verdicts[:len(public)], strict=True)), calendar)
-                    pending = produced
+                    pending = produced.petitions
                 if pending:
                     self.simulations.speculate(calendar, pending, produced)
                     return pending
-                final = await self.simulations.final(calendar)
+                final = await self.simulations.final(calendar, produced)
             await self.landing.run(calendar, final)
             self.court.settle_accounts(calendar)
             self.court.settle_journeys(calendar.data)
