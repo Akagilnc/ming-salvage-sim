@@ -3,17 +3,16 @@
 import json
 import math
 from difflib import get_close_matches
-from typing import Any, Never, cast
+from typing import Any, Never
 
 from pydantic_ai import ModelRetry
 
-from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS, Entity, Item, Ledger
-from ming.middle.appointments import CATALOGUE_KINDS
-from ming.middle.calendar import calendar_row
+from ming.ledger import Entity, Item
+from ming.middle.appointments import CATALOGUE_KINDS, cabinet_members
 from ming.middle.declaration import Declaration, Fact
 from ming.middle.fiscal import WAN, current_paid, has_obligation, obligation
 from ming.middle.fields import FIELDS
-from ming.middle.travel import SPEEDS, journey_distances, journey_route, move_person
+from ming.middle.travel import SPEEDS, journey_route
 Names = dict[str, dict[str, list[str]]]
 
 
@@ -53,16 +52,8 @@ def fail(field: str, value: object, expected: object, names: Names, how: str) ->
     }, ensure_ascii=False))
 
 
-def check_rules(ledger: Ledger, out: Declaration, names: Names) -> None:
-    person_names = {fact.entity for fact in out.facts if fact.entity_type == "person"
-                    if any(change.field in {"location", "status"} for change in fact.changes)}
-    people: dict[str, Entity] = {row["key"]: Entity("person", row["key"], "", dict(row["data"]))
-                               for row in ledger.entities(kind="person", query=ENTITY_ROWS.where(E.key.in_(person_names)))} if person_names else {}
-    people.update({name: Entity("person", name, "", {}) for name in person_names - people.keys()})
-    distances = journey_distances(ledger, out.facts, {name: person.data for name, person in people.items()})
-    date: Item | None = None
+def check_rules(out: Declaration, names: Names) -> None:
     for i, fact in enumerate(out.facts):
-        journey = check_journey(distances, fact, f"facts[{i}]", names, people)
         if fact.affair is not None and fact.affair not in names.get("affair", {}):
             fail(f"facts[{i}].affair", fact.affair, name_expected("affair", fact.affair, names), names,
                  "事务正名查 expected 指向的输入目录，或在本份先 create 该事务，重交整份。")
@@ -78,24 +69,10 @@ def check_rules(ledger: Ledger, out: Declaration, names: Names) -> None:
                      "把这个字段改成有限数字，重交整份。")
             if (fact.entity_type, change.field) == ("person", "departure_day") and type(change.value) is not int:
                 fail(f"facts[{i}].changes[{j}].value", change.value, "整数", names, "启程日交整数，重交整份。")
-            if (fact.entity_type, change.field) == ("person", "travel_speed") and change.value not in list(SPEEDS):
-                fail(f"facts[{i}].changes[{j}].value", change.value, list(SPEEDS), names, "行速用 expected 中的档名，重交整份。")
         check_money(fact, names, i)
-        if journey is not None:
-            person, route = journey
-            if route is not None and date is None:
-                date = cast(Item, calendar_row(ledger)["data"])
-            changes = field_values(fact, person.data, None)["changes"]
-            # Replay landing's lifecycle on detached aggregates, without committing.
-            move_person(person, changes, route,
-                        lambda entity, kind, detail, updates: entity.record(kind, "", detail, updates), date or {})
-            person.record("changed", "", {}, changes)
 
 
-def check_journey(distances: dict[str, Item], fact: Fact, path: str, names: Names, people: dict[str, Entity]) -> tuple[Entity, tuple[str, float] | None] | None:
-    if fact.entity_type != "person" or fact.entity not in people:
-        return None
-    person = people[fact.entity]
+def check_journey(distances: dict[str, Item], fact: Fact, path: str, names: Names, person: Entity) -> tuple[str, float] | None:
     changes = {c.field: c.value for c in fact.changes}
     try:
         route = journey_route(distances, person.data, changes)
@@ -105,7 +82,21 @@ def check_journey(distances: dict[str, Item], fact: Fact, path: str, names: Name
     if route is not None and "departure_day" not in changes:
         fail(path + ".departure_day", None, {"field": "departure_day", "type": "integer"}, names,
              "本条启程缺启程日；按戏文补交 departure_day 字段，重交整份。")
-    return person, route
+    for j, change in enumerate(fact.changes):
+        if change.field == "travel_speed" and change.value not in list(SPEEDS):
+            fail(f"{path}.changes[{j}].value", change.value, list(SPEEDS), names, "行速用 expected 中的档名，重交整份。")
+    return route
+
+
+def check_chief(fact: Fact, index: int, existing: dict[tuple[str, str], Item], names: Names) -> set[str]:
+    eligible = cabinet_members(existing)
+    if fact.entity_type == "incumbency" and json.loads(fact.entity)[0] == "内阁首辅":
+        for j, change in enumerate(fact.changes):
+            for k, person in enumerate(change.value):
+                if person not in eligible:
+                    fail(f"facts[{index}].changes[{j}].value[{k}]", person, sorted(eligible), names,
+                         "首辅须为在任阁臣；可在同份声明中先任大学士，再任首辅。重交整份。")
+    return eligible
 
 
 def check_money(fact: Fact, names: Names, index: int) -> None:
@@ -136,49 +127,28 @@ def check_money(fact: Fact, names: Names, index: int) -> None:
 
 
 def money_amounts(
-    facts: list[Fact], existing: dict[tuple[str, str], dict[str, Any]]
-) -> tuple[dict[tuple[int, int], float], dict[tuple[int, int], str | None]]:
-    amounts: dict[tuple[int, int], float] = {}
-    reasons: dict[tuple[int, int], str | None] = {}
-    if not any(f.entity_type == "account" and any(c.field == "taels" for c in f.changes) for f in facts):
-        return amounts, reasons
-    balances = {key: row["data"].get("taels", 0) for key, row in existing.items()}
-    # Caps use the declared post-values of policy, manpower and rates.
-    projected = {key: {**row, "data": dict(row["data"])} for key, row in existing.items()}
-    for fact in facts:
-        if (fact.entity_type, fact.entity) in projected:
-            projected[(fact.entity_type, fact.entity)]["data"].update(
-                field_values(fact, projected[(fact.entity_type, fact.entity)]["data"], None)["changes"]
-            )
-    limits: dict[tuple[str, str, str], float] = {}
-    for i, fact in enumerate(facts):
-        for j, change in enumerate(fact.changes):
-            if fact.entity_type != "account" or change.field != "taels":
-                continue
-            pair = fact.entity_type, fact.entity
-            recipient = (change.counterpart.entity_type, change.counterpart.entity) if change.counterpart else None
-            amounts[i, j] = (
-                -min(-change.value, max(0, balances.get(pair, 0))) if change.value <= 0
-                else change.value
-            )
-            reasons[i, j] = "balance" if amounts[i, j] != change.value else None
-            row = projected.get(recipient) if recipient else None
-            if (recipient is not None and row is not None and change.purpose in {"补欠", "当月饷"}
-                    and has_obligation(change.purpose, recipient[0], row["data"])):
-                key = (*recipient, change.purpose)
-                if key not in limits:
-                    limits[key] = max(0, row["data"].get("arrears", 0) if change.purpose == "补欠"
-                                      else obligation(recipient, projected) - current_paid(
-                                          row["data"], projected[("calendar", "world")]["data"]
-                                      )) * WAN
-                if -amounts[i, j] > limits[key]:
-                    reasons[i, j] = "obligation"
-                amounts[i, j] = -min(-amounts[i, j], limits[key])
-                limits[key] += amounts[i, j]
-            balances[pair] = balances.get(pair, 0) + amounts[i, j]
-            if recipient is not None and recipient[0] == "account":
-                balances[recipient] = balances.get(recipient, 0) - amounts[i, j]
-    return amounts, reasons
+    fact: Fact, account: Entity, projected: dict[tuple[str, str], Item],
+    limits: dict[tuple[str, str, str], float],
+) -> Item:
+    """Policy post-values set caps; the working account already has prior payments."""
+    change = fact.changes[0]
+    amount = -min(-change.value, max(0, account.data.get("taels", 0))) if change.value <= 0 else change.value
+    reason = "balance" if amount != change.value else None
+    recipient = (change.counterpart.entity_type, change.counterpart.entity) if change.counterpart else None
+    row = projected.get(recipient) if recipient else None
+    if (recipient is not None and row is not None and change.purpose in {"补欠", "当月饷"}
+            and has_obligation(change.purpose, recipient[0], row["data"])):
+        key = (*recipient, change.purpose)
+        if key not in limits:
+            limits[key] = max(0, row["data"].get("arrears", 0) if change.purpose == "补欠"
+                              else obligation(recipient, projected) - current_paid(
+                                  row["data"], projected[("calendar", "world")]["data"]
+                              )) * WAN
+        if -amount > limits[key]:
+            reason = "obligation"
+        amount = -min(-amount, limits[key])
+        limits[key] += amount
+    return {**field_values(fact, account.data, amount), "limit_reason": reason}
 
 
 def field_values(

@@ -3,11 +3,11 @@
 import json
 from collections.abc import Sequence
 from dataclasses import asdict
-from typing import Any, TypeVar, cast
-from uuid import UUID
+from typing import Any, cast
 
 from pydantic import ValidationError
 from sqlalchemy import JSON, case, func, type_coerce
+from pydantic_ai.models import Model
 from pydantic_ai import (
     Agent,
     PromptedOutput,
@@ -17,11 +17,10 @@ from pydantic_ai import (
 from pydantic_ai.exceptions import ToolRetryError, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelResponse
 
-from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS, FACT_COLUMNS as F, FACT_ROWS, Item, Ledger
+from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS, Item, Ledger
 from ming.middle.fiscal import OUTPUT_METRICS, levers, payable_army, settling
 from ming.middle.declaration import (
     Declaration,
-    DecreeEvent,
     EntityRef,
     Fact,
     NightDeclaration,
@@ -29,15 +28,15 @@ from ming.middle.declaration import (
     PaymentPolicy,
     Unhandled,
 )
-from ming.middle.queries import CALENDAR, CATALOGUE, landing_rows
+from ming.middle.queries import CATALOGUE
 from ming.middle.opening import REFERENCES
-from ming.middle.appointments import ALIASES, APPOINTMENT_ROLES, cabinet_members, incumbency_record, office_pairs, reference_key
+from ming.middle.appointments import ALIASES, APPOINTMENT_ROLES, catalogue, incumbency_record, office_pairs, reference_key
 from ming.middle.rules import Names, check_rules, fail, name_expected
+from ming.middle.dispatch import Translation, prepare
 from ming.middle.records import TranslationMaterials, read_records
-from ming.middle.invoke import ModelSource, build_agent, invoke
+from ming.middle.invoke import invoke
 from ming.middle.fields import FIELDS_BY_KIND
 
-T = TypeVar("T", bound=Declaration)
 APPOINTMENT_RULES = """任免只声明 incumbency：entity 用史书官名（京官如户部右侍郎、南京户部尚书；外官如陕西巡抚、保定府新城县知县），create=false。官职、属地由目录正名或别名精确解析，同名属地须带上级全名。holders、acting 按字段表填写。外官须带属地。首次任职由引擎创建在任记录；人物不存 office、office_region、office_type 等任职字段。
 升转新实职即离原任；旨里写明兼领、仍管的才保留旧职。没有兼领、仍管时，在同份声明里从原任 holders 去掉此人；旧职本来无在任记录不必声明。新官替换同官同地原任，不动同官别地。任免不改变人物状态、所在、在场或行程。罢去全部官职时，在同份声明中把罢官原因写进此人的 identity_description 作为处境。
 尚书现任只算掌部的一员；阁臣的尚书兼衔只记身份与履历文字，不写入在任记录。内阁首辅为单员职务，须为在任阁臣；同份声明可先任大学士再任首辅。离开全部阁职时同时卸首辅，新首辅只替原首辅这一职、不免其大学士。次辅只记身份。"""
@@ -59,34 +58,30 @@ text 保留圣旨定稿全文，不改写、不摘要。origin、people、endors
 """
 
 
-def catalogue(records: Sequence[Item]) -> dict[str, dict[str, list[str]]]:
-    result: dict[str, dict[str, list[str]]] = {}
-    for row in records:
-        result.setdefault(row["kind"], {})[row["key"]] = row["aliases"]
-    return result
-
-
 # Content catalogues the month accounts and levy timeline iterate: only the
 # imported rows exist, so a declaration may change them but never add one.
 CATALOGUES = {"historical_event", "fiscal", "account", "office", "territory", "incumbency"}
 
 
-def check(ledger: Ledger, out: Declaration, source: UUID) -> None:
-    if not (out.facts or out.reports or out.decree_events or isinstance(out, NightDeclaration) and out.decrees):
-        return
+def declaration_records(ledger: Ledger, out: Declaration | Unhandled) -> dict[tuple[str, str], Item]:
+    if isinstance(out, Unhandled) or not (out.facts or out.reports or out.decree_events or isinstance(out, NightDeclaration) and out.decrees):
+        return {}
     appointment_kinds = ("office", "incumbency") if any(f.entity_type == "incumbency" for f in out.facts) else ()
     records = ledger.read(CATALOGUE.with_only_columns(
-        E.kind, E.key, ALIASES, E.data["external"].as_boolean().label("external"),
+        E.id, E.kind, E.key, ALIASES, E.data["external"].as_boolean().label("external"),
         type_coerce(case((E.kind.in_(appointment_kinds), func.json_object(
             "multiple", E.data["multiple"].as_boolean(), "department", E.data["department"].as_string(),
             "office", E.data["office"].as_string(), "territory", E.data["territory"].as_string(),
             "holders", E.data["holders"], "acting", E.data["acting"],
         )), else_="{}"), JSON).label("data"),
     ))
-    names = catalogue(records)
+    return {(row["kind"], row["key"]): row for row in records}
+
+
+def check(ledger: Ledger, out: Declaration, records: dict[tuple[str, str], Item], names: Names) -> None:
     fields = FIELDS_BY_KIND
-    appointments = {(row["kind"], row["key"]): row for row in records
-                    if row["kind"] in {"office", "territory", "incumbency"}} if appointment_kinds else {}
+    appointments = {pair: row for pair, row in records.items()
+                    if pair[0] in {"office", "territory", "incumbency"}}
     for i, fact in enumerate(out.facts):
         path = f"facts[{i}]"
         if fact.entity_type != "incumbency":
@@ -133,86 +128,7 @@ def check(ledger: Ledger, out: Declaration, source: UUID) -> None:
                 )
     check_fiscal(ledger, out, names)
     check_references(ledger, out, names)
-    check_rules(ledger, out, names)
-    check_decrees(ledger, out, source, names)
-
-
-def check_decrees(
-    ledger: Ledger,
-    out: Declaration,
-    source: UUID,
-    names: dict[str, dict[str, list[str]]],
-) -> None:
-    # Both declarations index a decree list, never free-text names.
-    if not isinstance(out, NightDeclaration) and not (
-        out.decree_events or any(f.decree is not None or f.discovered for f in out.facts)
-    ):
-        return
-    count = len(out.decrees) if isinstance(out, NightDeclaration) else ledger.read(
-        landing_rows(CALENDAR).with_only_columns(func.count().label("count"), maintain_column_froms=True).order_by(None),
-    )[0]["count"]
-    labeled = (("facts", out.facts), ("decree_events", out.decree_events))
-    for label, items in labeled:
-        for i, item in enumerate(items):
-            ref = item.decree
-            path = f"{label}[{i}].decree"
-            if (ref is None and (isinstance(item, DecreeEvent) or item.discovered)) or (ref is not None and not 0 <= ref < count):
-                fail(path, ref, "decrees 的零基下标", names, "使用所属旨意在 decrees 中的下标，重交整份。")
-    if isinstance(out, NightDeclaration) and out.decrees:
-        turns = ledger.facts(entity_id=source, kind="turn", query=FACT_ROWS.with_only_columns(
-            F.detail["id"].as_string().label("turn_id"),
-        ))
-        for i, decree in enumerate(out.decrees):
-            if decree.secret:
-                decree.handler = reference_key(ledger, "person", decree.handler, names) if decree.handler is not None else None
-                if decree.handler not in names.get("person", {}):
-                    fail(
-                        f"decrees[{i}].handler", decree.handler,
-                        name_expected("person", decree.handler or "", names), names,
-                        "密令须声明唯一承办人，用人物目录正名或所列别名；照整夜戏文记录领旨去办者，重交整份。",
-                    )
-            if decree.turn > len(turns):
-                fail(
-                    f"decrees[{i}].turn",
-                    decree.turn,
-                    list(range(1, len(turns) + 1)),
-                    names,
-                    "turn 改成 expected 里的本夜轮次，重交整份。",
-                )
-        check_endorsements(ledger, out, {row["turn_id"] for row in turns}, names)
-
-
-def check_endorsements(
-    ledger: Ledger,
-    out: NightDeclaration,
-    turn_ids: set[str],
-    names: dict[str, dict[str, list[str]]],
-) -> None:
-    for i, decree in enumerate(out.decrees):
-        for j, endorsement in enumerate(decree.endorsements):
-            path = f"decrees[{i}].endorsements[{j}]"
-            if endorsement.source_chat_turn_id not in turn_ids:
-                fail(
-                    path + ".source_chat_turn_id",
-                    endorsement.source_chat_turn_id,
-                    sorted(turn_ids),
-                    names,
-                    "source_chat_turn_id 改成 expected 里的本夜轮次 id，重交整份。",
-                )
-            allowed: list[str] | dict[str, list[str]] = ["御笔"]
-            expected: object = allowed
-            if endorsement.form != "御笔手敕":
-                endorsement.endorser = reference_key(ledger, "person", endorsement.endorser, names)
-                allowed = names.get("person", {})
-                expected = name_expected("person", endorsement.endorser, names)
-            if endorsement.endorser not in allowed:
-                fail(
-                    path + ".endorser",
-                    endorsement.endorser,
-                    expected,
-                    names,
-                    "参照 expected 的正名清单或输入目录指针核对 endorser，重交整份。",
-                )
+    check_rules(out, names)
 
 
 def check_funding(ledger: Ledger, out: Declaration, names: Names) -> dict[str, Item]:
@@ -360,17 +276,6 @@ def check_appointment(
         for k, person in enumerate(holders):
             if person not in names.get("person", {}):
                 fail(f"{field}[{k}]", person, name_expected("person", person, names), names, "在任者用 expected 指向的输入人物目录中的正名，重交整份。")
-        if office["key"] == "内阁首辅":
-            eligible = sorted(cabinet_members(appointments))
-            for k, person in enumerate(holders):
-                if person not in eligible:
-                    fail(f"{field}[{k}]", person, eligible, names, "首辅须为在任阁臣；可在同份声明中先任大学士，再任首辅。重交整份。")
-        appointment = appointments.setdefault(("incumbency", fact.entity), {
-            "kind": "incumbency", "data": incumbency_record(pairs[0], [])[1],
-        })
-        appointments[("incumbency", fact.entity)] = {
-            **appointment, "data": {**appointment["data"], change.field: holders},
-        }
 
 
 def check_references(ledger: Ledger, out: Declaration, names: Names) -> None:
@@ -423,17 +328,24 @@ def check_references(ledger: Ledger, out: Declaration, names: Names) -> None:
 
 
 def declaration_agent(
-    model: ModelSource,
-    ledger: Ledger,
-    output_type: type[T],
+    output_type: type[Declaration],
     instructions: str,
-) -> Agent[TranslationMaterials, T]:
-    agent = build_agent(
-        model,
+) -> Agent[TranslationMaterials, Translation]:
+    def accept(ctx: RunContext[TranslationMaterials], out: Declaration):
+        ledger = ctx.deps.ledger
+        records = declaration_records(ledger, out)
+        names = catalogue(records.values())
+        check(ledger, out, records, names)
+        return prepare(ledger, out, ledger.get(ctx.deps.source), records, names)
+
+    # The same output function accepts this call's specific declaration schema.
+    accept.__annotations__["out"] = output_type
+
+    agent = Agent(
         tools=[read_records],
         name=output_type.__name__,
         deps_type=TranslationMaterials,
-        output_type=PromptedOutput(output_type),
+        output_type=PromptedOutput(accept),
         instructions=instructions + "\n" + APPOINTMENT_RULES + "\n官职和属地不混在实况名册里；需要核对官名、地名、别名、所属衙门或员额时，用 read_records 带类 office、territory 或正名查询；空参不返回目录。",
         retries=1,
     )
@@ -444,7 +356,7 @@ def declaration_agent(
         # only model I/O yields.
         return json.dumps(
             {
-                "catalogue": ctx.deps.court.record_catalogue(ctx.deps.identity),
+                "catalogue": ctx.deps.court.read.record_catalogue(ctx.deps.identity),
                 "field_schemas": {"payment_policy": PaymentPolicy.model_json_schema(), "monthly_funding": MonthlyFunding.model_json_schema()},
                 "allowed_fields": {
                     kind: {field: asdict(rule) for field, rule in rules.items()}
@@ -454,24 +366,21 @@ def declaration_agent(
             ensure_ascii=False,
         )
 
-    @agent.output_validator
-    def validate(ctx: RunContext[TranslationMaterials], out: T) -> T:
-        check(ledger, out, ctx.deps.source)
-        return out
-
     return agent
 
 
 async def translate(
-    agent: Agent[TranslationMaterials, T],
+    agent: Agent[TranslationMaterials, Translation],
     prompt: str,
     materials: TranslationMaterials,
-) -> T | Unhandled:
+    model: Model,
+) -> Translation | Unhandled:
     with capture_run_messages() as messages:
         try:
             return (
                 await invoke(
-                    agent, "请按 JSON schema 提交完整声明。\n" + prompt, deps=materials
+                    agent, "请按 JSON schema 提交完整声明。\n" + prompt,
+                    deps=materials, model=model,
                 )
             ).output
         except UnexpectedModelBehavior as exhausted:

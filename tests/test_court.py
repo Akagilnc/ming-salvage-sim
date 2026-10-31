@@ -2,9 +2,12 @@
 
 import json
 from pathlib import Path
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from contextlib import ExitStack, contextmanager
+from inspect import isawaitable
 
 import pytest
+from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel, DeltaToolCall
 from starlette.testclient import TestClient
@@ -17,19 +20,24 @@ RECORDED = Path(__file__).parent / "recorded"
 
 def replaying(
     replies: Sequence[str | ModelResponse | Exception]
-    | Callable[[list[ModelMessage]], str | ModelResponse | Exception],
+    | Callable[[list[ModelMessage]], str | ModelResponse | Exception | Awaitable[str | ModelResponse | Exception]],
     received: list[ModelMessage] | None = None,
     toolsets: list[list[str]] | None = None,
+    identities: list | None = None,
 ) -> FunctionModel:
     remaining = iter(replies) if not callable(replies) else iter(())
 
     async def reply(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         # Native async callback; model I/O alone is replaced.
+        if identities is not None:
+            identities.append(get_current_run_context().deps.identity)
         if received is not None:
             received.extend(_messages)
         if toolsets is not None:
             toolsets.append([tool.name for tool in _info.function_tools])
         result = replies(_messages) if callable(replies) else next(remaining)
+        if isawaitable(result):
+            result = await result
         if isinstance(result, Exception):
             raise result
         return result if isinstance(result, ModelResponse) else ModelResponse(parts=[TextPart(result)])
@@ -42,6 +50,17 @@ def replaying(
                 yield {index: DeltaToolCall(name=part.tool_name, json_args=part.args_as_json_str(), tool_call_id=part.tool_call_id)}
 
     return FunctionModel(reply, stream_function=stream_response)
+
+
+@contextmanager
+def reopening(directory):
+    """Each open ends the previous application's lifespan before creating another."""
+    with ExitStack() as clients:
+        def open_client():
+            clients.close()
+            return clients.enter_context(TestClient(create_app(directory)))
+
+        yield open_client
 
 
 @pytest.mark.parametrize("game_db", ["first_night"], indirect=True)
@@ -120,7 +139,7 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
         client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
         assert audit(game_db) == after
         returned = client.portal.call(
-            client.app.state.web.game.court.read_records, Officials(people=["毕自严"]), None, ["国库", "郭允厚"],
+            client.app.state.web.game.court.read.read_records, Officials(people=["毕自严"]), None, ["国库", "郭允厚"],
         )
         assert next(e["data"]["taels"] for e in returned["entities"] if e["key"] == "国库") == 3200000
         assert not {"dossier", "seed_guilt", "loyalty"}.intersection(
@@ -355,24 +374,27 @@ def test_recorded_r2_reply_lands(game_db, steps, audit, case):
 
 
 @pytest.mark.parametrize("game_db", ["first_night"], indirect=True)
-@pytest.mark.parametrize("stage", ["night", "month"])
-def test_translation_queries_preserve_two_table_permissions(game_db, steps, stage):
+def test_translation_queries_preserve_two_table_permissions(game_db, steps):
     recording = json.loads((RECORDED / "declarations_1972.json").read_text())["cases"]
     received = []
     offices = ["陕西巡抚", "巡抚", "新城知县", "西安知府", "内阁大学士", "陕西巡府", "不存在的官职", "内阁大学士"]
-    steps["NightDeclaration"] = replaying([(RECORDED / "night_empty.txt").read_text()])
-    steps["NightDeclaration" if stage == "night" else "Declaration"] = replaying(
+    for name, case in (("NightDeclaration", "night_catalogue_queries"), ("Declaration", "catalogue_queries")):
+        steps[name] = replaying(ModelMessagesTypeAdapter.validate_python(recording[case]), received)
+    steps["simulation"] = replaying(
         [ModelResponse(parts=[ToolCallPart("read_records", {"kind": "incumbency", "key": offices}, tool_call_id="batch"),
+                              ToolCallPart("read_records", {"kind": "person", "key": ["郭允厚", "郭允厚"], "date": {"year": 1600, "month": 1}}, tool_call_id="people"),
+                              ToolCallPart("read_records", {}, tool_call_id="empty"),
+                              *(ToolCallPart("read_records", {"key": key}, tool_call_id=f"names-{i}")
+                                for i, key in enumerate(["郭允厚", "郭尚书", "毕自严", "南户部", ["郭允厚", "毕自严"], ["郭尚书", "毕尚书"]])),
                               *(ToolCallPart("read_records", {"kind": "incumbency", "key": name}, tool_call_id=name)
                                 for name in dict.fromkeys(offices))]),
-         *ModelMessagesTypeAdapter.validate_python(recording["night_catalogue_queries" if stage == "night" else "catalogue_queries"])], received,
+         (RECORDED / "simulation.txt").read_text()], received,
     )
     with TestClient(create_app(game_db.parent)) as client:
         client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
         client.post("/actions", json={"action": "dismiss"}).raise_for_status()
         client.portal.call(client.app.state.web.game.drain)
-        if stage == "month":
-            client.post("/actions", json={"action": "month"}).raise_for_status()
+        client.post("/actions", json={"action": "month"}).raise_for_status()
         assert client.get("/state").json()["game"]["failure"] is None
     queries = {p.tool_call_id: p.args_as_dict() for m in received for p in m.parts if isinstance(p, ToolCallPart)}
     results = {p.tool_call_id: p.model_response_object() for m in received for p in m.parts if isinstance(p, ToolReturnPart)}
@@ -383,6 +405,15 @@ def test_translation_queries_preserve_two_table_permissions(game_db, steps, stag
     ) for result in batch] for batch in (results.pop("batch")["offices"], [results[name] for name in offices])]
     assert batches[0] == batches[1]
     queries.pop("batch")
+    assert results.pop("empty")["status"] == "query_required"
+    queries.pop("empty")
+    people = results.pop("people")
+    queries.pop("people")
+    assert [(e["kind"], e["key"]) for e in people["entities"]] == [("person", "郭允厚")]
+    assert people["facts"] == []
+    assert people["entities"][0]["data"]["appointments"][0]["office"] == "户部尚书"
+    assert [results.pop(f"names-{i}") for i in (0, 2, 4)] == [results.pop(f"names-{i}") for i in (1, 3, 5)]
+    queries = {call_id: query for call_id, query in queries.items() if not call_id.startswith("names-")}
     for call_id, query in queries.items():
         result = results[call_id]
         if query.get("kind") == "incumbency":

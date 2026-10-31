@@ -1,7 +1,6 @@
 """One entity/field declaration for immediate facts and monthly consequences."""
 
 from typing import Annotated, Any, Literal
-from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -21,23 +20,6 @@ class StrictModel(BaseModel):
 class EntityRef(StrictModel):
     entity_type: str
     entity: str
-
-
-class Petition(StrictModel):
-    text: str
-    options: list[str] = Field(min_length=1)
-
-
-class PendingPetition(Petition):
-    id: UUID
-    entity_id: UUID
-    available: dict[str, Any]
-    blocking: bool
-    source: str
-    signer: str | None = None
-    target: str | None = None
-    revision_of: UUID | None = None
-    ordinal: int = 0
 
 
 class FiscalEnd(StrictModel):

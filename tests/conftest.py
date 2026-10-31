@@ -2,26 +2,36 @@
 
 import asyncio
 import json
-from contextlib import contextmanager
-from collections import defaultdict
+from contextlib import ExitStack, contextmanager
+from collections import UserDict
 from pathlib import Path
 from shutil import copyfile, copytree
 
 import pytest
-from pydantic_ai import Agent
 from pydantic_ai.models import override_allow_model_requests
 from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelResponse
 from pydantic_ai.models.test import TestModel
 from starlette.testclient import TestClient
 
 from ming.__main__ import main
+from ming.audience import Audience, scene
+from ming.month_steps.deliberation import Deliberations
+from ming.month_steps.gazette import Gazette
+from ming.month_steps.landing import Landing
+from ming.month_steps.secrets import Secrets
+from ming.month_steps.simulation import Simulations
+from ming.month_steps.sources import Sources
 from ming.middle.court import Court
 from ming.middle.opening import CONTENT, build_opening
 from ming.web import create_app
 from tests.test_court import replaying
 
 RECORDED = Path(__file__).parent / "recorded"
-AGENT_RUN = Agent.run
+CALLS = {agent.name: agent for agent in (
+    scene, Audience.translation, Deliberations.agent, Gazette.agent, Landing.agent,
+    Secrets.agent, Simulations.draft_agent, Simulations.final_agent,
+    Sources.urgent, Sources.impeachment,
+)}
 HISTORY_ACTIONS = {
     "month": ({"action": "month"},),
     "night": ({"action": "open"}, {"action": "dismiss"}),
@@ -47,43 +57,38 @@ RECORDED_REPLIES = {
 }
 
 
+class StepOverrides(UserDict):
+    def __init__(self, stack):
+        self.stack = stack
+        super().__init__()
+
+    def __setitem__(self, name, model):
+        self.stack.enter_context(CALLS[name].override(model=model))
+        super().__setitem__(name, model)
+
+
 @contextmanager
-def recorded_steps(case=None, start=0, invocations=None):
-    replies = {
-        name: TestModel(call_tools=[], custom_output_text=text)
-        for name, text in RECORDED_REPLIES.items()
-    }
-    if case is not None:
-        case = json.loads((RECORDED / f"night_{case}.json").read_text())
-        replies["scene"] = replaying(
-            [m for m in ModelMessagesTypeAdapter.validate_python(case["scene_responses"])
-             if isinstance(m, ModelResponse)] if "scene_responses" in case else
-            [turn["scene"] for turn in case["turns"][start:]]
-        )
-        replies["NightDeclaration"] = replaying(case["replies"])
-
-    async def recorded(agent, *args, **kwargs):
-        # Only the external model is substituted; Agent, tools and validators run normally.
-        if invocations is not None:
-            invocations[agent.name].append(kwargs["deps"].identity)
-        with agent.override(model=replies[agent.name]):
-            return await AGENT_RUN(agent, *args, **kwargs)
-
-    with override_allow_model_requests(False), pytest.MonkeyPatch.context() as patch:
-        patch.setattr(Agent, "run", recorded)
+def recorded_steps(case=None, start=0):
+    with ExitStack() as stack, override_allow_model_requests(False), pytest.MonkeyPatch.context() as patch:
+        replies = StepOverrides(stack)
+        for name, text in RECORDED_REPLIES.items():
+            replies[name] = TestModel(call_tools=[], custom_output_text=text)
+        if case is not None:
+            case = json.loads((RECORDED / f"night_{case}.json").read_text())
+            replies["scene"] = replaying(
+                [m for m in ModelMessagesTypeAdapter.validate_python(case["scene_responses"])
+                 if isinstance(m, ModelResponse)] if "scene_responses" in case else
+                [turn["scene"] for turn in case["turns"][start:]]
+            )
+            replies["NightDeclaration"] = replaying(case["replies"])
         if case is not None and "turns" in case:
             patch.setattr("ming.game.uuid4", iter(t["id"] for t in case["turns"][start:]).__next__)
         yield replies
 
 
 @pytest.fixture
-def model_invocations():
-    return defaultdict(list)
-
-
-@pytest.fixture
-def steps(request, model_invocations):
-    with recorded_steps(getattr(request, "param", None), invocations=model_invocations) as replies:
+def steps(request):
+    with recorded_steps(getattr(request, "param", None)) as replies:
         yield replies
 
 
@@ -125,7 +130,7 @@ def opening_node(tmp_path_factory, variant=None):
             ] = "已准"
             (content / "events.json").write_text(json.dumps(events))
         template = build_opening(content, content / "opening.sqlite")
-        court = Court.new_game(directory, TestModel(), template)
+        court = Court.new_game(directory, template)
         court.close()
         return court.db_path
     with TestClient(create_app(directory)) as client:
@@ -201,6 +206,11 @@ def spoken_night(first_night, tmp_path_factory):
         tmp_path_factory.mktemp("spoken-night"),
         ({"action": "say", "words": case["emperor_words"]},),
     )
+
+
+@pytest.fixture(scope="session")
+def approved_night(first_night, tmp_path_factory):
+    return declared_night(first_night, tmp_path_factory, "approved")
 
 
 @pytest.fixture(scope="session")
@@ -436,7 +446,7 @@ def game_db(request, tmp_path):
 
 @pytest.fixture
 def audit(capsys):
-    def read(db: Path, *, identity: str = "audit"):
+    def read(db: Path, *, identity: str = "audit", replay: bool = False):
         capsys.readouterr()
         main(
             [
@@ -445,6 +455,7 @@ def audit(capsys):
                 str(db),
                 "--identity",
                 identity,
+                *(["--replay"] if replay else []),
             ]
         )
         return json.loads(capsys.readouterr().out)
