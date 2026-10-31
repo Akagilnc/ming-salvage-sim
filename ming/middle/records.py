@@ -12,6 +12,7 @@ from ming.middle.view import Identity, character_input
 
 if TYPE_CHECKING:
     from ming.middle.court import Court
+    from ming.ledger import Ledger
 
 
 class RecordMonth(BaseModel):
@@ -28,6 +29,7 @@ class Materials:
 @dataclass
 class TranslationMaterials(Materials):
     source: UUID
+    ledger: "Ledger"
 
 
 async def read_records(

@@ -105,7 +105,7 @@ async def conversation(court: Court, settings: Configuration) -> None:
 
 
 async def month_action(court: Court, args: argparse.Namespace) -> None:
-    game = Game(court, court.model, month_model=args.settings.month_model)
+    game = Game(court, args.settings, month_model=args.settings.month_model)
     await game.command(
         args.command,
         {"petition": str(args.petition), "option": args.option}
@@ -131,18 +131,17 @@ def main(argv: list[str] | None = None) -> None:
         **{key: getattr(args, key) for key in Settings.model_fields},
         "month_model": {key: getattr(args, f"month_{key}") for key in Settings.model_fields},
     })
-    model = args.settings
     court = (
-        Court.new_game(args.directory, model)
+        Court.new_game(args.directory)
         if args.command == "new"
-        else Court(args.db, model)
+        else Court(args.db)
     )
     try:
         if args.command in {"month", "choose"}:
             asyncio.run(month_action(court, args))
             return
         if args.command == "audience":
-            asyncio.run(conversation(court, model))
+            asyncio.run(conversation(court, args.settings))
             return
         print(
             json.dumps(

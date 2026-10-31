@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 
 from ming.audience import Audience
 from ming.middle.court import Court
-from ming.middle.invoke import ModelSource, build_agent
+from ming.middle.invoke import Settings, configured_model
 from ming.middle.view import EntityView
 from ming.month import Month
 
@@ -29,18 +29,16 @@ class Game:
     def __init__(
         self,
         court: Court,
-        model: ModelSource,
+        model: Settings,
         *,
-        month_model: ModelSource | None = None,
+        month_model: Settings | None = None,
     ) -> None:
         self.court = court
         self.emit: Callable[[dict[str, Any]], None] | None = None
         self.live: dict[str, str] = {}
-        self.audience = Audience(court, model)
-        self.month = Month(
-            court, month_model if month_model is not None else model,
-            partial(self.notify, "gazette"),
-        )
+        self.audience = Audience(court)
+        self.month = Month(court, partial(self.notify, "gazette"))
+        self.configure(model, month_model=month_model)
         self.active: asyncio.Task[Any] | None = None
         self.background: set[asyncio.Task[Any]] = set()
         self.translation: asyncio.Task[Any] | None = None
@@ -49,19 +47,13 @@ class Game:
             self.audience.open(nights[-1])
 
     def configure(
-        self, model: ModelSource, *, month_model: ModelSource | None = None,
+        self, model: Settings, *, month_model: Settings | None = None,
     ) -> None:
-        self.court.model = model
-        for agent in (self.audience.scene, self.audience.translation):
-            build_agent(model, agent=agent)
-        month_model = month_model if month_model is not None else model
-        for agent in (
-            self.month.deliberations.agent, self.month.simulations.draft_agent,
-            self.month.simulations.final_agent, self.month.landing.agent,
-            self.month.gazette.agent, self.month.secrets.agent,
-        ):
-            build_agent(month_model, agent=agent)
-        self.month.sources.model = month_model
+        self.audience.model = configured_model(model)
+        self.month.model = (
+            configured_model(month_model)
+            if month_model is not None else self.audience.model
+        )
 
     def notify(self, event: str, data: Any) -> None:
         if event != "state":

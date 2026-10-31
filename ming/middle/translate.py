@@ -8,6 +8,7 @@ from uuid import UUID
 
 from pydantic import ValidationError
 from sqlalchemy import JSON, case, func, type_coerce
+from pydantic_ai.models import Model
 from pydantic_ai import (
     Agent,
     PromptedOutput,
@@ -34,7 +35,7 @@ from ming.middle.opening import REFERENCES
 from ming.middle.appointments import ALIASES, APPOINTMENT_ROLES, cabinet_members, incumbency_record, office_pairs, reference_key
 from ming.middle.rules import Names, check_rules, fail, name_expected
 from ming.middle.records import TranslationMaterials, read_records
-from ming.middle.invoke import ModelSource, build_agent, invoke
+from ming.middle.invoke import invoke
 from ming.middle.fields import FIELDS_BY_KIND
 
 T = TypeVar("T", bound=Declaration)
@@ -423,13 +424,10 @@ def check_references(ledger: Ledger, out: Declaration, names: Names) -> None:
 
 
 def declaration_agent(
-    model: ModelSource,
-    ledger: Ledger,
     output_type: type[T],
     instructions: str,
 ) -> Agent[TranslationMaterials, T]:
-    agent = build_agent(
-        model,
+    agent = Agent(
         tools=[read_records],
         name=output_type.__name__,
         deps_type=TranslationMaterials,
@@ -456,7 +454,7 @@ def declaration_agent(
 
     @agent.output_validator
     def validate(ctx: RunContext[TranslationMaterials], out: T) -> T:
-        check(ledger, out, ctx.deps.source)
+        check(ctx.deps.ledger, out, ctx.deps.source)
         return out
 
     return agent
@@ -466,12 +464,14 @@ async def translate(
     agent: Agent[TranslationMaterials, T],
     prompt: str,
     materials: TranslationMaterials,
+    model: Model,
 ) -> T | Unhandled:
     with capture_run_messages() as messages:
         try:
             return (
                 await invoke(
-                    agent, "请按 JSON schema 提交完整声明。\n" + prompt, deps=materials
+                    agent, "请按 JSON schema 提交完整声明。\n" + prompt,
+                    deps=materials, model=model,
                 )
             ).output
         except UnexpectedModelBehavior as exhausted:

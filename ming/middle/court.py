@@ -10,6 +10,7 @@ from typing import TypeVar
 from uuid import UUID, uuid4
 
 from pydantic_ai import Agent
+from pydantic_ai.models import Model
 from sqlalchemy import JSON, func, or_, select, tuple_
 from ming.ledger import (
     ENTITY_COLUMNS as E,
@@ -32,13 +33,12 @@ from ming.middle.declaration import (
     PendingPetition,
     Unhandled,
 )
-from ming.middle.invoke import ModelSource
 from ming.middle.records import TranslationMaterials
 from ming.middle.rules import matching_offices
 from ming.middle.opening import opening_template
 from ming.middle.night import NightView, dismiss, known_people, open_night, read_nights
 from ming.middle.scene import HallResult, set_hall
-from ming.middle.translate import declaration_agent, translate
+from ming.middle.translate import translate
 from ming.middle.translate import catalogue as names_and_aliases
 from ming.middle.view import (
     EntityView,
@@ -59,11 +59,10 @@ T = TypeVar("T", bound=Declaration)
 
 
 class Court:
-    def __init__(self, db_path: Path, model: ModelSource) -> None:
+    def __init__(self, db_path: Path) -> None:
         if not db_path.is_file():
             raise FileNotFoundError(db_path)
         self.db_path = db_path
-        self.model = model
         self.error_path = db_path.with_suffix(".errors.log")
         self.log = logging.getLogger(f"ming.{db_path.stem}")
         self._log_handler = logging.FileHandler(self.error_path, encoding="utf-8")
@@ -74,7 +73,7 @@ class Court:
 
     @classmethod
     def new_game(
-        cls, directory: Path, model: ModelSource, template: Path | None = None
+        cls, directory: Path, template: Path | None = None
     ) -> "Court":
         template = template if template is not None else opening_template()
         try:
@@ -88,7 +87,7 @@ class Court:
             path = directory / f"{uuid4()}.sqlite"
             with path.open("xb") as destination:
                 copyfileobj(source, destination)
-        return cls(path, model)
+        return cls(path)
 
     def open_night(self) -> tuple[UUID, bool]:
         return open_night(self._ledger)
@@ -247,18 +246,11 @@ class Court:
         targets[entity_id].record(kind, "", {**detail, "date": date})
         self._ledger.commit(list(targets.values()))
 
-    def translation_agent(
-        self, output_type: type[T], instructions: str,
-        *, model: ModelSource | None = None,
-    ) -> Agent[TranslationMaterials, T]:
-        return declaration_agent(
-            self.model if model is None else model, self._ledger, output_type, instructions
-        )
-
     async def translate(
-        self, agent: Agent[TranslationMaterials, T], prompt: str, source: UUID
+        self, agent: Agent[TranslationMaterials, T], prompt: str, source: UUID,
+        *, model: Model,
     ) -> T | Unhandled:
-        result = await translate(agent, prompt, TranslationMaterials(self, "world", source))
+        result = await translate(agent, prompt, TranslationMaterials(self, "world", source, self._ledger), model)
         self.log.info("translation output: %s", result.model_dump_json())
         return result
 

@@ -28,10 +28,11 @@ def declaration_reply(messages, response_file, quiet_month=None):
 
 
 @pytest.mark.parametrize("game_db", ["secret_night"], indirect=True)
-def test_every_model_call_reads_identity_scoped_records(game_db, steps, model_invocations):
+def test_every_model_call_reads_identity_scoped_records(game_db, steps):
     names = ("scene", "NightDeclaration", "Declaration", "simulation", "deliberation", "urgent", "impeachment", "secret_report", "gazette")
     received = {name: [] for name in names}
     tools = {name: [] for name in names}
+    model_invocations = {name: [] for name in names}
     declaration = {"facts": [], "decree_events": [], "reports": [{
         "entity_type": "incumbency", "entity": "户部尚书",
         "text": "官报：户部实存银若干。", "audience": "official",
@@ -53,7 +54,7 @@ def test_every_model_call_reads_identity_scoped_records(game_db, steps, model_in
                                           ToolCallPart("read_records", {"kind": "account", "key": "国库"}, tool_call_id="treasury"),
                                           ToolCallPart("read_records", {"kind": "faction", "key": ["阉党", "东林"]}, tool_call_id="factions"),
                                       ])]),
-            received[name], tools[name],
+            received[name], tools[name], model_invocations[name],
         )
     with TestClient(create_app(game_db.parent)) as client:
         client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
