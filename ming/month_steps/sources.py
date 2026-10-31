@@ -77,13 +77,13 @@ class Sources:
         sources = [(source, kind, faction) for source, kind, faction in sources if (source.id, kind) not in produced]
         if not sources:
             return
-        holders: dict[tuple[str, str | None], list[str]] = defaultdict(list)
-        for person in self.court.read.office_holders():
-            holders["impeachment", person["faction"]].append(person["key"])
-            if any(office in PETITION_OFFICES for office in person["offices"]):
-                holders["urgent", None].append(person["key"])
+        holders: dict[str | None, list[str]] = defaultdict(list)
+        if any(kind == "impeachment" for _, kind, _ in sources):
+            for person in self.court.read.office_holders():
+                holders[person["faction"]].append(person["key"])
         for index, (source, kind, faction) in enumerate(sources):
-            people = holders[kind, faction]
+            people = ([p["key"] for p in self.court.read.office_holders(PETITION_OFFICES)]
+                      if kind == "urgent" else holders[faction])
             if kind == "urgent" and not people:
                 record_product(self.court, source.id, kind, {"petitions": [], "date": calendar.data})
                 continue

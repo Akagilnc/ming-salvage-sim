@@ -163,6 +163,7 @@ def test_every_model_call_reads_identity_scoped_records(game_db, steps):
             "deliberation": Officials(people=["王体乾"], exclude_secrets=True),
             "urgent": Officials(people=["黄立极", "王体乾"]),
             "secret_report": Officials(people=["王承恩"]),
+            "impeachment": court.entities("world", kind="person"),
         }
         for name in received:
             assert model_invocations[name]
@@ -170,8 +171,8 @@ def test_every_model_call_reads_identity_scoped_records(game_db, steps):
                 assert all(identity == expected[name] for identity in model_invocations[name])
             else:
                 assert all(isinstance(identity, Officials) and not identity.exclude_secrets for identity in model_invocations[name])
-                assert {frozenset(identity.people) for identity in model_invocations[name]} == {
-                    frozenset(p["key"] for p in court.office_holders(faction=faction.key))
+                assert {tuple(identity.people) for identity in model_invocations[name]} == {
+                    tuple(p.key for p in expected[name] if p.data["appointments"] and p.data.get("faction") == faction.key)
                     for faction in court.entities("audit", kind="faction")
                 }
             assert_model_read_tools(name, received[name], tools[name], model_invocations[name][0])
