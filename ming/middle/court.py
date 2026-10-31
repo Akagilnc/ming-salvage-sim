@@ -2,7 +2,6 @@
 
 import logging
 from collections.abc import Sequence
-from functools import partial
 from pathlib import Path
 from shutil import copyfileobj
 from typing import TypeVar
@@ -20,14 +19,15 @@ from ming.ledger import (
 from ming.middle import queries
 from ming.middle.dispatch import dispatch
 from ming.middle.fiscal import Accounts
-from ming.middle.calendar import settle_journeys
+from ming.middle.calendar import CAPITAL, calendar_row, journeys_due
 from ming.middle.declaration import Declaration, LandingMode, Unhandled
 from ming.middle.invoke import ModelSource
 from ming.middle.records import TranslationMaterials
 from ming.middle.reading import Records
 from ming.middle.opening import opening_template
-from ming.middle.night import NightView, dismiss, open_night, read_nights
-from ming.middle.scene import set_hall
+from ming.middle.night import INITIAL_HALL, NightView, change_hall, read_nights
+from ming.middle.scene import HallResult
+from ming.middle.travel import CLEARED_JOURNEY
 from ming.middle.translate import declaration_agent, translate
 from ming.middle.view import EntityView, FactView, character_input
 
@@ -48,10 +48,6 @@ class Court:
         self.log.propagate = False
         self._ledger = Ledger(db_path)
         self.read = Records(self._ledger)
-        self.open_night = partial(open_night, self._ledger)
-        self.dismiss = partial(dismiss, self._ledger)
-        self.set_hall = partial(set_hall, self._ledger)
-        self.settle_journeys = partial(settle_journeys, self._ledger)
 
     @classmethod
     def new_game(
@@ -70,6 +66,70 @@ class Court:
             with path.open("xb") as destination:
                 copyfileobj(source, destination)
         return cls(path, model)
+
+    def open_night(self) -> tuple[UUID, bool]:
+        for row in self._ledger.entities(query=queries.LATEST_NIGHT.with_only_columns(E.id, E.data["closed"].as_boolean().label("closed"))):
+            if not row["closed"]:
+                return row["id"], False
+        date = calendar_row(self._ledger)["data"]
+        night = Entity(
+            "night", str(uuid4()), "", {"closed": False, "hall": list(INITIAL_HALL), "date": {k: date[k] for k in ("year", "month")}}
+        )
+        self._ledger.commit([night])
+        return night.id, True
+
+    def set_hall(self, night_id: UUID, add: list[str], remove: list[str]) -> HallResult:
+        night = self._ledger.get(night_id)
+        people = {
+            e["key"]: e
+            for e in self._ledger.entities(kind="person", query=ENTITY_ROWS.with_only_columns(
+                E.id, E.key, E.data["location"].as_string().label("location"),
+                E.data["transit_to"].as_string().label("transit_to"),
+                E.data["waiting_audience"].as_boolean().label("waiting_audience"),
+            ).where(E.key.in_(add)))
+        } if add else {}
+        failures: list[Item] = []
+        for name in add:
+            person = people.get(name)
+            if (
+                person is None
+                # ADR 0096: an empty location counts as in the capital (fail-open).
+                or (person["location"] or CAPITAL) != CAPITAL
+                or person["transit_to"]
+            ):
+                failures.append({
+                    "name": name,
+                    "found": person is not None,
+                    "location": person["location"] if person else None,
+                    "required_location": CAPITAL,
+                })
+        if failures or night.data["closed"]:
+            return HallResult(ok=False, hall=night.data["hall"], failures=failures)
+        hall = change_hall(night.data["hall"], add, remove)
+        night.record("hall", "", {"add": add, "remove": remove}, {"hall": hall})
+        admitted = [
+            self._ledger.get(people[name]["id"])
+            for name in dict.fromkeys(add)
+            if name in hall and people[name]["waiting_audience"]
+        ]
+        for person in admitted:
+            person.record("audience_admitted", "", {"night_id": str(night_id)}, {"waiting_audience": False})
+        self._ledger.commit([night, *admitted])
+        return HallResult(ok=True, hall=hall)
+
+    def settle_journeys(self, date: Item) -> None:
+        changed: list[Entity] = []
+        for row in self._ledger.read(journeys_due(date).with_only_columns(E.id)):
+            person = self._ledger.get(row["id"])
+            destination = person.data["transit_to"]
+            changes: Item = {
+                **CLEARED_JOURNEY,
+                "location": destination,
+                "waiting_audience": destination == CAPITAL,
+            }
+            person.record("arrived", "", {"date": person.data["arrival_date"], **changes}, changes)
+            changed.append(person)
+        self._ledger.commit(changed)
 
     def night(self, night_id: UUID) -> NightView:
         return read_nights(self._ledger, self._ledger.entities(entity_id=night_id))[0]
@@ -115,7 +175,18 @@ class Court:
         }
 
     def settle_accounts(self) -> None:
-        Accounts(self._ledger).run()
+        accounts = Accounts(self._ledger)
+        if self._ledger.facts(
+            entity_id=accounts.calendar.id, kind="month_accounts", date=accounts.date,
+            query=FACT_ROWS.with_only_columns(F.position).order_by(None).limit(1),
+        ):
+            return
+        accounts.taxes()
+        accounts.revenues()
+        accounts.production()
+        accounts.expenses()
+        accounts.calendar.record("month_accounts", "", {"date": accounts.date})
+        self._ledger.commit(accounts.rows)
 
     def record(
         self,

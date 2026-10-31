@@ -1,7 +1,6 @@
 """Land a whole declaration, query rows and events in the same transaction."""
 
 import json
-from collections import defaultdict
 from collections.abc import Callable, Iterator, Sequence
 from typing import cast
 from uuid import UUID
@@ -18,7 +17,7 @@ from ming.middle.declaration import (
     NightDeclaration,
     Unhandled,
 )
-from ming.middle import queries
+from ming.middle.reading import Records, latest_detail
 from ming.middle.rules import field_values, money_amounts
 from ming.middle.fiscal import WAN, current_paid, expense_rate, has_obligation
 from ming.middle.appointments import APPOINTMENT_ROLES, cabinet_members, cabinet_records, incumbency_record
@@ -94,32 +93,6 @@ def landing_entities(
     return {**{pair: found[pair] for pair in sorted(pairs) if pair in found}, **found}
 
 
-def landing_sources(
-    ledger: Ledger, date: Item, *, include_history: bool = True,
-) -> list[tuple[Item, LandingMode | None, list[Item]]]:
-    """Ordered sources, retaining decisions already read while resolving their mode."""
-    records = ledger.entities(query=queries.landing_rows(date, include_history=include_history))
-    if not records:
-        return []
-    decisions: dict[UUID, list[Item]] = defaultdict(list)
-    for event in ledger.facts(entity_id=[row["id"] for row in records], kind=("deliberation", "choice"), date=date):
-        decisions[event["entity_id"]].append(event)
-    sources: list[tuple[Item, LandingMode | None, list[Item]]] = []
-    for row in records:
-        mode: LandingMode | None = "landed" if row.pop("errand") else None
-        events = decisions[row["id"]]
-        if row.pop("deliberated"):
-            verdict = latest_detail(events, "deliberation")
-            choice = latest_detail(events, "choice")
-            mode = None
-            if verdict and (verdict["verdict"] == "准" or (choice and choice["text"] == "强颁")):
-                mode = "landed"
-            elif row["data"].get("interim"):
-                mode = "attempted"
-        sources.append((row, mode, events))
-    return sources
-
-
 def dispatch(
     ledger: Ledger,
     result: Declaration | Unhandled,
@@ -127,7 +100,7 @@ def dispatch(
     monthly: LandingMode | None = None,
 ) -> None:
     owner = ledger.get(night_id)
-    sources = landing_sources(ledger, owner.data) if monthly and owner.kind == "calendar" else []
+    sources = Records(ledger).landing_sources(owner.data) if monthly and owner.kind == "calendar" else []
     existing = landing_entities(ledger, result, owner, sources)
     changed: dict[tuple[str, str], Entity] = {}
     fact_origin: Item = {}
@@ -336,14 +309,6 @@ def record_receipts(
                 },
                 changes,
             )
-
-
-def latest_detail(events: Sequence[Item], kind: str) -> Item | None:
-    """Latest deliberation or choice of this month, the row both landing and interim use."""
-    return next(
-        (event["detail"] for event in reversed(events) if event["kind"] == kind),
-        None,
-    )
 
 
 def decree_disposition(

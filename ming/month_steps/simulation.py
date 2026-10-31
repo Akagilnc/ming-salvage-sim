@@ -11,12 +11,11 @@ from ming.middle.concepts import (
     ACTING, DECREE_EVENT, DISCOVERED, FORK, HANDLER, HELD, IMPERIAL_PUSH,
     INTERIM, MONTH_DRAFT, MONTH_FINAL, PEOPLE, PREVIEW, SECRET, VERDICT,
 )
-from ming.middle.declaration import PendingPetition
 from ming.middle.invoke import ModelSource, build_agent, invoke
-from ming.month_steps.materials import MonthText, Simulation, landing_materials, month_petitions, prior_choices, prompt
+from ming.month_steps.materials import MonthText, PendingPetition, Simulation, as_petition, landing_materials, month_petitions, prior_choices, prompt
 from ming.middle.view import EntityView, character_input
 from ming.middle.records import Materials, read_records
-from ming.month_steps.products import as_petition, record_product
+from ming.month_steps.products import record_product
 
 
 class Simulations:

@@ -12,7 +12,7 @@ from sqlalchemy import event, text
 from sqlalchemy.orm import Session
 from starlette.testclient import TestClient
 
-from ming.middle.declaration import PendingPetition
+from ming.month_steps.materials import PendingPetition
 from ming.middle.view import Officials
 from ming.web import create_app
 from tests.test_court import replaying

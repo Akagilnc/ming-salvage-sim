@@ -5,12 +5,8 @@ from typing import Any
 from uuid import UUID
 
 from ming.middle.court import Court
-from ming.middle.declaration import PendingPetition
+from ming.month_steps.materials import PendingPetition
 from ming.middle.view import FactView
-
-
-def as_petition(fact: FactView) -> PendingPetition:
-    return PendingPetition.model_validate({k: v for k, v in fact.detail.items() if k != "date"})
 
 
 def record_product(

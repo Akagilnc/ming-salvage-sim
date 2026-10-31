@@ -94,7 +94,7 @@ class Audience:
 
     def _finish_dismiss(self) -> None:
         if self._dismiss_requested is not None:
-            self.court.dismiss(self._dismiss_requested)
+            self.court.record(self._dismiss_requested, [("dismissed", {})], {"closed": True})
             self._dismiss_requested = None
 
     async def translate_pending(self) -> None:

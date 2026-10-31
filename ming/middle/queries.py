@@ -63,11 +63,15 @@ def available_on(date: Item) -> ColumnElement[bool]:
     )
 
 
-def unmatched(kind: str, response: str, link: tuple[str, str], *, same_entity: bool = False) -> ColumnElement[bool]:
+def matching_details(column: ColumnElement[Any], detail: Item) -> tuple[ColumnElement[bool], ...]:
+    return tuple(column[field].as_string().in_(values if isinstance(values, list) else [values])
+                 for field, values in detail.items())
+
+
+def unmatched(kind: str, response: str, link: tuple[str, str]) -> ColumnElement[bool]:
     answer = F.position.table.alias("answer").c
     return and_(F.kind == kind, F.detail[link[0]].as_string().is_not(None), ~select(answer.position).where(
         answer.kind == response,
-        *([answer.entity_id == F.entity_id] if same_entity else []),
         answer.detail[link[1]].as_string() == F.detail[link[0]].as_string(),
     ).exists())
 

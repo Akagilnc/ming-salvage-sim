@@ -173,7 +173,7 @@ def entities(
             EntityView.model_validate(e)
             for e in opening["detail"]["entities"]
             if all(e[k] == v for k, v in selection.items())
-            and (keys is None or e["key"] in keys) and (ids is None or UUID(e["id"]) in ids)
+            and (keys is None or e["key"] in keys)
         )
     query = ENTITY_SOURCES[identity_key(identity)]
     query = query.where(E.kind == selection["kind"]) if selection.get("kind") is not None else query
@@ -421,6 +421,7 @@ ACCOUNTS = {key: owned_accounts(identity) for key, identity in IDENTITIES.items(
 ENTITY_EXPOSURE = {key: entity_exposure(identity, ACCOUNTS[key]) for key, identity in IDENTITIES.items()}
 ENTITY_SOURCES = {key: ENTITY_ROWS.add_columns(exposure.label("exposure")).where(exposure.is_not(None))
                   for key, exposure in ENTITY_EXPOSURE.items()}
+VISIBLE_IDS = {key: source.with_only_columns(E.id).order_by(None) for key, source in ENTITY_SOURCES.items()}
 FACT_EXPOSURE = {key: fact_exposure(identity, ACCOUNTS[key]) for key, identity in IDENTITIES.items()}
 AVAILABLE = or_(CALENDAR.is_(None), available_on({
     "year": CALENDAR["year"].as_integer(), "month": CALENDAR["month"].as_integer(),

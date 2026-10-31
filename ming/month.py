@@ -5,7 +5,6 @@ from collections.abc import Callable
 from typing import Any
 
 from ming.middle.court import Court
-from ming.middle.declaration import PendingPetition
 from ming.middle.invoke import ModelSource, TextUpdate, gather_or_raise
 from ming.middle.view import EntityView
 from ming.month_steps.deliberation import Deliberations
@@ -16,7 +15,7 @@ from ming.month_steps.gazette import Gazette
 from ming.month_steps.sources import Sources
 from ming.month_steps.secrets import Secrets
 from ming.month_steps.products import record_product
-from ming.month_steps.materials import next_month, pending_petitions, pending_pushes, petition_officials
+from ming.month_steps.materials import PendingPetition, next_month, pending_petitions, pending_pushes, petition_officials
 
 
 class Month:

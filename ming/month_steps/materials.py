@@ -7,9 +7,8 @@ from uuid import UUID
 from pydantic import Field
 
 from ming.middle.court import Court
-from ming.middle.declaration import PendingPetition, Petition, StrictModel
+from ming.middle.declaration import StrictModel
 from ming.middle.view import EntityView, FactView, Identity, Officials, character_input
-from ming.month_steps.products import as_petition
 
 
 COST_RULES = """背书（含御笔手敕、御笔强推）本身不走代价轨。
@@ -17,6 +16,23 @@ COST_RULES = """背书（含御笔手敕、御笔强推）本身不走代价轨�
 预先中旨被驳也有满意度反应与中旨名声，但不执行旨意、不扣皇威；收回、留中不抹去已经发生的中旨尝试反应。
 同旨背书与中旨并存只计一份代价。prior_interim 是本旨已记的中旨历史，重议不重复已付反应；后来获准或强颁只补实际颁出的皇威代价。
 撤回成命交皇威、当事大臣与相关派系反应；收权罢差零毁约代价。正规被驳旨收回、留中中性。民心不是这些动作的固定代价。"""
+
+
+class Petition(StrictModel):
+    text: str
+    options: list[str] = Field(min_length=1)
+
+
+class PendingPetition(Petition):
+    id: UUID
+    entity_id: UUID
+    available: dict[str, Any]
+    blocking: bool
+    source: str
+    signer: str | None = None
+    target: str | None = None
+    revision_of: UUID | None = None
+    ordinal: int = 0
 
 
 class Deliberation(StrictModel):
@@ -30,6 +46,10 @@ class MonthText(StrictModel):
 
 class Simulation(MonthText):
     petitions: list[Petition] = Field(default_factory=list[Petition], description="本月岔路口奏疏列表，无岔路可省略；含义见岔路口。")
+
+
+def as_petition(fact: FactView) -> PendingPetition:
+    return PendingPetition.model_validate({k: v for k, v in fact.detail.items() if k != "date"})
 
 
 def next_month(date: dict[str, Any]) -> dict[str, Any]:
@@ -56,7 +76,7 @@ def month_petitions(court: Court, date: dict[str, Any]) -> tuple[FactView, ...]:
 
 
 def pending_pushes(court: Court, date: dict[str, Any]) -> tuple[tuple[EntityView, dict[str, Any]], ...]:
-    backings = [f for f in court.read.unmatched("audit", "endorsed", "deliberation", ("decision_key", "decision_key"), same_entity=True)
+    backings = [f for f in court.read.unmatched("audit", "endorsed", "deliberation", ("decision_key", "decision_key"))
                 if f.detail["decision_key"].get("petition_id") is not None
                 and (f.detail["date"]["year"], f.detail["date"]["month"]) < (date["year"], date["month"])]
     return tuple((e, f.detail["decision_key"]) for e in court.read.entities("audit", kind="decree", ids=[f.entity_id for f in backings])
