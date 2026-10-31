@@ -4,6 +4,7 @@ from typing import Any
 from uuid import UUID
 
 from ming.middle.court import Court
+from ming.month_steps.materials import pending_petitions
 
 
 class Inbox:
@@ -12,7 +13,7 @@ class Inbox:
 
     def choose(self, payload: dict[str, Any], *, accept: bool = False) -> None:
         petition_id, option, date = payload["petition"], payload["option"], payload["date"]
-        petition = next(iter(self.court.pending_petitions(date, petition_id)), None)
+        petition = next(iter(pending_petitions(self.court, petition_id)), None)
         petition = petition.model_dump(mode="json") if petition else None
         if (
             petition is None
@@ -29,5 +30,5 @@ class Inbox:
         if petition["source"] == "deliberation" and petition["options"][option] == "御笔强推":
             endorsement = {"endorser": "御笔", "form": "御笔手敕", "decision_key": decision}
             events.append(("endorsed", {**endorsement, "date": date}))
-            changes = {"endorsements": [*self.court.entity(entity_id).data.get("endorsements", []), endorsement]}
+            changes = {"endorsements": [*self.court.read.entities("audit", ids=[entity_id])[0].data.get("endorsements", []), endorsement]}
         self.court.record(entity_id, events, changes)

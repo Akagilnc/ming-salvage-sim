@@ -10,7 +10,7 @@ from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelResponse, RetryP
 from pydantic_ai.models.test import TestModel
 from starlette.testclient import TestClient
 
-from ming.middle.declaration import PendingPetition
+from ming.month_steps.materials import PendingPetition
 from ming.web import create_app
 from tests.test_court import replaying
 from tests.test_month import GUOKU_ORDER

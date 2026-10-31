@@ -153,7 +153,7 @@ def main(argv: list[str] | None = None) -> None:
             json.dumps(
                 {
                     "db": str(court.db_path),
-                    **court.read_records(args.identity, replay=getattr(args, "replay", False)),
+                    **court.read.read_records(args.identity, replay=getattr(args, "replay", False)),
                 },
                 ensure_ascii=False,
                 indent=2,

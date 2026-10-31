@@ -156,7 +156,7 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
         court = client.app.state.web.game.court
         assert court.nights()[0].result == "translated"
         first, second = sorted(
-            court.entities("audit", kind="decree"), key=lambda d: d.data["turn"]
+            court.read.entities("audit", kind="decree"), key=lambda d: d.data["turn"]
         )
         # Knowledge follows the hall at approval, before that turn's scene tools.
         for person, known in (
@@ -165,7 +165,7 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
             ("郭允厚", {second.id}),
         ):
             assert {
-                d.id for d in court.entities(Officials(people=[person]), kind="decree")
+                d.id for d in court.read.entities(Officials(people=[person]), kind="decree")
             } == known
     returned = {
         part.tool_call_id: (part.tool_name, part.model_response_object())

@@ -14,6 +14,7 @@ from ming.middle.invoke import Settings, configured_model
 from ming.middle.view import EntityView
 from ming.middle.night import NightHeader
 from ming.month import Month
+from ming.month_steps.materials import has_pending_petitions
 
 
 def same_call(item: dict[str, Any], action: str, payload: dict[str, Any]) -> bool:
@@ -92,7 +93,7 @@ class Game:
         self, action: str, status: str, payload: dict[str, Any], *, calendar: EntityView | None = None,
     ) -> None:
         key = f"choose:{payload['petition']}" if action == "choose" else action
-        calendar = self.court.calendar() if calendar is None else calendar
+        calendar = self.court.read.calendar() if calendar is None else calendar
         self.court.record(
             calendar.id,
             [
@@ -111,7 +112,7 @@ class Game:
 
     def actions(self, *, night: NightHeader | None = None) -> ActionFacts:
         """Synchronous action materials; never carried into scheduled work."""
-        calendar = self.court.calendar()
+        calendar = self.court.read.calendar()
         items = self.court.interactions(calendar.data)
         if night is None and "say" in items:
             night = self.court.latest_night()
@@ -134,31 +135,24 @@ class Game:
         latest = next(iter(self.court.nights()), None)
         calendar, _, interactions, _ = self.actions(night=latest)
         night = latest.model_dump(mode="json") if latest else None
-        petitions = self.court.pending_petitions(calendar.data)
+        monthly = self.month.presentation(calendar)
         opened = self.month.opened(calendar)
-        running = self.running(interactions, waiting=self.month.waiting(calendar, opened=opened, has_petitions=bool(petitions)))
+        running = self.running(interactions, waiting=self.month.waiting(calendar, opened=opened, has_petitions=bool(monthly["petitions"])))
         pending = next((i for i in running if i["action"] == "month"), next(iter(running), None))
         failures = self.failures(interactions)
         failure = next(iter(failures), None)
-        returned = self.court.returned_petitions(date=calendar.data)
-        awaiting_drafter = bool(returned) and not self.court.petition_officials()
         return {
             "face": "audience" if night and not night["closed"] else
                     "month" if opened or "month" in interactions else "desk",
             "night": night, "date": calendar.data,
             "running": pending is not None and failure is None,
-            "failure": failure, "pending": pending,
-            "unhandled_monthly": self.court.unhandled_monthly(calendar.data),
-            "petitions": [p.model_dump(mode="json") for p in petitions
-                          if f"choose:{p.id}" not in interactions],
-            "returned_petitions": [
-                {"petition": f.detail, "awaiting_drafter": awaiting_drafter} for f in returned
-            ],
+            "failure": failure, "pending": pending, **monthly,
+            "petitions": [p for p in monthly["petitions"] if f"choose:{p['id']}" not in interactions],
         }
 
     def reopen(self, facts: ActionFacts | None = None) -> None:
         facts = self.actions() if facts is None else facts
-        has_petitions = self.court.has_pending_petitions(facts.calendar.data)
+        has_petitions = has_pending_petitions(self.court)
         self.resume(facts, has_petitions=has_petitions)
         if has_petitions or (facts.pending_nights if facts.pending_nights is not None else self.court.pending_nights()):
             self.start_background()
@@ -231,7 +225,7 @@ class Game:
             return None
         failure, night, failures = None, None, ()
         if action == "choose":
-            calendar = facts.calendar if facts is not None else self.court.calendar()
+            calendar = facts.calendar if facts is not None else self.court.read.calendar()
         else:
             facts = self.actions() if facts is None else facts
             calendar, night, interactions, pending_nights = facts

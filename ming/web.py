@@ -78,7 +78,7 @@ class Web:
                 "data": {
                     "text": event["data"],
                     "hall": list(
-                        self.game.court.entity(self.game.audience.night_id).data["hall"]
+                        self.game.court.read.entities("audit", ids=[self.game.audience.night_id])[0].data["hall"]
                     ),
                 },
             }
@@ -156,7 +156,7 @@ class Web:
     async def records(self, request: Request) -> JSONResponse:
         if self.game is None:
             raise HTTPException(409, "请先打开一局")
-        return JSONResponse(self.game.court.read_records("emperor"))
+        return JSONResponse(self.game.court.read.read_records("emperor"))
 
     async def stream(self, request: Request) -> EventSourceResponse:
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()

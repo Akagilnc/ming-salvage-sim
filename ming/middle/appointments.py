@@ -1,9 +1,10 @@
 """Exact catalogue references and current appointments, independent of people."""
 
 import json
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 
-from sqlalchemy import JSON, case, func, literal, or_, select, type_coerce
+from typing import Any
+from sqlalchemy import JSON, Select, case, func, literal, or_, select, type_coerce
 from sqlalchemy.sql.elements import BindParameter, ColumnElement
 
 from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS, Item, Ledger
@@ -23,6 +24,13 @@ PAIR_DATA = type_coerce(func.json_object(
 ), JSON).label("data")
 
 
+def catalogue(records: Iterable[Item]) -> dict[str, dict[str, list[str]]]:
+    result: dict[str, dict[str, list[str]]] = {}
+    for row in records:
+        result.setdefault(row["kind"], {})[row["key"]] = row["aliases"]
+    return result
+
+
 def incumbency_record(pair: Sequence[str], holders: list[str]) -> tuple[str, Item]:
     return json.dumps(pair, ensure_ascii=False), {
         "office": pair[0], "territory": pair[1], "holders": holders, "acting": [],
@@ -32,6 +40,7 @@ def incumbency_record(pair: Sequence[str], holders: list[str]) -> tuple[str, Ite
 def named(
     ledger: Ledger, kind: str | None, value: str | list[str],
     *, records: Mapping[tuple[str, str], Item] | None = None,
+    query: Select[Any] = ENTITY_ROWS.with_only_columns(E.id, E.key, E.data["external"].as_boolean().label("external")),
 ) -> tuple[Item, ...]:
     values = [value] if isinstance(value, str) else value
     if records is not None:
@@ -41,9 +50,7 @@ def named(
                          for name in values
                      ))
     aliases = func.json_each(ALIASES).table_valued("value")
-    return ledger.entities(kind=kind, query=ENTITY_ROWS.with_only_columns(
-        E.id, E.key, E.data["external"].as_boolean().label("external"),
-    ).where(or_(
+    return ledger.entities(kind=kind, query=query.where(or_(
         E.key.in_(values),
         select(aliases.c.value).where(aliases.c.value.in_(values)).exists(),
     )))

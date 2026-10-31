@@ -45,7 +45,7 @@ class Audience:
 
     @property
     def identity(self) -> Officials:
-        return Officials(people=self.court.entity(self.night_id).data["hall"])
+        return Officials(people=self.court.read.entities("audit", ids=[self.night_id])[0].data["hall"])
 
     @property
     def night_id(self) -> UUID:
@@ -60,8 +60,8 @@ class Audience:
         if item := items.get("say"):
             payload = item["payload"]
             if night and not night.closed and str(night.id) == payload["night_id"]:
-                said = self.court.has_product(night.id, "turn", date=None, detail={"id": payload["turn_id"]})
-                if not said or self.court.has_product(night.id, "dismiss_requested", date=None):
+                said = self.court.read.has_facts(night.id, "turn", date=None, detail={"id": payload["turn_id"]})
+                if not said or self.court.read.has_facts(night.id, "dismiss_requested", date=None):
                     pending["say"] = item
         if item := items.get("translation"):
             if set(item["payload"]["nights"]) & {str(n) for n in pending_nights}:
@@ -74,7 +74,7 @@ class Audience:
             closed = False
         else:
             self._night_id, created, closed = night.id, False, night.closed
-        if not closed and not created and self.court.has_product(self.night_id, "dismiss_requested", date=None):
+        if not closed and not created and self.court.read.has_facts(self.night_id, "dismiss_requested", date=None):
             self._dismiss_requested = self.night_id
         return created
 
@@ -91,7 +91,7 @@ class Audience:
 
     def _finish_dismiss(self) -> None:
         if self._dismiss_requested is not None:
-            self.court.dismiss(self._dismiss_requested)
+            self.court.record(self._dismiss_requested, [("dismissed", {})], {"closed": True})
             self._dismiss_requested = None
             self.on_dismiss()
 
@@ -131,7 +131,7 @@ class Audience:
         try:
             result = await invoke(
                 scene,
-                [json.dumps({**self.court.scene_material(), "catalogue": self.court.record_catalogue(Officials(people=list(night.hall)))}, ensure_ascii=False), words],
+                [json.dumps({**self.court.scene_material(), "catalogue": self.court.read.record_catalogue(Officials(people=list(night.hall)))}, ensure_ascii=False), words],
                 deps=self, model=self.model,
                 message_history=history,
                 event_stream_handler=partial(stream_text, on_delta)

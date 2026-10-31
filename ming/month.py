@@ -7,8 +7,6 @@ from typing import Any
 from pydantic_ai.models import Model
 
 from ming.middle.court import Court
-from ming.middle.declaration import PendingPetition
-
 from ming.middle.invoke import TextUpdate, gather_or_raise
 from ming.middle.view import EntityView
 from ming.month_steps.deliberation import Deliberations
@@ -18,6 +16,8 @@ from ming.month_steps.landing import Landing
 from ming.month_steps.gazette import Gazette
 from ming.month_steps.sources import Sources
 from ming.month_steps.secrets import Secrets
+from ming.month_steps.products import record_product
+from ming.month_steps.materials import PendingPetition, has_pending_petitions, next_month, pending_petitions, pending_pushes, petition_officials
 
 
 class Month:
@@ -38,14 +38,16 @@ class Month:
         self.lock = asyncio.Lock()
 
     def opened(self, calendar: EntityView | None = None) -> bool:
-        calendar = self.court.calendar() if calendar is None else calendar
-        return self.court.has_product(calendar.id, "month_open", date=calendar.data)
+        calendar = self.court.read.calendar() if calendar is None else calendar
+        return self.court.read.has_facts(calendar.id, "month_open", date=calendar.data)
 
     def open(self) -> EntityView:
-        calendar = self.court.calendar()
-        if not self.opened(calendar):
-            self.court.record_product(calendar.id, "month_open", {
-                "entities": [e.model_dump(mode="json") for e in self.court.entities("emperor", current=calendar.data)],
+        calendar = self.court.read.calendar()
+        snapshot = self.court.read.opening_snapshot()
+        if snapshot is not None:
+            record_product(self.court, calendar.id, "month_open", {
+                "date": calendar.data,
+                "entities": [e.model_dump(mode="json") for e in snapshot],
             })
         return calendar
 
@@ -54,11 +56,11 @@ class Month:
         has_petitions: bool | None = None,
     ) -> bool:
         opened = self.opened(calendar) if opened is None else opened
-        return opened and (has_petitions if has_petitions is not None else self.court.has_pending_petitions(calendar.data))
+        return opened and (has_petitions if has_petitions is not None else has_pending_petitions(self.court))
 
     def pending_actions(self, items: dict[str, Any]) -> dict[str, Any]:
         choices = [i["payload"]["petition"] for i in items.values() if i["action"] == "choose"]
-        chosen = {f.detail["petition_id"] for f in self.court.petition_products(choices, "choice", date=None)}
+        chosen = {f.detail["petition_id"] for f in self.court.read.facts("audit", kind="choice", detail={"petition_id": choices})}
         return {
             key: item for key, item in items.items()
             if item["action"] in {"month", "choose"}
@@ -68,46 +70,66 @@ class Month:
     def choose(self, payload: dict[str, Any], *, accept: bool = False) -> None:
         self.inbox.choose(payload, accept=accept)
 
-    async def resume(self, *, speculative: bool = False, date: dict[str, Any] | None = None) -> tuple[PendingPetition, ...]:
-        date = self.court.calendar().data if date is None else date
+    def presentation(self, calendar: EntityView) -> dict[str, Any]:
+        """The month's share of the screen; Game owns the action state around it."""
+        returned = self.court.returned_petitions(date=calendar.data)
+        awaiting_drafter = bool(returned) and not petition_officials(self.court)
+        previous = {"year": calendar.data["year"] - (calendar.data["month"] == 1),
+                    "month": (calendar.data["month"] - 2) % 12 + 1}
+        return {
+            "unhandled_monthly": [{"entity_id": str(entity_id)} for entity_id in self.court.read.fact_ids(
+                "audit", "unhandled", date=previous, has="monthly",
+            )],
+            "petitions": [p.model_dump(mode="json") for p in pending_petitions(self.court)],
+            "returned_petitions": [{"petition": f.detail, "awaiting_drafter": awaiting_drafter} for f in returned],
+        }
+
+    async def resume(
+        self, *, speculative: bool = False, date: dict[str, Any] | None = None, opened: bool = False,
+    ) -> tuple[PendingPetition, ...]:
+        date = self.court.read.calendar().data if date is None else date
         async with self.lock:
-            calendar = self.court.calendar()
+            calendar = self.court.read.calendar()
+            # The lock can wait behind a month that advances the calendar.
             if date != calendar.data:
-                return self.court.pending_petitions(calendar.data)
-            public = [d for d in self.court.current_decrees(calendar.data) if not d.data["secret"]]
+                return pending_petitions(self.court)
+            public = [d for d in self.court.read.entities("audit", kind="decree", ids=list(self.court.read.fact_ids(
+                "audit", "decreed", date=calendar.data, entity_kind="decree",
+            ))) if not d.data["secret"]]
             verdicts = await self.deliberations.run(
-                [(d, None) for d in public] + list(self.court.pending_pushes(calendar.data)), calendar.data,
+                [(d, None) for d in public] + list(pending_pushes(self.court, calendar.data)), calendar.data,
             )
-            if speculative or not self.opened(calendar):
-                pending = self.court.pending_petitions(calendar.data)
-                if pending and self.court.has_product(calendar.id, "month_draft", date=calendar.data):
-                    self.simulations.speculate(calendar)
+            if speculative or not (opened or self.opened(calendar)):
+                pending = pending_petitions(self.court)
+                if pending and self.court.read.has_facts(calendar.id, "month_draft", date=calendar.data):
+                    self.simulations.speculate(calendar, pending, None)
                 return pending
-            # Opening urgent petitions must be answered before drafting, since
-            # their choices are inputs to this month's single timeline.
-            pending = self.court.pending_petitions(calendar.data)
-            drafted = self.court.has_product(calendar.id, "month_draft", date=calendar.data)
-            if pending and not drafted:
-                return pending
-            if not drafted:
-                # These are this stage's completed outputs, including newly
-                # committed verdicts, not a cache of unchanged ledger reads.
-                await self.simulations.draft(list(zip(public, verdicts[:len(public)], strict=True)), calendar)
-                pending = self.court.pending_petitions(calendar.data)
-            if not self.court.has_product(calendar.id, "month_final", date=calendar.data):
-                if pending:
-                    self.simulations.speculate(calendar)
+            final = None
+            if not self.court.read.has_facts(calendar.id, "month_final", date=calendar.data):
+                # Opening urgent petitions must be answered before drafting, since
+                # their choices are inputs to this month's single timeline.
+                pending = pending_petitions(self.court)
+                drafted = self.court.read.has_facts(calendar.id, "month_draft", date=calendar.data)
+                if pending and not drafted:
                     return pending
-                await self.simulations.final(calendar)
-            await self.landing.run(calendar)
-            self.court.settle_accounts()
+                produced = None
+                if not drafted:
+                    # Reuse only this invocation's already committed complete product.
+                    produced = await self.simulations.draft(list(zip(public, verdicts[:len(public)], strict=True)), calendar)
+                    pending = produced.petitions
+                if pending:
+                    self.simulations.speculate(calendar, pending, produced)
+                    return pending
+                final = await self.simulations.final(calendar, produced)
+            await self.landing.run(calendar, final)
+            self.court.settle_accounts(calendar)
             self.court.settle_journeys(calendar.data)
             await gather_or_raise(
                 self.gazette.run(calendar), self.sources.run(calendar),
-                self.secrets.report(self.court.errands(calendar.data), calendar.data),
+                self.secrets.report(self.court.read.without_events("decree", {"secret": True}, "completed", calendar.data), calendar.data),
             )
-            self.court.advance_month(calendar.id)
+            self.court.record(calendar.id, [("advanced", {"date": calendar.data})], next_month(calendar.data))
             return ()
 
     async def advance(self) -> tuple[PendingPetition, ...]:
-        return await self.resume(date=self.open().data)
+        return await self.resume(date=self.open().data, opened=True)

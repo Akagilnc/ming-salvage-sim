@@ -8,9 +8,10 @@ from pydantic_ai.models import Model
 
 from ming.middle.court import Court
 from ming.middle.invoke import TextUpdate, invoke, stream_text
-from ming.middle.month_work import prompt
+from ming.month_steps.materials import prompt
 from ming.middle.records import Materials, read_records
 from ming.middle.view import EntityView
+from ming.month_steps.products import record_product
 
 
 class Gazette:
@@ -28,7 +29,7 @@ class Gazette:
         self.court, self.model, self.on_delta = court, model, on_delta
 
     async def run(self, calendar: EntityView) -> None:
-        if self.court.has_product(calendar.id, "gazette", date=calendar.data):
+        if self.court.read.has_facts(calendar.id, "gazette", date=calendar.data):
             return
         result = await invoke(
             self.agent,
@@ -39,4 +40,4 @@ class Gazette:
             else None,
         )
         self.court.log.info("model output: %s", result.output)
-        self.court.record_product(calendar.id, "gazette", {"text": result.output})
+        record_product(self.court, calendar.id, "gazette", {"text": result.output, "date": calendar.data})

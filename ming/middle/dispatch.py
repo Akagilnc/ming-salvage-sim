@@ -1,7 +1,6 @@
 """Land a whole declaration, query rows and events in the same transaction."""
 
 import json
-from collections import defaultdict
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import cast
@@ -20,7 +19,7 @@ from ming.middle.declaration import (
     NightDeclaration,
     Unhandled,
 )
-from ming.middle import queries
+from ming.middle.reading import Records, latest_detail
 from ming.middle.rules import Names, check_chief, check_journey, fail, field_values, money_amounts, name_expected
 from ming.middle.fiscal import WAN, current_paid, expense_rate, has_obligation
 from ming.middle.appointments import APPOINTMENT_ROLES, incumbency_record, reference_key
@@ -35,32 +34,6 @@ class Translation:
     targets: dict[tuple[str, str], Entity]
     words: str
     date: Item
-
-
-def landing_sources(
-    ledger: Ledger, date: Item, *, include_history: bool = True,
-) -> list[tuple[Item, LandingMode | None, list[Item]]]:
-    """Ordered sources, retaining decisions already read while resolving their mode."""
-    records = ledger.entities(query=queries.landing_rows(date, include_history=include_history))
-    if not records:
-        return []
-    decisions: dict[UUID, list[Item]] = defaultdict(list)
-    for event in ledger.facts(entity_id=[row["id"] for row in records], kind=("deliberation", "choice"), date=date):
-        decisions[event["entity_id"]].append(event)
-    sources: list[tuple[Item, LandingMode | None, list[Item]]] = []
-    for row in records:
-        mode: LandingMode | None = "landed" if row.pop("errand") else None
-        events = decisions[row["id"]]
-        if row.pop("deliberated"):
-            verdict = latest_detail(events, "deliberation")
-            choice = latest_detail(events, "choice")
-            mode = None
-            if verdict and (verdict["verdict"] == "准" or (choice and choice["text"] == "强颁")):
-                mode = "landed"
-            elif row["data"].get("interim"):
-                mode = "attempted"
-        sources.append((row, mode, events))
-    return sources
 
 
 def check_decrees(
@@ -119,16 +92,14 @@ def check_endorsements(
                     "source_chat_turn_id 改成 expected 里的本夜轮次 id，重交整份。",
                 )
             allowed: list[str] | dict[str, list[str]] = ["御笔"]
-            expected: object = allowed
             if endorsement.form != "御笔手敕":
                 endorsement.endorser = reference_key(ledger, "person", endorsement.endorser, names)
                 allowed = names.get("person", {})
-                expected = name_expected("person", endorsement.endorser, names)
             if endorsement.endorser not in allowed:
                 fail(
                     path + ".endorser",
                     endorsement.endorser,
-                    expected,
+                    allowed if endorsement.form == "御笔手敕" else name_expected("person", endorsement.endorser, names),
                     names,
                     "参照 expected 的正名清单或输入目录指针核对 endorser，重交整份。",
                 )
@@ -138,7 +109,7 @@ def prepare(
     ledger: Ledger, result: Declaration | Unhandled, owner: Entity,
     records: dict[tuple[str, str], Item], names: Names,
 ) -> Translation:
-    sources = landing_sources(ledger, owner.data) if owner.kind == "calendar" else []
+    sources = Records(ledger).landing_sources(owner.data) if owner.kind == "calendar" else []
     existing = {pair: row for pair, row in records.items() if pair[0] in {"office", "incumbency"} and row["data"]}
     existing[owner.kind, owner.key] = owner.snapshot()
     records.update(((row["kind"], row["key"]), row) for row, _mode, _events in sources)
@@ -391,14 +362,6 @@ def record_receipts(
                 },
                 changes,
             )
-
-
-def latest_detail(events: Sequence[Item], kind: str) -> Item | None:
-    """Latest deliberation or choice of this month, the row both landing and interim use."""
-    return next(
-        (event["detail"] for event in reversed(events) if event["kind"] == kind),
-        None,
-    )
 
 
 def decree_disposition(
