@@ -24,5 +24,5 @@ class Inbox:
         if petition["source"] == "deliberation" and petition["options"][option] == "御笔强推":
             endorsement = {"endorser": "御笔", "form": "御笔手敕", "decision_key": decision}
             events.append(("endorsed", {**endorsement, "date": date}))
-            changes = {"endorsements": [*self.court.entity(entity_id).data.get("endorsements", []), endorsement]}
+            changes = {"endorsements": [*self.court.read.entity(entity_id).data.get("endorsements", []), endorsement]}
         self.court.record(entity_id, events, changes)

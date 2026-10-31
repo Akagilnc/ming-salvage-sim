@@ -30,13 +30,13 @@ class Simulation(MonthText):
 
 
 def prompt(court: Court, identity: Identity, context: Any, *, date: dict[str, Any]) -> dict[str, Any]:
-    speakers = {e.key: e.model_dump(mode="json") for e in court.entities(
+    speakers = {e.key: e.model_dump(mode="json") for e in court.read.entities(
         identity, kind="person", key=identity.people,
     )} if isinstance(identity, Officials) and identity.people else {}
     return character_input({
         "date": date,
         "context": context,
-        "catalogue": court.record_catalogue(identity),
+        "catalogue": court.read.record_catalogue(identity),
         **({"speakers": [speakers[name] for name in identity.people if name in speakers]}
            if isinstance(identity, Officials) else {}),
     })

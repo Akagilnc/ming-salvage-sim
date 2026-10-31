@@ -31,7 +31,7 @@ from ming.middle.declaration import (
 )
 from ming.middle.queries import CALENDAR, CATALOGUE, landing_rows
 from ming.middle.opening import REFERENCES
-from ming.middle.appointments import ALIASES, APPOINTMENT_ROLES, cabinet_members, incumbency_record, office_pairs, reference_key
+from ming.middle.appointments import ALIASES, APPOINTMENT_ROLES, cabinet_members, catalogue, incumbency_record, office_pairs, reference_key
 from ming.middle.rules import Names, check_rules, fail, name_expected
 from ming.middle.records import TranslationMaterials, read_records
 from ming.middle.invoke import ModelSource, build_agent, invoke
@@ -57,13 +57,6 @@ text 保留圣旨定稿全文，不改写、不摘要。origin、people、endors
 在场进出归场景名单工具，退朝归场景退朝工具；不声明进出、退朝、说话人分段、可闻性或御前主角。
 没有的项目交空列表，不凭空增添。
 """
-
-
-def catalogue(records: Sequence[Item]) -> dict[str, dict[str, list[str]]]:
-    result: dict[str, dict[str, list[str]]] = {}
-    for row in records:
-        result.setdefault(row["kind"], {})[row["key"]] = row["aliases"]
-    return result
 
 
 # Content catalogues the month accounts and levy timeline iterate: only the
@@ -444,7 +437,7 @@ def declaration_agent(
         # only model I/O yields.
         return json.dumps(
             {
-                "catalogue": ctx.deps.court.record_catalogue(ctx.deps.identity),
+                "catalogue": ctx.deps.court.read.record_catalogue(ctx.deps.identity),
                 "field_schemas": {"payment_policy": PaymentPolicy.model_json_schema(), "monthly_funding": MonthlyFunding.model_json_schema()},
                 "allowed_fields": {
                     kind: {field: asdict(rule) for field, rule in rules.items()}

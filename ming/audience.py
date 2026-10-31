@@ -63,7 +63,7 @@ class Audience:
 
     @property
     def identity(self) -> Officials:
-        return Officials(people=self.court.entity(self.night_id).data["hall"])
+        return Officials(people=self.court.read.entity(self.night_id).data["hall"])
 
     @property
     def night_id(self) -> UUID:
@@ -77,7 +77,7 @@ class Audience:
             closed = False
         else:
             self._night_id, created, closed = night.id, False, night.closed
-        if not closed and not created and self.court.has_product(self.night_id, "dismiss_requested", date=None):
+        if not closed and not created and self.court.read.has_facts(self.night_id, "dismiss_requested", date=None):
             self._dismiss_requested = self.night_id
         return created
 
@@ -133,7 +133,7 @@ class Audience:
         try:
             result = await invoke(
                 self.scene,
-                [json.dumps({**self.court.scene_material(), "catalogue": self.court.record_catalogue(Officials(people=list(night.hall)))}, ensure_ascii=False), words],
+                [json.dumps({**self.court.scene_material(), "catalogue": self.court.read.record_catalogue(Officials(people=list(night.hall)))}, ensure_ascii=False), words],
                 deps=self,
                 message_history=history,
                 event_stream_handler=partial(stream_text, on_delta)

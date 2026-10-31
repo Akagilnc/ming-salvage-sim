@@ -436,7 +436,7 @@ def game_db(request, tmp_path):
 
 @pytest.fixture
 def audit(capsys):
-    def read(db: Path, *, identity: str = "audit"):
+    def read(db: Path, *, identity: str = "audit", replay: bool = False):
         capsys.readouterr()
         main(
             [
@@ -445,6 +445,7 @@ def audit(capsys):
                 str(db),
                 "--identity",
                 identity,
+                *(["--replay"] if replay else []),
             ]
         )
         return json.loads(capsys.readouterr().out)

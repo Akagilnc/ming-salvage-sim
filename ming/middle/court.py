@@ -1,7 +1,6 @@
 """The ledger's door: identity reads, event recording, translation and landing."""
 
 import logging
-from functools import partial
 from collections import defaultdict
 from collections.abc import Sequence
 from pathlib import Path
@@ -10,50 +9,28 @@ from typing import TypeVar
 from uuid import UUID, uuid4
 
 from pydantic_ai import Agent
-from sqlalchemy import JSON, func, or_, select, tuple_
+from sqlalchemy import JSON, func, select, tuple_
 from ming.ledger import (
     ENTITY_COLUMNS as E,
     FACT_COLUMNS as F,
     ENTITY_ROWS,
-    ENTITY_ORDER,
     FACT_ROWS,
     facts_in_month,
+    Entity, Item, Ledger,
 )
 from ming.middle import queries
-from ming.middle.appointments import ALIASES, office_pairs, incumbency_record, named
-
-from ming.ledger import Entity, Item, Ledger
 from ming.middle.dispatch import dispatch, landing_sources
 from ming.middle.fiscal import Accounts, due_levies
-from ming.middle.calendar import advance_month, calendar_row, journeys_due, settle_journeys
-from ming.middle.declaration import (
-    Declaration,
-    LandingMode,
-    PendingPetition,
-    Unhandled,
-)
+from ming.middle.calendar import advance_month, journeys_due, settle_journeys
+from ming.middle.declaration import Declaration, LandingMode, Unhandled
 from ming.middle.invoke import ModelSource
 from ming.middle.records import TranslationMaterials
-from ming.middle.rules import matching_offices
+from ming.middle.reading import Records
 from ming.middle.opening import opening_template
 from ming.middle.night import NightView, dismiss, known_people, open_night, read_nights
 from ming.middle.scene import HallResult, set_hall
 from ming.middle.translate import declaration_agent, translate
-from ming.middle.translate import catalogue as names_and_aliases
-from ming.middle.view import (
-    EntityView,
-    FactView,
-    Identity,
-    character_input,
-    entities,
-    fact_sources,
-    ENTITY_SOURCES,
-    identity_key,
-    month_open,
-    project,
-    visible_appointments,
-    view_parameters,
-)
+from ming.middle.view import EntityView, FactView, character_input
 
 T = TypeVar("T", bound=Declaration)
 
@@ -71,6 +48,7 @@ class Court:
         self.log.setLevel(logging.INFO)
         self.log.propagate = False
         self._ledger = Ledger(db_path)
+        self.read = Records(self._ledger)
 
     @classmethod
     def new_game(
@@ -121,8 +99,8 @@ class Court:
             kind="person",
             query=ENTITY_ROWS.with_only_columns(E.key).where(E.data["waiting_audience"].as_boolean().is_(True)),
         )
-        gazette = self.entities("audit", kind="gazette")[0].data["text"]
-        calendar = self.calendar()
+        gazette = self.read.entities("audit", kind="gazette")[0].data["text"]
+        calendar = self.read.calendar()
         for fact in self._ledger.facts(
             entity_id=calendar.id,
             kind="gazette",
@@ -132,14 +110,13 @@ class Court:
         return {
             "date": calendar.data,
             "imperial_prestige": character_input(
-                self.entities("audit", kind="world")[0].data
+                self.read.entities("audit", kind="world")[0].data
             )["imperial_prestige"],
             "waiting_audience": [row["key"] for row in rows],
             "gazette": gazette,
             "unhandled": [
-                {"kind": "unhandled", "entity_id": str(row["entity_id"])}
-                for row in self._ledger.read(fact_sources(self._ledger, "emperor", cutoff=month_open(calendar.data))
-                                             .with_only_columns(F.entity_id).where(F.kind == "unhandled"))
+                {"kind": "unhandled", "entity_id": str(fact.entity_id)}
+                for fact in self.read.facts("emperor", kind="unhandled")
             ],
         }
 
@@ -175,9 +152,6 @@ class Court:
     def advance_month(self, calendar_id: UUID) -> None:
         advance_month(self._ledger, calendar_id)
 
-    def calendar(self) -> EntityView:
-        return EntityView.model_validate(calendar_row(self._ledger))
-
     def record(
         self,
         entity: UUID | tuple[str, str],
@@ -185,67 +159,23 @@ class Court:
         changes: Item | None = None,
         *,
         words: str = "",
+        related: Sequence[FactView] = (),
     ) -> UUID:
-        """Record an event on an existing entity or an explicitly named new one."""
+        """Commit all supplied events together, including related entities."""
         if isinstance(entity, UUID):
             target = self._ledger.get(entity)
         else:
             row = next(iter(self._ledger.entities(kind=entity[0], key=entity[1], query=ENTITY_ROWS.with_only_columns(E.id))), None)
             target = self._ledger.get(row["id"]) if row else Entity(*entity, "", {})
+        targets = {target.id: target}
+        for fact in related:
+            if fact.entity_id not in targets:
+                targets[fact.entity_id] = self._ledger.get(fact.entity_id)
+            targets[fact.entity_id].record(fact.kind, fact.emperor_words, fact.detail)
         for kind, detail in events:
             target.record(kind, words, detail, changes)
-        self._ledger.commit([target])
-        return target.id
-
-    def products(
-        self,
-        entity_id: UUID,
-        *,
-        kind: str | tuple[str, ...] | None = None,
-        date: Item | None,
-    ) -> tuple[FactView, ...]:
-        return tuple(
-            FactView(**event)
-            for event in self._ledger.facts(
-                entity_id=entity_id, kind=kind,
-                date=date,
-            )
-        )
-
-    def has_product(self, entity_id: UUID, kind: str | tuple[str, ...], *, date: Item | None) -> bool:
-        return bool(self._ledger.facts(
-            entity_id=entity_id, kind=kind, date=date,
-            query=FACT_ROWS.with_only_columns(F.position).order_by(None).limit(1),
-        ))
-
-    def as_petition(self, fact: FactView) -> PendingPetition:
-        return PendingPetition.model_validate(
-            {k: v for k, v in fact.detail.items() if k != "date"}
-        )
-
-    def record_product(
-        self,
-        entity_id: UUID,
-        kind: str,
-        detail: dict[str, object],
-        *,
-        petitions: Sequence[PendingPetition] = (),
-        date: Item | None = None,
-    ) -> None:
-        """Commit a complete product and its petitions in the same transaction."""
-        targets = {
-            key: self._ledger.get(key)
-            for key in {entity_id, *(p.entity_id for p in petitions)}
-        }
-        source = targets[entity_id]
-        if date is None:
-            date = source.data if source.kind == "calendar" else self.calendar().data
-        for petition in petitions:
-            targets[petition.entity_id].record(
-                "petition", "", {**petition.model_dump(mode="json"), "date": date}
-            )
-        targets[entity_id].record(kind, "", {**detail, "date": date})
         self._ledger.commit(list(targets.values()))
+        return target.id
 
     def translation_agent(
         self, output_type: type[T], instructions: str,
@@ -271,158 +201,8 @@ class Court:
     ) -> None:
         dispatch(self._ledger, result, source, monthly)
 
-    def record_catalogue(
-        self, identity: Identity, date: Item | None = None,
-        kind: str | None = None, keys: list[str] | None = None,
-    ) -> tuple[Item, ...]:
-        """Names and counts from the existing entity/fact projections, never prose."""
-        matches = named(self._ledger, kind, keys) if keys is not None else None
-        cutoff = month_open(calendar_row(self._ledger)["data"]) if identity == "emperor" else None
-        source = fact_sources(self._ledger, identity, cutoff=cutoff)
-        visible = ENTITY_SOURCES[identity_key(identity)].with_only_columns(E.id).order_by(None)
-        if cutoff is not None:
-            opening = FACT_ROWS.with_only_columns(F.detail["entities"]).where(
-                F.position == cutoff,
-            ).order_by(None).scalar_subquery()
-            snapshot = func.json_each(opening).table_valued("value")
-            visible = select(E.id).where(or_(
-                E.id.in_(select(func.replace(func.json_extract(snapshot.c.value, "$.id"), "-", ""))),
-                cutoff.is_(None) & E.id.in_(visible.correlate(None)),
-            ))
-        if kind is not None:
-            source, visible = source.where(E.kind == kind), visible.where(E.kind == kind)
-        if matches is not None:
-            source = source.where(F.entity_id.in_([r["id"] for r in matches]))
-            visible = visible.where(E.id.in_([r["id"] for r in matches]))
-        query = source
-        if date is not None:
-            query = query.where(facts_in_month(date))
-        counts = query.with_only_columns(
-            F.entity_id, func.count().label("event_count"), maintain_column_froms=True,
-        ).order_by(None).group_by(F.entity_id).subquery()
-        visible_entities = visible.order_by(None).distinct().subquery()
-        eligible = or_(visible_entities.c.id.is_not(None), (
-            counts.c.entity_id.is_not(None) if date is None else E.id.in_(
-                source.with_only_columns(F.entity_id).order_by(None).limit(None if keys is not None else 1).correlate(None),
-            )
-        ))
-        names = ENTITY_ROWS.outerjoin(counts, counts.c.entity_id == E.id).outerjoin(
-            visible_entities, visible_entities.c.id == E.id,
-        ).with_only_columns(
-            E.kind, E.key, func.coalesce(counts.c.event_count, 0).label("event_count"),
-        )
-        parameters = view_parameters(identity, kind)
-        result = self._ledger.read(
-            names.where(eligible if date is None or keys is not None else counts.c.entity_id.is_not(None)),
-            parameters,
-        )
-        if date is not None and keys is None and kind is not None and not result:
-            result = self._ledger.read(
-                names.where(eligible).order_by(None).order_by(visible_entities.c.id.is_(None), ENTITY_ORDER).limit(1),
-                parameters,
-            )
-        return result
-
-    def office_record(self, identity: Identity, key: str | list[str], date: Item | None = None) -> Item:
-        results: dict[str, Item] = {}
-        resolved: dict[tuple[str, str], Item] = {}
-        offices: dict[str, list[Item]] = {}
-        names: dict[str, dict[str, list[str]]] | None = None
-        for name in dict.fromkeys([key] if isinstance(key, str) else key):
-            pairs, resolution = office_pairs(self._ledger, name, partial(visible_appointments, self._ledger, identity))
-            if resolution["status"] == "territory_required":
-                results[name] = resolution
-            elif resolution["status"] == "office_not_found":
-                if names is None:
-                    names = self.catalogue([*self.record_catalogue(identity, kind="office"), *self.record_catalogue(identity, kind="territory")])
-                results[name] = {"status": "office_not_found", "names_and_aliases": matching_offices(names, name)}
-            else:
-                if pairs[0] in resolved:
-                    results[name] = resolved[pairs[0]]
-                    continue
-                record_key, data = incumbency_record(pairs[0], [])
-                rows = self._ledger.entities(kind="incumbency", key=record_key)
-                visible = visible_appointments(self._ledger, identity, rows)
-                if rows and not visible:
-                    results[name] = resolved[pairs[0]] = {"status": "not_found", "message": "未找到"}
-                    continue
-                if visible:
-                    data = visible[0]["data"]
-                if pairs[0][0] not in offices:
-                    offices[pairs[0][0]] = [e.model_dump(mode="json") for e in self.entities(identity, kind="office", key=pairs[0][0])]
-                results[name] = resolved[pairs[0]] = {
-                    "status": "occupied" if data["holders"] else "acting" if data["acting"] else "vacant",
-                    "appointments": [data],
-                    "entities": offices[pairs[0][0]],
-                    "facts": [f.model_dump(mode="json") for f in self.facts(identity, entity_id=[e["id"] for e in visible], date=date)],
-                }
-        return results[key] if isinstance(key, str) else results[key[0]] if len(key) == 1 else {"offices": [results[name] for name in key]}
-
-    def read_records(
-        self, identity: Identity, kind: str | None = None,
-        key: str | list[str] | None = None, date: Item | None = None,
-        *, replay: bool = False,
-    ) -> Item:
-        """Read one identity projection, sharing one reconstruction for --replay."""
-        keys = list(dict.fromkeys(key)) if isinstance(key, list) else [key] if key is not None else None
-        selection = {k: v for k, v in {"kind": kind, "keys": keys}.items() if v is not None}
-        with self._ledger.reading(replay) as ledger:
-            cutoff = month_open(calendar_row(ledger)["data"]) if identity == "emperor" else None
-            query = fact_sources(ledger, identity, cutoff=cutoff)
-            query = query.where(E.kind == kind) if kind is not None else query
-            query = query.where(E.key.in_(keys)) if keys is not None else query
-            return {
-                "entities": [e.model_dump(mode="json") for e in entities(ledger, identity, selection, cutoff=cutoff)],
-                "facts": [
-                    f.model_dump(mode="json")
-                    for f in project(ledger, identity, {"date": date} if date is not None else {}, query)
-                ],
-            }
-
-    def facts(
-        self,
-        identity: Identity,
-        replay: bool = False,
-        *,
-        entity_id: UUID | list[UUID] | None = None,
-        kind: str | tuple[str, ...] | None = None,
-        date: Item | None = None,
-    ) -> tuple[FactView, ...]:
-        if entity_id == []:
-            return ()
-        selection = {
-            k: v
-            for k, v in {"entity_id": entity_id, "kind": kind, "date": date}.items()
-            if v is not None
-        }
-        with self._ledger.reading(replay) as ledger:
-            return project(ledger, identity, selection)
-
-    def entities(
-        self,
-        identity: Identity,
-        replay: bool = False,
-        *,
-        kind: str | None = None,
-        key: str | list[str] | None = None,
-        current: Item | None = None,
-    ) -> tuple[EntityView, ...]:
-        selection: Item = {
-            k: v for k, v in {"kind": kind, "key": key}.items() if v is not None
-        }
-        if isinstance(key, list):
-            selection["keys"] = selection.pop("key")
-        with self._ledger.reading(replay) as ledger:
-            return entities(ledger, identity, selection, cutoff=month_open(current) if identity == "emperor" and current is not None else None)
-
-    def entity(self, entity_id: UUID) -> EntityView:
-        return EntityView.model_validate(self._ledger.entities(entity_id=entity_id)[0])
-
-    def pending_petitions(self, date: Item) -> tuple[PendingPetition, ...]:
-        return tuple(
-            self.as_petition(FactView(**f))
-            for f in self._ledger.read(queries.pending_petitions(date))
-        )
+    def pending_petitions(self, date: Item) -> tuple[FactView, ...]:
+        return tuple(FactView(**f) for f in self._ledger.read(queries.pending_petitions(date)))
 
     def has_pending_petitions(self, date: Item) -> bool:
         return bool(self._ledger.read(queries.pending_petitions(date)
@@ -443,12 +223,6 @@ class Court:
                 ),
             )
         )
-
-    def catalogue(self, records: Sequence[Item] | None = None) -> dict[str, dict[str, list[str]]]:
-        query = queries.CATALOGUE if records is None else ENTITY_ROWS.where(
-            tuple_(E.kind, E.key).in_([(e["kind"], e["key"]) for e in records])
-        )
-        return names_and_aliases(self._ledger.read(query.with_only_columns(E.kind, E.key, ALIASES)))
 
     def returned_petitions(self, *, date: Item | None = None) -> tuple[FactView, ...]:
         return tuple(
@@ -497,14 +271,9 @@ class Court:
             )
         )
 
-    def month_petitions(self, date: Item, *, single_pending: bool = False) -> tuple[FactView, ...]:
+    def month_petitions(self, date: Item) -> tuple[FactView, ...]:
         query = FACT_ROWS.where(F.kind == "petition", facts_in_month(date),
                                F.detail["blocking"].as_boolean().is_(True))
-        if single_pending:
-            query = query.where(
-                query.with_only_columns(func.count()).order_by(None).correlate(None).scalar_subquery() == 1,
-                F.position.in_(queries.pending_petitions({}).with_only_columns(F.position).order_by(None)),
-            )
         return tuple(FactView(**row) for row in self._ledger.read(query))
 
     def current_decrees(self, date: Item) -> tuple[EntityView, ...]:
@@ -610,7 +379,7 @@ class Court:
         )
 
     def presentation(self, calendar: EntityView | None = None) -> Item:
-        calendar = self.calendar() if calendar is None else calendar
+        calendar = self.read.calendar() if calendar is None else calendar
         interactions = self.interactions()
         pending = next(iter(self.running(interactions)), None)
         month = interactions.get("month")
@@ -631,7 +400,7 @@ class Court:
             if night and not night["closed"]
             else (
                 "month"
-                if self.has_product(calendar.id, "month_open", date=calendar.data)
+                if self.read.has_facts(calendar.id, "month_open", date=calendar.data)
                 or (month and month["status"] != "done")
                 else "desk"
             ),
@@ -641,7 +410,7 @@ class Court:
             "failure": failure,
             "pending": pending,
             "unhandled_monthly": self.unhandled_monthly(calendar.data),
-            "petitions": [p.model_dump(mode="json") for p in self.pending_petitions(calendar.data)],
+            "petitions": [{k: v for k, v in f.detail.items() if k != "date"} for f in self.pending_petitions(calendar.data)],
             "returned_petitions": [
                 {"petition": f.detail, "awaiting_drafter": awaiting_drafter}
                 for f in returned

@@ -63,7 +63,7 @@ def test_every_model_call_reads_identity_scoped_records(game_db, steps, model_in
         client.portal.call(client.app.state.web.game.drain)
         client.post("/actions", json={"action": "month"}).raise_for_status()
         assert client.get("/state").json()["game"]["failure"] is None
-        court = client.app.state.web.game.court
+        court = client.app.state.web.game.court.read
         reports = court.facts(Officials(people=["郭允厚"]), kind="reported")
         assert reports
         assert {f.entity_id for f in reports} == {
@@ -85,7 +85,7 @@ def test_every_model_call_reads_identity_scoped_records(game_db, steps, model_in
             else:
                 assert all(isinstance(identity, Officials) and not identity.exclude_secrets for identity in model_invocations[name])
                 assert {frozenset(identity.people) for identity in model_invocations[name]} == {
-                    frozenset(court.petition_officials(faction.key))
+                    frozenset(client.app.state.web.game.court.petition_officials(faction.key))
                     for faction in court.entities("audit", kind="faction")
                 }
             assert tools[name]
@@ -159,7 +159,7 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
             client.post("/actions", json={"action": "say", "words": words}).raise_for_status()
         client.portal.call(client.app.state.web.game.drain)
         assert client.get("/state").json()["game"]["failure"] is None
-        court = client.app.state.web.game.court
+        court = client.app.state.web.game.court.read
         orders = court.entities("audit", kind="decree")
         secret = next(d for d in orders if d.data["secret"])
         public = next(d for d in orders if not d.data["secret"])
@@ -197,6 +197,7 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
         assert {f.entity_id for f in court.facts("audit", kind="deliberation")} == {
             public.id
         }
+        case["views"] = [client.get("/records").json()]
         client.post("/actions", json={"action": "month"}).raise_for_status()
         client.portal.call(client.app.state.web.game.drain)
         if failure == "report":
@@ -205,10 +206,20 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
                 == "ModelHTTPError"
             )
             before = audit(game_db)
+            case["views"].append(client.get("/records").json())
+            assert any(f["kind"] == "arrived" for f in before["facts"])
+            client.post("/actions", json={"action": "menu"}).raise_for_status()
             client.post(
                 "/actions", json={"action": "load", "save": game_db.name}
             ).raise_for_status()
             client.portal.call(client.app.state.web.game.drain)
+            case["views"].append(client.get("/records").json())
+            assert all(value == views[0] for views in (
+                [[(e["id"], e["data"].get("location"), e["data"].get("transit_to"))
+                  for e in view["entities"] if e["kind"] == "person"] for view in case["views"]],
+                [[(f["entity_id"], f["kind"], f["detail"].get("date"))
+                  for f in view["facts"] if f["kind"] in {"changed", "arrived", "departed"}] for view in case["views"]],
+            ) for value in views[1:])
             assert audit(game_db) == before
             steps["secret_report"] = replaying(
                 [(RECORDED / "secret_report.txt").read_text()] * 2, material
@@ -228,7 +239,7 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
             assert returned == character_input(client.portal.call(court.read_records, Officials(people=[handler]), "person", ["毕自严", "徐光启"]))
         # Repeated months keep recorded knowledge without an exposure accumulator.
         for month in range(2):
-            court = client.app.state.web.game.court
+            court = client.app.state.web.game.court.read
             assert client.get("/state").json()["game"]["failure"] is None
             assert client.get("/state").json()["game"]["unhandled_monthly"] == (
                 [{"entity_id": str(court.calendar().id)}]
@@ -249,7 +260,7 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
             assert {d.id for d in court.entities("public", kind="decree")} == (
                 set() if failure == "declaration" else {public.id}
             )
-            assert not court.products(secret.id, kind="exposure", date=None)
+            assert not court.facts("audit", entity_id=secret.id, kind="exposure", date=None)
             assert "exposure" not in court.entity(secret.id).data
             assert {f.entity_id for f in court.facts("audit", kind="unhandled")} == (
                 {court.calendar().id} if failure == "declaration" else set()
@@ -317,7 +328,7 @@ def test_discoveries_stay_private_and_completion_stops_only_reports(
         client.post(
             "/actions", json={"action": "load", "save": game_db.name}
         ).raise_for_status()
-        court = client.app.state.web.game.court
+        court = client.app.state.web.game.court.read
         secret = next(
             d for d in court.entities("audit", kind="decree") if d.data["secret"]
         )
@@ -325,16 +336,16 @@ def test_discoveries_stay_private_and_completion_stops_only_reports(
             client.post("/actions", json={"action": "month"}).raise_for_status()
             client.portal.call(client.app.state.web.game.drain)
             assert client.get("/state").json()["game"]["failure"] is None
-            court = client.app.state.web.game.court
+            court = client.app.state.web.game.court.read
             done = month >= (quiet_month is not None)
             assert len(
-                court.products(secret.id, kind="completed", date=None)
+                court.facts("audit", entity_id=secret.id, kind="completed", date=None)
             ) == int(done)
             for identity in ("emperor", Officials(people=["王承恩"])):
                 assert len(court.facts(identity, kind="secret_report")) == min(
                     month + 1, 1 + (quiet_month is not None)
                 )
-            assert not court.products(secret.id, kind="exposure", date=None)
+            assert not court.facts("audit", entity_id=secret.id, kind="exposure", date=None)
             assert "exposure" not in court.entity(secret.id).data
             changed = [
                 f

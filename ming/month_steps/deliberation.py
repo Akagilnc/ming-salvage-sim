@@ -11,6 +11,7 @@ from ming.middle.invoke import ModelSource, build_agent, gather_or_raise, invoke
 from ming.middle.month_work import Deliberation, prompt
 from ming.middle.records import Materials, read_records
 from ming.middle.view import EntityView, Officials, character_input
+from ming.month_steps.products import record_product
 
 
 class Deliberations:
@@ -32,7 +33,7 @@ class Deliberations:
         """Prepare unchanged inputs before starting independent verdict calls."""
         done: dict[int, dict[str, Any]] = {}
         pending: dict[tuple[str, ...], list[int]] = {}
-        products = {key: self.court.products(key, kind="deliberation", date=date)
+        products = {key: self.court.read.facts("audit", entity_id=key, kind="deliberation", date=date)
                     for key in dict.fromkeys(d.id for d, _ in decrees)}
         for index, (decree, decision) in enumerate(decrees):
             product = next((f.detail for f in products[decree.id]
@@ -43,7 +44,7 @@ class Deliberations:
                 pending.setdefault(tuple(decree.data["people"]), []).append(index)
         calls: dict[int, Awaitable[dict[str, Any]]] = {}
         if pending:
-            prestige = self.court.entities("audit", kind="world")[0].data["imperial_prestige"]
+            prestige = self.court.read.entities("audit", kind="world")[0].data["imperial_prestige"]
             for people, indices in pending.items():
                 identity = Officials(people=list(people), exclude_secrets=True)
                 inputs = prompt(self.court, identity, {"imperial_prestige": prestige}, date=date)
@@ -68,5 +69,5 @@ class Deliberations:
             **result.output.model_dump(),
             "decision_key": decision,
         }
-        self.court.record_product(decree.id, "deliberation", verdict)
+        record_product(self.court, decree.id, "deliberation", {**verdict, "date": inputs["date"]})
         return verdict

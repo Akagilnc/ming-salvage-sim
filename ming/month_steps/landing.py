@@ -9,6 +9,7 @@ from ming.middle.declaration import Declaration, Unhandled
 from ming.middle.opening import CONTENT
 from ming.middle.month_work import COST_RULES
 from ming.middle.view import EntityView
+from ming.month_steps.products import record_product
 
 
 class Landing:
@@ -21,21 +22,21 @@ class Landing:
         )
 
     async def run(self, calendar: EntityView) -> None:
-        if self.court.has_product(calendar.id, ("landed", "unhandled"), date=calendar.data):
+        if self.court.read.has_facts(calendar.id, ("landed", "unhandled"), date=calendar.data):
             return
-        declarations = self.court.products(calendar.id, kind="declaration", date=calendar.data)
+        declarations = self.court.read.facts("audit", entity_id=calendar.id, kind="declaration", date=calendar.data)
         if not declarations:
             result = await self.court.translate(
                 self.agent,
                 json.dumps({
                     "date": calendar.data, "scope": "month",
-                    "month_final": self.court.products(calendar.id, kind="month_final", date=calendar.data)[0].detail["output"],
+                    "month_final": self.court.read.facts("audit", entity_id=calendar.id, kind="month_final", date=calendar.data)[0].detail["output"],
                     "decrees": self.court.landing_materials(date=calendar.data),
                 }, ensure_ascii=False),
                 calendar.id,
             )
             product: dict[str, object] = {"result": result.model_dump(mode="json"), "unhandled": isinstance(result, Unhandled)}
-            self.court.record_product(calendar.id, "declaration", product)
+            record_product(self.court, calendar.id, "declaration", {**product, "date": calendar.data})
         else:
             product = declarations[0].detail
         self.court.land(

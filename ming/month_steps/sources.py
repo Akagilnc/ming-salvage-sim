@@ -16,6 +16,7 @@ from ming.middle.month_work import prompt
 from ming.middle.records import Materials, read_records
 from ming.middle.view import EntityView, Officials, character_input
 from ming.middle.rules import fail, name_expected
+from ming.month_steps.products import record_product
 
 
 class UrgentPetition(Petition):
@@ -50,13 +51,13 @@ class Sources:
         pending: dict[tuple[str, ...], list[tuple[int, EntityView, str, dict[str, object]]]] = {}
         for index, (source, kind, faction) in enumerate([
             (calendar, "urgent", None),
-            *((f, "impeachment", f.key) for f in self.court.entities("audit", kind="faction")),
+            *((f, "impeachment", f.key) for f in self.court.read.entities("audit", kind="faction")),
         ]):
-            if self.court.has_product(source.id, kind, date=calendar.data):
+            if self.court.read.has_facts(source.id, kind, date=calendar.data):
                 continue
             people = list(self.court.petition_officials(faction))
             if kind == "urgent" and not people:
-                self.court.record_product(source.id, kind, {"petitions": []})
+                record_product(self.court, source.id, kind, {"petitions": [], "date": calendar.data})
                 continue
             context: dict[str, object] = {
                 "returned": [f.detail for f in self.court.returned_petitions()],
@@ -96,7 +97,7 @@ class Sources:
         def names(ctx: RunContext[Materials], output: Urgencies | Impeachments):
             if not output.petitions:
                 return output
-            catalogue = ctx.deps.court.catalogue()
+            catalogue = ctx.deps.court.read.catalogue()
             allowed: dict[str, list[str]] | list[str] = catalogue["person"]
             expected: object = name_expected("person", "", catalogue)
             if kind == "urgent":
@@ -133,9 +134,9 @@ class Sources:
             deps=Materials(self.court, identity),
         )
         self.court.log.info("%s output: %s", kind, result.output.model_dump_json())
-        date = self.court.calendar().data
+        date = inputs["date"]
         available = {**date, **next_month(date)}
-        people = {e.key: e.id for e in self.court.entities(
+        people = {e.key: e.id for e in self.court.read.entities(
             "audit", kind="person", key=[p.signer for p in result.output.petitions],
         )} if result.output.petitions else {}
         petitions = [
@@ -153,9 +154,8 @@ class Sources:
             )
             for index, item in enumerate(result.output.petitions)
         ]
-        self.court.record_product(
-            source.id,
-            kind,
-            {"petitions": [str(p.id) for p in petitions]},
-            petitions=petitions, date=date,
+        record_product(
+            self.court, source.id, kind,
+            {"petitions": [str(p.id) for p in petitions], "date": date},
+            petitions=petitions,
         )

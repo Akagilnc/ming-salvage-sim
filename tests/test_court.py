@@ -120,7 +120,7 @@ def test_common_declaration_updates_entities_and_displaces_incumbent_atomically(
         client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
         assert audit(game_db) == after
         returned = client.portal.call(
-            client.app.state.web.game.court.read_records, Officials(people=["毕自严"]), None, ["国库", "郭允厚"],
+            client.app.state.web.game.court.read.read_records, Officials(people=["毕自严"]), None, ["国库", "郭允厚"],
         )
         assert next(e["data"]["taels"] for e in returned["entities"] if e["key"] == "国库") == 3200000
         assert not {"dossier", "seed_guilt", "loyalty"}.intersection(
@@ -363,6 +363,8 @@ def test_translation_queries_preserve_two_table_permissions(game_db, steps, stag
     steps["NightDeclaration"] = replaying([(RECORDED / "night_empty.txt").read_text()])
     steps["NightDeclaration" if stage == "night" else "Declaration"] = replaying(
         [ModelResponse(parts=[ToolCallPart("read_records", {"kind": "incumbency", "key": offices}, tool_call_id="batch"),
+                              ToolCallPart("read_records", {"kind": "person", "key": ["郭允厚", "郭允厚"], "date": {"year": 1600, "month": 1}}, tool_call_id="people"),
+                              ToolCallPart("read_records", {}, tool_call_id="empty"),
                               *(ToolCallPart("read_records", {"kind": "incumbency", "key": name}, tool_call_id=name)
                                 for name in dict.fromkeys(offices))]),
          *ModelMessagesTypeAdapter.validate_python(recording["night_catalogue_queries" if stage == "night" else "catalogue_queries"])], received,
@@ -383,6 +385,13 @@ def test_translation_queries_preserve_two_table_permissions(game_db, steps, stag
     ) for result in batch] for batch in (results.pop("batch")["offices"], [results[name] for name in offices])]
     assert batches[0] == batches[1]
     queries.pop("batch")
+    assert results.pop("empty")["status"] == "query_required"
+    queries.pop("empty")
+    people = results.pop("people")
+    queries.pop("people")
+    assert [(e["kind"], e["key"]) for e in people["entities"]] == [("person", "郭允厚")]
+    assert people["facts"] == []
+    assert people["entities"][0]["data"]["appointments"][0]["office"] == "户部尚书"
     for call_id, query in queries.items():
         result = results[call_id]
         if query.get("kind") == "incumbency":

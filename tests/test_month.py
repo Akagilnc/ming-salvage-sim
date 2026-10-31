@@ -75,6 +75,7 @@ LANDING = (
     [
         ("simulation.txt", None),
         ("sources", None),
+        ("sources-write", None),
         ("deltas", None),
     ],
     indirect=["steps"],
@@ -88,7 +89,7 @@ def test_month_advances_after_reopening(
         [(RECORDED / "month_empty.txt").read_text()] * 6,
         declarations,
     )
-    if first == "sources":
+    if first in {"sources", "sources-write"}:
         for name in ("urgent", "impeachment"):
             steps[name] = TestModel(
                 call_tools=[],
@@ -115,11 +116,27 @@ def test_month_advances_after_reopening(
             client.post("/actions", json={"action": "dismiss"}).raise_for_status()
             client.portal.call(client.app.state.web.game.drain)
             assert next(e["data"]["satisfaction"] for e in audit(game_db)["entities"] if e["kind"] == "faction" and e["key"] == "阉党") == 67
+        if first == "sources-write":
+            with sqlite3.connect(game_db) as connection:
+                connection.execute("CREATE TRIGGER interrupt BEFORE INSERT ON facts WHEN NEW.kind='urgent' BEGIN SELECT RAISE(ABORT, 'injected product failure'); END")
         for index, (year, month) in enumerate([(1627, 11), (1627, 12), (1628, 1)]):
             declarations.clear()
             assert client.post("/actions", json={"action": "month"}).status_code == 204
+            if first == "sources-write" and index == 0:
+                failed = client.get("/state").json()["game"]
+                assert failed["failure"]["payload"]["type"] == "IntegrityError"
+                assert failed["date"]["month"] == 10
+                ledger = audit(game_db)
+                assert not [f for f in ledger["facts"] if f["kind"] == "urgent" or f["detail"].get("source") == "urgent"]
+                assert audit(game_db, replay=True) == ledger
+                assert next(e["data"]["month"] for e in client.get("/records").json()["entities"] if e["kind"] == "calendar") == 10
+                with sqlite3.connect(game_db) as connection:
+                    connection.execute("DROP TRIGGER interrupt")
+                client.post("/actions", json={"action": "load", "save": save}).raise_for_status()
+                client.post("/actions", json={"action": "retry"}).raise_for_status()
             state = client.get("/state").json()["game"]
             assert state["date"] == {"id": "world", "year": year, "month": month}
+            assert next(e["data"] for e in client.get("/records").json()["entities"] if e["kind"] == "calendar") == state["date"]
             assert (state["running"], state["pending"], state["failure"]) == (
                 False,
                 None,
@@ -129,7 +146,7 @@ def test_month_advances_after_reopening(
                 assert next(e["data"]["satisfaction"] for e in audit(game_db)["entities"] if e["kind"] == "faction" and e["key"] == "阉党") == [72, 97, 0][index]
                 material = _declaration_prompt(declarations)
                 assert "entities" not in material
-            if first == "sources":
+            if first in {"sources", "sources-write"}:
                 urgent = [p for p in state["petitions"] if p["source"] == "urgent"]
                 assert [p["signer"] for p in urgent] == ["王体乾", "黄立极"]
                 assert all(not p["blocking"] for p in state["petitions"])
@@ -421,7 +438,7 @@ def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
         )
         if nominal == 5000000:
             assert not [f for f in public["facts"] if f["kind"] == "reported"]
-            reports = client.app.state.web.game.court.facts(Officials(people=["郭允厚"]), kind="reported")
+            reports = client.app.state.web.game.court.read.facts(Officials(people=["郭允厚"]), kind="reported")
             assert reports
             assert all(set(f.detail) == {"text"} for f in reports)
             treasury = next(e["id"] for e in ledger["entities"] if e["key"] == "国库")

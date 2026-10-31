@@ -78,7 +78,7 @@ class Game:
         key = f"choose:{payload['petition']}" if action == "choose" else action
         if status != "running" and action in {"say", "month"}:
             self.live.pop("delta" if action == "say" else "gazette", None)
-        calendar = self.court.calendar() if calendar is None else calendar
+        calendar = self.court.read.calendar() if calendar is None else calendar
         self.court.record(
             calendar.id,
             [
@@ -105,11 +105,11 @@ class Game:
         interactions = self.court.interactions() if interactions is None else interactions
         failed = [i for i in interactions.values() if i["action"] in {"month", "choose"} and i["status"] == "failed"]
         if failed and date is None and calendar is None:
-            calendar = self.court.calendar()
+            calendar = self.court.read.calendar()
         current = calendar.data if calendar else None
         settled = [i for i in failed if (i["payload"]["date"] == date if date is not None else i["payload"]["date"] != current)]
         for item in settled:
-            calendar = calendar or self.court.calendar()
+            calendar = calendar or self.court.read.calendar()
             self.interaction(item["action"], "done", item["payload"], calendar=calendar)
         return bool(settled)
 
@@ -124,7 +124,7 @@ class Game:
         if pending:
             self.active = asyncio.create_task(self._resume(pending))
         elif not failures:
-            calendar = self.court.calendar() if calendar is None else calendar
+            calendar = self.court.read.calendar() if calendar is None else calendar
             # Recovery belongs to the ledger, not to the currently showing face.
             if not self.recover_month(calendar, ready=True) and (
                 self.court.pending_nights() or self.court.has_pending_petitions(calendar.data)
@@ -179,7 +179,7 @@ class Game:
             self.start_background()
 
     async def command(self, action: str, payload: dict[str, Any]) -> None:
-        calendar = self.court.calendar() if action == "month" else None
+        calendar = self.court.read.calendar() if action == "month" else None
         interactions = self.court.interactions()
         accepted = any(
             item["status"] == "running" and same_call(item, action, payload)
@@ -198,7 +198,7 @@ class Game:
             return
         current = None
         if not failures and calendar is not None:
-            current = self.court.calendar()
+            current = self.court.read.calendar()
             if current.data != calendar.data:
                 return
         self.start(action, payload, failures=failures, calendar=current)
@@ -220,7 +220,7 @@ class Game:
         if failure:
             action = "retry"
         if action == "retry":
-            calendar = self.court.calendar() if calendar is None else calendar
+            calendar = self.court.read.calendar() if calendar is None else calendar
             state = self.court.presentation(calendar)
             failure = failure or state["failure"]
             if not failure:
@@ -275,7 +275,7 @@ class Game:
     def accept(
         self, action: str, payload: dict[str, Any], *, calendar: EntityView | None = None,
     ) -> dict[str, Any]:
-        calendar = self.court.calendar() if calendar is None else calendar
+        calendar = self.court.read.calendar() if calendar is None else calendar
         state = self.court.presentation(calendar)
         if (
             state["failure"]
@@ -375,13 +375,13 @@ class Game:
                 payload["turn_id"],
                 partial(self.notify, "delta"),
             )
-            if self.court.entity(self.audience.night_id).data["closed"]:
+            if self.court.read.entity(self.audience.night_id).data["closed"]:
                 self.start_background()
             return output
         if action == "translation":
             await self.audience.translate_pending()
             return None
-        calendar = self.court.calendar()
+        calendar = self.court.read.calendar()
         if payload["date"] != calendar.data:
             if starting:
                 self.notify("state", None)
