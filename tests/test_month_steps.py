@@ -132,7 +132,7 @@ def test_returned_urgent_waits_through_vacancy(
 
 @pytest.mark.parametrize("steps", ["approved"], indirect=True)
 @pytest.mark.parametrize("option,forecast_failure,game_db", [
-    (0, False, "rejected_night"), (1, False, "rejected_month"),
+    (0, False, "rejected_month"), (1, False, "rejected_month"),
     (2, False, "rejected_month"), (0, True, "rejected_night"),
 ], indirect=["game_db"])
 def test_rejected_decree_is_forced_withdrawn_or_held(game_db, steps, audit, option, forecast_failure):
@@ -144,7 +144,7 @@ def test_rejected_decree_is_forced_withdrawn_or_held(game_db, steps, audit, opti
         client = reopen()
         client.post("/actions", json={"action": "load", "save": game_db.name})
         before = audit(game_db)
-        if option == 0:
+        if forecast_failure:
             assert client.get("/state").json()["game"]["petitions"] == []
             assert not [f for f in before["facts"] if f["kind"] in {"month_draft", "month_final", "simulation"}]
             client.post("/actions", json={"action": "month"}).raise_for_status()

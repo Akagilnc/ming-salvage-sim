@@ -31,6 +31,25 @@ def declaration_reply(messages, response_file, quiet_month=None):
     return (RECORDED / name).read_text()
 
 
+def record_queries(catalogue):
+    date = {"year": 1627, "month": 10}
+    return {
+        "empty": {},
+        "class": {"kind": "person"},
+        "date": {"date": date},
+        "class-date": {"kind": "person", "date": date},
+        "dated": {"kind": "person", "key": "王承恩", "date": date},
+        "prior": {"kind": "person", "key": "王承恩", "date": {"year": 1627, "month": 9}},
+        "prior-class": {"kind": "person", "date": {"year": 1627, "month": 9}},
+        "date-original": {"date": {"id": "world", **date}},
+        "date-reordered": {"date": {"month": 10, "year": 1627, "id": "world"}},
+        "pair": {"kind": "person", "key": ["温体仁", "杨嗣昌"]},
+        "many": {"key": [e["key"] for e in catalogue if e["kind"] in {"account", "army"} or e["key"] == "杨嗣昌"]},
+        "unknown-key": {"key": "不存在的人"},
+        "unknown-kind": {"kind": "不存在的类"},
+    }
+
+
 def assert_model_read_tools(received, tools, model_invocations, court):
     expected = {
         "scene": Officials(people=["王承恩"]),
@@ -69,6 +88,37 @@ def assert_model_read_tools(received, tools, model_invocations, court):
             factions = {e["key"]: e["data"] for e in responses["factions"]["entities"]}
             assert ("satisfaction" in factions["阉党"]) == (name in {"deliberation", "urgent"})
             assert factions["东林"] == {"name": "东林"}
+        if name in {"scene", "simulation", "gazette"}:
+            assert responses["empty"]["status"] == "query_required"
+            assert all(responses[label]["status"] == "not_found" and "names_and_aliases" not in responses[label]
+                       for label in ("unknown-key", "unknown-kind"))
+            assert {e["key"] for e in responses["pair"]["entities"]} == {"温体仁", "杨嗣昌"}
+            assert {e["kind"] for e in responses["class"]["catalogue"]} == {"person"}
+            assert all(set(e) == {"kind", "key", "event_count"} for e in responses["class"]["catalogue"])
+            assert responses["date"] == responses["date-original"] == responses["date-reordered"]
+            accounts = {e["key"]: e["data"] for e in responses["many"]["entities"] if e["kind"] == "account"}
+            if name == "scene":
+                assert accounts == {key: {"name": key} for key in ("国库", "内库", "节慎库", "常盈库")}
+            elif name == "gazette":
+                assert accounts == {}
+                assert not [f for f in responses["many"]["facts"] if f["kind"] == "reported"]
+            else:
+                assert {key: data["taels"] for key, data in accounts.items()} == {
+                    "国库": 3200000, "内库": 4400000, "节慎库": 600000, "常盈库": 1200000,
+                }
+                assert {tuple(f["detail"]["date"][k] for k in ("year", "month"))
+                        for f in responses["dated"]["facts"]} == {(1627, 10)}
+                assert next(e["event_count"] for e in responses["class-date"]["catalogue"] if e["key"] == "王承恩") == len(responses["dated"]["facts"])
+                assert responses["prior"]["facts"] == []
+                assert responses["prior-class"]["catalogue"] == []
+                assert all(isinstance(next(e["data"] for e in responses["many"]["entities"] if e["key"] == "杨嗣昌")[field], str)
+                           for field in ("loyalty", "ability", "integrity", "courage", "identity", "intrigue"))
+                assert next(e.data["loyalty"] for e in court.entities("world", kind="person", key="杨嗣昌")) == 75
+                assert {(e["key"], field): e["data"][field] for e in responses["many"]["entities"] if e["kind"] == "army"
+                        for field in ("firearm_equipment", "cannon_equipment")} == {
+                    (e.key, field): e.data[field] for e in court.entities("audit", kind="army")
+                    for field in ("firearm_equipment", "cannon_equipment")
+                }
         if name in {"urgent", "impeachment", "deliberation", "secret_report"}:
             for identity, message in zip(model_invocations[name], (
                 m for m in messages if m.kind == "request" and m.parts[0].part_kind == "user-prompt"
@@ -150,6 +200,10 @@ def test_every_model_call_reads_identity_scoped_records(game_db, steps):
                         return (RECORDED / "deliberation_rejected.txt").read_text()
                 return outputs[name]
             return ModelResponse(parts=[
+                *(ToolCallPart("read_records", args, tool_call_id=label)
+                  for label, args in (record_queries(json.loads(
+                      messages[0].parts[0].content[0] if name == "scene" else messages[0].parts[0].content,
+                  )["catalogue"]) if name in {"scene", "simulation", "gazette"} else {}).items()),
                 ToolCallPart("read_records", {"kind": "incumbency", "key": "户部尚书"}, tool_call_id="office"),
                 *([] if name == "impeachment" else [
                     ToolCallPart("read_records", {"kind": "person", "key": "王体乾"}, tool_call_id="person"),

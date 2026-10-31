@@ -1,7 +1,7 @@
 """Land a whole declaration, query rows and events in the same transaction."""
 
 import json
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import cast
 from uuid import UUID
@@ -19,7 +19,7 @@ from ming.middle.declaration import (
     NightDeclaration,
     Unhandled,
 )
-from ming.middle.reading import Records, was_forced
+from ming.middle.reading import Records
 from ming.middle.rules import Names, check_chief, check_journey, fail, field_values, money_amounts, name_expected
 from ming.middle.fiscal import WAN, current_paid, expense_rate, has_obligation
 from ming.middle.appointments import APPOINTMENT_ROLES, incumbency_record, reference_key
@@ -112,7 +112,7 @@ def prepare(
     sources = Records(ledger).landing_sources(owner.data) if owner.kind == "calendar" else []
     existing = {pair: row for pair, row in records.items() if pair[0] in {"office", "incumbency"} and row["data"]}
     existing[owner.kind, owner.key] = owner.snapshot()
-    records.update(((row["kind"], row["key"]), row) for row, _mode, _events in sources)
+    records.update(((row["kind"], row["key"]), row) for row, _mode, _events, _interim in sources)
     changed = {(owner.kind, owner.key): owner}
     fact_origin: Item = {}
     date = owner.data if owner.kind == "calendar" else ledger.entities(kind="calendar", key="world")[0]["data"]
@@ -146,7 +146,7 @@ def prepare(
         existing[(entity.kind, entity.key)] = entity.snapshot()
 
     decrees = [(decree.id, decree.key) for decree in record_decrees(result, owner, known, record)] + [
-        (row["id"], row["key"]) for row, _mode, _events in sources
+        (row["id"], row["key"]) for row, _mode, _events, _interim in sources
     ]
     if isinstance(result, Declaration):
         values, projected = calculated_values(ledger, result.facts, existing, known)
@@ -189,13 +189,13 @@ def prepare(
         fact_origin = {}
     sources = [source for source in sources if source[1] is not None]
     prior_interims: set[UUID] = {event["entity_id"] for event in ledger.facts(
-        entity_id=[row["id"] for row, _mode, _events in sources], kind="interim",
+        entity_id=[row["id"] for row, _mode, _events, _interim in sources], kind="interim",
         query=FACT_ROWS.with_only_columns(F.entity_id).order_by(None).distinct(),
     )} if sources else set()
     for source in sources:
         entity = known(source[0]["kind"], source[0]["key"])
         for kind, detail in decree_disposition(
-            entity.id in prior_interims, entity, cast(LandingMode, source[1]), source[2],
+            entity.id in prior_interims, entity, cast(LandingMode, source[1]), source[3],
             not isinstance(result, Unhandled),
         ):
             record(entity, kind, detail)
@@ -365,9 +365,8 @@ def record_receipts(
 
 
 def decree_disposition(
-    prior_interim: bool, decree: Entity, mode: LandingMode, events: Sequence[Item], translated: bool,
+    prior_interim: bool, decree: Entity, mode: LandingMode, interim: bool, translated: bool,
 ) -> list[tuple[str, Item]]:
-    interim = decree.data.get("interim") or was_forced(events)
     return ([('interim', {"text": decree.data["text"]})]
             if interim and not prior_interim else []) + ([(mode, {"monthly": mode})] if translated else [])
 

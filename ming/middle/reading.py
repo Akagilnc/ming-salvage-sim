@@ -33,11 +33,6 @@ def latest_detail(events: Sequence[Item], kind: str) -> Item | None:
     )
 
 
-def was_forced(events: Sequence[Item]) -> bool:
-    choice = latest_detail(events, "choice")
-    return choice is not None and choice["disposition"] == "forced"
-
-
 class Records:
     def __init__(self, ledger: Ledger) -> None:
         self._ledger = ledger
@@ -302,26 +297,28 @@ class Records:
 
     def landing_sources(
         self, date: Item, *, include_history: bool = True,
-    ) -> list[tuple[Item, LandingMode | None, list[Item]]]:
-        """Ordered sources, retaining decisions already read while resolving their mode."""
+    ) -> list[tuple[Item, LandingMode | None, list[Item], bool]]:
+        """Ordered sources with decisions and the interim consequence resolved once."""
         records = self._ledger.entities(query=queries.landing_rows(date, include_history=include_history))
         if not records:
             return []
         decisions: dict[UUID, list[Item]] = defaultdict(list)
         for event in self._ledger.facts(entity_id=[row["id"] for row in records], kind=("deliberation", "choice"), date=date):
             decisions[event["entity_id"]].append(event)
-        sources: list[tuple[Item, LandingMode | None, list[Item]]] = []
+        sources: list[tuple[Item, LandingMode | None, list[Item], bool]] = []
         for row in records:
             mode: LandingMode | None = "landed" if row.pop("errand") else None
             events = decisions[row["id"]]
+            choice = latest_detail(events, "choice")
+            forced = choice is not None and choice["disposition"] == "forced"
             if row.pop("deliberated"):
                 verdict = latest_detail(events, "deliberation")
                 mode = None
-                if verdict and (verdict["verdict"] == "准" or was_forced(events)):
+                if verdict and (verdict["verdict"] == "准" or forced):
                     mode = "landed"
                 elif row["data"].get("interim"):
                     mode = "attempted"
-            sources.append((row, mode, events))
+            sources.append((row, mode, events, bool(row["data"].get("interim") or forced)))
         return sources
 
     def known_people(self, ids: list[UUID]) -> dict[UUID, list[str]]:

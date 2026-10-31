@@ -95,12 +95,12 @@ def prior_choices(court: Court, date: dict[str, Any]) -> list[dict[str, Any]]:
 def landing_materials(court: Court, *, include_history: bool = True, date: dict[str, Any]) -> tuple[dict[str, Any], ...]:
     materials: list[dict[str, Any]] = []
     sources = court.read.landing_sources(date, include_history=include_history)
-    known = court.read.known_people([row["id"] for row, _mode, _events in sources if row["data"]["secret"]])
+    known = court.read.known_people([row["id"] for row, _mode, _events, _interim in sources if row["data"]["secret"]])
     prior: dict[UUID, list[dict[str, Any]]] = defaultdict(list)
-    if current_ids := [row["id"] for row, mode, events in sources if mode is not None or events]:
+    if current_ids := [row["id"] for row, mode, events, _interim in sources if mode is not None or events]:
         for event in court.read.facts("audit", entity_id=current_ids, kind="interim"):
             prior[event.entity_id].append(event.detail)
-    for row, mode, events in sources:
+    for row, mode, events, _interim in sources:
         decree = EntityView.model_validate(row)
         deliberations = [FactView(**event) for event in events]
         current = mode is not None or bool(deliberations)

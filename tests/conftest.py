@@ -1,8 +1,9 @@
 """Recorded model boundary: native overrides selected only by the declared call name."""
 
 import asyncio
+import io
 import json
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, contextmanager, redirect_stdout
 from collections import UserDict
 from pathlib import Path
 from shutil import copyfile, copytree
@@ -206,6 +207,28 @@ def spoken_night(first_night, tmp_path_factory):
         tmp_path_factory.mktemp("spoken-night"),
         ({"action": "say", "words": case["emperor_words"]},),
     )
+
+
+@pytest.fixture(scope="session")
+def approved_night(first_night, tmp_path_factory):
+    path = tmp_path_factory.mktemp("approved-night") / first_night.name
+    copyfile(first_night, path)
+    case = json.loads((RECORDED / "night_approved.json").read_text())
+    actions = [
+        {"action": "open"},
+        *({"action": "say", "words": words} for words in case["words"]),
+        *({"action": action} for action in ("dismiss", "drain", "state")),
+    ]
+    with recorded_steps("approved"), pytest.MonkeyPatch.context() as patch, redirect_stdout(io.StringIO()) as output:
+        patch.setattr("sys.stdin", io.StringIO("\n".join(json.dumps(a) for a in actions)))
+        main(["audience", "--db", str(path), "--backend", "claude-cli"])
+    rows = [json.loads(line) for line in output.getvalue().splitlines()]
+    assert set(rows[0]) == {"night"}
+    assert all(set(row) == {"scene", "night", "month_running", "month_error", "petitions", "date"} for row in rows[1:])
+    assert (rows[-1]["month_error"], rows[-1]["month_running"], rows[-1]["petitions"]) == (None, False, [])
+    assert rows[-1]["night"]["closed"] is True
+    assert [turn["emperor_words"] for turn in rows[-1]["night"]["turns"]] == case["words"]
+    return path
 
 
 @pytest.fixture(scope="session")

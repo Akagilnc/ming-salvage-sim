@@ -1,5 +1,6 @@
 """Medium: unchanged CLI arguments and JSONL protocol use the shared actions."""
 
+import asyncio
 import io
 import json
 from pathlib import Path
@@ -13,70 +14,58 @@ from ming.web import create_app
 
 from ming.__main__ import main
 from tests.test_court import replaying
+from tests.test_web import counted, state_updates
 
 RECORDED = Path(__file__).parent / "recorded"
 
 
-@pytest.mark.parametrize("steps", ["approved"], indirect=True)
+@pytest.mark.parametrize("game_db", ["approved_night"], indirect=True)
 def test_cli_preserves_jsonl_and_resumes_failed_month(
     game_db: Path, steps, monkeypatch, capsys, opening_db
 ) -> None:
-    case = json.loads((RECORDED / "night_approved.json").read_text())
-    steps["Declaration"] = replaying([
-        (RECORDED / "month_decree_money.txt").read_text(),
-        (RECORDED / "month_empty.txt").read_text(),
-    ])
-    steps["simulation"] = replaying(
-        [
-            (RECORDED / "month_petition.txt").read_text(),
-        ]
-    )
+    steps["Declaration"] = TestModel(call_tools=[], custom_output_text=(RECORDED / "month_decree_money.txt").read_text())
+    steps["simulation"] = replaying([(RECORDED / "month_petition.txt").read_text()])
     db = str(game_db)
-    requests = [
-        {"action": "open"},
-        *[{"action": "say", "words": words} for words in case["words"]],
-    ]
-    requests += [
-        {"action": action} for action in ("dismiss", "drain", "month", "drain", "state")
-    ]
-    monkeypatch.setattr(
-        "sys.stdin", io.StringIO("\n".join(json.dumps(r) for r in requests))
-    )
-    main(["audience", "--db", db, "--backend", "claude-cli"])
-    rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
-    assert set(rows[0]) == {"night"}
-    assert all(
-        set(row)
-        == {"scene", "night", "month_running", "month_error", "petitions", "date"}
-        for row in rows[1:]
-    )
-    assert rows[-1]["date"]["month"] == 10
-    assert rows[-1]["month_running"] is False
-    assert rows[-1]["month_error"] is None
-    assert rows[-1]["night"]["closed"] is True
-    assert len(rows[-1]["petitions"]) == 1
-    petition = rows[-1]["petitions"][0]
+    main(["month", "--db", db, "--backend", "claude-cli"])
+    pending = json.loads(capsys.readouterr().out)
+    assert set(pending) == {"date", "petitions"}
+    assert pending["date"]["month"] == 10
+    assert len(pending["petitions"]) == 1
+    petition = pending["petitions"][0]
     main(["read", "--db", db, "--identity", "audit"])
     before = json.loads(capsys.readouterr().out)
     rejected = [
         "not json", "1", ' {"words":"x"}', "[]", '{"action":["x"]}',
         '{"action":"say","words":5}',
+        '{"action":"choose"}', '{"action":"choose","petition":null}',
         *(json.dumps({"action": "choose", "petition": petition["id"], "option": option})
           for option in (-1, len(petition["options"]), "0", 0.5, True)),
         '{"action":"choose","petition":"00000000-0000-0000-0000-000000000000","option":0}',
         '{"action":"say","words":"退朝后说话"}',
     ]
-    with TestClient(create_app(game_db.parent)) as client:
-        client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
-        client.portal.call(client.app.state.web.game.drain)
-        assert [client.post("/actions", content=line).status_code for line in rejected] == [400] * 12 + [409]
-    monkeypatch.setattr("sys.stdin", io.StringIO("\n".join([*rejected, '{"action":"state"}'])))
-    main(["audience", "--db", db, "--backend", "claude-cli"])
-    refused = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
-    assert [r["error"]["status"] for r in refused[1:-1]] == [400] * 12 + [409]
-    assert refused[-1]["month_error"] is None
-    main(["read", "--db", db, "--identity", "audit"])
-    assert json.loads(capsys.readouterr().out) == before
+    invocations = counted(steps)
+    for entry, expected in (("http", [400] * 14 + [409]), ("jsonl", [400] * 14 + [409])):
+        if entry == "http":
+            with TestClient(create_app(game_db.parent)) as client:
+                client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
+                client.portal.call(client.app.state.web.game.drain)
+                events = asyncio.Queue()
+                client.app.state.web.listeners.add(events)
+                statuses = ([client.post("/actions", content=line).status_code for line in rejected],
+                            client.get("/state").json()["game"]["failure"])
+                assert state_updates(events) == []
+        else:
+            monkeypatch.setattr("sys.stdin", io.StringIO("\n".join([*rejected, '{"action":"state"}'])))
+            main(["audience", "--db", db, "--backend", "claude-cli"])
+            refused = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+            statuses = ([r["error"]["status"] for r in refused[1:-1]], refused[-1]["month_error"])
+            assert set(refused[0]) == {"night"}
+            assert refused[-1]["petitions"] == pending["petitions"]
+        assert statuses == (expected, None)
+        assert not invocations
+        main(["read", "--db", db, "--identity", "audit"])
+        assert json.loads(capsys.readouterr().out) == before
+    alternate = str(copyfile(game_db, game_db.with_name("choose.sqlite")))
     for entry in ("audience", "choose"):
         if entry == "audience":
             monkeypatch.setattr(
@@ -93,18 +82,11 @@ def test_cli_preserves_jsonl_and_resumes_failed_month(
             assert result["petitions"] == []
             assert result["date"]["month"] == 11
         else:
-            steps["simulation"] = replaying(
-                [
-                    (RECORDED / "month_petition.txt").read_text(),
-                ]
-            )
-            main(["month", "--db", db, "--backend", "claude-cli"])
-            petition = json.loads(capsys.readouterr().out)["petitions"][0]
             main(
                 [
                     "choose",
                     "--db",
-                    db,
+                    alternate,
                     "--backend",
                     "claude-cli",
                     "--petition",
@@ -115,20 +97,11 @@ def test_cli_preserves_jsonl_and_resumes_failed_month(
             )
             result = json.loads(capsys.readouterr().out)
             assert result["petitions"] == []
-            assert result["date"]["month"] == 12
+            assert set(result) == {"date", "petitions"}
+            assert result["date"]["month"] == 11
     main(["read", "--db", db, "--identity", "audit"])
     ledger = json.loads(capsys.readouterr().out)
     assert not [f for f in ledger["facts"] if f["kind"] == "interaction" and f["detail"]["status"] == "done"]
-    decree = next(e for e in ledger["entities"] if e["kind"] == "decree")
-    assert {f["kind"] for f in ledger["facts"] if f["entity_id"] == decree["id"]} >= {
-        "deliberation",
-        "landed",
-    }
-    assert [
-        f
-        for f in ledger["facts"]
-        if f["kind"] == "changed" and f["detail"].get("origin_ref") == decree["id"] and "taels" in f["detail"]["actual"]
-    ]
     steps["NightDeclaration"] = TestModel(
         call_tools=[],
         custom_output_text=json.loads((RECORDED / "night_invalid.json").read_text())[

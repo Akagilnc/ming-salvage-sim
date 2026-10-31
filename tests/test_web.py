@@ -6,15 +6,12 @@ import sqlite3
 from collections import defaultdict
 from contextlib import asynccontextmanager, closing
 from pathlib import Path
-from uuid import uuid4
 
 import pytest
 from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
 from pydantic_ai.messages import (
     ModelResponse,
     TextPart,
-    ToolCallPart,
-    ToolReturnPart,
 )
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.function import FunctionModel
@@ -39,26 +36,6 @@ def state_updates(events: asyncio.Queue) -> list[dict]:
         for event in (events.get_nowait() for _ in range(events.qsize()))
         if event["event"] == "state"
     ]
-
-
-def record_queries(catalogue, date, *, dated_facts: bool):
-    return {
-        "empty": {},
-        "class": {"kind": "person"},
-        "date": {"date": date},
-        **({
-            "class-date": {"kind": "person", "date": date},
-            "dated": {"kind": "person", "key": "王承恩", "date": date},
-            "prior": {"kind": "person", "key": "王承恩", "date": {"year": 1627, "month": 9}},
-            "prior-class": {"kind": "person", "date": {"year": 1627, "month": 9}},
-        } if dated_facts else {}),
-        "date-original": {"date": {"id": "world", **date}},
-        "date-reordered": {"date": {"month": date["month"], "year": date["year"], "id": "world"}},
-        "pair": {"kind": "person", "key": ["温体仁", "杨嗣昌"]},
-        "many": {"key": [e["key"] for e in catalogue if e["kind"] in {"account", "army"} or e["key"] == "杨嗣昌"]},
-        "unknown-key": {"key": "不存在的人"},
-        "unknown-kind": {"kind": "不存在的类"},
-    }
 
 
 def test_menu_creates_distinct_games_and_opens_only_existing_saves(
@@ -150,7 +127,7 @@ def test_menu_creates_distinct_games_and_opens_only_existing_saves(
             path,
             "opening_db"
             if path in {"multiple-petitions", "choice-error"}
-            else "first_night",
+            else "approved_night" if path == "decree" else "first_night",
         )
         for path in (
             "multiple-petitions",
@@ -166,8 +143,10 @@ def test_menu_creates_distinct_games_and_opens_only_existing_saves(
 def test_http_month_dispatches_choices_and_retries_missing_step(
     game_db: Path, path: str, steps, audit, clock
 ) -> None:
-    money = (RECORDED / "month_decree_money.txt").read_text()
-    received = {name: [] for name in ("deliberation", "simulation", "gazette")}
+    steps["Declaration"] = TestModel(call_tools=[], custom_output_text=(
+        RECORDED / ("month_empty.txt" if path in {"multiple-petitions", "choice-error"} else "month_decree_money.txt")
+    ).read_text())
+    received = {}
     if path in {"multiple-petitions", "choice-error"}:
         case = (RECORDED / "month_multiple_petitions.txt").read_text()
         steps["simulation"] = replaying([case])
@@ -182,38 +161,16 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
         ).json()["save"]
         db = game_db
         if path in {
-            "decree",
             "precompute-error",
             "precompute-structure",
             "translation-error",
         }:
-            for name in received if path == "decree" else ():
-                text = (RECORDED / f"{name}.txt").read_text()
-                steps[name] = replaying(
-                    lambda messages, text=text, dated_facts=name == "simulation": (
-                        ModelResponse(parts=[TextPart(text)])
-                        if any(
-                            isinstance(part, ToolReturnPart)
-                            for m in messages
-                            for part in m.parts
-                        )
-                        else ModelResponse(parts=[
-                            ToolCallPart("read_records", args, tool_call_id=label)
-                            for label, args in record_queries(
-                                json.loads(messages[0].parts[0].content)["catalogue"],
-                                {"year": 1627, "month": 10}, dated_facts=dated_facts,
-                            ).items()
-                        ])
-                    ),
-                    received[name],
-                )
             case = json.loads((RECORDED / "night_approved.json").read_text())
             steps["NightDeclaration"] = (
                 replaying([ModelHTTPError(429, "recording"), *case["replies"]])
                 if path == "translation-error"
                 else steps["NightDeclaration"]
             )
-            steps["Declaration"] = TestModel(call_tools=[], custom_output_text=money)
             if path in {"precompute-error", "precompute-structure"}:
                 steps["deliberation"] = replaying(
                     [
@@ -306,14 +263,6 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
             } == ({"translation"} if path == "translation-error" else set())
         events = asyncio.Queue()
         app.state.web.listeners.add(events)
-        before = audit(db)
-        assert [
-            client.post("/actions", json={"action": "choose", **parameters}).status_code
-            for parameters in ({}, {"petition": None}, {"petition": str(uuid4())})
-        ] == [400, 400, 400]
-        assert client.get("/state").json()["game"]["failure"] is None
-        assert audit(db) == before
-        assert state_updates(events) == []  # Rejected choices do not transition.
         assert client.post("/actions", json={"action": "month"}).status_code == 204
         game = client.get("/state").json()["game"]
         # One acceptance and one completion, regardless of monthly writes.
@@ -350,12 +299,7 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
             assert audit(db) == before
             for petition in game["petitions"][:]:
                 choice = {"action": "choose", "petition": petition["id"], "option": 0}
-                assert (
-                    client.post("/actions", json={**choice, "option": -1}).status_code
-                    == 400
-                )
                 assert client.post("/actions", json=choice).status_code == 204
-                assert client.post("/actions", json=choice).status_code == 400
                 game["petitions"].remove(petition)
                 if game["petitions"]:
                     assert not [f for f in audit(db)["facts"] if f["kind"] == "month_final"]
@@ -378,6 +322,7 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
                     *([(False, None, 10 if path == "choice-error" else 11, set())]
                       if not game["petitions"] else []),
                 ]
+            assert client.post("/actions", json=choice).status_code == 400
         # Choice completion no longer waits for the shared month action.
         client.portal.call(app.state.web.game.drain)
         if path == "choice-error":
@@ -425,78 +370,6 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
                 for f in ledger["facts"]
                 if f["kind"] == "changed" and f["detail"].get("origin_ref") == decree["id"] and "taels" in f["detail"]["actual"]
             ]
-            materials = {
-                name: [
-                    part.model_response_object()
-                    for m in messages
-                    for part in m.parts
-                    if isinstance(part, ToolReturnPart) and part.tool_call_id == "many"
-                ]
-                for name, messages in received.items()
-            }
-            case = [
-                {part.tool_call_id: part.model_response_object()
-                 for m in messages for part in m.parts if isinstance(part, ToolReturnPart)}
-                for messages in received.values()
-            ]
-            assert all(data["empty"]["status"] == "query_required" for data in case)
-            assert all(data[label]["status"] == "not_found" and "names_and_aliases" not in data[label]
-                       for data in case for label in ("unknown-key", "unknown-kind"))
-            assert all({e["key"] for e in data["pair"]["entities"]} == {"温体仁", "杨嗣昌"} for data in case)
-            assert all({e["kind"] for e in data["class"]["catalogue"]} == {"person"} for data in case)
-            assert all(set(e) == {"kind", "key", "event_count"} for data in case for e in data["class"]["catalogue"])
-            assert all(data["date"] == data["date-original"] == data["date-reordered"] for data in case)
-            assert {tuple(f["detail"]["date"][k] for k in ("year", "month"))
-                    for f in case[1]["dated"]["facts"]} == {(1627, 10)}
-            assert next(e["event_count"] for e in case[1]["class-date"]["catalogue"] if e["key"] == "王承恩") == len(case[1]["dated"]["facts"])
-            assert case[1]["prior"]["facts"] == []
-            assert case[1]["prior-class"]["catalogue"] == []
-            assert not [f for f in materials["gazette"][0]["facts"] if f["kind"] == "reported"]
-            assert all(
-                {e["key"]: e["data"] for e in data["entities"] if e["kind"] == "account"}
-                == {name: {"name": name} for name in ("国库", "内库", "节慎库", "常盈库")}
-                for data in materials["deliberation"]
-            )
-            assert all(not [e for e in data["entities"] if e["kind"] == "account"] for data in materials["gazette"])
-            assert {
-                e["key"]: e["data"]["taels"]
-                for e in materials["simulation"][0]["entities"]
-                if e["kind"] == "account"
-            } == {"国库": 3200000, "内库": 4400000, "节慎库": 600000, "常盈库": 1200000}
-            assert (
-                next(
-                    e["data"]
-                    for e in materials["simulation"][0]["entities"]
-                    if e["kind"] == "person" and e["key"] == "杨嗣昌"
-                ).items()
-                >= {
-                    "loyalty": "颇知向背",
-                    "ability": "足任大事",
-                    "integrity": "操守平常",
-                    "courage": "敢任其事",
-                    "identity": "党色极深",
-                    "intrigue": "善藏行迹",
-                }.items()
-            )
-            assert {
-                (e["key"], field): e["data"][field]
-                for e in materials["simulation"][0]["entities"]
-                if e["kind"] == "army"
-                for field in ("firearm_equipment", "cannon_equipment")
-            } == {
-                (e["key"], field): e["data"][field]
-                for e in ledger["entities"]
-                if e["kind"] == "army"
-                for field in ("firearm_equipment", "cannon_equipment")
-            }
-            assert (
-                next(
-                    e["data"]["loyalty"]
-                    for e in audit(db, identity="world")["entities"]
-                    if e["kind"] == "person" and e["key"] == "杨嗣昌"
-                )
-                == 75
-            )
         before = audit(db)
         client.get("/state")
         client.get("/records")
