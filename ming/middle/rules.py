@@ -8,7 +8,7 @@ from typing import Any, Never
 from pydantic_ai import ModelRetry
 
 from ming.ledger import Entity, Item
-from ming.middle.appointments import CATALOGUE_KINDS
+from ming.middle.appointments import CATALOGUE_KINDS, cabinet_members
 from ming.middle.declaration import Declaration, Fact
 from ming.middle.fiscal import WAN, current_paid, has_obligation, obligation
 from ming.middle.fields import FIELDS
@@ -86,6 +86,17 @@ def check_journey(distances: dict[str, Item], fact: Fact, path: str, names: Name
         if change.field == "travel_speed" and change.value not in list(SPEEDS):
             fail(f"{path}.changes[{j}].value", change.value, list(SPEEDS), names, "行速用 expected 中的档名，重交整份。")
     return route
+
+
+def check_chief(fact: Fact, index: int, existing: dict[tuple[str, str], Item], names: Names) -> set[str]:
+    eligible = cabinet_members(existing)
+    if fact.entity_type == "incumbency" and json.loads(fact.entity)[0] == "内阁首辅":
+        for j, change in enumerate(fact.changes):
+            for k, person in enumerate(change.value):
+                if person not in eligible:
+                    fail(f"facts[{index}].changes[{j}].value[{k}]", person, sorted(eligible), names,
+                         "首辅须为在任阁臣；可在同份声明中先任大学士，再任首辅。重交整份。")
+    return eligible
 
 
 def check_money(fact: Fact, names: Names, index: int) -> None:

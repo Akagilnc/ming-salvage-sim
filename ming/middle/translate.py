@@ -1,10 +1,9 @@
 """One retry owner for declarations. Exhaustion alone becomes an unhandled fact."""
 
 import json
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import asdict
-from typing import Any, TypeVar, cast
-from uuid import UUID
+from typing import Any, cast
 
 from pydantic import ValidationError
 from sqlalchemy import JSON, case, func, type_coerce
@@ -32,12 +31,11 @@ from ming.middle.queries import CATALOGUE
 from ming.middle.opening import REFERENCES
 from ming.middle.appointments import ALIASES, APPOINTMENT_ROLES, incumbency_record, office_pairs, reference_key
 from ming.middle.rules import Names, check_rules, fail, name_expected
-from ming.middle.dispatch import prepare
+from ming.middle.dispatch import Translation, prepare
 from ming.middle.records import TranslationMaterials, read_records
 from ming.middle.invoke import ModelSource, build_agent, invoke
 from ming.middle.fields import FIELDS_BY_KIND
 
-T = TypeVar("T", bound=Declaration)
 APPOINTMENT_RULES = """任免只声明 incumbency：entity 用史书官名（京官如户部右侍郎、南京户部尚书；外官如陕西巡抚、保定府新城县知县），create=false。官职、属地由目录正名或别名精确解析，同名属地须带上级全名。holders、acting 按字段表填写。外官须带属地。首次任职由引擎创建在任记录；人物不存 office、office_region、office_type 等任职字段。
 升转新实职即离原任；旨里写明兼领、仍管的才保留旧职。没有兼领、仍管时，在同份声明里从原任 holders 去掉此人；旧职本来无在任记录不必声明。新官替换同官同地原任，不动同官别地。任免不改变人物状态、所在、在场或行程。罢去全部官职时，在同份声明中把罢官原因写进此人的 identity_description 作为处境。
 尚书现任只算掌部的一员；阁臣的尚书兼衔只记身份与履历文字，不写入在任记录。内阁首辅为单员职务，须为在任阁臣；同份声明可先任大学士再任首辅。离开全部阁职时同时卸首辅，新首辅只替原首辅这一职、不免其大学士。次辅只记身份。"""
@@ -59,7 +57,7 @@ text 保留圣旨定稿全文，不改写、不摘要。origin、people、endors
 """
 
 
-def catalogue(records: Sequence[Item]) -> dict[str, dict[str, list[str]]]:
+def catalogue(records: Iterable[Item]) -> dict[str, dict[str, list[str]]]:
     result: dict[str, dict[str, list[str]]] = {}
     for row in records:
         result.setdefault(row["kind"], {})[row["key"]] = row["aliases"]
@@ -71,9 +69,9 @@ def catalogue(records: Sequence[Item]) -> dict[str, dict[str, list[str]]]:
 CATALOGUES = {"historical_event", "fiscal", "account", "office", "territory", "incumbency"}
 
 
-def check(ledger: Ledger, out: Declaration, source: UUID) -> None:
-    if not (out.facts or out.reports or out.decree_events or isinstance(out, NightDeclaration) and out.decrees):
-        return
+def declaration_records(ledger: Ledger, out: Declaration | Unhandled) -> dict[tuple[str, str], Item]:
+    if isinstance(out, Unhandled) or not (out.facts or out.reports or out.decree_events or isinstance(out, NightDeclaration) and out.decrees):
+        return {}
     appointment_kinds = ("office", "incumbency") if any(f.entity_type == "incumbency" for f in out.facts) else ()
     records = ledger.read(CATALOGUE.with_only_columns(
         E.id, E.kind, E.key, ALIASES, E.data["external"].as_boolean().label("external"),
@@ -83,10 +81,13 @@ def check(ledger: Ledger, out: Declaration, source: UUID) -> None:
             "holders", E.data["holders"], "acting", E.data["acting"],
         )), else_="{}"), JSON).label("data"),
     ))
-    names = catalogue(records)
+    return {(row["kind"], row["key"]): row for row in records}
+
+
+def check(ledger: Ledger, out: Declaration, records: dict[tuple[str, str], Item], names: Names) -> None:
     fields = FIELDS_BY_KIND
-    appointments = {(row["kind"], row["key"]): row for row in records
-                    if row["kind"] in {"office", "territory", "incumbency"}} if appointment_kinds else {}
+    appointments = {pair: row for pair, row in records.items()
+                    if pair[0] in {"office", "territory", "incumbency"}}
     for i, fact in enumerate(out.facts):
         path = f"facts[{i}]"
         if fact.entity_type != "incumbency":
@@ -134,7 +135,6 @@ def check(ledger: Ledger, out: Declaration, source: UUID) -> None:
     check_fiscal(ledger, out, names)
     check_references(ledger, out, names)
     check_rules(out, names)
-    prepare(ledger, out, ledger.get(source), {(row["kind"], row["key"]): row for row in records}, names)
 
 
 def check_funding(ledger: Ledger, out: Declaration, names: Names) -> dict[str, Item]:
@@ -336,15 +336,24 @@ def check_references(ledger: Ledger, out: Declaration, names: Names) -> None:
 def declaration_agent(
     model: ModelSource,
     ledger: Ledger,
-    output_type: type[T],
+    output_type: type[Declaration],
     instructions: str,
-) -> Agent[TranslationMaterials, T]:
+) -> Agent[TranslationMaterials, Translation]:
+    def accept(ctx: RunContext[TranslationMaterials], out: Declaration):
+        records = declaration_records(ledger, out)
+        names = catalogue(records.values())
+        check(ledger, out, records, names)
+        return prepare(ledger, out, ledger.get(ctx.deps.source), records, names)
+
+    # The same output function accepts this call's specific declaration schema.
+    accept.__annotations__["out"] = output_type
+
     agent = build_agent(
         model,
         tools=[read_records],
         name=output_type.__name__,
         deps_type=TranslationMaterials,
-        output_type=PromptedOutput(output_type),
+        output_type=PromptedOutput(accept),
         instructions=instructions + "\n" + APPOINTMENT_RULES + "\n官职和属地不混在实况名册里；需要核对官名、地名、别名、所属衙门或员额时，用 read_records 带类 office、territory 或正名查询；空参不返回目录。",
         retries=1,
     )
@@ -365,19 +374,14 @@ def declaration_agent(
             ensure_ascii=False,
         )
 
-    @agent.output_validator
-    def validate(ctx: RunContext[TranslationMaterials], out: T) -> T:
-        check(ledger, out, ctx.deps.source)
-        return out
-
     return agent
 
 
 async def translate(
-    agent: Agent[TranslationMaterials, T],
+    agent: Agent[TranslationMaterials, Translation],
     prompt: str,
     materials: TranslationMaterials,
-) -> T | Unhandled:
+) -> Translation | Unhandled:
     with capture_run_messages() as messages:
         try:
             return (

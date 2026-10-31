@@ -323,7 +323,9 @@ def test_returned_urgent_waits_through_vacancy(
         (5000000, 3200000, "write"),
         (5000000, 3200000, "commit"),
         (5000000, 3200000, "archive"),
-    ]] + [("two-payments-shortage", ("combined", 250000, False), "shortage_payment_night")],
+    ]] + [("two-payments-shortage", ("combined", 250000, False), "shortage_payment_night"),
+          pytest.param(None, ("county", None, "archive"), "county_night", id="archive-county"),
+          pytest.param(None, ("calendar", None, False), "county_night", id="calendar-report")],
     indirect=["opening_db", "game_db"],
 )
 def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
@@ -331,7 +333,10 @@ def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
 ) -> None:
     nominal, actual, interrupt = case
     steps["Declaration"] = replaying([
-        (RECORDED / f"month_two_payments_{nominal}.txt").read_text()
+        # Synthetic report to the same aggregate on which the declaration is archived.
+        json.dumps({"facts": [], "reports": [{"entity_type": "calendar", "entity": "world", "text": "月事奏报", "audience": "public"}]})
+        if nominal == "calendar" else
+        (RECORDED / ("month_provincial_county.txt" if nominal == "county" else f"month_two_payments_{nominal}.txt")).read_text()
         if isinstance(nominal, str)
         else json.loads((RECORDED / f"month_money_once_{nominal}.json").read_text())["reply"]
     ])
@@ -392,6 +397,37 @@ def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
             assert client.get("/state").json()["game"]["failure"] is not None
             client.post("/actions", json={"action": "retry"})
         ledger = audit(db)
+        public = audit(db, identity="public")
+        assert not [e for e in public["entities"] if e["kind"] == "account"]
+        assert all(
+            "nominal" not in f["detail"] and "actual" not in f["detail"]
+            for f in public["facts"]
+        )
+        if nominal == 5000000:
+            assert not [f for f in public["facts"] if f["kind"] == "reported"]
+            reports = client.app.state.web.game.court.facts(Officials(people=["郭允厚"]), kind="reported")
+            assert reports
+            assert all(set(f.detail) == {"text"} for f in reports)
+            treasury = next(e["id"] for e in ledger["entities"] if e["key"] == "国库")
+            assert all(str(f.entity_id) == treasury for f in reports)
+        state = client.get("/state").json()["game"]
+        assert state["failure"] is None
+        assert state["date"]["month"] == 11
+        assert len(model_invocations["Declaration"]) == 1
+        client.post("/actions", json={"action": "load", "save": db.name}).raise_for_status()
+        assert audit(db) == ledger
+        assert len(model_invocations["Declaration"]) == 1
+        if nominal in {"county", "calendar"}:
+            if nominal == "county":
+                assert next(e["data"]["holders"] for e in ledger["entities"] if e["kind"] == "incumbency"
+                            and e["data"]["office"] == "知县" and e["data"]["territory"] == "保定府新城县") == ["徐应秋"]
+            else:
+                assert [f["entity_id"] for f in ledger["facts"] if f["kind"] == "reported"] == [
+                    next(e["id"] for e in ledger["entities"] if e["kind"] == "calendar")
+                ]
+            assert len([f for f in ledger["facts"] if f["kind"] == "declaration"]) == 1
+            assert len([f for f in ledger["facts"] if f["kind"] == "landed"]) == 2
+            return
         if actual != 250000:
             assert {
                 e["key"]: e["data"]["taels"]
@@ -423,26 +459,6 @@ def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
             assert next(e["data"]["imperial_prestige"] for e in ledger["entities"] if e["kind"] == "world") == 25
             assert [t["limit_reason"] for t in transfers] == [None, "balance" if actual == 250000 else None]
             assert [f["detail"]["limit_reason"] for f in ledger["facts"] if f["kind"] == "received"] == [None, "balance" if actual == 250000 else None]
-        public = audit(db, identity="public")
-        assert not [e for e in public["entities"] if e["kind"] == "account"]
-        assert all(
-            "nominal" not in f["detail"] and "actual" not in f["detail"]
-            for f in public["facts"]
-        )
-        if nominal == 5000000:
-            assert not [f for f in public["facts"] if f["kind"] == "reported"]
-            reports = client.app.state.web.game.court.facts(Officials(people=["郭允厚"]), kind="reported")
-            assert reports
-            assert all(set(f.detail) == {"text"} for f in reports)
-            treasury = next(e["id"] for e in ledger["entities"] if e["key"] == "国库")
-            assert all(str(f.entity_id) == treasury for f in reports)
-        state = client.get("/state").json()["game"]
-        assert state["failure"] is None
-        assert state["date"]["month"] == 11
-        assert len(model_invocations["Declaration"]) == 1
-        client.post("/actions", json={"action": "load", "save": db.name}).raise_for_status()
-        assert audit(db) == ledger
-        assert len(model_invocations["Declaration"]) == 1
 
 
 DEBT = {

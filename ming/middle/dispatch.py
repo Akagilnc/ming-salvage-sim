@@ -3,6 +3,7 @@
 import json
 from collections import defaultdict
 from collections.abc import Callable, Iterator, Sequence
+from dataclasses import dataclass
 from typing import cast
 from uuid import UUID
 
@@ -20,10 +21,21 @@ from ming.middle.declaration import (
     Unhandled,
 )
 from ming.middle import queries
-from ming.middle.rules import Names, check_journey, fail, field_values, money_amounts, name_expected
+from ming.middle.rules import Names, check_chief, check_journey, fail, field_values, money_amounts, name_expected
 from ming.middle.fiscal import WAN, current_paid, expense_rate, has_obligation
-from ming.middle.appointments import APPOINTMENT_ROLES, cabinet_members, incumbency_record, reference_key
+from ming.middle.appointments import APPOINTMENT_ROLES, incumbency_record, reference_key
 from ming.middle.travel import journey_distances, move_person
+
+
+@dataclass
+class Translation:
+    """Output-function return value: the declaration and its native working objects."""
+    declaration: Declaration | Unhandled
+    owner: Entity
+    targets: dict[tuple[str, str], Entity]
+    words: str
+    date: Item
+
 
 def landing_sources(
     ledger: Ledger, date: Item, *, include_history: bool = True,
@@ -52,15 +64,15 @@ def landing_sources(
 
 
 def check_decrees(
-    ledger: Ledger, out: Declaration, owner: Entity, names: Names, count: int,
+    ledger: Ledger, out: Declaration | Unhandled, owner: Entity, names: Names, count: int,
 ) -> str:
     # One turn read supplies both validation IDs and the landing's emperor words.
     turns = ledger.facts(
-        entity_id=UUID(owner.data["night_id"]) if owner.kind == "decree" else owner.id,
+        entity_id=owner.id,
         kind="turn", query=FACT_ROWS.with_only_columns(F.emperor_words, F.detail["id"].as_string().label("turn_id")),
     ) if owner.kind != "calendar" else ()
     count = len(out.decrees) if isinstance(out, NightDeclaration) else count
-    labeled = (("facts", out.facts), ("decree_events", out.decree_events))
+    labeled = (("facts", out.facts), ("decree_events", out.decree_events)) if isinstance(out, Declaration) else ()
     for label, items in labeled:
         for i, item in enumerate(items):
             ref = item.decree
@@ -123,14 +135,14 @@ def check_endorsements(
 
 
 def prepare(
-    ledger: Ledger, result: Declaration, owner: Entity,
+    ledger: Ledger, result: Declaration | Unhandled, owner: Entity,
     records: dict[tuple[str, str], Item], names: Names,
-) -> None:
+) -> Translation:
     sources = landing_sources(ledger, owner.data) if owner.kind == "calendar" else []
     existing = {pair: row for pair, row in records.items() if pair[0] in {"office", "incumbency"} and row["data"]}
     existing[owner.kind, owner.key] = owner.snapshot()
     records.update(((row["kind"], row["key"]), row) for row, _mode, _events in sources)
-    changed: dict[tuple[str, str], Entity] = {}
+    changed = {(owner.kind, owner.key): owner}
     fact_origin: Item = {}
     date = owner.data if owner.kind == "calendar" else ledger.entities(kind="calendar", key="world")[0]["data"]
     existing["calendar", "world"] = {"data": date}
@@ -165,11 +177,9 @@ def prepare(
     decrees = [(decree.id, decree.key) for decree in record_decrees(result, owner, known, record)] + [
         (row["id"], row["key"]) for row, _mode, _events in sources
     ]
-    if result.facts or result.reports or result.decree_events:
-        for fact in result.facts:
-            known(fact.entity_type, fact.entity)
-        distances = journey_distances(ledger, result.facts, {key: row["data"] for (kind, key), row in existing.items() if kind == "person"})
+    if isinstance(result, Declaration):
         values, projected = calculated_values(ledger, result.facts, existing, known)
+        distances = journey_distances(ledger, result.facts, {key: row["data"] for (kind, key), row in existing.items() if kind == "person"})
         limits: dict[tuple[str, str, str], float] = {}
         for i, j, fact in landing_facts(result.facts):
             entity = known(fact.entity_type, fact.entity)
@@ -193,60 +203,49 @@ def prepare(
                 displace(entity, detail["changes"], known, record, {**association, "text": fact.text})
             record(entity, "changed", detail, detail["changes"])
             if entity.kind in {"office", "incumbency"}:
-                retire_chief(existing, known, record, {**association, "text": fact.text}, (i, fact, names))
+                eligible = check_chief(fact, i, existing, names)
+                retire_chief(existing, known, record, {**association, "text": fact.text}, eligible)
             if (i, j) not in values:
                 record_receipts(fact, detail, date, known, record)
         fact_origin = {}
         register_funding(ledger, result.facts, known, record)
         for report in result.reports:
-            record(
-                known(report.entity_type, report.entity),
-                "reported",
-                report.model_dump(),
-            )
+            known(report.entity_type, report.entity)
         for event in result.decree_events:
-            target = known("decree", decrees[cast(int, event.decree)][1])
-            fact_origin = {"origin_ref": str(target.id)}
-            record(target, event.kind, {"text": event.text})
+            entity = known("decree", decrees[cast(int, event.decree)][1])
+            fact_origin = {"origin_ref": str(entity.id)}
+            record(entity, event.kind, {"text": event.text})
         fact_origin = {}
-    result.prepared = ([entity for entity in changed.values() if entity.pending_events], sources, words, date)
-
-
-def dispatch(
-    ledger: Ledger, result: Declaration | Unhandled, night_id: UUID,
-    monthly: LandingMode | None = None,
-) -> None:
-    owner = ledger.get(night_id)
-    changed, sources, words, date = result.prepared if isinstance(result, Declaration) and result.prepared is not None else (
-        [], landing_sources(ledger, owner.data) if monthly and owner.kind == "calendar" else [], "\n".join(
-            e["emperor_words"] for e in ledger.facts(entity_id=owner.id, kind="turn")
-        ), owner.data if owner.kind == "calendar" else ledger.entities(kind="calendar", key="world")[0]["data"],
-    )
-    targets = {entity.id: entity for entity in changed}
     sources = [source for source in sources if source[1] is not None]
     prior_interims: set[UUID] = {event["entity_id"] for event in ledger.facts(
         entity_id=[row["id"] for row, _mode, _events in sources], kind="interim",
         query=FACT_ROWS.with_only_columns(F.entity_id).order_by(None).distinct(),
     )} if sources else set()
     for source in sources:
-        target = targets.get(source[0]["id"])
-        if target is None:
-            target = ledger.get(source[0]["id"])
-            targets[target.id] = target
+        entity = known(source[0]["kind"], source[0]["key"])
         for kind, detail in decree_disposition(
-            target.id in prior_interims, target, cast(LandingMode, source[1]), source[2],
+            entity.id in prior_interims, entity, cast(LandingMode, source[1]), source[2],
             not isinstance(result, Unhandled),
         ):
-            target.record(kind, words, {"origin_ref": str(owner.id), "date": date, **detail})
-    target = targets.setdefault(owner.id, owner)
-    target.record(
-        "unhandled"
-        if isinstance(result, Unhandled)
-        else (monthly or "translated"),
-        words,
-        {"origin_ref": str(owner.id), "date": date, "result": result.model_dump(mode="json"), "monthly": monthly},
+            record(entity, kind, detail)
+    return Translation(result, owner, changed, words, date)
+
+
+def dispatch(ledger: Ledger, work: Translation, monthly: LandingMode | None = None) -> None:
+    # Reports have no calculations; append them after any intervening source write.
+    if isinstance(work.declaration, Declaration):
+        for report in work.declaration.reports:
+            work.targets[report.entity_type, report.entity].record(
+                "reported", work.words,
+                {"origin_ref": str(work.owner.id), "date": work.date, **report.model_dump()},
+            )
+    work.owner.record(
+        "unhandled" if isinstance(work.declaration, Unhandled) else (monthly or "translated"),
+        work.words,
+        {"origin_ref": str(work.owner.id), "date": work.date,
+         "result": work.declaration.model_dump(mode="json"), "monthly": monthly},
     )
-    ledger.commit(list(targets.values()))
+    ledger.commit(list(work.targets.values()))
 
 
 def calculated_values(
@@ -254,22 +253,23 @@ def calculated_values(
     known: Callable[[str, str], Entity],
 ) -> tuple[dict[tuple[int, int], Item], dict[tuple[str, str], Item]]:
     """Local arithmetic only; the handoff contains aggregates, not these intermediates."""
-    buildings_read = False
+    expenses: set[str] = set()
     for fact in facts:
+        known(fact.entity_type, fact.entity)
         for change in fact.changes:
-            if change.counterpart is None:
-                continue
-            recipient = known(change.counterpart.entity_type, change.counterpart.entity)
-            if recipient.kind != "fiscal" or change.purpose != "当月饷":
-                continue
-            if recipient.key == "建筑维护_base":
-                if not buildings_read:
-                    for row in ledger.entities(kind="building"):
-                        existing.setdefault((row["kind"], row["key"]), row)
-                    buildings_read = True
-            elif ("fiscal", expense_rate(recipient.key)) not in existing:
-                for row in ledger.entities(kind="fiscal", key=expense_rate(recipient.key)):
-                    existing[row["kind"], row["key"]] = row
+            if change.counterpart is not None:
+                recipient = known(change.counterpart.entity_type, change.counterpart.entity)
+                if recipient.kind == "fiscal" and change.purpose == "当月饷":
+                    expenses.add(recipient.key)
+    rates = {expense_rate(key) for key in expenses if key != "建筑维护_base"} - {
+        key for kind, key in existing if kind == "fiscal"
+    }
+    if rates:
+        for row in ledger.entities(kind="fiscal", query=ENTITY_ROWS.where(E.key.in_(rates))):
+            existing[row["kind"], row["key"]] = row
+    if "建筑维护_base" in expenses:
+        for row in ledger.entities(kind="building"):
+            existing.setdefault((row["kind"], row["key"]), row)
     projected = {pair: {**row, "data": dict(row["data"])} for pair, row in existing.items()}
     values: dict[tuple[int, int], Item] = {}
     for i, j, fact in landing_facts(facts):
@@ -288,27 +288,29 @@ def register_funding(
     record: Callable[..., None],
 ) -> None:
     """Keep a funded affair in its source account's order, retaining explicit order."""
-    for name in dict.fromkeys(f.entity for f in facts if f.entity_type == "affair"
-                              and any(c.field == "monthly_funding" for c in f.changes)):
-        entity = known("affair", name)
-        recipient = EntityRef(entity_type=entity.kind, entity=entity.key).model_dump()
-        orders = func.json_each(E.data["payment_order"]).table_valued("value", "type")
-        order = case((orders.c.type == "object", orders.c.value), else_="{}")
-        accounts = {row["key"] for row in ledger.entities(kind="account", query=ENTITY_ROWS.with_only_columns(E.key).where(
-            select(orders.c.value).where(func.json_extract(order, "$.entity_type") == "affair",
-                                        func.json_extract(order, "$.entity") == entity.key).exists(),
-        ))}
-        accounts.add(entity.data["monthly_funding"]["account"])
+    grants = {name: known("affair", name).data["monthly_funding"]["account"]
+              for name in dict.fromkeys(f.entity for f in facts if f.entity_type == "affair"
+                                       and any(c.field == "monthly_funding" for c in f.changes))}
+    if not grants:
+        return
+    orders = func.json_each(E.data["payment_order"]).table_valued("value", "type")
+    order_value = case((orders.c.type == "object", orders.c.value), else_="{}")
+    accounts = {row["key"] for row in ledger.entities(kind="account", query=ENTITY_ROWS.with_only_columns(E.key).where(
+        select(orders.c.value).where(func.json_extract(order_value, "$.entity_type") == "affair",
+                                    func.json_extract(order_value, "$.entity").in_(grants)).exists(),
+    ))} | set(grants.values())
+    for name, source in grants.items():
+        recipient = EntityRef(entity_type="affair", entity=name).model_dump()
         for key in sorted(accounts):
             account = known("account", key)
-            order = list(account.data.get("payment_order", []))
-            if key == entity.data["monthly_funding"]["account"]:
-                if recipient not in order:
-                    order.append(recipient)
-            elif recipient in order:
-                order.remove(recipient)
-            if order != account.data.get("payment_order", []):
-                record(account, "payment_order", {"recipient": entity.key}, {"payment_order": order})
+            payment_order = list(account.data.get("payment_order", []))
+            if account.key == source:
+                if recipient not in payment_order:
+                    payment_order.append(recipient)
+            elif recipient in payment_order:
+                payment_order.remove(recipient)
+            if payment_order != account.data.get("payment_order", []):
+                record(account, "payment_order", {"recipient": name}, {"payment_order": payment_order})
 
 
 def landing_facts(facts: list[Fact]) -> Iterator[tuple[int, int, Fact]]:
@@ -415,19 +417,11 @@ def retire_chief(
     known: Callable[[str, str], Entity],
     record: Callable[[Entity, str, Item, Item], None],
     association: Item,
-    declaration: tuple[int, Fact, Names],
+    eligible: set[str],
 ) -> None:
     chief = existing.get(("incumbency", incumbency_record(("内阁首辅", ""), [])[0]))
     if not chief:
         return
-    eligible = cabinet_members(existing)
-    index, fact, names = declaration
-    if fact.entity_type == "incumbency" and fact.entity == chief["key"]:
-        for j, change in enumerate(fact.changes):
-            for k, person in enumerate(change.value):
-                if person not in eligible:
-                    fail(f"facts[{index}].changes[{j}].value[{k}]", person, sorted(eligible), names,
-                         "首辅须为在任阁臣；可在同份声明中先任大学士，再任首辅。重交整份。")
     changes: Item = {role: [] for role in APPOINTMENT_ROLES
                if chief["data"][role] and chief["data"][role][0] not in eligible}
     if changes:

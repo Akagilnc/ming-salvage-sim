@@ -24,6 +24,7 @@ class Landing:
         if self.court.has_product(calendar.id, ("landed", "unhandled"), date=calendar.data):
             return
         declarations = self.court.products(calendar.id, kind="declaration", date=calendar.data)
+        recorded = None
         if not declarations:
             result = await self.court.translate(
                 self.agent,
@@ -34,9 +35,11 @@ class Landing:
                 }, ensure_ascii=False),
                 calendar.id,
             )
-            product: dict[str, object] = {"result": result.model_dump(mode="json"), "unhandled": isinstance(result, Unhandled)}
-            self.court.record_product(calendar.id, "declaration", product)
+            product: dict[str, object] = {"result": result.declaration.model_dump(mode="json"), "unhandled": isinstance(result.declaration, Unhandled)}
+            recorded = self.court.record_product(calendar.id, "declaration", product)
         else:
             product = declarations[0].detail
-            result = (Unhandled if product["unhandled"] else Declaration).model_validate(product["result"])
-        self.court.land(result, calendar.id, monthly="landed")
+            result = self.court.restore_declaration(
+                (Unhandled if product["unhandled"] else Declaration).model_validate(product["result"]), calendar.id,
+            )
+        self.court.land(result, recorded=recorded, monthly="landed")
