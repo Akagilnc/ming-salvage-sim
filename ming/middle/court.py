@@ -6,7 +6,6 @@ from collections import defaultdict
 from collections.abc import Sequence
 from pathlib import Path
 from shutil import copyfileobj
-from typing import TypeVar
 from uuid import UUID, uuid4
 
 from pydantic_ai import Agent
@@ -24,7 +23,7 @@ from ming.middle import queries
 from ming.middle.appointments import ALIASES, office_pairs, incumbency_record, named
 
 from ming.ledger import Entity, Item, Ledger
-from ming.middle.dispatch import dispatch, landing_sources
+from ming.middle.dispatch import Translation, dispatch, landing_sources, prepare
 from ming.middle.fiscal import Accounts, due_levies
 from ming.middle.calendar import advance_month, calendar_row, journeys_due, settle_journeys
 from ming.middle.declaration import (
@@ -38,7 +37,7 @@ from ming.middle.rules import matching_offices
 from ming.middle.opening import opening_template
 from ming.middle.night import NightView, dismiss, known_people, open_night, read_nights
 from ming.middle.scene import HallResult, set_hall
-from ming.middle.translate import translate
+from ming.middle.translate import declaration_records, translate
 from ming.middle.translate import catalogue as names_and_aliases
 from ming.middle.view import (
     EntityView,
@@ -54,9 +53,6 @@ from ming.middle.view import (
     visible_appointments,
     view_parameters,
 )
-
-T = TypeVar("T", bound=Declaration)
-
 
 class Court:
     def __init__(self, db_path: Path) -> None:
@@ -230,8 +226,8 @@ class Court:
         *,
         petitions: Sequence[PendingPetition] = (),
         date: Item | None = None,
-    ) -> None:
-        """Commit a complete product and its petitions in the same transaction."""
+    ) -> Entity:
+        """Commit a complete product and return its current source aggregate."""
         targets = {
             key: self._ledger.get(key)
             for key in {entity_id, *(p.entity_id for p in petitions)}
@@ -245,23 +241,30 @@ class Court:
             )
         targets[entity_id].record(kind, "", {**detail, "date": date})
         self._ledger.commit(list(targets.values()))
+        return source
 
     async def translate(
-        self, agent: Agent[TranslationMaterials, T], prompt: str, source: UUID,
+        self, agent: Agent[TranslationMaterials, Translation], prompt: str, source: UUID,
         *, model: Model,
-    ) -> T | Unhandled:
+    ) -> Translation:
         result = await translate(agent, prompt, TranslationMaterials(self, "world", source, self._ledger), model)
-        self.log.info("translation output: %s", result.model_dump_json())
+        if isinstance(result, Unhandled):
+            result = self.restore_declaration(result, source)
+        self.log.info("translation output: %s", result.declaration.model_dump_json())
         return result
 
+    def restore_declaration(self, declaration: Declaration | Unhandled, source: UUID) -> Translation:
+        """Recalculate an archived, already normalized declaration without model validation."""
+        records = declaration_records(self._ledger, declaration)
+        return prepare(self._ledger, declaration, self._ledger.get(source), records, names_and_aliases(records.values()))
+
     def land(
-        self,
-        result: Declaration | Unhandled,
-        source: UUID,
-        *,
-        monthly: LandingMode | None = None,
+        self, result: Translation, *, recorded: Entity | None = None, monthly: LandingMode | None = None,
     ) -> None:
-        dispatch(self._ledger, result, source, monthly)
+        if recorded is not None:
+            result.owner = recorded
+            result.targets[recorded.kind, recorded.key] = recorded
+        dispatch(self._ledger, result, monthly)
 
     def record_catalogue(
         self, identity: Identity, date: Item | None = None,

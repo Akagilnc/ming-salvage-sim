@@ -110,17 +110,6 @@ def reference_key(
     return matches[0] if len(matches) == 1 else value
 
 
-def cabinet_records(ledger: Ledger) -> dict[tuple[str, str], Item]:
-    """Load cabinet offices and appointments for validation and in-flight landing."""
-    offices = ledger.entities(kind="office", query=ENTITY_ROWS.where(
-        E.data["department"].as_string() == "内阁"
-    ))
-    appointments = ledger.entities(kind="incumbency", query=ENTITY_ROWS.where(
-        E.data["office"].as_string().in_([row["key"] for row in offices])
-    ))
-    return {(row["kind"], row["key"]): row for row in [*offices, *appointments]}
-
-
 def cabinet_members(records: dict[tuple[str, str], Item]) -> set[str]:
     """Derive eligible members from the caller's current appointment snapshot."""
     offices = {key for (kind, key), row in records.items()

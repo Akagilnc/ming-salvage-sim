@@ -85,7 +85,7 @@ class Audience:
                 self.translation, night.model_dump_json(), night_id,
                 model=self.model,
             )
-            self.court.land(result, night_id)
+            self.court.land(result)
 
     async def say(
         self, night: NightView, words: str, turn_id: str, on_delta: Callable[[TextUpdate], None] | None = None

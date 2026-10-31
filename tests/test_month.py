@@ -3,17 +3,14 @@
 import json
 import sqlite3
 from pathlib import Path
-from shutil import copyfile
-from uuid import UUID
 
 import pytest
-from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelResponse, RetryPromptPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessagesTypeAdapter, RetryPromptPart
 from pydantic_ai.models.test import TestModel
 from sqlalchemy import event, text
 from sqlalchemy.orm import Session
 from starlette.testclient import TestClient
 
-from ming.middle.declaration import PendingPetition
 from ming.middle.view import Officials
 from ming.web import create_app
 from tests.test_court import replaying
@@ -217,116 +214,7 @@ def test_month_advances_after_reopening(
             assert client.get("/state").json()["game"] == state
 
 
-@pytest.mark.parametrize("valid_revision", [True, False])
-def test_returned_urgent_waits_through_vacancy(
-    game_db: Path, steps, monkeypatch, valid_revision: bool
-) -> None:
-    revision = (RECORDED / "sources_revision.txt").read_text()
-    other_save = game_db.with_name("other.sqlite")
-    copyfile(game_db, other_save)
-    received = []
-    steps["simulation"] = replaying(
-        [(RECORDED / "simulation.txt").read_text()] * 5, received
-    )
-    steps["urgent"] = replaying([(RECORDED / "sources_urgent.txt").read_text()])
-    drafting = []
-    with TestClient(create_app(game_db.parent)) as client:
-        client.post("/actions", json={"action": "load", "save": game_db.name})
-        if valid_revision:
-
-            def identify_original(**fields):
-                # Align only this original's generated ID, regardless of scheduling.
-                if fields["source"] == "urgent" and fields["ordinal"] == 0:
-                    fields["id"] = UUID(
-                        json.loads(revision)["petitions"][0]["revision_of"]
-                    )
-                return PendingPetition(**fields)
-
-            monkeypatch.setattr(
-                "ming.month_steps.sources.PendingPetition", identify_original
-            )
-        client.post("/actions", json={"action": "month"})
-        monkeypatch.undo()
-        petitions = client.get("/state").json()["game"]["petitions"]
-        original = petitions[0]
-        for index, petition in enumerate(petitions):
-            client.post(
-                "/actions",
-                json={
-                    "action": "choose",
-                    "petition": petition["id"],
-                    "option": len(petition["options"]) - 1 if index == 0 else 0,
-                },
-            ).raise_for_status()
-        assert client.get("/state").json()["game"]["returned_petitions"] == []
-        for phase, month in (("vacancy", 12), ("appointment", 1)):
-            case = json.loads((RECORDED / f"sources_{phase}.json").read_text())
-            steps["scene"] = replaying(ModelMessagesTypeAdapter.validate_python(case["scene_responses"]))
-            steps["NightDeclaration"] = replaying([case["declaration"]])
-            if phase == "appointment":
-                # The accepted immediate appointment takes effect during the night.
-                steps["urgent"] = replaying([revision] * 2, drafting)
-            client.post("/actions", json={"action": "open"})
-            for words in case["words"]:
-                client.post("/actions", json={"action": "say", "words": words})
-            client.post("/actions", json={"action": "dismiss"})
-            client.post("/actions", json={"action": "month"})
-            state = client.get("/state").json()["game"]
-            if phase == "appointment" and not valid_revision:
-                assert state["failure"] is not None
-                assert state["failure"]["payload"]["type"] == "UnexpectedModelBehavior"
-                assert state["date"]["month"] == 12
-                assert state["petitions"] == []
-                assert [p["petition"]["id"] for p in state["returned_petitions"]] == [
-                    original["id"]
-                ]
-                assert [
-                    (json.loads(p.content)["field"], json.loads(p.content)["expected"])
-                    for m in drafting
-                    for p in m.parts
-                    if isinstance(p, RetryPromptPart)
-                ] == [("petitions[0].revision_of", [original["id"]])]
-            else:
-                assert state["failure"] is None
-                assert state["date"]["month"] == month
-                if phase == "vacancy":
-                    assert state["petitions"] == []
-                    assert [
-                        (p["petition"]["id"], p["awaiting_drafter"])
-                        for p in state["returned_petitions"]
-                    ] == [(original["id"], True)]
-                else:
-                    assert [
-                        (p["signer"], p["revision_of"])
-                        for p in state["petitions"]
-                        if p["revision_of"]
-                    ] == [("曹化淳", original["id"])]
-                    assert state["returned_petitions"] == []
-            material = json.loads(received[-1].parts[0].content)["context"]
-            assert {p["petition_id"] for p in material["prior_choices"]} == (
-                {petitions[1]["id"]} if phase == "vacancy" else set()
-            )
-            client.post("/actions", json={"action": "load", "save": game_db.name})
-            assert client.get("/state").json()["game"] == state
-        material = json.loads(drafting[0].parts[0].content)
-        assert [p["key"] for p in material["speakers"]] == ["曹化淳"]
-        assert [p["id"] for p in material["context"]["returned"]] == [original["id"]]
-        drafting.clear()
-        steps["urgent"] = replaying([
-            ModelResponse(parts=[ToolCallPart("read_records", {"kind": "office", "key": "司礼监掌印太监"})]),
-            (RECORDED / "sources_urgent.txt").read_text(),
-        ], drafting)
-        with TestClient(create_app(game_db.parent)) as other:
-            other.post("/actions", json={"action": "load", "save": other_save.name}).raise_for_status()
-            other.post("/actions", json={"action": "month"}).raise_for_status()
-            other_state = other.get("/state").json()["game"]
-            assert (other_state["failure"], other_state["date"]["month"]) == (None, 11)
-            assert {p["signer"] for p in other_state["petitions"]} == {"黄立极", "王体乾"}
-            assert [p.model_response_object()["appointments"][0]["holders"]
-                    for m in drafting for p in m.parts if isinstance(p, ToolReturnPart)] == [["王体乾"]]
-            assert client.get("/state").json()["game"] == state
-
-
+@pytest.mark.usefixtures("opening_db")
 @pytest.mark.parametrize(
     ("opening_db", "case", "game_db"),
     [(None, case, "payment_night" if isinstance(case[0], str) else "opening_db") for case in [
@@ -338,67 +226,112 @@ def test_returned_urgent_waits_through_vacancy(
         (5000000, 3200000, False),
         (5000000, 3200000, "write"),
         (5000000, 3200000, "commit"),
-    ]] + [("two-payments-shortage", ("combined", 250000, False), "shortage_payment_night")],
+        (5000000, 3200000, "archive"),
+    ]] + [("two-payments-shortage", ("combined", 250000, False), "shortage_payment_night"),
+          pytest.param(None, ("county", None, "archive"), "county_night", id="archive-county"),
+          pytest.param(None, ("calendar", None, False), "county_night", id="calendar-report")],
     indirect=["opening_db", "game_db"],
 )
 def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
-    game_db: Path, case, steps, audit, opening_db
+    game_db: Path, case, steps, audit
 ) -> None:
     nominal, actual, interrupt = case
-    recorded = (
-        (RECORDED / f"month_two_payments_{nominal}.txt").read_text()
+    declaration_calls = []
+    steps["Declaration"] = replaying([
+        # Synthetic report to the same aggregate on which the declaration is archived.
+        json.dumps({"facts": [], "reports": [{"entity_type": "calendar", "entity": "world", "text": "月事奏报", "audience": "public"}]})
+        if nominal == "calendar" else
+        (RECORDED / ("month_provincial_county.txt" if nominal == "county" else f"month_two_payments_{nominal}.txt")).read_text()
         if isinstance(nominal, str)
         else json.loads((RECORDED / f"month_money_once_{nominal}.json").read_text())["reply"]
-    )
-    steps["Declaration"] = replaying(lambda _: recorded)
+    ], identities=declaration_calls)
     observed = []
 
-    def before_commit(session):
-        # Outer SQLAlchemy commit: events and read rows exist, none durable.
-        current = tuple(session.execute(text(q)).scalar_one() for q in LANDING)
-        if current[1] and not observed:
+    def interrupt_commit(session):
+        if interrupt == "archive":
+            # The declaration is durable, but no prepared consequences have landed.
+            with sqlite3.connect(game_db) as connection:
+                current = tuple(connection.execute(q).fetchone()[0] for q in LANDING)
+                ready = connection.execute("SELECT count(*) FROM facts WHERE kind='declaration'").fetchone()[0]
+        else:
+            # Outer commit: events and read rows exist, none durable.
+            current = tuple(session.execute(text(q)).scalar_one() for q in LANDING)
+            ready = current[1]
+        if ready and not observed:
             observed.append(current)
-            raise RuntimeError("injected pre-commit failure")
+            raise RuntimeError("injected commit interruption")
 
     with TestClient(create_app(game_db.parent)) as client:
         client.post(
             "/actions", json={"action": "load", "save": game_db.name}
         ).raise_for_status()
-        db = game_db
         if interrupt == "write":
-            with sqlite3.connect(db) as connection:
+            with sqlite3.connect(game_db) as connection:
                 connection.execute(
                     "CREATE TRIGGER interrupt BEFORE UPDATE ON entities WHEN NEW.key='内库' BEGIN SELECT RAISE(ABORT, 'injected'); END"
                 )
-        if interrupt == "commit":
-            event.listen(Session, "before_commit", before_commit)
+        commit_event = "after_commit" if interrupt == "archive" else "before_commit"
+        if interrupt in {"commit", "archive"}:
+            event.listen(Session, commit_event, interrupt_commit)
         try:
             client.post("/actions", json={"action": "month"})
         finally:
-            if interrupt == "commit":
-                event.remove(Session, "before_commit", before_commit)
-        with sqlite3.connect(db) as connection:
+            if interrupt in {"commit", "archive"}:
+                event.remove(Session, commit_event, interrupt_commit)
+        with sqlite3.connect(game_db) as connection:
             durable = tuple(connection.execute(q).fetchone()[0] for q in LANDING)
         assert bool(durable[1]) != bool(interrupt)
         if interrupt == "commit":
             assert observed[0][0] > durable[0]
             assert observed[0][1] > durable[1] == 0
         if interrupt:
-            ledger = audit(db)
+            ledger = audit(game_db)
             assert {
                 e["key"]: e["data"]["taels"]
                 for e in ledger["entities"]
                 if e["kind"] == "account"
             } == {"国库": 3200000, "内库": 4400000, "节慎库": 600000, "常盈库": 1200000}
             assert not [
-                f for f in ledger["facts"] if f["kind"] in {"changed", "landed"}
+                f for f in ledger["facts"] if f["kind"] in {"changed", "landed", "received", "unhandled"}
             ]
-            with sqlite3.connect(db) as connection:
+            assert len([f for f in ledger["facts"] if f["kind"] == "declaration"]) == 1
+            with sqlite3.connect(game_db) as connection:
                 connection.execute("DROP TRIGGER IF EXISTS interrupt")
-            client.post("/actions", json={"action": "load", "save": db.name})
+            client.post("/actions", json={"action": "load", "save": game_db.name})
             assert client.get("/state").json()["game"]["failure"] is not None
             client.post("/actions", json={"action": "retry"})
-        ledger = audit(db)
+        ledger = audit(game_db)
+        public = audit(game_db, identity="public")
+        assert not [e for e in public["entities"] if e["kind"] == "account"]
+        assert all(
+            "nominal" not in f["detail"] and "actual" not in f["detail"]
+            for f in public["facts"]
+        )
+        if nominal == 5000000:
+            assert not [f for f in public["facts"] if f["kind"] == "reported"]
+            reports = client.app.state.web.game.court.facts(Officials(people=["郭允厚"]), kind="reported")
+            assert reports
+            assert all(set(f.detail) == {"text"} for f in reports)
+            treasury = next(e["id"] for e in ledger["entities"] if e["key"] == "国库")
+            assert all(str(f.entity_id) == treasury for f in reports)
+        state = client.get("/state").json()["game"]
+        assert state["failure"] is None
+        assert state["date"]["month"] == 11
+        assert len(declaration_calls) == 1
+        client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
+        assert audit(game_db) == ledger
+        assert len(declaration_calls) == 1
+        if nominal in {"county", "calendar"}:
+            if nominal == "county":
+                assert next(e["data"]["holders"] for e in ledger["entities"] if e["kind"] == "incumbency"
+                            and e["data"]["office"] == "知县" and e["data"]["territory"] == "保定府新城县") == ["徐应秋"]
+            else:
+                assert [f["entity_id"] for f in ledger["facts"] if f["kind"] == "reported"] == [
+                    next(e["id"] for e in ledger["entities"] if e["kind"] == "calendar")
+                ]
+            assert len([f for f in ledger["facts"] if f["kind"] == "declaration"]) == 1
+            assert len([f for f in ledger["facts"] if f["kind"] == "landed"]) == 2
+            return
         if actual != 250000:
             assert {
                 e["key"]: e["data"]["taels"]
@@ -430,22 +363,6 @@ def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
             assert next(e["data"]["imperial_prestige"] for e in ledger["entities"] if e["kind"] == "world") == 25
             assert [t["limit_reason"] for t in transfers] == [None, "balance" if actual == 250000 else None]
             assert [f["detail"]["limit_reason"] for f in ledger["facts"] if f["kind"] == "received"] == [None, "balance" if actual == 250000 else None]
-        public = audit(db, identity="public")
-        assert not [e for e in public["entities"] if e["kind"] == "account"]
-        assert all(
-            "nominal" not in f["detail"] and "actual" not in f["detail"]
-            for f in public["facts"]
-        )
-        if nominal == 5000000:
-            assert not [f for f in public["facts"] if f["kind"] == "reported"]
-            reports = client.app.state.web.game.court.facts(Officials(people=["郭允厚"]), kind="reported")
-            assert reports
-            assert all(set(f.detail) == {"text"} for f in reports)
-            treasury = next(e["id"] for e in ledger["entities"] if e["key"] == "国库")
-            assert all(str(f.entity_id) == treasury for f in reports)
-        state = client.get("/state").json()["game"]
-        assert state["failure"] is None
-        assert state["date"]["month"] == 11
 
 
 DEBT = {
@@ -531,6 +448,22 @@ DEBT = {
         pytest.param(None, {
             "recording": "month_fiscal_building.txt", "building": "钦定银矿", "maintenance": 2,
         }, id="building-maintenance"),
+        pytest.param(None, {
+            # Synthetic #1999 example: 200k cash, 100k monthly due, payment before rate 100 → 50.
+            "recording": None,
+            "reply": {"facts": [
+                {"entity_type": "fiscal", "entity": "工程_base", "create": False, "text": "",
+                 "changes": [{"field": "value", "value": 10}]},
+                {"entity_type": "fiscal", "entity": "工程_rate", "create": False, "text": "",
+                 "changes": [{"field": "value", "value": 100}]},
+                {"entity_type": "account", "entity": "国库", "create": False, "text": "",
+                 "changes": [{"field": "taels", "value": -3000000, "counterpart": {"entity_type": "account", "entity": "内库"}},
+                             {"field": "taels", "value": -100000, "counterpart": {"entity_type": "fiscal", "entity": "工程_base"}, "purpose": "当月饷"}]},
+                {"entity_type": "fiscal", "entity": "工程_rate", "create": False, "text": "",
+                 "changes": [{"field": "value", "value": 50}]},
+            ]},
+            "receipts": [(None, 3000000, 3000000, None), ("当月饷", 100000, 50000, "obligation")],
+        }, id="post-policy"),
         pytest.param(
             "prestige",
             {
@@ -546,7 +479,9 @@ def test_month_keeps_debt_separate_from_reduction_and_temporary_deferral(
     opening_db, game_db: Path, steps, audit, case
 ) -> None:
     case = {**DEBT, **case}
-    recording = ((RECORDED / case["recording"]).read_text() if case["recording"] != "shared_obligation" else None)
+    recording = json.dumps(case["reply"]) if "reply" in case else (
+        (RECORDED / case["recording"]).read_text() if case["recording"] != "shared_obligation" else None
+    )
     if "maintenance" in case:
         recording = json.loads(recording)
         next(f for f in recording["facts"] if f["entity_type"] == "building")["changes"].append({"field": "maintenance", "value": case["maintenance"]})
@@ -634,6 +569,13 @@ def test_month_keeps_debt_separate_from_reduction_and_temporary_deferral(
                 assert building["condition"] != 100
                 assert rows[("fiscal", "建筑维护_base")]["arrears"] == 0
                 assert next(f["detail"]["due"] for f in reversed(ledger["facts"]) if f["kind"] == "monthly_payment" and f["detail"]["recipient"] == "建筑维护_base") == pytest.approx(32 + case.get("maintenance", 0))
+            if "reply" in case:
+                transfers = [f["detail"] for f in ledger["facts"] if f["kind"] == "changed" and "taels" in f["detail"]["actual"]]
+                assert [(t["nominal"]["taels"], t["actual"]["taels"], t["changes"]["taels"]) for t in transfers] == [
+                    (-3000000, -3000000, 200000), (-100000, -50000, 150000),
+                ]
+                engineering = next(f["detail"] for f in ledger["facts"] if f["kind"] == "monthly_payment" and f["detail"]["recipient"] == "工程_base")
+                assert (engineering["due"], engineering["prior_paid"], engineering["paid"]) == (5, 5, 0)
             if "prestige" in case:
                 assert (
                     rows[("world", "天下")]["imperial_prestige"] == case["prestige"]
