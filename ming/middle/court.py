@@ -176,10 +176,7 @@ class Court:
 
     def settle_accounts(self) -> None:
         accounts = Accounts(self._ledger)
-        if self._ledger.facts(
-            entity_id=accounts.calendar.id, kind="month_accounts", date=accounts.date,
-            query=FACT_ROWS.with_only_columns(F.position).order_by(None).limit(1),
-        ):
+        if self.read.has_facts(accounts.calendar.id, "month_accounts", date=accounts.date):
             return
         accounts.taxes()
         accounts.revenues()

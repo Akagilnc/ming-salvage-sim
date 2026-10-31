@@ -227,15 +227,18 @@ class Records:
         selection: Item = {k: v for k, v in {"kind": kind, "keys" if isinstance(key, list) else "key": key, "ids": ids}.items() if v is not None}
         return entities(self._ledger, identity, selection, opening=self._opening(identity, snapshot=True))
 
+    def _unmatched_query(self, identity: Identity, kind: str, response: str, link: tuple[str, str]) -> Select[Any]:
+        return fact_sources(identity).where(queries.unmatched(kind, response, link))
+
     def unmatched(
         self, identity: Identity, kind: str, response: str, link: tuple[str, str],
     ) -> tuple[FactView, ...]:
         """Facts whose reference has no matching response, ordered by event position."""
-        query = fact_sources(identity).where(queries.unmatched(kind, response, link)).order_by(None).order_by(F.position)
+        query = self._unmatched_query(identity, kind, response, link).order_by(None).order_by(F.position)
         return project(self._ledger, identity, {}, query)
 
     def has_unmatched(self, identity: Identity, kind: str, response: str, link: tuple[str, str]) -> bool:
-        query = fact_sources(identity).where(queries.unmatched(kind, response, link))
+        query = self._unmatched_query(identity, kind, response, link)
         return bool(self._ledger.read(query.with_only_columns(F.position).order_by(None).limit(1), view_parameters(identity)))
 
     def related_details(

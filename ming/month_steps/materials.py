@@ -11,6 +11,8 @@ from ming.middle.declaration import StrictModel
 from ming.middle.view import EntityView, FactView, Identity, Officials, character_input
 
 
+PENDING_PETITIONS: tuple[Identity, str, str, tuple[str, str]] = ("world", "petition", "choice", ("id", "petition_id"))
+
 COST_RULES = """背书（含御笔手敕、御笔强推）本身不走代价轨。
 强颁与预先中旨共用代价轨：实际颁出才付皇威；相关派系／阶级满意度反应可正可负可零。
 预先中旨被驳也有满意度反应与中旨名声，但不执行旨意、不扣皇威；收回、留中不抹去已经发生的中旨尝试反应。
@@ -58,13 +60,13 @@ def next_month(date: dict[str, Any]) -> dict[str, Any]:
 
 def pending_petitions(court: Court) -> tuple[PendingPetition, ...]:
     return tuple(sorted(
-        (as_petition(f) for f in court.read.unmatched("world", "petition", "choice", ("id", "petition_id"))),
+        (as_petition(f) for f in court.read.unmatched(*PENDING_PETITIONS)),
         key=lambda p: (p.available["year"], p.available["month"], p.ordinal),
     ))
 
 
 def has_pending_petitions(court: Court) -> bool:
-    return court.read.has_unmatched("world", "petition", "choice", ("id", "petition_id"))
+    return court.read.has_unmatched(*PENDING_PETITIONS)
 
 
 def petition_officials(court: Court, faction: str | None = None) -> tuple[str, ...]:
