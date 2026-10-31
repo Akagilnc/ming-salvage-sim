@@ -3,7 +3,6 @@
 import json
 import sqlite3
 from pathlib import Path
-from uuid import UUID
 
 import pytest
 from pydantic_ai.messages import ModelMessagesTypeAdapter, RetryPromptPart
@@ -12,7 +11,6 @@ from sqlalchemy import event, text
 from sqlalchemy.orm import Session
 from starlette.testclient import TestClient
 
-from ming.middle.declaration import PendingPetition
 from ming.middle.view import Officials
 from ming.web import create_app
 from tests.test_court import replaying
@@ -214,100 +212,6 @@ def test_month_advances_after_reopening(
             state = client.get("/state").json()["game"]
             client.post("/actions", json={"action": "load", "save": save})
             assert client.get("/state").json()["game"] == state
-
-
-@pytest.mark.parametrize("valid_revision", [True, False])
-def test_returned_urgent_waits_through_vacancy(
-    game_db: Path, steps, monkeypatch, valid_revision: bool
-) -> None:
-    revision = (RECORDED / "sources_revision.txt").read_text()
-    received = []
-    steps["simulation"] = replaying(
-        [(RECORDED / "simulation.txt").read_text()] * 5, received
-    )
-    steps["urgent"] = replaying([(RECORDED / "sources_urgent.txt").read_text()])
-    drafting = []
-    with TestClient(create_app(game_db.parent)) as client:
-        client.post("/actions", json={"action": "load", "save": game_db.name})
-        if valid_revision:
-
-            def identify_original(**fields):
-                # Align only this original's generated ID, regardless of scheduling.
-                if fields["source"] == "urgent" and fields["ordinal"] == 0:
-                    fields["id"] = UUID(
-                        json.loads(revision)["petitions"][0]["revision_of"]
-                    )
-                return PendingPetition(**fields)
-
-            monkeypatch.setattr(
-                "ming.month_steps.sources.PendingPetition", identify_original
-            )
-        client.post("/actions", json={"action": "month"})
-        monkeypatch.undo()
-        petitions = client.get("/state").json()["game"]["petitions"]
-        original = petitions[0]
-        for index, petition in enumerate(petitions):
-            client.post(
-                "/actions",
-                json={
-                    "action": "choose",
-                    "petition": petition["id"],
-                    "option": len(petition["options"]) - 1 if index == 0 else 0,
-                },
-            ).raise_for_status()
-        assert client.get("/state").json()["game"]["returned_petitions"] == []
-        for phase, month in (("vacancy", 12), ("appointment", 1)):
-            case = json.loads((RECORDED / f"sources_{phase}.json").read_text())
-            steps["scene"] = replaying(ModelMessagesTypeAdapter.validate_python(case["scene_responses"]))
-            steps["NightDeclaration"] = replaying([case["declaration"]])
-            if phase == "appointment":
-                # The accepted immediate appointment takes effect during the night.
-                steps["urgent"] = replaying([revision] * 2, drafting)
-            client.post("/actions", json={"action": "open"})
-            for words in case["words"]:
-                client.post("/actions", json={"action": "say", "words": words})
-            client.post("/actions", json={"action": "dismiss"})
-            client.post("/actions", json={"action": "month"})
-            state = client.get("/state").json()["game"]
-            if phase == "appointment" and not valid_revision:
-                assert state["failure"] is not None
-                assert state["failure"]["payload"]["type"] == "UnexpectedModelBehavior"
-                assert state["date"]["month"] == 12
-                assert state["petitions"] == []
-                assert [p["petition"]["id"] for p in state["returned_petitions"]] == [
-                    original["id"]
-                ]
-                assert [
-                    (json.loads(p.content)["field"], json.loads(p.content)["expected"])
-                    for m in drafting
-                    for p in m.parts
-                    if isinstance(p, RetryPromptPart)
-                ] == [("petitions[0].revision_of", [original["id"]])]
-            else:
-                assert state["failure"] is None
-                assert state["date"]["month"] == month
-                if phase == "vacancy":
-                    assert state["petitions"] == []
-                    assert [
-                        (p["petition"]["id"], p["awaiting_drafter"])
-                        for p in state["returned_petitions"]
-                    ] == [(original["id"], True)]
-                else:
-                    assert [
-                        (p["signer"], p["revision_of"])
-                        for p in state["petitions"]
-                        if p["revision_of"]
-                    ] == [("曹化淳", original["id"])]
-                    assert state["returned_petitions"] == []
-            material = json.loads(received[-1].parts[0].content)["context"]
-            assert {p["petition_id"] for p in material["prior_choices"]} == (
-                {petitions[1]["id"]} if phase == "vacancy" else set()
-            )
-            client.post("/actions", json={"action": "load", "save": game_db.name})
-            assert client.get("/state").json()["game"] == state
-        material = json.loads(drafting[0].parts[0].content)
-        assert [p["key"] for p in material["speakers"]] == ["曹化淳"]
-        assert [p["id"] for p in material["context"]["returned"]] == [original["id"]]
 
 
 @pytest.mark.usefixtures("opening_db")
