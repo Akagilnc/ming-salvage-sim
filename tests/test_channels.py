@@ -12,7 +12,7 @@ from pathlib import Path
 from functools import partial
 from shutil import copyfile
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, create_autospec
 
 import httpx2
 import pytest
@@ -24,13 +24,15 @@ from openai.types.responses import (
     ResponseFunctionToolCall,
     ResponseOutputItemDoneEvent,
 )
+from pydantic_ai import Agent
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai.providers.openai_codex import OpenAICodexProvider
 from pydantic_ai.providers.openai import OpenAIProvider
 from starlette.testclient import TestClient
 
 from ming.__main__ import main
-from ming.middle import codex_auth, invoke as invocation
+from ming import game
+from ming.middle import codex_auth
 from ming.middle.cli_model import GROK_OFF
 from ming.middle.opening import opening_template
 from ming.web import create_app
@@ -512,8 +514,8 @@ def test_subscription_month_completes(tmp_path: Path, monkeypatch, backend: str,
     opening_template().parent.mkdir(parents=True, exist_ok=True)
     copyfile(template, opening_template())
     calls = install_process(monkeypatch)
-    agents = Mock(wraps=invocation.Agent)
-    monkeypatch.setattr(invocation, "Agent", agents)
+    agents = create_autospec(Agent.__init__, side_effect=Agent.__init__)
+    monkeypatch.setattr(Agent, "__init__", agents)
     if "deliberation" in expected_calls:
         monkeypatch.setitem(REPLIES, "NightDeclaration", json.loads(
             (RECORDED / "night_endorsed.json").read_text()
@@ -591,8 +593,8 @@ def test_subscription_month_completes(tmp_path: Path, monkeypatch, backend: str,
 ])
 def test_optional_channel_falls_back_and_configure_reopens(game_db, monkeypatch, optional):
     calls = install_process(monkeypatch)
-    agents = Mock(wraps=invocation.Agent)
-    monkeypatch.setattr(invocation, "Agent", agents)
+    agents = create_autospec(Agent.__init__, side_effect=Agent.__init__)
+    monkeypatch.setattr(Agent, "__init__", agents)
     settings = {"backend": "claude-cli", "model": "sonnet", "effort": "medium", **optional}
     (game_db.parent / "settings.json").write_text(json.dumps(settings))
     app = create_app(game_db.parent)
@@ -612,8 +614,8 @@ def test_optional_channel_falls_back_and_configure_reopens(game_db, monkeypatch,
         if not optional:
             calls.clear()
             settings["month_model"] = {"backend": "pi", "model": PI_MODEL, "effort": "high"}
-            factory = Mock(wraps=invocation.configured_model)
-            monkeypatch.setattr(invocation, "configured_model", factory)
+            factory = Mock(wraps=game.configured_model)
+            monkeypatch.setattr(game, "configured_model", factory)
             client.post("/actions", json={"action": "settings", "settings": settings}).raise_for_status()
             assert factory.call_count == 2
             client.post("/actions", json={"action": "month"}).raise_for_status()
@@ -624,7 +626,40 @@ def test_optional_channel_falls_back_and_configure_reopens(game_db, monkeypatch,
             for args, _ in calls:
                 assert args[args.index("--thinking") + 1] == "high"
             assert factory.call_count == 2
-        client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
+        read_chunks = chunks_for
+
+        async def reopen(url):
+            chunks = await read_chunks(url)
+            async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app), base_url="http://test") as http:
+                for action in (
+                    {"action": "menu"},
+                    {"action": "settings", "settings": {
+                        "backend": "claude-cli", "model": "opus", "effort": "high",
+                        "month_model": {"backend": "claude-cli", "model": "reopened-month", "effort": "low"},
+                    }},
+                    {"action": "load", "save": game_db.name},
+                ):
+                    (await http.post("/actions", json=action)).raise_for_status()
+            return chunks
+
+        client.post("/actions", json={"action": "open"}).raise_for_status()
+        client.post("/actions", json={"action": "say", "words": "宣王承恩"}).raise_for_status()
+        drain = app.state.web.game.drain
+        with monkeypatch.context() as patch:
+            patch.setitem(globals(), "chunks_for", reopen)
+            client.post("/actions", json={"action": "dismiss"}).raise_for_status()
+            client.portal.call(drain)
+        for petition in client.get("/state").json()["game"]["petitions"]:
+            client.post("/actions", json={"action": "choose", "petition": petition["id"], "option": 0}).raise_for_status()
+        client.portal.call(drain)
+        calls.clear()
+        client.post("/actions", json={"action": "month"}).raise_for_status()
+        assert client.get("/state").json()["game"]["failure"] is None
+        assert calls
+        for args, _ in calls:
+            assert args[0] == "claude"
+            assert args[args.index("--model") + 1] == "reopened-month"
+            assert args[args.index("--effort") + 1] == "low"
         assert agents.call_count == 0
 
 

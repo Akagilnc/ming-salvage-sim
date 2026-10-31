@@ -35,7 +35,7 @@ from ming.middle.opening import REFERENCES
 from ming.middle.appointments import ALIASES, APPOINTMENT_ROLES, cabinet_members, incumbency_record, office_pairs, reference_key
 from ming.middle.rules import Names, check_rules, fail, name_expected
 from ming.middle.records import TranslationMaterials, read_records
-from ming.middle.invoke import build_agent, invoke
+from ming.middle.invoke import invoke
 from ming.middle.fields import FIELDS_BY_KIND
 
 T = TypeVar("T", bound=Declaration)
@@ -427,7 +427,7 @@ def declaration_agent(
     output_type: type[T],
     instructions: str,
 ) -> Agent[TranslationMaterials, T]:
-    agent = build_agent(
+    agent = Agent(
         tools=[read_records],
         name=output_type.__name__,
         deps_type=TranslationMaterials,

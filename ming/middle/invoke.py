@@ -2,13 +2,13 @@
 
 import asyncio
 import json
-from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable
 from typing import Any, Literal, TypeVar, cast
 
 from httpx2 import TimeoutException
 from openai import APIConnectionError
 from pydantic import BaseModel, field_validator, model_validator
-from pydantic_ai import Agent, AgentRunResult, RunContext, Tool
+from pydantic_ai import Agent, AgentRunResult, RunContext
 from pydantic_ai.messages import (
     AgentStreamEvent,
     PartStartEvent,
@@ -67,14 +67,11 @@ class Configuration(Settings):
         return value
 
 
-ModelSource = Model | Settings
 TextUpdate = str | dict[str, str]
 
 
-def configured_model(settings: ModelSource) -> Model:
-    if isinstance(settings, Model):
-        model = settings
-    elif settings.backend == "claude-cli":
+def configured_model(settings: Settings) -> Model:
+    if settings.backend == "claude-cli":
         model = ClaudeCliModel(settings.model, effort=settings.effort)
     elif settings.backend == "grok":
         model = GrokCliModel(settings.model, effort=settings.effort)
@@ -98,13 +95,6 @@ def configured_model(settings: ModelSource) -> Model:
     if isinstance(model, (OpenAIChatModel, OpenAIResponsesModel)):
         model.client.max_retries = 0
     return model
-
-
-def build_agent(
-    *, tools: Sequence[Callable[..., Any] | Tool[Any]] = (), **kwargs: Any,
-) -> Agent[Any, Any]:
-    """Define a call once; its model and dependencies belong to each run."""
-    return Agent(tools=tools, **kwargs)
 
 
 def transient(error: BaseException) -> bool:

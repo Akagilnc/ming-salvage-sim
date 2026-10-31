@@ -3,17 +3,18 @@
 from collections.abc import Callable
 from functools import partial
 
+from pydantic_ai import Agent
 from pydantic_ai.models import Model
 
 from ming.middle.court import Court
-from ming.middle.invoke import TextUpdate, build_agent, invoke, stream_text
+from ming.middle.invoke import TextUpdate, invoke, stream_text
 from ming.middle.month_work import prompt
 from ming.middle.records import Materials, read_records
 from ming.middle.view import EntityView
 
 
 class Gazette:
-    agent = build_agent(
+    agent = Agent(
         name="gazette",
         output_type=str,
         deps_type=Materials,

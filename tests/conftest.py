@@ -3,7 +3,7 @@
 import asyncio
 import json
 from contextlib import ExitStack, contextmanager
-from collections import UserDict, defaultdict
+from collections import UserDict
 from pathlib import Path
 from shutil import copyfile, copytree
 
@@ -87,11 +87,6 @@ def recorded_steps(case=None, start=0):
 
 
 @pytest.fixture
-def model_invocations():
-    return defaultdict(list)
-
-
-@pytest.fixture
 def steps(request):
     with recorded_steps(getattr(request, "param", None)) as replies:
         yield replies
@@ -135,7 +130,7 @@ def opening_node(tmp_path_factory, variant=None):
             ] = "已准"
             (content / "events.json").write_text(json.dumps(events))
         template = build_opening(content, content / "opening.sqlite")
-        court = Court.new_game(directory, TestModel(), template)
+        court = Court.new_game(directory, template)
         court.close()
         return court.db_path
     with TestClient(create_app(directory)) as client:

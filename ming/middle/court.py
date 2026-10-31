@@ -33,7 +33,6 @@ from ming.middle.declaration import (
     PendingPetition,
     Unhandled,
 )
-from ming.middle.invoke import ModelSource
 from ming.middle.records import TranslationMaterials
 from ming.middle.rules import matching_offices
 from ming.middle.opening import opening_template
@@ -60,11 +59,10 @@ T = TypeVar("T", bound=Declaration)
 
 
 class Court:
-    def __init__(self, db_path: Path, model: ModelSource) -> None:
+    def __init__(self, db_path: Path) -> None:
         if not db_path.is_file():
             raise FileNotFoundError(db_path)
         self.db_path = db_path
-        self.model = model
         self.error_path = db_path.with_suffix(".errors.log")
         self.log = logging.getLogger(f"ming.{db_path.stem}")
         self._log_handler = logging.FileHandler(self.error_path, encoding="utf-8")
@@ -75,7 +73,7 @@ class Court:
 
     @classmethod
     def new_game(
-        cls, directory: Path, model: ModelSource, template: Path | None = None
+        cls, directory: Path, template: Path | None = None
     ) -> "Court":
         template = template if template is not None else opening_template()
         try:
@@ -89,7 +87,7 @@ class Court:
             path = directory / f"{uuid4()}.sqlite"
             with path.open("xb") as destination:
                 copyfileobj(source, destination)
-        return cls(path, model)
+        return cls(path)
 
     def open_night(self) -> tuple[UUID, bool]:
         return open_night(self._ledger)

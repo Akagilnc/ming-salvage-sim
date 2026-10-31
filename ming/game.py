@@ -8,8 +8,7 @@ from uuid import UUID, uuid4
 
 from ming.audience import Audience
 from ming.middle.court import Court
-from ming.middle import invoke as invocation
-from ming.middle.invoke import ModelSource
+from ming.middle.invoke import Settings, configured_model
 from ming.middle.view import EntityView
 from ming.month import Month
 
@@ -30,15 +29,16 @@ class Game:
     def __init__(
         self,
         court: Court,
+        model: Settings,
         *,
-        month_model: ModelSource | None = None,
+        month_model: Settings | None = None,
     ) -> None:
         self.court = court
         self.emit: Callable[[dict[str, Any]], None] | None = None
         self.live: dict[str, str] = {}
         self.audience = Audience(court)
         self.month = Month(court, partial(self.notify, "gazette"))
-        self.configure(court.model, month_model=month_model)
+        self.configure(model, month_model=month_model)
         self.active: asyncio.Task[Any] | None = None
         self.background: set[asyncio.Task[Any]] = set()
         self.translation: asyncio.Task[Any] | None = None
@@ -47,11 +47,11 @@ class Game:
             self.audience.open(nights[-1])
 
     def configure(
-        self, model: ModelSource, *, month_model: ModelSource | None = None,
+        self, model: Settings, *, month_model: Settings | None = None,
     ) -> None:
-        self.audience.model = invocation.configured_model(model)
+        self.audience.model = configured_model(model)
         self.month.model = (
-            invocation.configured_model(month_model)
+            configured_model(month_model)
             if month_model is not None else self.audience.model
         )
 

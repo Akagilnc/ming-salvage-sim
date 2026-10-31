@@ -5,7 +5,7 @@ from typing import Any
 from collections.abc import Callable
 from uuid import UUID, uuid4
 
-from pydantic_ai import PromptedOutput
+from pydantic_ai import Agent, PromptedOutput
 from pydantic_ai.models import Model
 
 from ming.middle.court import Court
@@ -14,7 +14,7 @@ from ming.middle.concepts import (
     INTERIM, MONTH_DRAFT, MONTH_FINAL, PEOPLE, PREVIEW, SECRET, VERDICT,
 )
 from ming.middle.declaration import PendingPetition
-from ming.middle.invoke import build_agent, invoke
+from ming.middle.invoke import invoke
 from ming.middle.month_work import MonthText, Simulation, prompt
 from ming.middle.view import EntityView, character_input
 from ming.middle.records import Materials, read_records
@@ -22,12 +22,12 @@ from ming.middle.records import Materials, read_records
 
 class Simulations:
     instructions = "你推演真实世界，按输入 catalogue 用 read_records 按需查本月实况，日期由输入给定。fiscal_events 是本月到点应呈的饷率事件，写陈情与拟旨，停在本月岔路待皇帝批红，不自行准驳。拨款用途、减额、暂欠、改序与摊派仍由人物与旨意决定。上月急务按所选办理；弹劾按原奏疏的署名人、被劾人及所选处置，写清皇威、发难派系反应及被劾者去留的实际后果。查实再办要查被劾人实有行迹，写清所费工夫、所得及各方反应。arrivals 是账本记定的本月预计抵达人物、目的地与日期。写人物行程先用 read_records 查 distance 的里程与各档天数、人物的 departure_date 与 arrival_date；按引擎记定的预计到达日写，尚未启程者哪天动身由人物与戏文定。事务办完仍是日后人物行事的前情。" + "\n" + "\n".join((MONTH_DRAFT, MONTH_FINAL, FORK, IMPERIAL_PUSH, VERDICT, HELD, SECRET, HANDLER, PEOPLE, ACTING, INTERIM, DISCOVERED, DECREE_EVENT))
-    draft_agent = build_agent(
+    draft_agent = Agent(
         name="simulation", output_type=PromptedOutput(Simulation),
         deps_type=Materials, tools=[read_records], retries=1,
         instructions=instructions,
     )
-    final_agent = build_agent(
+    final_agent = Agent(
         name="month_final", output_type=PromptedOutput(MonthText),
         deps_type=Materials, tools=[read_records], retries=1,
         instructions=instructions + "\n" + PREVIEW,

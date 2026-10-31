@@ -6,7 +6,7 @@ from collections.abc import Callable
 from functools import partial
 from uuid import UUID
 
-from pydantic_ai import RunContext
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.models import Model
 from pydantic_ai.messages import (
     ModelMessage,
@@ -20,7 +20,7 @@ from ming.middle.court import Court
 from ming.middle.concepts import ACTING, AUDIENCE, DECREE, DECREE_EVENT, DISCOVERED, HANDLER, HELD, INTERIM, PEOPLE, SECRET
 from ming.middle.translate import INSTRUCTIONS, declaration_agent
 from ming.middle.declaration import NightDeclaration
-from ming.middle.invoke import TextUpdate, build_agent, invoke, stream_text
+from ming.middle.invoke import TextUpdate, invoke, stream_text
 from ming.middle.night import NightView
 from ming.middle.opening import CONTENT
 from ming.middle.scene import HallResult
@@ -148,7 +148,7 @@ async def dismiss(ctx: RunContext[Audience]) -> None:
     ctx.deps.dismiss()
 
 
-scene = build_agent(
+scene = Agent(
     name="scene",
     output_type=str,
     deps_type=Audience,

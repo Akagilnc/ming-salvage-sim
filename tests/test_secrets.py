@@ -28,10 +28,11 @@ def declaration_reply(messages, response_file, quiet_month=None):
 
 
 @pytest.mark.parametrize("game_db", ["secret_night"], indirect=True)
-def test_every_model_call_reads_identity_scoped_records(game_db, steps, model_invocations):
+def test_every_model_call_reads_identity_scoped_records(game_db, steps):
     names = ("scene", "NightDeclaration", "Declaration", "simulation", "deliberation", "urgent", "impeachment", "secret_report", "gazette")
     received = {name: [] for name in names}
     tools = {name: [] for name in names}
+    model_invocations = {name: [] for name in names}
     declaration = {"facts": [], "decree_events": [], "reports": [{
         "entity_type": "incumbency", "entity": "户部尚书",
         "text": "官报：户部实存银若干。", "audience": "official",

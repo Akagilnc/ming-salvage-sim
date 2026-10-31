@@ -5,14 +5,14 @@ from uuid import UUID, uuid4
 from collections.abc import Awaitable, Callable
 
 from pydantic import Field
-from pydantic_ai import PromptedOutput, RunContext
+from pydantic_ai import Agent, PromptedOutput, RunContext
 from pydantic_ai.models import Model
 
 from ming.middle.calendar import next_month
 from ming.middle.court import Court
 from ming.middle.concepts import ACTING
 from ming.middle.declaration import Petition, PendingPetition, StrictModel
-from ming.middle.invoke import build_agent, gather_or_raise, invoke
+from ming.middle.invoke import gather_or_raise, invoke
 from ming.middle.month_work import prompt
 from ming.middle.records import Materials, read_records
 from ming.middle.view import EntityView, Officials, character_input
@@ -44,7 +44,7 @@ class Impeachments(StrictModel):
 
 class Sources:
     urgent, impeachment = (
-        build_agent(
+        Agent(
             name=kind, output_type=PromptedOutput(output),
             deps_type=Materials, tools=[read_records], retries=1,
             instructions="你演上奏的官员。按输入 catalogue 用 read_records 按需查本人所知见闻；按输入人物立场写下月开局的奏折。正文与选项用奏报口吻，人物才具、操守以言行呈现。" + "\n" + ACTING,

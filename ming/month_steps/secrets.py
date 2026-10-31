@@ -3,18 +3,19 @@
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from pydantic_ai import Agent
 from pydantic_ai.models import Model
 
 from ming.middle.court import Court
 from ming.middle.concepts import HANDLER, PEOPLE, SECRET
-from ming.middle.invoke import build_agent, gather_or_raise, invoke
+from ming.middle.invoke import gather_or_raise, invoke
 from ming.middle.month_work import prompt
 from ming.middle.records import Materials, read_records
 from ming.middle.view import EntityView, Officials, character_input
 
 
 class Secrets:
-    agent = build_agent(
+    agent = Agent(
         name="secret_report",
         output_type=str,
         deps_type=Materials,

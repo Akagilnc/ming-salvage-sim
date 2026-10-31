@@ -154,12 +154,12 @@ class Web:
         else:
             if action == "new":
                 try:
-                    court = Court.new_game(self.directory, model)
+                    court = Court.new_game(self.directory)
                 except FileNotFoundError as error:
                     raise HTTPException(503, str(error)) from error
             else:
-                court = Court(self.directory / save, model)
-            game = Game(court, month_model=model.month_model)
+                court = Court(self.directory / save)
+            game = Game(court, model, month_model=model.month_model)
             game.emit = partial(self.emit, source=game)
         self.menu()
         self.game = game

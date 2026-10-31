@@ -3,19 +3,19 @@
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
-from pydantic_ai import PromptedOutput
+from pydantic_ai import Agent, PromptedOutput
 from pydantic_ai.models import Model
 
 from ming.middle.court import Court
 from ming.middle.concepts import ACTING, IMPERIAL_PUSH, INTERIM, VERDICT
-from ming.middle.invoke import build_agent, gather_or_raise, invoke
+from ming.middle.invoke import gather_or_raise, invoke
 from ming.middle.month_work import Deliberation, prompt
 from ming.middle.records import Materials, read_records
 from ming.middle.view import EntityView, Officials, character_input
 
 
 class Deliberations:
-    agent = build_agent(
+    agent = Agent(
         name="deliberation",
         output_type=PromptedOutput(Deliberation),
         deps_type=Materials,
