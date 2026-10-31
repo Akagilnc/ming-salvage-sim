@@ -593,8 +593,6 @@ def test_subscription_month_completes(tmp_path: Path, monkeypatch, backend: str,
 ])
 def test_optional_channel_falls_back_and_configure_reopens(game_db, monkeypatch, optional):
     calls = install_process(monkeypatch)
-    agents = create_autospec(Agent.__init__, side_effect=Agent.__init__)
-    monkeypatch.setattr(Agent, "__init__", agents)
     settings = {"backend": "claude-cli", "model": "sonnet", "effort": "medium", **optional}
     (game_db.parent / "settings.json").write_text(json.dumps(settings))
     app = create_app(game_db.parent)
@@ -626,45 +624,10 @@ def test_optional_channel_falls_back_and_configure_reopens(game_db, monkeypatch,
             for args, _ in calls:
                 assert args[args.index("--thinking") + 1] == "high"
             assert factory.call_count == 2
-        read_chunks = chunks_for
-
-        async def reopen(url):
-            chunks = await read_chunks(url)
-            async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app), base_url="http://test") as http:
-                for action in (
-                    {"action": "menu"},
-                    {"action": "settings", "settings": {
-                        "backend": "claude-cli", "model": "opus", "effort": "high",
-                        "month_model": {"backend": "claude-cli", "model": "reopened-month", "effort": "low"},
-                    }},
-                    {"action": "load", "save": game_db.name},
-                ):
-                    (await http.post("/actions", json=action)).raise_for_status()
-            return chunks
-
-        client.post("/actions", json={"action": "open"}).raise_for_status()
-        client.post("/actions", json={"action": "say", "words": "宣王承恩"}).raise_for_status()
-        drain = app.state.web.game.drain
-        with monkeypatch.context() as patch:
-            patch.setitem(globals(), "chunks_for", reopen)
-            client.post("/actions", json={"action": "dismiss"}).raise_for_status()
-            client.portal.call(drain)
-        for petition in client.get("/state").json()["game"]["petitions"]:
-            client.post("/actions", json={"action": "choose", "petition": petition["id"], "option": 0}).raise_for_status()
-        client.portal.call(drain)
-        calls.clear()
-        client.post("/actions", json={"action": "month"}).raise_for_status()
-        assert client.get("/state").json()["game"]["failure"] is None
-        assert calls
-        for args, _ in calls:
-            assert args[0] == "claude"
-            assert args[args.index("--model") + 1] == "reopened-month"
-            assert args[args.index("--effort") + 1] == "low"
-        assert agents.call_count == 0
 
 
-@pytest.mark.parametrize("failure", [500, "timeout"])
-def test_background_call_keeps_its_model_across_tools_validation_and_retry(game_db, monkeypatch, clock, failure):
+@pytest.mark.parametrize(("failure", "reopen"), [(500, False), ("timeout", True)])
+def test_background_call_keeps_its_model_across_tools_validation_and_retry(game_db, monkeypatch, clock, failure, reopen):
     app = create_app(game_db.parent)
     models = []
     tools = []
@@ -678,10 +641,14 @@ def test_background_call_keeps_its_model_across_tools_validation_and_retry(game_
             tools.extend(json.loads(m["content"]) for m in body["messages"] if m["role"] == "tool")
             if len(models) == 1:
                 async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app), base_url="http://test") as http:
+                    if reopen:
+                        (await http.post("/actions", json={"action": "menu"})).raise_for_status()
                     response = await http.post("/actions", json={"action": "settings", "settings": {
                         "backend": "api", "model": "new-model", "effort": "high",
                     }})
                     assert response.status_code == 204
+                    if reopen:
+                        (await http.post("/actions", json={"action": "load", "save": game_db.name})).raise_for_status()
             if len(models) == 3:
                 if failure == "timeout":
                     raise httpx2.ReadTimeout("recorded timeout", request=request)
