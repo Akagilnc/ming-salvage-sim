@@ -645,6 +645,8 @@ def test_background_call_keeps_its_model_across_tools_validation_and_retry(game_
                         (await http.post("/actions", json={"action": "menu"})).raise_for_status()
                     response = await http.post("/actions", json={"action": "settings", "settings": {
                         "backend": "api", "model": "new-model", "effort": "high",
+                        "month_model": {"backend": "api", "model": "new-month-model", "effort": "medium",
+                                        "base_url": "https://month.example.test/v1"},
                     }})
                     assert response.status_code == 204
                     if reopen:
@@ -657,8 +659,8 @@ def test_background_call_keeps_its_model_across_tools_validation_and_retry(game_
                 if len(models) == 2:
                     patch.setitem(REPLIES, name, INVALID_NIGHT["reply"])
                 return codex_response(request, read_args={"kind": "person", "key": "王承恩"})
-        assert body["model"] == "new-model"
-        assert body["reasoning_effort"] == "high"
+        assert body["model"] == ("new-model" if name == "scene" else "new-month-model")
+        assert body["reasoning_effort"] == ("high" if name == "scene" else "medium")
         return codex_response(request)
 
     install_codex(monkeypatch, exchange, OpenAIProvider)
@@ -671,6 +673,9 @@ def test_background_call_keeps_its_model_across_tools_validation_and_retry(game_
         assert models == ["old-model"] * 5
         assert tools and all(t["entities"][0]["key"] == "王承恩" for t in tools)
         assert clock == [5]
+        client.post("/actions", json={"action": "month"}).raise_for_status()
+        state = client.get("/state").json()["game"]
+        assert (state["failure"], state["date"]["month"]) == (None, 11)
         client.post("/actions", json={"action": "open"}).raise_for_status()
         client.post("/actions", json={"action": "say", "words": "宣王承恩"}).raise_for_status()
         assert client.get("/state").json()["game"]["failure"] is None
