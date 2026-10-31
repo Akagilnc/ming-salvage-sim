@@ -10,7 +10,7 @@ from ming.web import create_app
 from tests.test_court import RECORDED, replaying
 
 
-@pytest.mark.parametrize("case", ["journeys", "missing_day_month", "missing_day_night", "invalid_speed", "missing_distance"])
+@pytest.mark.parametrize("case", ["journeys", "restart", "retry", "missing_day_month", "missing_day_night", "invalid_speed", "missing_distance"])
 def test_declared_journey_dates_and_month_end_arrival(game_db, steps, audit, case):
     # All seven travellers start in the capital; dates are independent worked examples.
     cases = [
@@ -36,10 +36,29 @@ def test_declared_journey_dates_and_month_end_arrival(game_db, steps, audit, cas
         reply["facts"] = reply["facts"][:1]
         reply["facts"][0]["changes"][0]["value"] = "新地区"
         reply["facts"].append({"entity_type": "region", "entity": "新地区", "create": True, "changes": [], "text": ""})
-    if case != "missing_day_month":
-        reply["decrees"] = []
+    reply.update({} if case == "missing_day_month" else {"decrees": []})
+    # Synthetic lifecycle and retry inputs; recorded missing-day replies stay untouched.
+    if case == "restart":
+        reply["facts"][0]["changes"][1]["value"] = 1
+        reply["facts"][1:1] = [
+            {"entity_type": "person", "entity": "黄立极", "create": False, "text": "",
+             "changes": [{"field": "status", "value": "inactive"}]},
+            {"entity_type": "person", "entity": "黄立极", "create": False, "text": "",
+             "changes": [{"field": "status", "value": "active"}, {"field": "location", "value": "山东"},
+                         {"field": "departure_day", "value": 20}]},
+        ]
+    replies = [json.dumps(reply)] * 2
+    if case == "retry":
+        invalid = json.loads(replies[0])
+        invalid["facts"].extend([
+            {"entity_type": "person", "entity": "黄立极", "create": False, "text": "",
+             "changes": [{"field": "status", "value": "inactive"}]},
+            {"entity_type": "person", "entity": "黄立极", "create": False, "text": "",
+             "changes": [{"field": "status", "value": "active"}, {"field": "location", "value": "山东"}]},
+        ])
+        replies[0] = json.dumps(invalid)
     received = []
-    steps["Declaration" if case == "missing_day_month" else "NightDeclaration"] = replaying([json.dumps(reply)] * 2, received)
+    steps["Declaration" if case == "missing_day_month" else "NightDeclaration"] = replaying(replies, received)
     with TestClient(create_app(game_db.parent)) as client:
         client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
         if case == "missing_day_month":
@@ -50,7 +69,7 @@ def test_declared_journey_dates_and_month_end_arrival(game_db, steps, audit, cas
             client.portal.call(client.app.state.web.game.drain)
         assert client.get("/state").json()["game"]["failure"] is None
         ledger = audit(game_db)
-        if case != "journeys":
+        if case not in {"journeys", "restart", "retry"}:
             assert json.loads(next(p.content for m in received for p in m.parts if p.part_kind == "retry-prompt"))["field"] == {
                 "missing_day_month": "facts[0].departure_day", "missing_day_night": "facts[0].departure_day",
                 "invalid_speed": "facts[0].changes[2].value", "missing_distance": "facts[0].location",
@@ -58,6 +77,11 @@ def test_declared_journey_dates_and_month_end_arrival(game_db, steps, audit, cas
             assert not [f for f in ledger["facts"] if f["kind"] in {"departed", "arrived"}]
             assert len([f for f in ledger["facts"] if f["kind"] == "unhandled"]) == 1
             return
+        assert not [f for f in ledger["facts"] if f["kind"] == "unhandled"]
+        assert len([f for f in ledger["facts"] if f["kind"] == "departed"]) == (8 if case == "restart" else 7)
+        assert [json.loads(p.content)["field"] for m in received for p in m.parts if p.part_kind == "retry-prompt"] == (
+            ["facts[8].departure_day"] if case == "retry" else []
+        )
         data = {e["key"]: e["data"] for e in ledger["entities"] if e["kind"] == "person"}
         for name, destination, _, day, pace, expected in cases:
             assert data[name]["departure_date"] == {"year": 1627, "month": 10, "day": day}

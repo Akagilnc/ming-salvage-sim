@@ -38,7 +38,7 @@ from ming.middle.rules import matching_offices
 from ming.middle.opening import opening_template
 from ming.middle.night import NightView, dismiss, known_people, open_night, read_nights
 from ming.middle.scene import HallResult, set_hall
-from ming.middle.translate import declaration_agent, translate
+from ming.middle.translate import check, declaration_agent, translate
 from ming.middle.translate import catalogue as names_and_aliases
 from ming.middle.view import (
     EntityView,
@@ -269,6 +269,8 @@ class Court:
         *,
         monthly: LandingMode | None = None,
     ) -> None:
+        if isinstance(result, Declaration) and result.prepared is None:
+            check(self._ledger, result, source)
         dispatch(self._ledger, result, source, monthly)
 
     def record_catalogue(

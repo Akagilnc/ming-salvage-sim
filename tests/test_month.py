@@ -310,6 +310,7 @@ def test_returned_urgent_waits_through_vacancy(
         assert [p["id"] for p in material["context"]["returned"]] == [original["id"]]
 
 
+@pytest.mark.usefixtures("opening_db")
 @pytest.mark.parametrize(
     ("opening_db", "case", "game_db"),
     [(None, case, "payment_night" if isinstance(case[0], str) else "opening_db") for case in [
@@ -321,27 +322,34 @@ def test_returned_urgent_waits_through_vacancy(
         (5000000, 3200000, False),
         (5000000, 3200000, "write"),
         (5000000, 3200000, "commit"),
+        (5000000, 3200000, "archive"),
     ]] + [("two-payments-shortage", ("combined", 250000, False), "shortage_payment_night")],
     indirect=["opening_db", "game_db"],
 )
 def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
-    game_db: Path, case, steps, audit, opening_db
+    game_db: Path, case, steps, audit, model_invocations
 ) -> None:
     nominal, actual, interrupt = case
-    recorded = (
+    steps["Declaration"] = replaying([
         (RECORDED / f"month_two_payments_{nominal}.txt").read_text()
         if isinstance(nominal, str)
         else json.loads((RECORDED / f"month_money_once_{nominal}.json").read_text())["reply"]
-    )
-    steps["Declaration"] = replaying(lambda _: recorded)
+    ])
     observed = []
 
-    def before_commit(session):
-        # Outer SQLAlchemy commit: events and read rows exist, none durable.
-        current = tuple(session.execute(text(q)).scalar_one() for q in LANDING)
-        if current[1] and not observed:
+    def interrupt_commit(session):
+        if interrupt == "archive":
+            # The declaration is durable, but no prepared consequences have landed.
+            with sqlite3.connect(game_db) as connection:
+                current = tuple(connection.execute(q).fetchone()[0] for q in LANDING)
+                ready = connection.execute("SELECT count(*) FROM facts WHERE kind='declaration'").fetchone()[0]
+        else:
+            # Outer commit: events and read rows exist, none durable.
+            current = tuple(session.execute(text(q)).scalar_one() for q in LANDING)
+            ready = current[1]
+        if ready and not observed:
             observed.append(current)
-            raise RuntimeError("injected pre-commit failure")
+            raise RuntimeError("injected commit interruption")
 
     with TestClient(create_app(game_db.parent)) as client:
         client.post(
@@ -353,13 +361,14 @@ def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
                 connection.execute(
                     "CREATE TRIGGER interrupt BEFORE UPDATE ON entities WHEN NEW.key='内库' BEGIN SELECT RAISE(ABORT, 'injected'); END"
                 )
-        if interrupt == "commit":
-            event.listen(Session, "before_commit", before_commit)
+        commit_event = "after_commit" if interrupt == "archive" else "before_commit"
+        if interrupt in {"commit", "archive"}:
+            event.listen(Session, commit_event, interrupt_commit)
         try:
             client.post("/actions", json={"action": "month"})
         finally:
-            if interrupt == "commit":
-                event.remove(Session, "before_commit", before_commit)
+            if interrupt in {"commit", "archive"}:
+                event.remove(Session, commit_event, interrupt_commit)
         with sqlite3.connect(db) as connection:
             durable = tuple(connection.execute(q).fetchone()[0] for q in LANDING)
         assert bool(durable[1]) != bool(interrupt)
@@ -374,8 +383,9 @@ def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
                 if e["kind"] == "account"
             } == {"国库": 3200000, "内库": 4400000, "节慎库": 600000, "常盈库": 1200000}
             assert not [
-                f for f in ledger["facts"] if f["kind"] in {"changed", "landed"}
+                f for f in ledger["facts"] if f["kind"] in {"changed", "landed", "received", "unhandled"}
             ]
+            assert len([f for f in ledger["facts"] if f["kind"] == "declaration"]) == 1
             with sqlite3.connect(db) as connection:
                 connection.execute("DROP TRIGGER IF EXISTS interrupt")
             client.post("/actions", json={"action": "load", "save": db.name})
@@ -429,6 +439,10 @@ def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
         state = client.get("/state").json()["game"]
         assert state["failure"] is None
         assert state["date"]["month"] == 11
+        assert len(model_invocations["Declaration"]) == 1
+        client.post("/actions", json={"action": "load", "save": db.name}).raise_for_status()
+        assert audit(db) == ledger
+        assert len(model_invocations["Declaration"]) == 1
 
 
 DEBT = {
@@ -514,6 +528,22 @@ DEBT = {
         pytest.param(None, {
             "recording": "month_fiscal_building.txt", "building": "钦定银矿", "maintenance": 2,
         }, id="building-maintenance"),
+        pytest.param(None, {
+            # Synthetic #1999 example: 200k cash, 100k monthly due, payment before rate 100 → 50.
+            "recording": None,
+            "reply": {"facts": [
+                {"entity_type": "fiscal", "entity": "工程_base", "create": False, "text": "",
+                 "changes": [{"field": "value", "value": 10}]},
+                {"entity_type": "fiscal", "entity": "工程_rate", "create": False, "text": "",
+                 "changes": [{"field": "value", "value": 100}]},
+                {"entity_type": "account", "entity": "国库", "create": False, "text": "",
+                 "changes": [{"field": "taels", "value": -3000000, "counterpart": {"entity_type": "account", "entity": "内库"}},
+                             {"field": "taels", "value": -100000, "counterpart": {"entity_type": "fiscal", "entity": "工程_base"}, "purpose": "当月饷"}]},
+                {"entity_type": "fiscal", "entity": "工程_rate", "create": False, "text": "",
+                 "changes": [{"field": "value", "value": 50}]},
+            ]},
+            "receipts": [(None, 3000000, 3000000, None), ("当月饷", 100000, 50000, "obligation")],
+        }, id="post-policy"),
         pytest.param(
             "prestige",
             {
@@ -529,7 +559,9 @@ def test_month_keeps_debt_separate_from_reduction_and_temporary_deferral(
     opening_db, game_db: Path, steps, audit, case
 ) -> None:
     case = {**DEBT, **case}
-    recording = ((RECORDED / case["recording"]).read_text() if case["recording"] != "shared_obligation" else None)
+    recording = json.dumps(case["reply"]) if "reply" in case else (
+        (RECORDED / case["recording"]).read_text() if case["recording"] != "shared_obligation" else None
+    )
     if "maintenance" in case:
         recording = json.loads(recording)
         next(f for f in recording["facts"] if f["entity_type"] == "building")["changes"].append({"field": "maintenance", "value": case["maintenance"]})
@@ -617,6 +649,13 @@ def test_month_keeps_debt_separate_from_reduction_and_temporary_deferral(
                 assert building["condition"] != 100
                 assert rows[("fiscal", "建筑维护_base")]["arrears"] == 0
                 assert next(f["detail"]["due"] for f in reversed(ledger["facts"]) if f["kind"] == "monthly_payment" and f["detail"]["recipient"] == "建筑维护_base") == pytest.approx(32 + case.get("maintenance", 0))
+            if "reply" in case:
+                transfers = [f["detail"] for f in ledger["facts"] if f["kind"] == "changed" and "taels" in f["detail"]["actual"]]
+                assert [(t["nominal"]["taels"], t["actual"]["taels"], t["changes"]["taels"]) for t in transfers] == [
+                    (-3000000, -3000000, 200000), (-100000, -50000, 150000),
+                ]
+                engineering = next(f["detail"] for f in ledger["facts"] if f["kind"] == "monthly_payment" and f["detail"]["recipient"] == "工程_base")
+                assert (engineering["due"], engineering["prior_paid"], engineering["paid"]) == (5, 5, 0)
             if "prestige" in case:
                 assert (
                     rows[("world", "天下")]["imperial_prestige"] == case["prestige"]

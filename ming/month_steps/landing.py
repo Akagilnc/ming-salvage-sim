@@ -38,7 +38,5 @@ class Landing:
             self.court.record_product(calendar.id, "declaration", product)
         else:
             product = declarations[0].detail
-        self.court.land(
-            (Unhandled if product["unhandled"] else Declaration).model_validate(product["result"]),
-            calendar.id, monthly="landed",
-        )
+            result = (Unhandled if product["unhandled"] else Declaration).model_validate(product["result"])
+        self.court.land(result, calendar.id, monthly="landed")

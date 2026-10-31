@@ -3,10 +3,13 @@
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
+
+from ming.ledger import Entity, Item
 
 
 LandingMode = Literal["landed", "attempted"]
+type Prepared = tuple[list[Entity], list[tuple[Item, LandingMode | None, list[Item]]], str, Item]
 
 
 class Unhandled(BaseModel):
@@ -122,9 +125,19 @@ class DecreeEvent(StrictModel):
 
 
 class Declaration(StrictModel):
+    # Attempt-local native aggregates; never part of model input or the archive.
+    _prepared: Prepared | None = PrivateAttr(default=None)
     facts: list[Fact]
     reports: list[Report] = Field(default_factory=list[Report])
     decree_events: list[DecreeEvent] = Field(default_factory=list[DecreeEvent])
+
+    @property
+    def prepared(self) -> Prepared | None:
+        return self._prepared
+
+    @prepared.setter
+    def prepared(self, value: Prepared | None) -> None:
+        self._prepared = value
 
 
 class Endorsement(StrictModel):
