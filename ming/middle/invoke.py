@@ -71,50 +71,40 @@ ModelSource = Model | Settings
 TextUpdate = str | dict[str, str]
 
 
-def configured_model(settings: Settings) -> Model:
-    if settings.backend == "claude-cli":
-        return ClaudeCliModel(settings.model, effort=settings.effort)
-    if settings.backend == "grok":
-        return GrokCliModel(settings.model, effort=settings.effort)
-    if settings.backend == "pi":
-        return PiCliModel(settings.model, effort=settings.effort)
-    native_settings = (
-        cast(ModelSettings, {"openai_reasoning_effort": settings.effort})
-        if settings.effort else None
-    )
-    if settings.backend == "codex":
-        return codex_model(settings.model, settings=native_settings)
-    return OpenAIChatModel(
-        settings.model or "gpt-4.1",
-        settings=native_settings,
-        provider=OpenAIProvider(
-            base_url=settings.base_url, api_key=settings.api_key or "not-configured"
-        ),
-    )
+def configured_model(settings: ModelSource) -> Model:
+    if isinstance(settings, Model):
+        model = settings
+    elif settings.backend == "claude-cli":
+        model = ClaudeCliModel(settings.model, effort=settings.effort)
+    elif settings.backend == "grok":
+        model = GrokCliModel(settings.model, effort=settings.effort)
+    elif settings.backend == "pi":
+        model = PiCliModel(settings.model, effort=settings.effort)
+    else:
+        native_settings = (
+            cast(ModelSettings, {"openai_reasoning_effort": settings.effort})
+            if settings.effort else None
+        )
+        if settings.backend == "codex":
+            model = codex_model(settings.model, settings=native_settings)
+        else:
+            model = OpenAIChatModel(
+                settings.model or "gpt-4.1",
+                settings=native_settings,
+                provider=OpenAIProvider(
+                    base_url=settings.base_url, api_key=settings.api_key or "not-configured"
+                ),
+            )
+    if isinstance(model, (OpenAIChatModel, OpenAIResponsesModel)):
+        model.client.max_retries = 0
+    return model
 
 
 def build_agent(
-    model: ModelSource,
-    *,
-    tools: Sequence[Callable[..., Any] | Tool[Any]] = (),
-    agent: Agent[Any, Any] | None = None,
-    **kwargs: Any,
+    *, tools: Sequence[Callable[..., Any] | Tool[Any]] = (), **kwargs: Any,
 ) -> Agent[Any, Any]:
-    """Bind a call's model and tools, initially or for its future runs."""
-    if agent is None:
-        agent = Agent(tools=tools, **kwargs)
-    if isinstance(model, Settings):
-        model = configured_model(model)
-    if isinstance(model, CliHost):
-        tools = [
-            tool for toolset in agent.toolsets if isinstance(toolset, FunctionToolset)
-            for tool in toolset.tools.values()
-        ]
-        model = type(model)(model.cli_name, tools, effort=model.effort)
-    if isinstance(model, (OpenAIChatModel, OpenAIResponsesModel)):
-        model.client.max_retries = 0
-    agent.model = model
-    return agent
+    """Define a call once; its model and dependencies belong to each run."""
+    return Agent(tools=tools, **kwargs)
 
 
 def transient(error: BaseException) -> bool:
@@ -149,8 +139,15 @@ async def stream_text(
 
 
 async def invoke(
-    agent: Agent[D, T], prompt: str | list[str] | dict[str, Any], **kwargs: Any
+    agent: Agent[D, T], prompt: str | list[str] | dict[str, Any],
+    *, model: Model, **kwargs: Any,
 ) -> AgentRunResult[T]:
+    if isinstance(model, CliHost):
+        tools = [
+            tool for toolset in agent.toolsets if isinstance(toolset, FunctionToolset)
+            for tool in toolset.tools.values()
+        ]
+        model = type(model)(model.cli_name, tools, effort=model.effort)
     if isinstance(prompt, dict):
         prompt = json.dumps(prompt, ensure_ascii=False)
     async for attempt in AsyncRetrying(
@@ -160,7 +157,7 @@ async def invoke(
         reraise=True,
     ):
         with attempt:
-            return await agent.run(prompt, **kwargs)
+            return await agent.run(prompt, model=model, **kwargs)
     raise AssertionError("tenacity completed without a result")
 
 

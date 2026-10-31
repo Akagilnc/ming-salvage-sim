@@ -12,7 +12,7 @@ from pathlib import Path
 from functools import partial
 from shutil import copyfile
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import httpx2
 import pytest
@@ -30,11 +30,11 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from starlette.testclient import TestClient
 
 from ming.__main__ import main
-from ming.middle import codex_auth
+from ming.middle import codex_auth, invoke as invocation
 from ming.middle.cli_model import GROK_OFF
 from ming.middle.opening import opening_template
 from ming.web import create_app
-from tests.conftest import RECORDED, RECORDED_REPLIES
+from tests.conftest import CALLS, INVALID_NIGHT, RECORDED, RECORDED_REPLIES
 
 CODEX_MODEL = "gpt-6.1-sol"
 PI_MODEL = f"openai-codex/{CODEX_MODEL}"
@@ -227,6 +227,11 @@ def codex_response(
             "choices": [{"index": 0, "message": {"role": "assistant", "content": reply},
                          "finish_reason": "stop"}],
         }
+        if read_args is not None and not any(m["role"] == "tool" for m in body["messages"]):
+            completion["choices"] = [{"index": 0, "finish_reason": "tool_calls", "message": {
+                "role": "assistant", "tool_calls": [{"id": "call_ledger", "type": "function",
+                    "function": {"name": "read_records", "arguments": json.dumps(read_args)}}],
+            }}]
         if body.get("stream"):
             completion["object"] = "chat.completion.chunk"
             completion["choices"] = [{"index": 0, "delta": {"role": "assistant", "content": reply},
@@ -497,7 +502,7 @@ def test_codex_settings_require_a_model(tmp_path: Path) -> None:
     ("grok", "opening_db", {"Declaration"}), ("pi", "opening_db", {"Declaration"}),
     ("codex", "opening_db", set()), ("api", "opening_db", set()),
     ("claude-cli", "secret_night", {"secret_report", "Declaration"}),
-    ("claude-cli", "backed_night", {"deliberation", "Declaration"}),
+    ("claude-cli", "backed_night", {"deliberation", "Declaration", "month_final"}),
 ], indirect=["game_db"])
 def test_subscription_month_completes(tmp_path: Path, monkeypatch, backend: str, game_db: Path, expected_calls) -> None:
     template = opening_template()
@@ -507,10 +512,13 @@ def test_subscription_month_completes(tmp_path: Path, monkeypatch, backend: str,
     opening_template().parent.mkdir(parents=True, exist_ok=True)
     copyfile(template, opening_template())
     calls = install_process(monkeypatch)
+    agents = Mock(wraps=invocation.Agent)
+    monkeypatch.setattr(invocation, "Agent", agents)
     if "deliberation" in expected_calls:
         monkeypatch.setitem(REPLIES, "NightDeclaration", json.loads(
             (RECORDED / "night_endorsed.json").read_text()
         )["replies"][0])
+        monkeypatch.setitem(REPLIES, "simulation", (RECORDED / "month_petition.txt").read_text())
     bodies = []
     if backend in {"api", "codex"}:
         home = tmp_path / "codex"
@@ -527,7 +535,8 @@ def test_subscription_month_completes(tmp_path: Path, monkeypatch, backend: str,
             "month_model": {"backend": backend, "model": CODEX_MODEL if backend in {"api", "codex"} else PI_MODEL,
                             "effort": "high", "base_url": "https://month.example.test/v1", "api_key": "month-key"},
         }
-        open_game(client, settings, None if backend == "pi" else game_db)
+        open_game(client, {"backend": "claude-cli", "model": "stale-model"}, None if backend == "pi" else game_db)
+        client.post("/actions", json={"action": "settings", "settings": settings}).raise_for_status()
         if backend == "pi":
             client.post("/actions", json={"action": "open"}).raise_for_status()
             client.post("/actions", json={"action": "say", "words": "宣王承恩"}).raise_for_status()
@@ -536,9 +545,15 @@ def test_subscription_month_completes(tmp_path: Path, monkeypatch, backend: str,
             client.portal.call(app.state.web.game.drain)
         client.post("/actions", json={"action": "month"}).raise_for_status()
         state = client.get("/state").json()
+        for petition in state["game"]["petitions"]:
+            client.post("/actions", json={"action": "choose", "petition": petition["id"], "option": 0}).raise_for_status()
+        client.portal.call(app.state.web.game.drain)
+        state = client.get("/state").json()
         if backend == "grok":
             client.post("/actions", json={"action": "month"}).raise_for_status()
             assert client.get("/state").json()["game"]["failure"] is None
+    assert agents.call_count == 0
+    assert all(agent.model is None for agent in CALLS.values())
     assert state["game"]["failure"] is None
     assert state["game"]["date"]["month"] == 11
     assert state["settings"]["month_model"] == settings["month_model"]
@@ -564,10 +579,9 @@ def test_subscription_month_completes(tmp_path: Path, monkeypatch, backend: str,
             flag = {"claude-cli": "--effort", "grok": "--reasoning-effort", "pi": "--thinking"}[backend]
             assert args[args.index(flag) + 1] == "high"
     assert {info["agent"] for _, info in calls} >= expected_calls
-    if backend == "grok":
-        trust = [args for args, _kwargs in calls if "--trust" in args]
-        assert trust
-        assert len(trust) == len({args[args.index("--cwd") + 1] for args in trust})
+    trust = [args for args, _kwargs in calls if "--trust" in args]
+    assert bool(trust) == (backend == "grok")
+    assert len(trust) == len({args[args.index("--cwd") + 1] for args in trust})
 
 
 @pytest.mark.parametrize("optional", [
@@ -577,6 +591,8 @@ def test_subscription_month_completes(tmp_path: Path, monkeypatch, backend: str,
 ])
 def test_optional_channel_falls_back_and_configure_reopens(game_db, monkeypatch, optional):
     calls = install_process(monkeypatch)
+    agents = Mock(wraps=invocation.Agent)
+    monkeypatch.setattr(invocation, "Agent", agents)
     settings = {"backend": "claude-cli", "model": "sonnet", "effort": "medium", **optional}
     (game_db.parent / "settings.json").write_text(json.dumps(settings))
     app = create_app(game_db.parent)
@@ -596,7 +612,10 @@ def test_optional_channel_falls_back_and_configure_reopens(game_db, monkeypatch,
         if not optional:
             calls.clear()
             settings["month_model"] = {"backend": "pi", "model": PI_MODEL, "effort": "high"}
+            factory = Mock(wraps=invocation.configured_model)
+            monkeypatch.setattr(invocation, "configured_model", factory)
             client.post("/actions", json={"action": "settings", "settings": settings}).raise_for_status()
+            assert factory.call_count == 2
             client.post("/actions", json={"action": "month"}).raise_for_status()
             state = client.get("/state").json()
             assert state["game"]["failure"] is None
@@ -604,6 +623,55 @@ def test_optional_channel_falls_back_and_configure_reopens(game_db, monkeypatch,
             assert calls
             for args, _ in calls:
                 assert args[args.index("--thinking") + 1] == "high"
+            assert factory.call_count == 2
+        client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
+        assert agents.call_count == 0
+
+
+@pytest.mark.parametrize("failure", [500, "timeout"])
+def test_background_call_keeps_its_model_across_tools_validation_and_retry(game_db, monkeypatch, clock, failure):
+    app = create_app(game_db.parent)
+    models = []
+    tools = []
+
+    async def exchange(request):
+        body = json.loads(request.content)
+        name = get_current_run_context().agent.name
+        if name == "NightDeclaration":
+            models.append(body["model"])
+            assert body["reasoning_effort"] == "low"
+            tools.extend(json.loads(m["content"]) for m in body["messages"] if m["role"] == "tool")
+            if len(models) == 1:
+                async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app), base_url="http://test") as http:
+                    response = await http.post("/actions", json={"action": "settings", "settings": {
+                        "backend": "api", "model": "new-model", "effort": "high",
+                    }})
+                    assert response.status_code == 204
+            if len(models) == 3:
+                if failure == "timeout":
+                    raise httpx2.ReadTimeout("recorded timeout", request=request)
+                return httpx2.Response(500, json={"error": {"message": "recorded failure"}})
+            with monkeypatch.context() as patch:
+                if len(models) == 2:
+                    patch.setitem(REPLIES, name, INVALID_NIGHT["reply"])
+                return codex_response(request, read_args={"kind": "person", "key": "王承恩"})
+        assert body["model"] == "new-model"
+        assert body["reasoning_effort"] == "high"
+        return codex_response(request)
+
+    install_codex(monkeypatch, exchange, OpenAIProvider)
+    with TestClient(app) as client:
+        open_game(client, {"backend": "api", "model": "old-model", "effort": "low"}, game_db)
+        client.post("/actions", json={"action": "open"}).raise_for_status()
+        client.post("/actions", json={"action": "dismiss"}).raise_for_status()
+        client.portal.call(app.state.web.game.drain)
+        assert client.get("/state").json()["game"]["failure"] is None
+        assert models == ["old-model"] * 5
+        assert tools and all(t["entities"][0]["key"] == "王承恩" for t in tools)
+        assert clock == [5]
+        client.post("/actions", json={"action": "open"}).raise_for_status()
+        client.post("/actions", json={"action": "say", "words": "宣王承恩"}).raise_for_status()
+        assert client.get("/state").json()["game"]["failure"] is None
 
 
 def test_codex_forwards_a_ledger_sized_tool_result(tmp_path: Path, monkeypatch, game_db: Path) -> None:

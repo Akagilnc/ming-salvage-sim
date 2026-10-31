@@ -159,7 +159,7 @@ class Web:
                     raise HTTPException(503, str(error)) from error
             else:
                 court = Court(self.directory / save, model)
-            game = Game(court, model, month_model=model.month_model)
+            game = Game(court, month_model=model.month_model)
             game.emit = partial(self.emit, source=game)
         self.menu()
         self.game = game

@@ -53,7 +53,7 @@ def test_every_model_call_reads_identity_scoped_records(game_db, steps, model_in
                                           ToolCallPart("read_records", {"kind": "account", "key": "国库"}, tool_call_id="treasury"),
                                           ToolCallPart("read_records", {"kind": "faction", "key": ["阉党", "东林"]}, tool_call_id="factions"),
                                       ])]),
-            received[name], tools[name],
+            received[name], tools[name], model_invocations[name],
         )
     with TestClient(create_app(game_db.parent)) as client:
         client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()

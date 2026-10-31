@@ -10,6 +10,7 @@ from typing import TypeVar
 from uuid import UUID, uuid4
 
 from pydantic_ai import Agent
+from pydantic_ai.models import Model
 from sqlalchemy import JSON, func, or_, select, tuple_
 from ming.ledger import (
     ENTITY_COLUMNS as E,
@@ -38,7 +39,7 @@ from ming.middle.rules import matching_offices
 from ming.middle.opening import opening_template
 from ming.middle.night import NightView, dismiss, known_people, open_night, read_nights
 from ming.middle.scene import HallResult, set_hall
-from ming.middle.translate import declaration_agent, translate
+from ming.middle.translate import translate
 from ming.middle.translate import catalogue as names_and_aliases
 from ming.middle.view import (
     EntityView,
@@ -247,18 +248,11 @@ class Court:
         targets[entity_id].record(kind, "", {**detail, "date": date})
         self._ledger.commit(list(targets.values()))
 
-    def translation_agent(
-        self, output_type: type[T], instructions: str,
-        *, model: ModelSource | None = None,
-    ) -> Agent[TranslationMaterials, T]:
-        return declaration_agent(
-            self.model if model is None else model, self._ledger, output_type, instructions
-        )
-
     async def translate(
-        self, agent: Agent[TranslationMaterials, T], prompt: str, source: UUID
+        self, agent: Agent[TranslationMaterials, T], prompt: str, source: UUID,
+        *, model: Model,
     ) -> T | Unhandled:
-        result = await translate(agent, prompt, TranslationMaterials(self, "world", source))
+        result = await translate(agent, prompt, TranslationMaterials(self, "world", source, self._ledger), model)
         self.log.info("translation output: %s", result.model_dump_json())
         return result
 

@@ -5,6 +5,7 @@ from pathlib import Path
 from collections.abc import AsyncIterator, Callable, Sequence
 
 import pytest
+from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel, DeltaToolCall
 from starlette.testclient import TestClient
@@ -20,11 +21,14 @@ def replaying(
     | Callable[[list[ModelMessage]], str | ModelResponse | Exception],
     received: list[ModelMessage] | None = None,
     toolsets: list[list[str]] | None = None,
+    identities: list | None = None,
 ) -> FunctionModel:
     remaining = iter(replies) if not callable(replies) else iter(())
 
     async def reply(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         # Native async callback; model I/O alone is replaced.
+        if identities is not None:
+            identities.append(get_current_run_context().deps.identity)
         if received is not None:
             received.extend(_messages)
         if toolsets is not None:

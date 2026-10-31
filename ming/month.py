@@ -4,9 +4,12 @@ import asyncio
 from collections.abc import Callable
 from typing import Any
 
+from pydantic_ai.models import Model
+
 from ming.middle.court import Court
 from ming.middle.declaration import PendingPetition
-from ming.middle.invoke import ModelSource, TextUpdate, gather_or_raise
+
+from ming.middle.invoke import TextUpdate, gather_or_raise
 from ming.middle.view import EntityView
 from ming.month_steps.deliberation import Deliberations
 from ming.month_steps.simulation import Simulations
@@ -19,10 +22,12 @@ from ming.month_steps.secrets import Secrets
 
 class Month:
     def __init__(
-        self, court: Court, model: ModelSource,
+        self, court: Court,
         on_delta: Callable[[TextUpdate], None] | None = None,
     ) -> None:
         self.court = court
+        self.model: Model
+        model = lambda: self.model
         self.deliberations = Deliberations(court, model)
         self.simulations = Simulations(court, model)
         self.inbox = Inbox(court)

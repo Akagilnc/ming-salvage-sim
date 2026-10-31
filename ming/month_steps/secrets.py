@@ -1,27 +1,29 @@
 """Each unfinished secret errand's own report."""
 
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from typing import Any
+
+from pydantic_ai.models import Model
 
 from ming.middle.court import Court
 from ming.middle.concepts import HANDLER, PEOPLE, SECRET
-from ming.middle.invoke import ModelSource, build_agent, gather_or_raise, invoke
+from ming.middle.invoke import build_agent, gather_or_raise, invoke
 from ming.middle.month_work import prompt
 from ming.middle.records import Materials, read_records
 from ming.middle.view import EntityView, Officials, character_input
 
 
 class Secrets:
-    def __init__(self, court: Court, model: ModelSource) -> None:
-        self.court = court
-        self.agent = build_agent(
-            model,
-            name="secret_report",
-            output_type=str,
-            deps_type=Materials,
-            tools=[read_records],
-            instructions="按本月实况与风声，用本旨承办人复命的口吻给皇帝写这一道密令的密报。按 catalogue 用 read_records 查本人所知材料，按本人的立场与利害复命；查得什么、听得什么、尚有何难处，由承办人据其所知复命。人物的打算与文字由你发挥。" + "\n" + "\n".join((SECRET, HANDLER, PEOPLE)),
-        )
+    agent = build_agent(
+        name="secret_report",
+        output_type=str,
+        deps_type=Materials,
+        tools=[read_records],
+        instructions="按本月实况与风声，用本旨承办人复命的口吻给皇帝写这一道密令的密报。按 catalogue 用 read_records 查本人所知材料，按本人的立场与利害复命；查得什么、听得什么、尚有何难处，由承办人据其所知复命。人物的打算与文字由你发挥。" + "\n" + "\n".join((SECRET, HANDLER, PEOPLE)),
+    )
+
+    def __init__(self, court: Court, model: Callable[[], Model]) -> None:
+        self.court, self.model = court, model
 
     async def report(self, decrees: tuple[EntityView, ...], date: dict[str, Any]) -> None:
         pending: dict[str, list[int]] = {}
@@ -51,7 +53,7 @@ class Secrets:
                     )
                 ],
             })},
-            deps=Materials(self.court, identity),
+            deps=Materials(self.court, identity), model=self.model(),
         )
         self.court.log.info("model output: %s", result.output)
         self.court.record_product(decree.id, "secret_report", {"text": result.output})

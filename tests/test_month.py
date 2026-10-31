@@ -3,10 +3,11 @@
 import json
 import sqlite3
 from pathlib import Path
+from shutil import copyfile
 from uuid import UUID
 
 import pytest
-from pydantic_ai.messages import ModelMessagesTypeAdapter, RetryPromptPart
+from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelResponse, RetryPromptPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.test import TestModel
 from sqlalchemy import event, text
 from sqlalchemy.orm import Session
@@ -221,6 +222,8 @@ def test_returned_urgent_waits_through_vacancy(
     game_db: Path, steps, monkeypatch, valid_revision: bool
 ) -> None:
     revision = (RECORDED / "sources_revision.txt").read_text()
+    other_save = game_db.with_name("other.sqlite")
+    copyfile(game_db, other_save)
     received = []
     steps["simulation"] = replaying(
         [(RECORDED / "simulation.txt").read_text()] * 5, received
@@ -308,6 +311,20 @@ def test_returned_urgent_waits_through_vacancy(
         material = json.loads(drafting[0].parts[0].content)
         assert [p["key"] for p in material["speakers"]] == ["曹化淳"]
         assert [p["id"] for p in material["context"]["returned"]] == [original["id"]]
+        drafting.clear()
+        steps["urgent"] = replaying([
+            ModelResponse(parts=[ToolCallPart("read_records", {"kind": "office", "key": "司礼监掌印太监"})]),
+            (RECORDED / "sources_urgent.txt").read_text(),
+        ], drafting)
+        with TestClient(create_app(game_db.parent)) as other:
+            other.post("/actions", json={"action": "load", "save": other_save.name}).raise_for_status()
+            other.post("/actions", json={"action": "month"}).raise_for_status()
+            other_state = other.get("/state").json()["game"]
+            assert (other_state["failure"], other_state["date"]["month"]) == (None, 11)
+            assert {p["signer"] for p in other_state["petitions"]} == {"黄立极", "王体乾"}
+            assert [p.model_response_object()["appointments"][0]["holders"]
+                    for m in drafting for p in m.parts if isinstance(p, ToolReturnPart)] == [["王体乾"]]
+            assert client.get("/state").json()["game"] == state
 
 
 @pytest.mark.parametrize(
