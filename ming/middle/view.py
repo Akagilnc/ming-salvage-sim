@@ -174,6 +174,7 @@ def entities(
             for e in opening["detail"]["entities"]
             if all(e[k] == v for k, v in selection.items())
             and (keys is None or e["key"] in keys)
+            and (ids is None or UUID(e["id"]) in ids)
         )
     query = ENTITY_SOURCES[identity_key(identity)]
     query = query.where(E.kind == selection["kind"]) if selection.get("kind") is not None else query

@@ -5,6 +5,7 @@ import json
 from collections import Counter
 from functools import partial
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 from pydantic_ai._run_context import get_current_run_context
@@ -376,6 +377,22 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
                 [[(f["entity_id"], f["kind"], f["detail"].get("date"))
                   for f in view["facts"] if f["kind"] in {"changed", "arrived", "departed"}] for view in case["views"]],
             ) for value in views[1:])
+            case["selected_id"] = UUID(next(
+                e["id"] for e in case["views"][0]["entities"]
+                if e["kind"] == "person" and e["key"] == "郭允厚"
+            ))
+            assert all(
+                {e.id for e in client.app.state.web.game.court.read.entities("emperor", **selection)} == expected
+                for selection, expected in (
+                    ({"ids": [case["selected_id"]]}, {case["selected_id"]}),
+                    ({"ids": [UUID(int=0)]}, set()),
+                    ({"ids": []}, set()),
+                    ({"ids": [case["selected_id"]], "kind": "person"}, {case["selected_id"]}),
+                    ({"ids": [case["selected_id"]], "kind": "calendar"}, set()),
+                    ({"ids": [case["selected_id"]], "key": "徐光启"}, set()),
+                    ({"ids": [case["selected_id"]], "key": ["郭允厚", "徐光启"]}, {case["selected_id"]}),
+                )
+            )
             assert audit(game_db) == before
             steps["secret_report"] = replaying(
                 [(RECORDED / "secret_report.txt").read_text()] * 2, material
