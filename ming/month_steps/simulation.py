@@ -111,7 +111,7 @@ class Simulations:
 
     def speculate(
         self, calendar: EntityView, pending: tuple[PendingPetition, ...],
-        produced: Draft | None = None,
+        produced: Draft | None,
     ) -> None:
         petitions = tuple(map(as_petition, month_petitions(self.court, calendar.data))) if produced is None else produced.petitions
         if len(petitions) != 1 or petitions[0].id not in {p.id for p in pending}:
@@ -125,11 +125,11 @@ class Simulations:
             options = [option for option in options if option not in existing]
             if not options:
                 return
-            inputs = self.context(calendar, final=True) if produced is None else {
-                **produced.inputs,
-                "catalogue": character_input(self.court.read.record_catalogue("world")),
-                "context": {**produced.inputs["context"], "draft": character_input(produced.product["output"])},
-            }
+            if produced is None:
+                inputs = self.context(calendar, final=True)
+            else:
+                inputs = prompt(self.court, "world", {"draft": produced.product["output"]}, date=calendar.data)
+                inputs["context"] = {**produced.inputs["context"], **inputs["context"]}
         except Exception:
             # Preparing optional candidates has the same failure contract as running them.
             self.court.log.exception("month candidate preparation failed")
@@ -142,7 +142,7 @@ class Simulations:
         # A newly drafted month reaches final only when it has no petitions.
         petitions = {} if produced is not None else {str(p.detail["id"]): p for p in month_petitions(self.court, calendar.data)}
         choices: list[dict[str, Any]] = [{**f.detail, "petition": petitions[f.detail["petition_id"]].detail}
-                   for f in self.court.read.facts("audit", kind="choice", detail={"petition_id": list(petitions)})] if petitions else []
+                   for f in self.court.read.facts("audit", kind="choice", detail={"petition_id": list(petitions)})]
         result: dict[str, Any]
         if len(petitions) == 1:
             petition = as_petition(next(iter(petitions.values())))
