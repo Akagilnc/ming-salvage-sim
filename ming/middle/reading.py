@@ -330,12 +330,17 @@ class Records:
             E.id, select(func.json_group_array(readers.c.person, type_=JSON)).scalar_subquery().label("people"),
         ).where(E.id.in_(ids)))} if ids else {}
 
-    def office_holders(self, offices: tuple[str, ...] | None = None, *, faction: str | None = None) -> tuple[str, ...]:
-        query = ENTITY_ROWS.with_only_columns(E.key).where(E.kind == "person", queries.IN_OFFICE)
+    def office_holders(self, offices: tuple[str, ...] | None = None, *, faction: str | None = None) -> tuple[Item, ...]:
+        query = ENTITY_ROWS.with_only_columns(
+            E.key, E.data["faction"].as_string().label("faction"),
+            queries.CURRENT_APPOINTMENT.with_only_columns(func.json_group_array(
+                queries.APPOINTMENT.data["office"].as_string(), type_=JSON,
+            )).scalar_subquery().label("offices"),
+        ).where(E.kind == "person", queries.IN_OFFICE)
         if offices is not None:
             query = query.where(queries.CURRENT_APPOINTMENT.where(
                 queries.APPOINTMENT.data["office"].as_string().in_(offices),
             ).exists())
         if faction is not None:
             query = query.where(E.data["faction"].as_string() == faction)
-        return tuple(row["key"] for row in self._ledger.read(query))
+        return self._ledger.read(query)

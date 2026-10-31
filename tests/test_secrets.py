@@ -112,7 +112,7 @@ def test_every_model_call_reads_identity_scoped_records(game_db, steps):
                 # origin, not call order or the prose of either decree.
                 if name == "deliberation":
                     decree = json.loads(messages[0].parts[0].content)["context"]["decree"]
-                    if decree["id"] == started[0]:
+                    if decree["id"] == started[0] and len(started) > 1:
                         await release.wait()
                     else:
                         release.set()
@@ -171,7 +171,7 @@ def test_every_model_call_reads_identity_scoped_records(game_db, steps):
             else:
                 assert all(isinstance(identity, Officials) and not identity.exclude_secrets for identity in model_invocations[name])
                 assert {frozenset(identity.people) for identity in model_invocations[name]} == {
-                    frozenset(client.app.state.web.game.court.read.office_holders(faction=faction.key))
+                    frozenset(p["key"] for p in court.office_holders(faction=faction.key))
                     for faction in court.entities("audit", kind="faction")
                 }
             assert_model_read_tools(name, received[name], tools[name], model_invocations[name][0])
@@ -329,6 +329,7 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
             [p["key"] for p in json.loads(part.content)["speakers"]] == [handler]
             for message in material for part in message.parts if part.part_kind == "user-prompt"
         )
+        court = client.app.state.web.game.court.read
         if failure is None:
             returned = next(p.model_response_object() for m in material for p in m.parts if isinstance(p, ToolReturnPart))
             assert {e["key"]: e["data"]["location"] for e in returned["entities"]} == {

@@ -17,7 +17,7 @@ from ming.month_steps.gazette import Gazette
 from ming.month_steps.sources import Sources
 from ming.month_steps.secrets import Secrets
 from ming.month_steps.products import record_product
-from ming.month_steps.materials import PendingPetition, has_pending_petitions, next_month, pending_petitions, pending_pushes, petition_officials
+from ming.month_steps.materials import PETITION_OFFICES, PendingPetition, has_pending_petitions, next_month, pending_petitions, pending_pushes
 
 
 class Month:
@@ -73,7 +73,7 @@ class Month:
     def presentation(self, calendar: EntityView) -> dict[str, Any]:
         """The month's share of the screen; Game owns the action state around it."""
         returned = self.court.returned_petitions(date=calendar.data)
-        awaiting_drafter = bool(returned) and not petition_officials(self.court)
+        awaiting_drafter = bool(returned) and not self.court.read.office_holders(PETITION_OFFICES)
         previous = {"year": calendar.data["year"] - (calendar.data["month"] == 1),
                     "month": (calendar.data["month"] - 2) % 12 + 1}
         return {

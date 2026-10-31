@@ -13,7 +13,7 @@ from starlette.testclient import TestClient
 
 from ming.middle.view import Officials
 from ming.web import create_app
-from tests.test_court import replaying
+from tests.test_court import reopening, replaying
 from tests.test_secrets import _declaration_prompt
 
 RECORDED = Path(__file__).parent / "recorded"
@@ -98,7 +98,8 @@ def test_month_advances_after_reopening(
         ],
         received,
     )
-    with TestClient(create_app(game_db.parent)) as client:
+    with reopening(game_db.parent) as reopen:
+        client = reopen()
         save = client.post(
             "/actions", json={"action": "load", "save": game_db.name}
         ).json()["save"]
@@ -129,6 +130,7 @@ def test_month_advances_after_reopening(
                 assert next(e["data"]["month"] for e in client.get("/records").json()["entities"] if e["kind"] == "calendar") == 10
                 with sqlite3.connect(game_db) as connection:
                     connection.execute("DROP TRIGGER interrupt")
+                client = reopen()
                 client.post("/actions", json={"action": "load", "save": save}).raise_for_status()
                 client.post("/actions", json={"action": "retry"}).raise_for_status()
             state = client.get("/state").json()["game"]
@@ -226,6 +228,7 @@ def test_month_advances_after_reopening(
                 f["entity_id"] for f in ledger["facts"] if f["kind"] in {"month_draft", "month_final"}
             } == {calendar}
             state = client.get("/state").json()["game"]
+            client = reopen()
             client.post("/actions", json={"action": "load", "save": save})
             assert client.get("/state").json()["game"] == state
 
@@ -277,7 +280,8 @@ def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
             observed.append(current)
             raise RuntimeError("injected commit interruption")
 
-    with TestClient(create_app(game_db.parent)) as client:
+    with reopening(game_db.parent) as reopen:
+        client = reopen()
         client.post(
             "/actions", json={"action": "load", "save": game_db.name}
         ).raise_for_status()
@@ -313,6 +317,7 @@ def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
             assert len([f for f in ledger["facts"] if f["kind"] == "declaration"]) == 1
             with sqlite3.connect(game_db) as connection:
                 connection.execute("DROP TRIGGER IF EXISTS interrupt")
+            client = reopen()
             client.post("/actions", json={"action": "load", "save": game_db.name})
             assert client.get("/state").json()["game"]["failure"] is not None
             client.post("/actions", json={"action": "retry"})
@@ -328,12 +333,14 @@ def test_month_lands_both_sides_at_source_stock_and_preserves_nominal(
             reports = client.app.state.web.game.court.read.facts(Officials(people=["郭允厚"]), kind="reported")
             assert reports
             assert all(set(f.detail) == {"text"} for f in reports)
-            treasury = next(e["id"] for e in ledger["entities"] if e["key"] == "国库")
-            assert all(str(f.entity_id) == treasury for f in reports)
+            assert {str(f.entity_id) for f in reports} == {
+                next(e["id"] for e in ledger["entities"] if e["key"] == "国库")
+            }
         state = client.get("/state").json()["game"]
         assert state["failure"] is None
         assert state["date"]["month"] == 11
         assert len(declaration_calls) == 1
+        client = reopen()
         client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
         assert audit(game_db) == ledger
         assert len(declaration_calls) == 1

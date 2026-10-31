@@ -1,5 +1,6 @@
 """Month-end urgent drafting and faction petitions; choices act next month."""
 
+from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, cast
 from uuid import UUID, uuid4
@@ -13,7 +14,7 @@ from ming.middle.court import Court
 from ming.middle.concepts import ACTING
 from ming.middle.declaration import StrictModel
 from ming.middle.invoke import gather_or_raise, invoke
-from ming.month_steps.materials import Petition, PendingPetition, next_month, petition_officials, prepare
+from ming.month_steps.materials import PETITION_OFFICES, Petition, PendingPetition, next_month, prepare
 from ming.middle.records import Materials, read_records
 from ming.middle.view import EntityView, Officials, character_input
 from ming.middle.rules import Names, fail, name_expected
@@ -73,10 +74,16 @@ class Sources:
             "audit", entity_id=[source.id for source, _, _ in sources],
             kind=("urgent", "impeachment"), date=calendar.data,
         )}
+        sources = [(source, kind, faction) for source, kind, faction in sources if (source.id, kind) not in produced]
+        if not sources:
+            return
+        holders: dict[tuple[str, str | None], list[str]] = defaultdict(list)
+        for person in self.court.read.office_holders():
+            holders["impeachment", person["faction"]].append(person["key"])
+            if any(office in PETITION_OFFICES for office in person["offices"]):
+                holders["urgent", None].append(person["key"])
         for index, (source, kind, faction) in enumerate(sources):
-            if (source.id, kind) in produced:
-                continue
-            people = list(petition_officials(self.court, faction))
+            people = holders[kind, faction]
             if kind == "urgent" and not people:
                 record_product(self.court, source.id, kind, {"petitions": [], "date": calendar.data})
                 continue

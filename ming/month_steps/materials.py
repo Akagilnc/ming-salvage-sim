@@ -11,6 +11,8 @@ from ming.middle.declaration import StrictModel
 from ming.middle.view import EntityView, FactView, Identity, Officials, character_input
 
 
+PETITION_OFFICES = ("内阁首辅", "司礼监掌印太监")
+
 PENDING_PETITIONS: tuple[Identity, str, str, tuple[str, str]] = ("world", "petition", "choice", ("id", "petition_id"))
 
 COST_RULES = """背书（含御笔手敕、御笔强推）本身不走代价轨。
@@ -69,10 +71,6 @@ def pending_petitions(court: Court, petition_id: str | None = None) -> tuple[Pen
 
 def has_pending_petitions(court: Court) -> bool:
     return court.read.has_unmatched(*PENDING_PETITIONS)
-
-
-def petition_officials(court: Court, faction: str | None = None) -> tuple[str, ...]:
-    return court.read.office_holders(("内阁首辅", "司礼监掌印太监") if faction is None else None, faction=faction)
 
 
 def month_petitions(court: Court, date: dict[str, Any]) -> tuple[FactView, ...]:
