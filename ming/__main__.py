@@ -5,10 +5,10 @@ import asyncio
 import json
 import sys
 from pathlib import Path
-from typing import get_args
+from typing import Literal, get_args
 from uuid import UUID
 
-from ming.game import Game, InvalidAction
+from ming.game import Action, ActionName, Game, InvalidAction
 from ming.middle.invoke import Configuration, Settings
 from ming.middle.court import Court
 from ming.middle.opening import CONTENT, build_opening
@@ -69,19 +69,21 @@ async def conversation(court: Court, settings: Configuration) -> None:
     try:
         print(json.dumps({"night": night}), flush=True)
         while line := await asyncio.to_thread(sys.stdin.readline):
-            request = json.loads(line)
-            action = request.pop("action")
             scene = None
-            if action == "drain":
-                await game.drain()
-            elif action != "state":
-                try:
-                    task = game.start(action, request, failures=game.failures())
-                except InvalidAction as error:
-                    print(json.dumps({"error": {"status": error.status, "message": str(error)}}, ensure_ascii=False), flush=True)
-                    continue
-                if task is not None and action != "month":
-                    scene = await asyncio.shield(task)
+            try:
+                request = Action[ActionName | Literal["drain", "state"]].parse(line)
+                if request.action == "drain":
+                    await game.drain()
+                elif request.action != "state":
+                    task = game.start(
+                        request.action, request.model_dump(mode="json", exclude={"action"}),
+                        retry_same=True,
+                    )
+                    if task is not None and request.action != "month":
+                        scene = await asyncio.shield(task)
+            except InvalidAction as error:
+                print(json.dumps({"error": {"status": error.status, "message": str(error)}}, ensure_ascii=False), flush=True)
+                continue
             state = game.presentation()
             failure = state["failure"]
             print(

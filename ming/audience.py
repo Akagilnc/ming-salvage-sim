@@ -21,11 +21,11 @@ from ming.middle.concepts import ACTING, AUDIENCE, DECREE, DECREE_EVENT, DISCOVE
 from ming.middle.translate import INSTRUCTIONS
 from ming.middle.declaration import NightDeclaration
 from ming.middle.invoke import ModelSource, TextUpdate, build_agent, invoke, stream_text
-from ming.middle.night import NightView
+from ming.middle.night import NightView, TurnView
 from ming.middle.opening import CONTENT
 from ming.middle.scene import HallResult
 from ming.middle.records import read_records
-from ming.middle.view import EntityView, Officials
+from ming.middle.view import Officials
 
 
 class Audience:
@@ -73,32 +73,31 @@ class Audience:
         return self._night_id
 
     def pending_actions(
-        self, items: dict[str, Any], night: NightView | EntityView | None,
+        self, items: dict[str, Any], night: NightView | None, *,
+        turns: tuple[TurnView, ...] | None = None, pending_nights: tuple[UUID, ...],
     ) -> dict[str, Any]:
         pending: dict[str, Any] = {}
         if item := items.get("say"):
             payload = item["payload"]
-            closed = night.closed if isinstance(night, NightView) else night.data["closed"] if night else True
-            if night and not closed and str(night.id) == payload["night_id"]:
+            if night and not night.closed and str(night.id) == payload["night_id"]:
                 said = (
-                    any(t.id == payload["turn_id"] for t in night.turns)
-                    if isinstance(night, NightView) else
+                    any(t.id == payload["turn_id"] for t in turns)
+                    if turns is not None else
                     self.court.has_product(night.id, "turn", date=None, detail={"id": payload["turn_id"]})
                 )
                 if not said or self.court.has_product(night.id, "dismiss_requested", date=None):
                     pending["say"] = item
         if item := items.get("translation"):
-            if set(item["payload"]["nights"]) & {str(n) for n in self.court.pending_nights()}:
+            if set(item["payload"]["nights"]) & {str(n) for n in pending_nights}:
                 pending["translation"] = item
         return pending
 
-    def open(self, night: NightView | EntityView | None = None) -> bool:
+    def open(self, night: NightView | None = None) -> bool:
         if night is None:
             self._night_id, created = self.court.open_night()
             closed = False
         else:
-            self._night_id, created = night.id, False
-            closed = night.closed if isinstance(night, NightView) else night.data["closed"]
+            self._night_id, created, closed = night.id, False, night.closed
         if not closed and not created and self.court.has_product(self.night_id, "dismiss_requested", date=None):
             self._dismiss_requested = self.night_id
         return created
@@ -119,9 +118,8 @@ class Audience:
             self.court.dismiss(self._dismiss_requested)
             self._dismiss_requested = None
 
-    async def translate_pending(self) -> None:
-        while pending := self.court.pending_nights():
-            night_id = pending[0]
+    async def translate_pending(self, pending: tuple[UUID, ...]) -> None:
+        for night_id in pending:
             night = self.court.night(night_id)
             result = await self.court.translate(
                 self.translation, night.model_dump_json(), night_id

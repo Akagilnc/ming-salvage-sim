@@ -12,8 +12,6 @@ class Inbox:
 
     def choose(self, payload: dict[str, Any], *, accept: bool = False) -> None:
         petition_id, option, date = payload["petition"], payload["option"], payload["date"]
-        if not accept and self.court.petition_products([petition_id], "choice", date=None):
-            return
         petition = next(iter(self.court.pending_petitions(date, petition_id)), None)
         petition = petition.model_dump(mode="json") if petition else None
         if (

@@ -102,8 +102,8 @@ class Court:
     def set_hall(self, night_id: UUID, add: list[str], remove: list[str]) -> HallResult:
         return set_hall(self._ledger, night_id, add, remove)
 
-    def latest_night(self) -> EntityView | None:
-        return next((EntityView.model_validate(row) for row in self._ledger.read(queries.LATEST_NIGHT)), None)
+    def latest_night(self) -> NightView | None:
+        return next((NightView(id=row["id"], **row["data"]) for row in self._ledger.read(queries.LATEST_NIGHT)), None)
 
     def nights(self) -> tuple[NightView, ...]:
         return read_nights(self._ledger, self._ledger.read(queries.LATEST_NIGHT))

@@ -7,6 +7,9 @@ from shutil import copyfile
 
 import pytest
 from pydantic_ai.models.test import TestModel
+from starlette.testclient import TestClient
+
+from ming.web import create_app
 
 from ming.__main__ import main
 from tests.test_court import replaying
@@ -53,25 +56,28 @@ def test_cli_preserves_jsonl_and_resumes_failed_month(
     assert rows[-1]["night"]["closed"] is True
     assert len(rows[-1]["petitions"]) == 1
     petition = rows[-1]["petitions"][0]
+    main(["read", "--db", db, "--identity", "audit"])
+    before = json.loads(capsys.readouterr().out)
+    rejected = [
+        "not json", "1", ' {"words":"x"}', "[]", '{"action":["x"]}',
+        '{"action":"say","words":5}',
+        json.dumps({"action": "choose", "petition": petition["id"], "option": -1}),
+        '{"action":"choose","petition":"00000000-0000-0000-0000-000000000000","option":0}',
+        '{"action":"say","words":"退朝后说话"}',
+    ]
+    with TestClient(create_app(game_db.parent)) as client:
+        client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
+        client.portal.call(client.app.state.web.game.drain)
+        assert [client.post("/actions", content=line).status_code for line in rejected] == [400] * 8 + [409]
+    monkeypatch.setattr("sys.stdin", io.StringIO("\n".join([*rejected, '{"action":"state"}'])))
+    main(["audience", "--db", db, "--backend", "claude-cli"])
+    refused = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert [r["error"]["status"] for r in refused[1:-1]] == [400] * 8 + [409]
+    assert refused[-1]["month_error"] is None
+    main(["read", "--db", db, "--identity", "audit"])
+    assert json.loads(capsys.readouterr().out) == before
     for entry in ("audience", "choose"):
         if entry == "audience":
-            main(["read", "--db", db, "--identity", "audit"])
-            before = json.loads(capsys.readouterr().out)
-            rejected = [
-                {"action": "choose", "petition": petition["id"], "option": -1},
-                {"action": "choose", "petition": "00000000-0000-0000-0000-000000000000", "option": 0},
-                {"action": "say", "words": case["words"][0]},
-            ]
-            monkeypatch.setattr("sys.stdin", io.StringIO(
-                "\n".join(json.dumps(r) for r in [*rejected, {"action": "state"}])
-            ))
-            main(["audience", "--db", db, "--backend", "claude-cli"])
-            refused = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
-            assert [r["error"]["status"] for r in refused[1:-1]] == [400, 400, 409]
-            assert refused[-1]["month_error"] is None
-            assert refused[-1]["petitions"] == [petition]
-            main(["read", "--db", db, "--identity", "audit"])
-            assert json.loads(capsys.readouterr().out) == before
             monkeypatch.setattr(
                 "sys.stdin",
                 io.StringIO(
@@ -188,13 +194,15 @@ def test_cli_preserves_jsonl_and_resumes_failed_month(
     )
     main(["month", "--db", db, "--backend", "claude-cli"])
     petition = json.loads(capsys.readouterr().out)["petitions"][0]
-    monkeypatch.setattr(
-        "sys.stdin",
-        io.StringIO(
-            json.dumps({"action": "choose", "petition": petition["id"], "option": 0})
-            + '\n{"action":"drain"}\n{"action":"state"}\n'
-        ),
-    )
+    steps["scene"] = replaying([
+        RuntimeError("scene unavailable"),
+        json.loads((RECORDED / "night_invalid.json").read_text())["cases"]["missing_fields"]["scene"],
+    ])
+    monkeypatch.setattr("sys.stdin", io.StringIO("\n".join(json.dumps(r) for r in [
+        {"action": "open"}, {"action": "say", "words": "召对"},
+        {"action": "choose", "petition": petition["id"], "option": 0},
+        *({"action": action} for action in ("retry", "drain", "state")),
+    ])))
     main(["audience", "--db", db, "--backend", "claude-cli"])
     rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     assert rows[0] == {"night": None}
