@@ -33,6 +33,11 @@ def latest_detail(events: Sequence[Item], kind: str) -> Item | None:
     )
 
 
+def was_forced(events: Sequence[Item]) -> bool:
+    choice = latest_detail(events, "choice")
+    return choice is not None and choice["disposition"] == "forced"
+
+
 class Records:
     def __init__(self, ledger: Ledger) -> None:
         self._ledger = ledger
@@ -311,9 +316,8 @@ class Records:
             events = decisions[row["id"]]
             if row.pop("deliberated"):
                 verdict = latest_detail(events, "deliberation")
-                choice = latest_detail(events, "choice")
                 mode = None
-                if verdict and (verdict["verdict"] == "准" or (choice and choice["text"] == "强颁")):
+                if verdict and (verdict["verdict"] == "准" or was_forced(events)):
                     mode = "landed"
                 elif row["data"].get("interim"):
                     mode = "attempted"
@@ -326,12 +330,12 @@ class Records:
             E.id, select(func.json_group_array(readers.c.person, type_=JSON)).scalar_subquery().label("people"),
         ).where(E.id.in_(ids)))} if ids else {}
 
-    def office_holders(self, offices: tuple[str, ...] | None = None, *, faction: str | None = None) -> tuple[str, ...]:
-        query = ENTITY_ROWS.with_only_columns(E.key).where(E.kind == "person", queries.IN_OFFICE)
+    def office_holders(self, offices: tuple[str, ...] | None = None) -> tuple[Item, ...]:
+        query = ENTITY_ROWS.with_only_columns(E.key).where(E.kind == "person")
         if offices is not None:
             query = query.where(queries.CURRENT_APPOINTMENT.where(
                 queries.APPOINTMENT.data["office"].as_string().in_(offices),
             ).exists())
-        if faction is not None:
-            query = query.where(E.data["faction"].as_string() == faction)
-        return tuple(row["key"] for row in self._ledger.read(query))
+        else:
+            query = query.add_columns(E.data["faction"].as_string().label("faction")).where(queries.IN_OFFICE)
+        return self._ledger.read(query)

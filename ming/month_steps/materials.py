@@ -11,6 +11,8 @@ from ming.middle.declaration import StrictModel
 from ming.middle.view import EntityView, FactView, Identity, Officials, character_input
 
 
+PETITION_OFFICES = ("内阁首辅", "司礼监掌印太监")
+
 PENDING_PETITIONS: tuple[Identity, str, str, tuple[str, str]] = ("world", "petition", "choice", ("id", "petition_id"))
 
 COST_RULES = """背书（含御笔手敕、御笔强推）本身不走代价轨。
@@ -71,10 +73,6 @@ def has_pending_petitions(court: Court) -> bool:
     return court.read.has_unmatched(*PENDING_PETITIONS)
 
 
-def petition_officials(court: Court, faction: str | None = None) -> tuple[str, ...]:
-    return court.read.office_holders(("内阁首辅", "司礼监掌印太监") if faction is None else None, faction=faction)
-
-
 def month_petitions(court: Court, date: dict[str, Any]) -> tuple[FactView, ...]:
     return court.read.facts("audit", kind="petition", date=date, detail={"blocking": True})
 
@@ -117,6 +115,20 @@ def landing_materials(court: Court, *, include_history: bool = True, date: dict[
             **({"known_people": known[decree.id]} if decree.data["secret"] else {}),
         })
     return tuple(materials)
+
+
+def prepare(
+    court: Court, pending: dict[int, Officials], context: Any, *, date: dict[str, Any],
+) -> dict[int, tuple[Officials, dict[str, Any]]]:
+    """Share unchanged inputs by complete identity only within this pending batch."""
+    inputs: dict[str, dict[str, Any]] = {}
+    prepared: dict[int, tuple[Officials, dict[str, Any]]] = {}
+    for index, identity in pending.items():
+        key = identity.model_dump_json()
+        if key not in inputs:
+            inputs[key] = prompt(court, identity, context, date=date)
+        prepared[index] = identity, inputs[key]
+    return prepared
 
 
 def prompt(court: Court, identity: Identity, context: Any, *, date: dict[str, Any]) -> dict[str, Any]:

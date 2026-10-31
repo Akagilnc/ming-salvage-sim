@@ -2,7 +2,9 @@
 
 import json
 from pathlib import Path
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from contextlib import ExitStack, contextmanager
+from inspect import isawaitable
 
 import pytest
 from pydantic_ai._run_context import get_current_run_context
@@ -18,7 +20,7 @@ RECORDED = Path(__file__).parent / "recorded"
 
 def replaying(
     replies: Sequence[str | ModelResponse | Exception]
-    | Callable[[list[ModelMessage]], str | ModelResponse | Exception],
+    | Callable[[list[ModelMessage]], str | ModelResponse | Exception | Awaitable[str | ModelResponse | Exception]],
     received: list[ModelMessage] | None = None,
     toolsets: list[list[str]] | None = None,
     identities: list | None = None,
@@ -34,6 +36,8 @@ def replaying(
         if toolsets is not None:
             toolsets.append([tool.name for tool in _info.function_tools])
         result = replies(_messages) if callable(replies) else next(remaining)
+        if isawaitable(result):
+            result = await result
         if isinstance(result, Exception):
             raise result
         return result if isinstance(result, ModelResponse) else ModelResponse(parts=[TextPart(result)])
@@ -46,6 +50,17 @@ def replaying(
                 yield {index: DeltaToolCall(name=part.tool_name, json_args=part.args_as_json_str(), tool_call_id=part.tool_call_id)}
 
     return FunctionModel(reply, stream_function=stream_response)
+
+
+@contextmanager
+def reopening(directory):
+    """Each open ends the previous application's lifespan before creating another."""
+    with ExitStack() as clients:
+        def open_client():
+            clients.close()
+            return clients.enter_context(TestClient(create_app(directory)))
+
+        yield open_client
 
 
 @pytest.mark.parametrize("game_db", ["first_night"], indirect=True)

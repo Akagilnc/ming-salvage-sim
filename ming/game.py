@@ -6,7 +6,7 @@ from functools import partial
 from typing import Any, Literal, NamedTuple, Self
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
 from ming.audience import Audience
 from ming.middle.court import Court
@@ -36,7 +36,7 @@ class Action[Name](BaseModel):
     action: Name
     words: str = ""
     petition: UUID | None = None
-    option: int = -1
+    option: int = Field(default=-1, strict=True)
 
     @classmethod
     def parse(cls, data: str | bytes) -> Self:

@@ -1,6 +1,6 @@
 """Each unfinished secret errand's own report."""
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from typing import Any
 
 from pydantic_ai import Agent
@@ -9,7 +9,7 @@ from pydantic_ai.models import Model
 from ming.middle.court import Court
 from ming.middle.concepts import HANDLER, PEOPLE, SECRET
 from ming.middle.invoke import gather_or_raise, invoke
-from ming.month_steps.materials import prompt
+from ming.month_steps.materials import prepare
 from ming.middle.records import Materials, read_records
 from ming.middle.view import EntityView, Officials, character_input
 from ming.month_steps.products import record_product
@@ -28,16 +28,15 @@ class Secrets:
         self.court, self.model = court, model
 
     async def report(self, decrees: tuple[EntityView, ...], date: dict[str, Any]) -> None:
-        pending: dict[str, list[int]] = {}
-        for index, decree in enumerate(decrees):
-            if not self.court.read.has_facts(decree.id, "secret_report", date=date):
-                pending.setdefault(decree.data["handler"], []).append(index)
-        calls: dict[int, Awaitable[None]] = {}
-        for handler, indices in pending.items():
-            identity = Officials(people=[handler])
-            inputs = prompt(self.court, identity, {}, date=date)
-            calls.update((index, self.call(decrees[index], identity, inputs)) for index in indices)
-        await gather_or_raise(*(calls[index] for index in sorted(calls)))
+        reported = {f.entity_id for f in self.court.read.facts(
+            "audit", entity_id=[d.id for d in decrees], kind="secret_report", date=date,
+        )}
+        pending = {index: Officials(people=[decree.data["handler"]])
+                   for index, decree in enumerate(decrees) if decree.id not in reported}
+        await gather_or_raise(*(
+            self.call(decrees[index], identity, inputs)
+            for index, (identity, inputs) in prepare(self.court, pending, {}, date=date).items()
+        ))
 
     async def call(self, decree: EntityView, identity: Officials, inputs: dict[str, Any]) -> None:
         result = await invoke(

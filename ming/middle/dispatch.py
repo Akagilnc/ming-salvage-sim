@@ -19,7 +19,7 @@ from ming.middle.declaration import (
     NightDeclaration,
     Unhandled,
 )
-from ming.middle.reading import Records, latest_detail
+from ming.middle.reading import Records, was_forced
 from ming.middle.rules import Names, check_chief, check_journey, fail, field_values, money_amounts, name_expected
 from ming.middle.fiscal import WAN, current_paid, expense_rate, has_obligation
 from ming.middle.appointments import APPOINTMENT_ROLES, incumbency_record, reference_key
@@ -367,10 +367,7 @@ def record_receipts(
 def decree_disposition(
     prior_interim: bool, decree: Entity, mode: LandingMode, events: Sequence[Item], translated: bool,
 ) -> list[tuple[str, Item]]:
-    choice = latest_detail(events, "choice")
-    interim = decree.data.get("interim") or (
-        choice and choice["text"] == "强颁" and latest_detail(events, "deliberation")
-    )
+    interim = decree.data.get("interim") or was_forced(events)
     return ([('interim', {"text": decree.data["text"]})]
             if interim and not prior_interim else []) + ([(mode, {"monthly": mode})] if translated else [])
 

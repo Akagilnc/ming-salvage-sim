@@ -7,7 +7,6 @@ from typing import Any
 from sqlalchemy import Select, and_, case, false, func, or_, select, true, tuple_
 from sqlalchemy.sql.base import ReadOnlyColumnCollection
 from sqlalchemy.sql.elements import ColumnElement, KeyedColumnElement
-from sqlalchemy.sql.functions import Function
 from ming.ledger import (
     Item,
     ENTITY_COLUMNS as E,
@@ -87,8 +86,7 @@ def returned_petitions(date: Item | None = None) -> Select[Any]:
         .where(
             choice.kind == "choice",
             choice.detail["petition_id"].as_string() == F.detail["id"].as_string(),
-            choice.detail["option"].as_integer()
-            == Function("json_array_length", F.detail["options"]) - 1,
+            choice.detail["disposition"].as_string() == "returned",
             *([choice.date != date] if date is not None else []),
         )
         .exists(),

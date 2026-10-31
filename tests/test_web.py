@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 from ming.middle.court import Court
 from ming.middle.invoke import Configuration
 from ming.web import create_app
-from tests.test_court import replaying
+from tests.test_court import reopening, replaying
 
 RECORDED = Path(__file__).parent / "recorded"
 
@@ -811,7 +811,8 @@ def test_month_transport_retry_is_bounded_and_persistent(
         return next(replies)
 
     steps[name] = replaying(reply)
-    with TestClient(create_app(game_db.parent)) as client:
+    with reopening(game_db.parent) as reopen:
+        client = reopen()
         client.post("/actions", json={"action": "load", "save": game_db.name})
         client.post("/actions", json={"action": "month"})
         state = client.get("/state").json()["game"]
@@ -844,6 +845,7 @@ def test_month_transport_retry_is_bounded_and_persistent(
                     for e in before["entities"]
                     if e["kind"] == "account"
                 }
+                client = reopen()
                 client.post("/actions", json={"action": "load", "save": game_db.name})
             client.post("/actions", json={"action": "continue"})
             assert client.get("/state").json()["game"]["failure"] == state["failure"]

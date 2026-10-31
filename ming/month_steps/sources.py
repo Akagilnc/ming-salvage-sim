@@ -1,9 +1,10 @@
 """Month-end urgent drafting and faction petitions; choices act next month."""
 
+from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, cast
 from uuid import UUID, uuid4
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 
 from pydantic import Field
 from pydantic_ai import Agent, PromptedOutput, RunContext
@@ -13,11 +14,12 @@ from ming.middle.court import Court
 from ming.middle.concepts import ACTING
 from ming.middle.declaration import StrictModel
 from ming.middle.invoke import gather_or_raise, invoke
-from ming.month_steps.materials import Petition, PendingPetition, next_month, petition_officials, prompt
+from ming.month_steps.materials import PETITION_OFFICES, Petition, PendingPetition, next_month, prepare
 from ming.middle.records import Materials, read_records
 from ming.middle.view import EntityView, Officials, character_input
 from ming.middle.rules import Names, fail, name_expected
 from ming.month_steps.products import record_product
+from ming.month_steps.petitions import urgent_options
 
 
 @dataclass
@@ -62,14 +64,26 @@ class Sources:
         self.court, self.model = court, model
 
     async def run(self, calendar: EntityView) -> None:
-        pending: dict[tuple[str, ...], list[tuple[int, EntityView, str, dict[str, object]]]] = {}
-        for index, (source, kind, faction) in enumerate([
+        pending: dict[int, Officials] = {}
+        requests: dict[int, tuple[EntityView, str, dict[str, object]]] = {}
+        sources = [
             (calendar, "urgent", None),
             *((f, "impeachment", f.key) for f in self.court.read.entities("audit", kind="faction")),
-        ]):
-            if self.court.read.has_facts(source.id, kind, date=calendar.data):
-                continue
-            people = list(petition_officials(self.court, faction))
+        ]
+        produced = {(f.entity_id, f.kind) for f in self.court.read.facts(
+            "audit", entity_id=[source.id for source, _, _ in sources],
+            kind=("urgent", "impeachment"), date=calendar.data,
+        )}
+        sources = [(source, kind, faction) for source, kind, faction in sources if (source.id, kind) not in produced]
+        if not sources:
+            return
+        holders: dict[str | None, list[str]] = defaultdict(list)
+        if any(kind == "impeachment" for _, kind, _ in sources):
+            for person in self.court.read.office_holders():
+                holders[person["faction"]].append(person["key"])
+        for index, (source, kind, faction) in enumerate(sources):
+            people = ([p["key"] for p in self.court.read.office_holders(PETITION_OFFICES)]
+                      if kind == "urgent" else holders[faction])
             if kind == "urgent" and not people:
                 record_product(self.court, source.id, kind, {"petitions": [], "date": calendar.data})
                 continue
@@ -81,17 +95,16 @@ class Sources:
                 "people": people,
                 "instruction": "以本派在朝人物的身份看本月见闻和本派、对手势力，自行决定劾不劾、劾谁、如何归因，可以交空。灾难真而归因可夹私货。署名人及被劾人用账本正名。每折三项：顺水推舟办人、压下、查实再办，措辞自拟。",
             }
-            pending.setdefault(tuple(people), []).append((index, source, kind, context))
+            pending[index] = Officials(people=people)
+            requests[index] = source, kind, context
         if not pending:
             return
         catalogue = self.court.read.catalogue()
-        calls: dict[int, Awaitable[None]] = {}
-        for names, requests in pending.items():
-            identity = Officials(people=list(names))
-            inputs = prompt(self.court, identity, {}, date=calendar.data)
-            calls.update((index, self.call(source, kind, identity, {**inputs, "context": character_input(context)}, catalogue))
-                         for index, source, kind, context in requests)
-        await gather_or_raise(*(calls[index] for index in sorted(calls)))
+        await gather_or_raise(*(
+            self.call(source, kind, identity, {**inputs, "context": character_input(context)}, catalogue)
+            for index, (identity, inputs) in prepare(self.court, pending, {}, date=calendar.data).items()
+            for source, kind, context in [requests[index]]
+        ))
 
     async def call(
         self,
@@ -115,7 +128,7 @@ class Sources:
         petitions = [
             PendingPetition(
                 **item.model_dump(exclude={"options"}),
-                options=[*item.options, "发回改票"]
+                options=urgent_options(item.options)
                 if kind == "urgent"
                 else item.options,
                 id=uuid4(),
