@@ -4,6 +4,7 @@ import asyncio
 import json
 from collections.abc import Callable
 from functools import partial
+from typing import Any
 from uuid import UUID
 
 from pydantic_ai import RunContext
@@ -24,7 +25,7 @@ from ming.middle.night import NightView
 from ming.middle.opening import CONTENT
 from ming.middle.scene import HallResult
 from ming.middle.records import read_records
-from ming.middle.view import Officials
+from ming.middle.view import EntityView, Officials
 
 
 class Audience:
@@ -71,12 +72,33 @@ class Audience:
             raise ValueError("open an audience night first")
         return self._night_id
 
-    def open(self, night: NightView | None = None) -> bool:
+    def pending_actions(
+        self, items: dict[str, Any], night: NightView | EntityView | None,
+    ) -> dict[str, Any]:
+        pending: dict[str, Any] = {}
+        if item := items.get("say"):
+            payload = item["payload"]
+            closed = night.closed if isinstance(night, NightView) else night.data["closed"] if night else True
+            if night and not closed and str(night.id) == payload["night_id"]:
+                said = (
+                    any(t.id == payload["turn_id"] for t in night.turns)
+                    if isinstance(night, NightView) else
+                    self.court.has_product(night.id, "turn", date=None, detail={"id": payload["turn_id"]})
+                )
+                if not said or self.court.has_product(night.id, "dismiss_requested", date=None):
+                    pending["say"] = item
+        if item := items.get("translation"):
+            if set(item["payload"]["nights"]) & {str(n) for n in self.court.pending_nights()}:
+                pending["translation"] = item
+        return pending
+
+    def open(self, night: NightView | EntityView | None = None) -> bool:
         if night is None:
             self._night_id, created = self.court.open_night()
             closed = False
         else:
-            self._night_id, created, closed = night.id, False, night.closed
+            self._night_id, created = night.id, False
+            closed = night.closed if isinstance(night, NightView) else night.data["closed"]
         if not closed and not created and self.court.has_product(self.night_id, "dismiss_requested", date=None):
             self._dismiss_requested = self.night_id
         return created

@@ -19,6 +19,8 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.function import FunctionModel
 from httpx import ASGITransport, AsyncClient
 from starlette.testclient import TestClient
+from sqlalchemy import event
+from sqlalchemy.orm import Session
 
 from ming.middle.court import Court
 from ming.middle.invoke import Configuration
@@ -637,6 +639,77 @@ def test_settings_survive_reopening_and_failed_scene_retries_in_place(
         else:
             assert game["date"]["month"] == 11
         assert game["running"] is False
+
+
+@pytest.mark.parametrize("case,game_db", [
+    (("say", "turn", False), "first_night"),
+    (("say", "turn", True), "first_night"),
+    (("translation", "unhandled", False), "spoken_night"),
+    (("month", "advanced", False), "opening_db"),
+    (("choose", "choice", False), "rejected_month"),
+], indirect=["game_db"])
+def test_http_reopens_committed_action_gaps(game_db, case, audit, model_invocations, steps):
+    """Freeze real commits, not a normally drained save or hand-written events."""
+    action, product, dismiss = case
+    if dismiss:
+        steps["scene"] = TestModel(call_tools=["dismiss"], custom_output_text=
+            json.loads((RECORDED / "night_invalid.json").read_text())["cases"]["missing_fields"]["scene"])
+    snapshots = {stage: game_db.parent / stage / game_db.name for stage in ("accepted", "product")}
+    for path in snapshots.values():
+        path.parent.mkdir()
+
+    def committed(session):
+        with closing(sqlite3.connect(game_db)) as source:
+            kind, detail = source.execute("SELECT kind, detail FROM facts ORDER BY position DESC LIMIT 1").fetchone()
+            detail = json.loads(detail)
+            stage = "product" if kind == product else "accepted" if (
+                kind == "interaction" and detail["action"] == action and detail["status"] != "failed"
+            ) else None
+            if stage is not None and not snapshots[stage].exists():
+                with closing(sqlite3.connect(snapshots[stage])) as target:
+                    source.backup(target)
+
+    with TestClient(create_app(game_db.parent)) as client:
+        client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
+        request = {"action": "dismiss" if action == "translation" else action}
+        if action == "say":
+            request["words"] = json.loads((RECORDED / "night_invalid.json").read_text())["emperor_words"]
+        if action == "choose":
+            request.update(petition=client.get("/state").json()["game"]["petitions"][0]["id"], option=0)
+        event.listen(Session, "after_commit", committed)
+        try:
+            client.post("/actions", json=request).raise_for_status()
+            client.portal.call(client.app.state.web.game.drain)
+        finally:
+            event.remove(Session, "after_commit", committed)
+        assert client.get("/state").json()["game"]["failure"] is None
+    for stage, path in snapshots.items():
+        before = audit(path)
+        assert len([f for f in before["facts"] if f["kind"] == product]) == int(stage == "product")
+        model_invocations.clear()
+        with TestClient(create_app(path.parent)) as client:
+            client.post("/actions", json={"action": "load", "save": path.name}).raise_for_status()
+            client.portal.call(client.app.state.web.game.drain)
+            state = client.get("/state").json()["game"]
+            assert (state["failure"], state["running"]) == (None, False)
+            assert state["date"]["month"] == (11 if action in {"month", "choose"} else 10)
+            if action == "say":
+                assert len(state["night"]["turns"]) == 1
+                assert state["night"]["turns"][0]["emperor_words"] == request["words"]
+            after = audit(path)
+            assert len([f for f in after["facts"] if f["kind"] == product]) == 1
+            assert all(f in after["facts"] for f in before["facts"])
+            assert not [f for f in after["facts"] if f["kind"] == "interaction" and f["detail"]["status"] == "done"]
+            if dismiss:
+                assert state["night"]["closed"] is True
+                assert state["night"]["result"] == "unhandled"
+                if stage == "product":
+                    assert not model_invocations["scene"]
+            elif stage == "product" and action != "choose":
+                assert not model_invocations
+                assert after == before
+            if action == "choose":
+                assert [f["detail"]["option"] for f in after["facts"] if f["kind"] == "choice"] == [0]
 
 
 @pytest.mark.parametrize(

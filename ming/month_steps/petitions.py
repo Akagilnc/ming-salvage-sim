@@ -10,13 +10,20 @@ class Inbox:
     def __init__(self, court: Court) -> None:
         self.court = court
 
-    def choose(self, petition: dict[str, Any] | None, option: int, date: dict[str, Any]) -> None:
+    def choose(self, payload: dict[str, Any], *, accept: bool = False) -> None:
+        petition_id, option, date = payload["petition"], payload["option"], payload["date"]
+        if not accept and self.court.petition_products([petition_id], "choice", date=None):
+            return
+        petition = next(iter(self.court.pending_petitions(date, petition_id)), None)
+        petition = petition.model_dump(mode="json") if petition else None
         if (
             petition is None
             or type(option) is not int
             or not 0 <= option < len(petition["options"])
         ):
             raise ValueError("not a petition option")
+        if accept:
+            return
         entity_id = UUID(petition["entity_id"])
         decision = {"petition_id": petition["id"], "option": option}
         events = [("choice", {**decision, "text": petition["options"][option], "date": date})]

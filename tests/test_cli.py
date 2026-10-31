@@ -55,6 +55,23 @@ def test_cli_preserves_jsonl_and_resumes_failed_month(
     petition = rows[-1]["petitions"][0]
     for entry in ("audience", "choose"):
         if entry == "audience":
+            main(["read", "--db", db, "--identity", "audit"])
+            before = json.loads(capsys.readouterr().out)
+            rejected = [
+                {"action": "choose", "petition": petition["id"], "option": -1},
+                {"action": "choose", "petition": "00000000-0000-0000-0000-000000000000", "option": 0},
+                {"action": "say", "words": case["words"][0]},
+            ]
+            monkeypatch.setattr("sys.stdin", io.StringIO(
+                "\n".join(json.dumps(r) for r in [*rejected, {"action": "state"}])
+            ))
+            main(["audience", "--db", db, "--backend", "claude-cli"])
+            refused = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+            assert [r["error"]["status"] for r in refused[1:-1]] == [400, 400, 409]
+            assert refused[-1]["month_error"] is None
+            assert refused[-1]["petitions"] == [petition]
+            main(["read", "--db", db, "--identity", "audit"])
+            assert json.loads(capsys.readouterr().out) == before
             monkeypatch.setattr(
                 "sys.stdin",
                 io.StringIO(
@@ -94,6 +111,7 @@ def test_cli_preserves_jsonl_and_resumes_failed_month(
             assert result["date"]["month"] == 12
     main(["read", "--db", db, "--identity", "audit"])
     ledger = json.loads(capsys.readouterr().out)
+    assert not [f for f in ledger["facts"] if f["kind"] == "interaction" and f["detail"]["status"] == "done"]
     decree = next(e for e in ledger["entities"] if e["kind"] == "decree")
     assert {f["kind"] for f in ledger["facts"] if f["entity_id"] == decree["id"]} >= {
         "deliberation",

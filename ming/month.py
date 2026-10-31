@@ -44,8 +44,20 @@ class Month:
             })
         return calendar
 
-    def choose(self, petition: dict[str, Any] | None, option: int, date: dict[str, Any]) -> None:
-        self.inbox.choose(petition, option, date)
+    def pending_actions(
+        self, items: dict[str, Any], calendar: EntityView,
+    ) -> dict[str, Any]:
+        choices = [i["payload"]["petition"] for i in items.values() if i["action"] == "choose"]
+        chosen = {f.detail["petition_id"] for f in self.court.petition_products(choices, "choice", date=None)}
+        return {
+            key: item for key, item in items.items()
+            if item["action"] in {"month", "choose"}
+            and item["payload"]["date"] == calendar.data
+            and (item["action"] == "month" or item["payload"]["petition"] not in chosen)
+        }
+
+    def choose(self, payload: dict[str, Any], *, accept: bool = False) -> None:
+        self.inbox.choose(payload, accept=accept)
 
     async def resume(self, *, speculative: bool = False, date: dict[str, Any] | None = None) -> tuple[PendingPetition, ...]:
         date = self.court.calendar().data if date is None else date

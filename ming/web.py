@@ -79,7 +79,7 @@ class Web:
             "settings": self.configuration.model_dump(),
             "required_settings": REQUIRED_SETTINGS,
             "save": self.game.court.db_path.name if self.game else None,
-            "game": {**self.game.court.presentation(), "live": dict(self.game.live)}
+            "game": {**self.game.presentation(), "live": dict(self.game.live)}
             if self.game else None,
         }
 
