@@ -21,7 +21,7 @@ from ming.middle.concepts import ACTING, AUDIENCE, DECREE, DECREE_EVENT, DISCOVE
 from ming.middle.translate import INSTRUCTIONS
 from ming.middle.declaration import NightDeclaration
 from ming.middle.invoke import ModelSource, TextUpdate, build_agent, invoke, stream_text
-from ming.middle.night import NightView, TurnView
+from ming.middle.night import NightHeader, NightView
 from ming.middle.opening import CONTENT
 from ming.middle.scene import HallResult
 from ming.middle.records import read_records
@@ -73,18 +73,13 @@ class Audience:
         return self._night_id
 
     def pending_actions(
-        self, items: dict[str, Any], night: NightView | None, *,
-        turns: tuple[TurnView, ...] | None = None, pending_nights: tuple[UUID, ...],
+        self, items: dict[str, Any], night: NightHeader | None, *, pending_nights: tuple[UUID, ...],
     ) -> dict[str, Any]:
         pending: dict[str, Any] = {}
         if item := items.get("say"):
             payload = item["payload"]
             if night and not night.closed and str(night.id) == payload["night_id"]:
-                said = (
-                    any(t.id == payload["turn_id"] for t in turns)
-                    if turns is not None else
-                    self.court.has_product(night.id, "turn", date=None, detail={"id": payload["turn_id"]})
-                )
+                said = self.court.has_product(night.id, "turn", date=None, detail={"id": payload["turn_id"]})
                 if not said or self.court.has_product(night.id, "dismiss_requested", date=None):
                     pending["say"] = item
         if item := items.get("translation"):
@@ -92,7 +87,7 @@ class Audience:
                 pending["translation"] = item
         return pending
 
-    def open(self, night: NightView | None = None) -> bool:
+    def open(self, night: NightHeader | None = None) -> bool:
         if night is None:
             self._night_id, created = self.court.open_night()
             closed = False

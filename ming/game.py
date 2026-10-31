@@ -3,7 +3,7 @@
 import asyncio
 from collections.abc import Callable
 from functools import partial
-from typing import Any, Literal, Self
+from typing import Any, Literal, NamedTuple, Self
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ValidationError
@@ -12,7 +12,7 @@ from ming.audience import Audience
 from ming.middle.court import Court
 from ming.middle.invoke import ModelSource, build_agent
 from ming.middle.view import EntityView
-from ming.middle.night import NightView
+from ming.middle.night import NightHeader
 from ming.month import Month
 
 
@@ -45,7 +45,11 @@ class Action[Name](BaseModel):
             raise InvalidAction("无效的动作", 400) from error
 
 
-type ActionFacts = tuple[EntityView, NightView | None, dict[str, Any], tuple[UUID, ...]]
+class ActionFacts(NamedTuple):
+    calendar: EntityView
+    night: NightHeader | None
+    interactions: dict[str, Any]
+    pending_nights: tuple[UUID, ...] | None
 
 
 class Game:
@@ -113,16 +117,17 @@ class Game:
             ],
         )
 
-    def actions(self, *, nights: tuple[NightView, ...] | None = None) -> ActionFacts:
+    def actions(self, *, night: NightHeader | None = None) -> ActionFacts:
         """Request-local materials; never retained on Game across operations."""
         calendar = self.court.calendar()
         items = self.court.interactions(calendar.data)
-        night = next(iter(nights), None) if nights is not None else self.court.latest_night()
-        pending_nights = self.court.pending_nights()
+        if night is None and "say" in items:
+            night = self.court.latest_night()
+        pending_nights = self.court.pending_nights() if "translation" in items else None
         pending = self.audience.pending_actions(
-            items, night, turns=night.turns if nights and night else None, pending_nights=pending_nights,
+            items, night, pending_nights=pending_nights or (),
         ) | self.month.pending_actions(items)
-        return calendar, night, {key: item for key, item in items.items() if key in pending}, pending_nights
+        return ActionFacts(calendar, night, {key: item for key, item in items.items() if key in pending}, pending_nights)
 
     def failures(self, interactions: dict[str, Any]) -> tuple[dict[str, Any], ...]:
         return tuple(sorted((i for i in interactions.values() if i["status"] == "failed"),
@@ -134,7 +139,8 @@ class Game:
                      and not (i["action"] == "month" and waiting))
 
     def presentation(self) -> dict[str, Any]:
-        calendar, latest, interactions, _ = self.actions(nights=self.court.nights())
+        latest = next(iter(self.court.nights()), None)
+        calendar, _, interactions, _ = self.actions(night=latest)
         night = latest.model_dump(mode="json") if latest else None
         petitions = self.court.pending_petitions(calendar.data)
         opened = self.month.opened(calendar)
@@ -148,7 +154,7 @@ class Game:
             "face": "audience" if night and not night["closed"] else
                     "month" if opened or "month" in interactions else "desk",
             "night": night, "date": calendar.data,
-            "running": pending is not None and failure is None and self.busy(),
+            "running": pending is not None and failure is None,
             "failure": failure, "pending": pending,
             "unhandled_monthly": self.court.unhandled_monthly(calendar.data),
             "petitions": [p.model_dump(mode="json") for p in petitions
@@ -158,18 +164,21 @@ class Game:
             ],
         }
 
+    def reopen(self, facts: ActionFacts | None = None) -> None:
+        facts = self.actions() if facts is None else facts
+        self.resume(facts)
+        self.start_background(facts)
+
     def resume(self, facts: ActionFacts | None = None) -> None:
-        if self.busy() and self.active is not asyncio.current_task():
+        if self.busy():
             return
         facts = self.actions() if facts is None else facts
-        calendar, _, interactions, pending_nights = facts
+        calendar, _, interactions, _ = facts
         failures = self.failures(interactions)
         waiting = "month" in interactions and self.month.waiting(calendar)
         pending = [i for i in self.running(interactions, waiting=waiting) if not failures or i["action"] == "choose"]
         if pending:
             self.active = asyncio.create_task(self._resume(pending, facts))
-        elif not failures and (waiting or pending_nights or self.court.has_pending_petitions(calendar.data)):
-            self.start_background(facts)
 
     async def _resume(self, pending: list[dict[str, Any]], facts: ActionFacts) -> None:
         async def ordered() -> None:
@@ -178,7 +187,7 @@ class Game:
                 if item["action"] not in {"month", "choose"}:
                     await self.execute(item["action"], item["payload"])
                     current = self.actions()
-                    if self.failures(current[2]):
+                    if self.failures(current.interactions):
                         return
             for item in pending:
                 if item["action"] == "month":
@@ -200,8 +209,8 @@ class Game:
     async def command(self, action: str, payload: dict[str, Any]) -> None:
         facts = self.actions()
         accepted = any(item["status"] != "failed" and same_call(item, action, payload)
-                       for item in facts[2].values())
-        self.resume(facts)
+                       for item in facts.interactions.values())
+        self.reopen(facts)
         # Choices never wait for unrelated work. Other commands can consume the
         # recovery they just started instead of accepting the same action twice.
         if accepted or action != "choose":
@@ -230,7 +239,7 @@ class Game:
             return None
         failure, night, failures = None, None, ()
         if action == "choose":
-            calendar = facts[0] if facts is not None else self.court.calendar()
+            calendar = facts.calendar if facts is not None else self.court.calendar()
         else:
             facts = self.actions() if facts is None else facts
             calendar, night, interactions, pending_nights = facts
@@ -242,7 +251,7 @@ class Game:
             if failure:
                 action, payload = failure["action"], dict(failure["payload"])
                 if action == "translation":
-                    payload["nights"] = [str(n) for n in pending_nights]
+                    payload["nights"] = [str(n) for n in pending_nights or ()]
                     if pending := interactions.get("month"):
                         action, payload = "month", dict(pending["payload"])
         if action != "choose" and self.busy():
@@ -273,6 +282,7 @@ class Game:
             self.audience.open(night)
             self.audience.dismiss()
             self.resume()
+            self.start_background()
             if not self.busy():
                 self.notify("state", None)
         else:
@@ -283,7 +293,7 @@ class Game:
 
     def accept(
         self, action: str, payload: dict[str, Any], calendar: EntityView, *,
-        night: NightView | None, failures: tuple[dict[str, Any], ...],
+        night: NightHeader | None, failures: tuple[dict[str, Any], ...],
     ) -> None:
         payload["date"] = calendar.data
         if action == "choose":
@@ -295,13 +305,12 @@ class Game:
         else:
             if any(action != "month" or i["action"] != "translation" for i in failures):
                 raise InvalidAction("请重试未完成的动作")
+            night = self.court.latest_night() if night is None else night
             opened = night is not None and not night.closed
             if action == "say":
                 if not payload.get("words", "").strip() or night is None or not opened:
                     raise InvalidAction("请在召对中说话")
                 payload.update(night_id=str(night.id), turn_id=str(uuid4()))
-            elif action != "month":
-                raise InvalidAction("无效的动作", 400)
             elif opened:
                 raise InvalidAction("请先退朝")
 
@@ -335,7 +344,7 @@ class Game:
             pending, calendar = None, None
 
     async def precompute(self, facts: ActionFacts | None = None) -> None:
-        if self.active is not None and not self.active.done():
+        while self.active is not None and not self.active.done():
             await asyncio.shield(self.active)
             facts = None
         calendar, _, interactions, pending_nights = self.actions() if facts is None else facts
@@ -387,6 +396,8 @@ class Game:
                 payload["turn_id"],
                 partial(self.notify, "delta"),
             )
+            if self.court.entity(night.id).data["closed"]:
+                self.start_background()
             return output
         if action == "translation":
             await self.audience.translate_pending(tuple(UUID(n) for n in payload["nights"]))
@@ -394,8 +405,8 @@ class Game:
         if action == "choose":
             self.month.choose(payload)
             return None
-        if not await self.translate(starting=starting, pending=facts[3] if facts else None,
-                                    calendar=facts[0] if facts else None):
+        if not await self.translate(starting=starting, pending=facts.pending_nights if facts else None,
+                                    calendar=facts.calendar if facts else None):
             return False
         await self.month.advance()
         return None

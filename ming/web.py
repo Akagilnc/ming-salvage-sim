@@ -146,7 +146,7 @@ class Web:
         self.game = game
         self.navigation += 1
         if opening:
-            game.resume()
+            game.reopen()
         self.emit(saves=saves)
         return {"save": game.court.db_path.name, "navigation": self.navigation}
 

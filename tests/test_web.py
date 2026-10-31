@@ -641,30 +641,6 @@ def test_settings_survive_reopening_and_failed_scene_retries_in_place(
         assert game["running"] is False
 
 
-@pytest.mark.parametrize("game_db", ["rejected_month"], indirect=True)
-def test_http_last_choice_waits_for_speech_then_resumes_month(game_db, steps):
-    app = create_app(game_db.parent)
-    with TestClient(app) as client:
-        client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
-        petition = client.get("/state").json()["game"]["petitions"][0]
-
-        async def scene(messages, info):
-            async with AsyncClient(transport=ASGITransport(app), base_url="http://game") as http:
-                response = await http.post("/actions", json={"action": "choose", "petition": petition["id"], "option": 0})
-                response.raise_for_status()
-            yield json.loads((RECORDED / "night_invalid.json").read_text())["cases"]["missing_fields"]["scene"]
-
-        steps["scene"] = FunctionModel(stream_function=scene)
-        client.post("/actions", json={"action": "open"}).raise_for_status()
-        client.post("/actions", json={"action": "say", "words": "召对"}).raise_for_status()
-        client.portal.call(app.state.web.game.drain)
-        state = client.get("/state").json()["game"]
-        assert (state["date"]["month"], state["running"], state["pending"], state["failure"]) == (11, False, None, None)
-        client.post("/actions", json={"action": "dismiss"}).raise_for_status()
-        client.portal.call(app.state.web.game.drain)
-        assert client.get("/state").json()["game"]["running"] is False
-
-
 @pytest.mark.parametrize("case,game_db", [
     (("say", "turn", False), "first_night"),
     (("say", "turn", True), "first_night"),

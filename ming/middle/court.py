@@ -36,7 +36,7 @@ from ming.middle.invoke import ModelSource
 from ming.middle.records import TranslationMaterials
 from ming.middle.rules import matching_offices
 from ming.middle.opening import opening_template
-from ming.middle.night import NightView, dismiss, known_people, open_night, read_nights
+from ming.middle.night import NightHeader, NightView, dismiss, known_people, open_night, read_nights
 from ming.middle.scene import HallResult, set_hall
 from ming.middle.translate import declaration_agent, translate
 from ming.middle.translate import catalogue as names_and_aliases
@@ -102,8 +102,8 @@ class Court:
     def set_hall(self, night_id: UUID, add: list[str], remove: list[str]) -> HallResult:
         return set_hall(self._ledger, night_id, add, remove)
 
-    def latest_night(self) -> NightView | None:
-        return next((NightView(id=row["id"], **row["data"]) for row in self._ledger.read(queries.LATEST_NIGHT)), None)
+    def latest_night(self) -> NightHeader | None:
+        return next((NightHeader(id=row["id"], **row["data"]) for row in self._ledger.read(queries.LATEST_NIGHT)), None)
 
     def nights(self) -> tuple[NightView, ...]:
         return read_nights(self._ledger, self._ledger.read(queries.LATEST_NIGHT))

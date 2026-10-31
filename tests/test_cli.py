@@ -180,11 +180,18 @@ def test_cli_preserves_jsonl_and_resumes_failed_month(
         f["kind"] == "interaction" and f["detail"]["status"] == "failed"
         for f in ledger["facts"]
     )
-    main(["month", "--db", db, "--backend", "claude-cli"])
-    resumed = json.loads(capsys.readouterr().out)
+    monkeypatch.setattr("sys.stdin", io.StringIO('{"action":"month"}\n{"action":"drain"}\n{"action":"state"}\n'))
+    main(["audience", "--db", db, "--backend", "claude-cli"])
+    resumed = json.loads(capsys.readouterr().out.splitlines()[-1])
     assert resumed["date"]["month"] == failed_date["month"] % 12 + 1
     assert resumed["date"]["year"] == failed_date["year"] + (failed_date["month"] == 12)
     assert resumed["petitions"] == []
+    main(["read", "--db", db, "--identity", "audit"])
+    ledger = json.loads(capsys.readouterr().out)
+    assert not {"words", "petition", "option"}.intersection(next(
+        f["detail"]["payload"] for f in reversed(ledger["facts"])
+        if f["kind"] == "interaction" and f["detail"]["action"] == "month"
+        and f["detail"]["status"] == "accepted"))
     # A world-only month can also be continued through JSONL before any audience exists.
     db = str(copyfile(opening_db, game_db.with_name("world.sqlite")))
     steps["simulation"] = replaying(

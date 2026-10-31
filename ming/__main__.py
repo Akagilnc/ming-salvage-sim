@@ -59,7 +59,7 @@ def parser() -> argparse.ArgumentParser:
 
 async def conversation(court: Court, settings: Configuration) -> None:
     game = Game(court, settings, month_model=settings.month_model)
-    game.resume()
+    game.reopen()
     await game.drain()
     state = game.presentation()
     night = state["night"]["id"] if state["night"] else None
@@ -76,7 +76,7 @@ async def conversation(court: Court, settings: Configuration) -> None:
                     await game.drain()
                 elif request.action != "state":
                     task = game.start(
-                        request.action, request.model_dump(mode="json", exclude={"action"}),
+                        request.action, request.model_dump(mode="json", exclude={"action"}, exclude_unset=True),
                         retry_same=True,
                     )
                     if task is not None and request.action != "month":
