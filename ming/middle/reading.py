@@ -33,6 +33,11 @@ def latest_detail(events: Sequence[Item], kind: str) -> Item | None:
     )
 
 
+def was_forced(events: Sequence[Item]) -> bool:
+    choice = latest_detail(events, "choice")
+    return choice is not None and choice["disposition"] == "forced"
+
+
 class Records:
     def __init__(self, ledger: Ledger) -> None:
         self._ledger = ledger
@@ -311,9 +316,8 @@ class Records:
             events = decisions[row["id"]]
             if row.pop("deliberated"):
                 verdict = latest_detail(events, "deliberation")
-                choice = latest_detail(events, "choice")
                 mode = None
-                if verdict and (verdict["verdict"] == "准" or (choice and choice.get("disposition") == "forced")):
+                if verdict and (verdict["verdict"] == "准" or was_forced(events)):
                     mode = "landed"
                 elif row["data"].get("interim"):
                     mode = "attempted"

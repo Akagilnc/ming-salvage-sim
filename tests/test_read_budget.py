@@ -9,6 +9,7 @@ measurement; the measured month request resumes an already open month.
 """
 
 import json
+from collections import Counter
 from contextlib import contextmanager
 from pathlib import Path
 from shutil import copyfile
@@ -25,7 +26,7 @@ RECORDED = Path(__file__).parent / "recorded"
 @contextmanager
 def measure_reads():
     """Observe SQL without consuming or replacing its real cursor."""
-    result = {"budget": [0, 0], "entity_writes": 0, "event_rows": 0}
+    result = {"budget": [0, 0], "entity_writes": 0, "event_rows": 0, "catalogues": Counter()}
 
     def count_reads(**query):
         compiled = query["context"].compiled
@@ -40,6 +41,13 @@ def measure_reads():
                 result["budget"][0] += 1
                 row_count = len(probe.fetchall())
                 result["budget"][1] += row_count
+                # The public catalogue's projection, not SQL text or a total-query ceiling.
+                if (tuple(column[0] for column in probe.description) == ("kind", "key", "event_count")
+                        and "read_people" in query["context"].compiled.params):
+                    parameters = query["context"].compiled_parameters[0]
+                    identity = (tuple(value for key, value in parameters.items() if key.startswith("read_people_")),
+                                parameters.get("exclude_secrets", False))
+                    result["catalogues"][identity] += 1
                 if any(getattr(table, "name", None) == "ledger_events"
                        for table in compiled.statement.get_final_froms()):
                     result["event_rows"] += row_count

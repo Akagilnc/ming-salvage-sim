@@ -33,11 +33,7 @@ class Inbox:
         petition_id, option, date = payload["petition"], payload["option"], payload["date"]
         petition = next(iter(pending_petitions(self.court, petition_id)), None)
         petition = petition.model_dump(mode="json") if petition else None
-        if (
-            petition is None
-            or type(option) is not int
-            or not 0 <= option < len(petition["options"])
-        ):
+        if petition is None or not 0 <= option < len(petition["options"]):
             raise ValueError("not a petition option")
         if accept:
             return

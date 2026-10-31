@@ -49,8 +49,7 @@ class Deliberations:
             for index, (identity, inputs) in prepare(self.court, pending, {"imperial_prestige": prestige}, date=date).items():
                 decree, decision = decrees[index]
                 calls[index] = self.call(decree, decision, identity, inputs)
-        indices = sorted(calls)
-        done.update(zip(indices, await gather_or_raise(*(calls[index] for index in indices)), strict=True))
+        done.update(zip(calls, await gather_or_raise(*calls.values()), strict=True))
         return [done[index] for index in range(len(decrees))]
 
     async def call(
