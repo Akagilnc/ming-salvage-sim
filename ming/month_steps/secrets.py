@@ -28,9 +28,11 @@ class Secrets:
         self.court, self.model = court, model
 
     async def report(self, decrees: tuple[EntityView, ...], date: dict[str, Any]) -> None:
+        reported = {f.entity_id for f in self.court.read.facts(
+            "audit", entity_id=[d.id for d in decrees], kind="secret_report", date=date,
+        )}
         pending = {index: Officials(people=[decree.data["handler"]])
-                   for index, decree in enumerate(decrees)
-                   if not self.court.read.has_facts(decree.id, "secret_report", date=date)}
+                   for index, decree in enumerate(decrees) if decree.id not in reported}
         await gather_or_raise(*(
             self.call(decrees[index], identity, inputs)
             for index, (identity, inputs) in prepare(self.court, pending, {}, date=date).items()

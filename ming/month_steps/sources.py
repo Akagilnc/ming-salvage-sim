@@ -65,11 +65,16 @@ class Sources:
     async def run(self, calendar: EntityView) -> None:
         pending: dict[int, Officials] = {}
         requests: dict[int, tuple[EntityView, str, dict[str, object]]] = {}
-        for index, (source, kind, faction) in enumerate([
+        sources = [
             (calendar, "urgent", None),
             *((f, "impeachment", f.key) for f in self.court.read.entities("audit", kind="faction")),
-        ]):
-            if self.court.read.has_facts(source.id, kind, date=calendar.data):
+        ]
+        produced = {(f.entity_id, f.kind) for f in self.court.read.facts(
+            "audit", entity_id=[source.id for source, _, _ in sources],
+            kind=("urgent", "impeachment"), date=calendar.data,
+        )}
+        for index, (source, kind, faction) in enumerate(sources):
+            if (source.id, kind) in produced:
                 continue
             people = list(petition_officials(self.court, faction))
             if kind == "urgent" and not people:

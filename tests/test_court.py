@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from contextlib import ExitStack, contextmanager
 from inspect import isawaitable
 
 import pytest
@@ -49,6 +50,17 @@ def replaying(
                 yield {index: DeltaToolCall(name=part.tool_name, json_args=part.args_as_json_str(), tool_call_id=part.tool_call_id)}
 
     return FunctionModel(reply, stream_function=stream_response)
+
+
+@contextmanager
+def reopening(directory):
+    """Each open ends the previous application's lifespan before creating another."""
+    with ExitStack() as clients:
+        def open_client():
+            clients.close()
+            return clients.enter_context(TestClient(create_app(directory)))
+
+        yield open_client
 
 
 @pytest.mark.parametrize("game_db", ["first_night"], indirect=True)

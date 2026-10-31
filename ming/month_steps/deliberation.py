@@ -2,6 +2,7 @@
 
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
+from uuid import UUID
 
 from pydantic_ai import Agent, PromptedOutput
 from pydantic_ai.models import Model
@@ -34,11 +35,12 @@ class Deliberations:
         """Prepare unchanged inputs before starting independent verdict calls."""
         done: dict[int, dict[str, Any]] = {}
         pending: dict[int, Officials] = {}
-        products = {key: self.court.read.facts("audit", entity_id=key, kind="deliberation", date=date)
-                    for key in dict.fromkeys(d.id for d, _ in decrees)}
+        products: dict[UUID, list[dict[str, Any]]] = {d.id: [] for d, _ in decrees}
+        for fact in self.court.read.facts("audit", entity_id=list(products), kind="deliberation", date=date):
+            products[fact.entity_id].append(fact.detail)
         for index, (decree, decision) in enumerate(decrees):
-            product = next((f.detail for f in products[decree.id]
-                            if f.detail["decision_key"] == decision), None)
+            product = next((detail for detail in products[decree.id]
+                            if detail["decision_key"] == decision), None)
             if product is not None:
                 done[index] = product
             else:

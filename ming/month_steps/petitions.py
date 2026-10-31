@@ -40,8 +40,13 @@ class Inbox:
         entity_id = UUID(petition["entity_id"])
         decision = {"petition_id": petition["id"], "option": option}
         text = petition["options"][option]
-        fixed = {"deliberation": DELIBERATION_OPTIONS, "urgent": URGENT_OPTIONS}.get(petition["source"], {})
-        disposition = next((key for key, label in fixed.items() if label == text), None)
+        disposition = None
+        if petition["source"] == "urgent":
+            offset: int = option - (len(petition["options"]) - len(URGENT_OPTIONS))
+            if offset >= 0:
+                disposition = list(URGENT_OPTIONS)[offset]
+        elif petition["source"] == "deliberation":
+            disposition = next((key for key, label in DELIBERATION_OPTIONS.items() if label == text), None)
         events = [("choice", {**decision, "text": text, "date": date, "disposition": disposition})]
         changes = None
         if disposition == "endorsed":

@@ -14,7 +14,7 @@ from starlette.testclient import TestClient
 
 from ming.middle.view import Officials, character_input
 from ming.web import create_app
-from tests.test_court import replaying
+from tests.test_court import reopening, replaying
 from tests.test_read_budget import measure_reads
 
 RECORDED = Path(__file__).parent / "recorded"
@@ -76,6 +76,8 @@ def test_every_model_call_reads_identity_scoped_records(game_db, steps):
     running = Counter()
     overlap = set()
     checked = set()
+    started, completed = [], []
+    release = asyncio.Event()
     precompute = True
     reads = None
     for name in received:
@@ -91,6 +93,8 @@ def test_every_model_call_reads_identity_scoped_records(game_db, steps):
                 data = json.loads(messages[0].parts[0].content)
                 assert [e["key"] for e in data["speakers"]] == deps.identity.people
                 identity = (tuple(deps.identity.people), deps.identity.exclude_secrets)
+                if name == "deliberation":
+                    started.append(data["context"]["decree"]["id"])
                 if reads is not None and identity not in checked:
                     # The whole group's preparation precedes its first model call.
                     # Check before the test's own visibility query below.
@@ -106,8 +110,15 @@ def test_every_model_call_reads_identity_scoped_records(game_db, steps):
             if any(isinstance(p, ToolReturnPart) for m in messages for p in m.parts):
                 # Distinct recorded verdicts are assigned by the task's structured
                 # origin, not call order or the prose of either decree.
-                if name == "deliberation" and json.loads(messages[0].parts[0].content)["context"]["decree"]["data"]["origin"] == "minister":
-                    return (RECORDED / "deliberation_rejected.txt").read_text()
+                if name == "deliberation":
+                    decree = json.loads(messages[0].parts[0].content)["context"]["decree"]
+                    if decree["id"] == started[0]:
+                        await release.wait()
+                    else:
+                        release.set()
+                    completed.append(decree["id"])
+                    if decree["data"]["origin"] == "minister":
+                        return (RECORDED / "deliberation_rejected.txt").read_text()
                 return outputs[name]
             return ModelResponse(parts=[
                 ToolCallPart("read_records", {"kind": "incumbency", "key": "户部尚书"}, tool_call_id="office"),
@@ -132,9 +143,11 @@ def test_every_model_call_reads_identity_scoped_records(game_db, steps):
             assert {p["entity_id"] for p in client.get("/state").json()["game"]["petitions"]} == {
                 str(d.id) for d in court.entities("audit", kind="decree") if d.data["origin"] == "minister"
             }
-            petition = client.get("/state").json()["game"]["petitions"][0]
-            client.post("/actions", json={"action": "choose", "petition": petition["id"], "option": 1}).raise_for_status()
+            client.post("/actions", json={
+                "action": "choose", "petition": client.get("/state").json()["game"]["petitions"][0]["id"], "option": 1,
+            }).raise_for_status()
             client.portal.call(client.app.state.web.game.drain)
+        assert completed == started[::-1]
         assert overlap == {"deliberation", "impeachment", "secret_report"}
         assert client.get("/state").json()["game"]["failure"] is None
         reports = court.facts(Officials(people=["郭允厚"]), kind="reported")
@@ -186,7 +199,8 @@ def test_month_retries_only_failed_source(game_db, steps, audit):
             [ModelHTTPError(429, "recorded"), *[reply] * factions] if name == "impeachment" else [reply] * 2,
             identities=calls[name],
         )
-    with TestClient(create_app(game_db.parent)) as client:
+    with reopening(game_db.parent) as reopen:
+        client = reopen()
         client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
         client.post("/actions", json={"action": "month"}).raise_for_status()
         assert client.get("/state").json()["game"]["failure"]["payload"]["type"] == "ModelHTTPError"
@@ -194,6 +208,7 @@ def test_month_retries_only_failed_source(game_db, steps, audit):
         completed = {(f["entity_id"], f["kind"]) for f in before["facts"] if f["kind"] in calls}
         assert sum(kind == "impeachment" for _, kind in completed) == factions - 1
         counts = {name: len(values) for name, values in calls.items()}
+        client = reopen()
         client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
         client.post("/actions", json={"action": "retry"}).raise_for_status()
         assert client.get("/state").json()["game"]["failure"] is None
@@ -235,7 +250,8 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
             ([ModelResponse(parts=[ToolCallPart("read_records", {"kind": "person", "key": ["毕自严", "徐光启"]})])]
              if failure is None else []) + [(RECORDED / "secret_report.txt").read_text()] * 2, material
         )
-    with TestClient(create_app(game_db.parent)) as client:
+    with reopening(game_db.parent) as reopen:
+        client = reopen()
         client.post(
             "/actions", json={"action": "load", "save": game_db.name}
         ).raise_for_status()
@@ -244,9 +260,8 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
         client.portal.call(client.app.state.web.game.drain)
         assert client.get("/state").json()["game"]["failure"] is None
         court = client.app.state.web.game.court.read
-        orders = court.entities("audit", kind="decree")
-        secret = next(d for d in orders if d.data["secret"])
-        public = next(d for d in orders if not d.data["secret"])
+        secret, public = court.entities("audit", kind="decree")
+        assert (secret.data["secret"], public.data["secret"]) == (True, False)
         gazettes = []
         steps["gazette"] = replaying([
             ModelResponse(parts=[ToolCallPart("read_records", {"kind": "decree", "key": secret.key}, tool_call_id="secret")]),
@@ -292,7 +307,7 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
             before = audit(game_db)
             case["views"].append(client.get("/records").json())
             assert any(f["kind"] == "arrived" for f in before["facts"])
-            client.post("/actions", json={"action": "menu"}).raise_for_status()
+            client = reopen()
             client.post(
                 "/actions", json={"action": "load", "save": game_db.name}
             ).raise_for_status()
@@ -357,7 +372,7 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
             )
             assert set(next(o["known_people"] for o in world["decrees"] if o["decree"]["id"] == str(secret.id))) == {handler, "王承恩", "杨嗣昌"}
             assert {o["decree"]["id"] for o in world["decrees"]} == {
-                str(d.id) for d in orders if month == 0 or d.id == secret.id or failure != "declaration"
+                str(d.id) for d in (secret, public) if month == 0 or d.id == secret.id or failure != "declaration"
             }
             for person, count in (
                 (handler, month + 1),
@@ -376,6 +391,7 @@ def test_secret_orders_keep_their_readers_and_monthly_products(
                   for year, number in [(1627, 10), (1627, 11)][:month + 1]]
             assert not court.facts("public", kind="secret_report")
             if month < 1:
+                client = reopen()
                 client.post(
                     "/actions", json={"action": "load", "save": game_db.name}
                 ).raise_for_status()
@@ -408,7 +424,8 @@ def test_discoveries_stay_private_and_completion_stops_only_reports(
     steps["simulation"] = replaying(
         [(RECORDED / "simulation.txt").read_text()] * 3, simulations
     )
-    with TestClient(create_app(tmp_path)) as client:
+    with reopening(tmp_path) as reopen:
+        client = reopen()
         client.post(
             "/actions", json={"action": "load", "save": game_db.name}
         ).raise_for_status()
@@ -462,6 +479,7 @@ def test_discoveries_stay_private_and_completion_stops_only_reports(
                     "origin_ref" not in f.detail
                     for f in court.facts(identity, kind="changed")
                 )
+            client = reopen()
             client.post(
                 "/actions", json={"action": "load", "save": game_db.name}
             ).raise_for_status()
