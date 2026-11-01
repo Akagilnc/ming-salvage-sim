@@ -266,33 +266,39 @@ class Records:
 
     def fact_ids(
         self, identity: Identity, kind: str, *, date: Item | None = None,
-        has: str | None = None, entity_kind: str | None = None,
+        has: str | None = None,
     ) -> tuple[UUID, ...]:
         query, _ = self._sources(identity)
         query = query.with_only_columns(F.entity_id)
         if has is not None:
             query = query.where(F.detail[has].as_string().is_not(None))
-        if entity_kind is not None:
-            query = query.where(E.kind == entity_kind)
         return tuple(row["entity_id"] for row in self._ledger.facts(kind=kind, date=date, query=query, parameters=view_parameters(identity)))
 
     def journeys_due(self, date: Item) -> tuple[Item, ...]:
-        return self._ledger.read(journeys_due(date))
+        return self._ledger.read(journeys_due(date).with_only_columns(
+            E.key.label("person"), E.data["transit_to"].as_string().label("destination"), E.data["arrival_date"].label("date"),
+        ))
+
+    def public_decrees(self, date: Item) -> tuple[EntityView, ...]:
+        """Public decrees issued this month; secret ones never take deliberation."""
+        query = queries.decrees_with("decreed", date).where(E.data["secret"].as_boolean().is_(False))
+        return tuple(EntityView.model_validate(row) for row in self._ledger.read(query))
 
     def levies_due(self, date: Item) -> list[Item]:
-        events = {row["data"]["id"]: row for row in self._ledger.entities(kind="historical_event")}
+        due = self._ledger.entities(kind="historical_event", query=ENTITY_ROWS.where(
+            E.data["category"].as_string() == "fiscal_levy",
+            E.data["trigger_year"].as_integer() == date["year"],
+            E.data["trigger_month"].as_integer() == date["month"],
+            E.data["terminal_reason"].as_string().is_(None),
+        ))
+        gates = {subject.split(".")[1] for row in due for subject in row["data"]["trigger_gate"]}
+        endings = {row["id"]: row["reason"] for row in self._ledger.entities(kind="historical_event", query=ENTITY_ROWS.with_only_columns(
+            E.data["id"].as_string().label("id"), E.data["terminal_reason"].as_string().label("reason"),
+        ).where(E.data["id"].as_string().in_(gates)))} if gates else {}
         return [
-            {"entity": row["key"], "data": row["data"]}
-            for row in events.values()
-            if row["data"].get("category") == "fiscal_levy"
-            and (row["data"]["trigger_year"], row["data"]["trigger_month"])
-            == (date["year"], date["month"])
-            and row["data"].get("terminal_reason") is None
-            and all(
-                events[subject.split(".")[1]]["data"].get("terminal_reason")
-                == required.removeprefix("==")
-                for subject, required in row["data"]["trigger_gate"].items()
-            )
+            {"entity": row["key"], "data": row["data"]} for row in due
+            if all(endings[subject.split(".")[1]] == required.removeprefix("==")
+                   for subject, required in row["data"]["trigger_gate"].items())
         ]
 
     def landing_sources(

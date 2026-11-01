@@ -670,7 +670,8 @@ def test_fiscal_petition_lands_only_declared_outcome_without_readding_levies(
     opening_db, game_db: Path, steps, audit, case: tuple
 ) -> None:
     recording = json.loads((RECORDED / case[0]).read_text())
-    steps["simulation"] = replaying(recording["simulation"][:1])
+    drafted = []
+    steps["simulation"] = replaying(recording["simulation"][:1], drafted)
     steps["month_final"] = replaying(recording["simulation"][1:])
     steps["Declaration"] = replaying(recording["Declaration"])
     if case[5] is not None:
@@ -683,6 +684,7 @@ def test_fiscal_petition_lands_only_declared_outcome_without_readding_levies(
         assert state["failure"] is None
         assert state["date"]["month"] == 1
         assert state["petitions"][0]["blocking"] is True
+        assert [e["entity"] for e in json.loads(drafted[-1].parts[0].content)["context"]["fiscal_events"]] == [case[1]]
         client.post(
             "/actions",
             json={

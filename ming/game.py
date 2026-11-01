@@ -406,7 +406,7 @@ class Game:
         self, action: str, payload: dict[str, Any], *, starting: bool = False,
     ) -> str | bool | None:
         if action == "say":
-            night = self.court.night(UUID(payload["night_id"]), include_result=False)
+            night = self.court.night(UUID(payload["night_id"]), complete=False)
             self.audience.open(night)
             return await self.audience.say(
                 night, payload["words"],

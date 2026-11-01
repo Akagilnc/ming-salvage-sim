@@ -127,8 +127,8 @@ class Court:
             changed.append(person)
         self._ledger.commit(changed)
 
-    def night(self, night_id: UUID, *, include_result: bool = True) -> NightView:
-        return read_nights(self._ledger, self._ledger.entities(entity_id=night_id), include_result=include_result)[0]
+    def night(self, night_id: UUID, *, complete: bool = True) -> NightView:
+        return read_nights(self._ledger, self._ledger.entities(entity_id=night_id), complete=complete)[0]
 
     def latest_night(self) -> NightHeader | None:
         return next((NightHeader(id=row["id"], **row["data"]) for row in self._ledger.read(queries.LATEST_NIGHT)), None)
@@ -152,14 +152,13 @@ class Court:
             kind="person",
             query=ENTITY_ROWS.with_only_columns(E.key).where(E.data["waiting_audience"].as_boolean().is_(True)),
         )
-        gazette = self.read.entities("audit", kind="gazette")[0].data["text"]
         calendar = self.read.calendar()
-        for fact in self._ledger.facts(
+        latest = self._ledger.facts(
             entity_id=calendar.id,
             kind="gazette",
             query=FACT_ROWS.order_by(None).order_by(F.position.desc()).limit(1),
-        ):
-            gazette = fact["detail"]["text"]
+        )
+        gazette = latest[0]["detail"]["text"] if latest else self.read.entities("audit", kind="gazette")[0].data["text"]
         return {
             "date": calendar.data,
             "imperial_prestige": character_input(

@@ -17,6 +17,7 @@ from starlette.testclient import TestClient
 from ming.middle.view import Officials
 from ming.web import create_app
 from tests.test_court import replaying
+from tests.test_secrets import _declaration_prompt
 from tests.test_web import state_updates
 
 RECORDED = Path(__file__).parent / "recorded"
@@ -139,7 +140,8 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
             *ModelMessagesTypeAdapter.validate_python(case["scene_responses"]),
         ], received,
     )
-    steps["NightDeclaration"] = replaying(case["replies"])
+    translated = []
+    steps["NightDeclaration"] = replaying(case["replies"], translated)
     events = asyncio.Queue()
     with TestClient(create_app(tmp_path)) as client:
         client.app.state.web.listeners.add(events)
@@ -154,9 +156,12 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
             game = client.get("/state").json()["game"]
             assert game["failure"] is None
             assert set(game["night"]["hall"]) == hall
-        assert isinstance(json.loads(received[0].parts[0].content[0])["imperial_prestige"], str)
+        scene_input = json.loads(received[0].parts[0].content[0])
+        assert isinstance(scene_input["imperial_prestige"], str)
         court = client.app.state.web.game.court
+        assert scene_input["gazette"] == court.read.entities("audit", kind="gazette")[0].data["text"]
         assert court.nights()[0].result == "translated"
+        assert _declaration_prompt(translated)["turns"] == [t.model_dump(mode="json") for t in court.nights()[0].turns]
         first, second = sorted(
             court.read.entities("audit", kind="decree"), key=lambda d: d.data["turn"]
         )

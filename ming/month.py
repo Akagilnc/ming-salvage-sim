@@ -17,7 +17,7 @@ from ming.month_steps.gazette import Gazette
 from ming.month_steps.sources import Sources
 from ming.month_steps.secrets import Secrets
 from ming.month_steps.products import record_product
-from ming.month_steps.materials import PETITION_OFFICES, PendingPetition, has_pending_petitions, next_month, pending_petitions, pending_pushes
+from ming.month_steps.materials import PETITION_OFFICES, has_pending_petitions, next_month, pending_petitions, pending_pushes
 
 
 class Month:
@@ -83,15 +83,13 @@ class Month:
 
     async def resume(
         self, *, date: dict[str, Any], speculative: bool = False, opened: bool = False,
-    ) -> tuple[PendingPetition, ...]:
+    ) -> None:
         async with self.lock:
             calendar = self.court.read.calendar()
             # The lock can wait behind a month that advances the calendar.
             if date != calendar.data:
-                return pending_petitions(self.court)
-            public = [d for d in self.court.read.entities("audit", kind="decree", ids=list(self.court.read.fact_ids(
-                "audit", "decreed", date=calendar.data, entity_kind="decree",
-            ))) if not d.data["secret"]]
+                return
+            public = self.court.read.public_decrees(calendar.data)
             verdicts = await self.deliberations.run(
                 [(d, None) for d in public] + list(pending_pushes(self.court, calendar.data)), calendar.data,
             )
@@ -99,7 +97,7 @@ class Month:
                 pending = pending_petitions(self.court)
                 if pending and self.court.read.has_facts(calendar.id, "month_draft", date=calendar.data):
                     self.simulations.speculate(calendar, pending, None)
-                return pending
+                return
             final = None
             if not self.court.read.has_facts(calendar.id, "month_final", date=calendar.data):
                 # Opening urgent petitions must be answered before drafting, since
@@ -107,7 +105,7 @@ class Month:
                 pending = pending_petitions(self.court)
                 drafted = self.court.read.has_facts(calendar.id, "month_draft", date=calendar.data)
                 if pending and not drafted:
-                    return pending
+                    return
                 produced = None
                 if not drafted:
                     # Reuse only this invocation's already committed complete product.
@@ -115,7 +113,7 @@ class Month:
                     pending = produced.petitions
                 if pending:
                     self.simulations.speculate(calendar, pending, produced)
-                    return pending
+                    return
                 final = await self.simulations.final(calendar, produced)
             await self.landing.run(calendar, final)
             self.court.settle_accounts(calendar)
@@ -125,8 +123,7 @@ class Month:
                 self.secrets.report(self.court.read.without_events("decree", {"secret": True}, "completed", calendar.data), calendar.data),
             )
             self.court.record(calendar.id, [("advanced", {"date": calendar.data})], next_month(calendar.data))
-            return ()
 
-    async def advance(self, calendar: EntityView) -> tuple[PendingPetition, ...]:
+    async def advance(self, calendar: EntityView) -> None:
         self.open(calendar)
-        return await self.resume(date=calendar.data, opened=True)
+        await self.resume(date=calendar.data, opened=True)

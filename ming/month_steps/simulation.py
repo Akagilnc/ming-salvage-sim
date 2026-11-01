@@ -47,8 +47,7 @@ class Simulations:
     def context(self, calendar: EntityView, *, final: bool = False) -> dict[str, Any]:
         context = {
             "decrees": landing_materials(self.court, include_history=False, date=calendar.data),
-            "arrivals": [{"person": row["key"], "destination": row["data"]["transit_to"], "date": row["data"]["arrival_date"]}
-                         for row in self.court.read.journeys_due(calendar.data)],
+            "arrivals": self.court.read.journeys_due(calendar.data),
             "fiscal_events": self.court.read.levies_due(calendar.data),
             "prior_choices": prior_choices(self.court, calendar.data),
         }
