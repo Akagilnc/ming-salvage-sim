@@ -659,18 +659,22 @@ def test_background_call_keeps_its_model_across_tools_validation_and_retry(game_
             async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app), base_url="http://test") as http:
                 (await http.post("/actions", json={"action": "menu"})).raise_for_status()
                 assert (await http.get("/state")).json()["game"] is None
-                app.state.web.listeners.add(events)
+                state_updates(events)  # From here the stream shows only the game opened next.
                 target = other if reopen else game_db
                 (await http.post("/actions", json={"action": "load", "save": target.name})).raise_for_status()
         return codex_response(request)
 
     install_codex(monkeypatch, exchange, OpenAIProvider)
     with TestClient(app) as client:
+        app.state.web.listeners.add(events)
         open_game(client, {"backend": "api", "model": "old-model", "effort": "low"}, game_db)
         client.post("/actions", json={"action": "open"}).raise_for_status()
         client.post("/actions", json={"action": "dismiss"}).raise_for_status()
         client.portal.call(app.state.web.game.drain)
         assert client.get("/state").json()["game"]["failure"] is None
+        completed = state_updates(events)[-1]
+        assert (completed["save"], completed["game"]["night"]["result"], completed["game"]["running"],
+                completed["game"]["failure"]) == (game_db.name, "translated", False, None)
         assert models == ["old-model"] * 5
         assert tools and all(t["entities"][0]["key"] == "王承恩" for t in tools)
         assert clock == [5]
