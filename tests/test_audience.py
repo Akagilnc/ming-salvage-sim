@@ -140,7 +140,9 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
         ], received,
     )
     steps["NightDeclaration"] = replaying(case["replies"])
+    events = asyncio.Queue()
     with TestClient(create_app(tmp_path)) as client:
+        client.app.state.web.listeners.add(events)
         client.post("/actions", json={"action": "load", "save": game_db.name})
         for turn, hall in zip(case["turns"], (
             {"王承恩", "杨嗣昌", "王绍徽"},
@@ -173,6 +175,8 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
         for part in message.parts
         if isinstance(part, ToolReturnPart)
     }
+    assert [event["data"] for event in (events.get_nowait() for _ in range(events.qsize()))
+            if event["event"] == "hall"] == [value["hall"] for name, value in returned.values() if name == "set_hall"]
     assert [result["status"] for result in returned["offices"][1]["offices"]] == ["occupied", "occupied"]
     assert [result["appointments"][0]["holders"] for result in returned["offices"][1]["offices"]] == [["黄立极"], ["郭允厚"]]
     before, after = (returned[key][1]["entities"][0] for key in ("before", "after"))

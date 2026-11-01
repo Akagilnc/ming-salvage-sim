@@ -218,6 +218,8 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
                 assert client.portal is not None
                 client.portal.call(app.state.web.game.drain)
                 assert received.pop("retry") == [(False, None, 204)]
+                # The other HTTP chain opened this night while translation awaited.
+                assert client.get("/state").json()["game"]["night"]["closed"] is False
                 steps["NightDeclaration"] = replaying(case["replies"])
                 with TestClient(create_app(game_db.parent / "recovery")) as restored:
                     events = asyncio.Queue()

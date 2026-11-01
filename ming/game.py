@@ -64,7 +64,7 @@ class Game:
         self.court = court
         self.emit: Callable[[dict[str, Any]], None] | None = None
         self.live: dict[str, str] = {}
-        self.audience = Audience(court, self.start_background)
+        self.audience = Audience(court, self.start_background, partial(self.notify, "hall"))
         self.month = Month(court, partial(self.notify, "gazette"))
         self.configure(model, month_model=month_model)
         self.active: asyncio.Task[Any] | None = None
@@ -81,7 +81,7 @@ class Game:
         )
 
     def notify(self, event: str, data: Any) -> None:
-        if event != "state":
+        if event in {"delta", "gazette"}:
             self.live[event] = (
                 data["replace"] if isinstance(data, dict)
                 else self.live.get(event, "") + data
@@ -132,68 +132,71 @@ class Game:
                      if i["status"] != "failed" and i["action"] != "translation"
                      and not (i["action"] == "month" and waiting))
 
+    def face(self, facts: ActionFacts, *, opened: bool | None = None) -> str:
+        if facts.night and not facts.night.closed:
+            return "audience"
+        if "month" in facts.interactions:
+            return "month"
+        return "month" if (self.month.opened(facts.calendar) if opened is None else opened) else "desk"
+
     def presentation(
         self, facts: ActionFacts | None = None, monthly: dict[str, Any] | None = None,
-        *, opened: bool | None = None,
+        *, opened: bool | None = None, failures: tuple[dict[str, Any], ...] | None = None,
     ) -> dict[str, Any]:
-        calendar, latest, interactions, _ = self.actions(full_night=True) if facts is None else facts
+        facts = self.actions(full_night=True) if facts is None else facts
+        calendar, latest, interactions, _ = facts
         night = latest.model_dump(mode="json") if latest else None
         monthly = self.month.presentation(calendar) if monthly is None else monthly
         opened = self.month.opened(calendar) if opened is None else opened
         running = self.running(interactions, waiting=self.month.waiting(calendar, opened=opened, has_petitions=bool(monthly["petitions"])))
         pending = next((i for i in running if i["action"] == "month"), next(iter(running), None))
-        failures = self.failures(interactions)
+        failures = self.failures(interactions) if failures is None else failures
         failure = next(iter(failures), None)
         return {
-            "face": "audience" if night and not night["closed"] else
-                    "month" if opened or "month" in interactions else "desk",
+            "face": self.face(facts, opened=opened),
             "night": night, "date": calendar.data,
             "running": pending is not None and failure is None,
             "failure": failure, "pending": pending, **monthly,
             "petitions": [p for p in monthly["petitions"] if f"choose:{p['id']}" not in interactions],
         }
 
-    def refresh(self, *, reopening: bool = False) -> dict[str, Any] | None:
-        """Resume and present one synchronous view, before scheduled work can run."""
-        if self.emit is None:
-            if reopening:
-                self.reopen()
-            else:
-                self.resume()
-            return None
-        facts = self.actions(full_night=True)
-        monthly = self.month.presentation(facts.calendar)
-        opened = self.month.opened(facts.calendar)
-        if reopening:
-            self.reopen(facts, has_petitions=bool(monthly["petitions"]), opened=opened)
-        else:
-            self.resume(facts, has_petitions=bool(monthly["petitions"]), opened=opened)
-        return self.presentation(facts, monthly, opened=opened)
+    def refresh(self, *, reopening: bool = False, present: bool = False) -> tuple[dict[str, Any] | None, bool]:
+        """Resume, optionally present, and report failure from one synchronous read."""
+        facts = self.actions(full_night=present)
+        monthly = self.month.presentation(facts.calendar) if present else None
+        opened = self.month.opened(facts.calendar) if present else None
+        resume = self.reopen if reopening else self.resume
+        failures = resume(facts, has_petitions=bool(monthly["petitions"]) if monthly is not None else None, opened=opened)
+        return (self.presentation(facts, monthly, opened=opened, failures=failures) if present else None,
+                bool(failures))
 
-    def reopen(self, facts: ActionFacts | None = None, *, has_petitions: bool | None = None, opened: bool | None = None) -> None:
+    def reopen(self, facts: ActionFacts | None = None, *, has_petitions: bool | None = None, opened: bool | None = None) -> tuple[dict[str, Any], ...]:
         facts = self.actions() if facts is None else facts
         has_petitions = has_pending_petitions(self.court) if has_petitions is None else has_petitions
-        self.resume(facts, has_petitions=has_petitions, opened=opened)
+        failures = self.resume(facts, has_petitions=has_petitions, opened=opened)
         if has_petitions or (facts.pending_nights if facts.pending_nights is not None else self.court.pending_nights()):
             self.start_background()
+        return failures
 
-    def resume(self, facts: ActionFacts | None = None, *, has_petitions: bool | None = None, opened: bool | None = None) -> None:
-        if self.busy():
-            return
+    def resume(self, facts: ActionFacts | None = None, *, has_petitions: bool | None = None, opened: bool | None = None) -> tuple[dict[str, Any], ...]:
         facts = self.actions() if facts is None else facts
         calendar, _, interactions, _ = facts
         failures = self.failures(interactions)
+        if self.busy():
+            return failures
         waiting = "month" in interactions and self.month.waiting(calendar, has_petitions=has_petitions, opened=opened)
         pending = [i for i in self.running(interactions, waiting=waiting) if not failures or i["action"] == "choose"]
         if pending:
             self.active = asyncio.create_task(self._resume(pending))
+        return failures
 
     async def _resume(self, pending: list[dict[str, Any]]) -> None:
         async def ordered() -> None:
             for item in pending:
                 if item["action"] not in {"month", "choose"}:
-                    await self.execute(item["action"], item["payload"])
-                    if self.failures(self.actions().interactions):
+                    _, failed = await self.execute(item["action"], item["payload"])
+                    # execute returns directly after its final synchronous refresh.
+                    if failed:
                         return
             for item in pending:
                 if item["action"] == "month":
@@ -278,7 +281,7 @@ class Game:
             self.notify("state", None)
         return task
 
-    def night_action(self, action: str) -> None:
+    def night_action(self, action: str, *, present: bool = False, date: dict[str, Any] | None = None) -> dict[str, Any] | None:
         if action == "dismiss":
             night = self.court.latest_night()
             if night is None:
@@ -288,14 +291,18 @@ class Game:
             self.audience.open(night)
             self.audience.dismiss()
             if not self.busy():
-                state = self.refresh()
+                state, _ = self.refresh(present=present or self.emit is not None)
                 if not self.busy():
                     self.notify("state", state)
+                return state
         else:
             if self.busy():
                 raise InvalidAction("这一步还在进行")
-            if self.audience.open():
-                self.notify("state", None)
+            if self.audience.open(date=date):
+                state = self.presentation() if present or self.emit is not None else None
+                self.notify("state", state)
+                return state
+        return None
 
     def accept(
         self, action: str, payload: dict[str, Any], calendar: EntityView, *,
@@ -342,13 +349,15 @@ class Game:
             if starting:
                 # Registration changes interactions, not the pending night set;
                 # scheduled translation cannot run until the await below.
-                facts = self.actions(full_night=True, pending_nights=pending)
-                calendar = facts.calendar
-                self.notify("state", self.presentation(facts))
+                if self.emit is not None:
+                    facts = self.actions(full_night=True, pending_nights=pending)
+                    calendar = facts.calendar
+                    self.notify("state", self.presentation(facts))
                 starting = False
             if self.translation is None or self.translation.done():
                 return self.court.read.calendar() if calendar is None else calendar
-            if not await asyncio.shield(self.translation):
+            output, _ = await asyncio.shield(self.translation)
+            if not output:
                 return None
             calendar, pending = None, None
 
@@ -369,11 +378,12 @@ class Game:
 
     async def execute(
         self, action: str, payload: dict[str, Any], *, starting: bool = False,
-    ) -> str | bool | None:
+    ) -> tuple[str | bool | None, bool | None]:
+        """Return output and a failure conclusion when continuation consumes it."""
         try:
             output = await self.work(action, payload, starting=starting)
             if output is False:
-                return None
+                return None, True
         except Exception as error:
             self.court.log.exception("action=%s", action)
             self.interaction(
@@ -391,8 +401,15 @@ class Game:
             self.live.pop("delta" if action == "say" else "gazette", None)
         if self.active is asyncio.current_task():
             self.active = None
-        self.notify("state", self.refresh() if action != "translation" else None)
-        return output
+        if action == "translation":
+            state, failed = None, output is None
+        elif action in {"month", "choose"} and self.busy() and self.emit is None:
+            # The active chain owns continuation; these callers consume no failure result.
+            state, failed = None, None
+        else:
+            state, failed = self.refresh(present=self.emit is not None)
+        self.notify("state", state)
+        return output, failed
 
     async def work(
         self, action: str, payload: dict[str, Any], *, starting: bool = False,

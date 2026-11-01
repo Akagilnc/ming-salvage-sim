@@ -63,13 +63,13 @@ class Court:
                 copyfileobj(source, destination)
         return cls(path)
 
-    def open_night(self) -> tuple[UUID, bool]:
+    def open_night(self, *, date: dict[str, object] | None = None) -> tuple[UUID, bool]:
         for row in self._ledger.entities(query=queries.LATEST_NIGHT.with_only_columns(E.id, E.data["closed"].as_boolean().label("closed"))):
             if not row["closed"]:
                 return row["id"], False
-        date = calendar_row(self._ledger)["data"]
+        current = calendar_row(self._ledger)["data"] if date is None else date
         night = Entity(
-            "night", str(uuid4()), "", {"closed": False, "hall": list(INITIAL_HALL), "date": {k: date[k] for k in ("year", "month")}}
+            "night", str(uuid4()), "", {"closed": False, "hall": list(INITIAL_HALL), "date": {k: current[k] for k in ("year", "month")}}
         )
         self._ledger.commit([night])
         return night.id, True

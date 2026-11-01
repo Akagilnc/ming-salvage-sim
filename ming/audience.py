@@ -35,9 +35,10 @@ class Audience:
         "\n".join((INSTRUCTIONS, DECREE, SECRET, HANDLER, PEOPLE, ACTING, INTERIM, DISCOVERED, AUDIENCE, DECREE_EVENT, HELD)),
     )
 
-    def __init__(self, court: Court, on_dismiss: Callable[[], None]) -> None:
+    def __init__(self, court: Court, on_dismiss: Callable[[], None], on_hall: Callable[[list[str]], None]) -> None:
         self.court = court
         self.on_dismiss = on_dismiss
+        self.on_hall = on_hall
         self.model: Model
         self._night_id: UUID | None = None
         self._turn: asyncio.Task[str] | None = None
@@ -69,9 +70,9 @@ class Audience:
                 pending["translation"] = item
         return pending
 
-    def open(self, night: NightHeader | None = None) -> bool:
+    def open(self, night: NightHeader | None = None, *, date: dict[str, Any] | None = None) -> bool:
         if night is None:
-            self._night_id, created = self.court.open_night()
+            self._night_id, created = self.court.open_night(date=date)
             closed = False
         else:
             self._night_id, created, closed = night.id, False, night.closed
@@ -158,7 +159,9 @@ async def set_hall(
     ctx: RunContext[Audience], add: list[str], remove: list[str]
 ) -> HallResult:
     """有人入殿或退下时先改名单；不在京师的人加不进殿。"""
-    return ctx.deps.court.set_hall(ctx.deps.night_id, add, remove)
+    result = ctx.deps.court.set_hall(ctx.deps.night_id, add, remove)
+    ctx.deps.on_hall(result.hall)
+    return result
 
 
 async def dismiss(ctx: RunContext[Audience]) -> None:

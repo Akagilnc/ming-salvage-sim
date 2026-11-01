@@ -72,16 +72,7 @@ class Web:
             return
         event = event or {"event": "state", "data": None}
         if event["event"] == "delta":
-            assert self.game is not None
-            event = {
-                **event,
-                "data": {
-                    "text": event["data"],
-                    "hall": list(
-                        self.game.court.read.entities("audit", ids=[self.game.audience.night_id])[0].data["hall"]
-                    ),
-                },
-            }
+            event = {**event, "data": {"text": event["data"]}}
         elif event["event"] == "state":
             event = {**event, "data": self.snapshot(saves, event["data"])}
         for queue in self.listeners:
@@ -90,6 +81,7 @@ class Web:
     def menu(self) -> None:
         game, self.game = self.game, None
         if game is not None:
+            game.emit = None
             self.navigation += 1
             save = game.court.db_path.name
             self.departed[save] = game
@@ -141,11 +133,11 @@ class Web:
             else:
                 court = Court(self.directory / save)
             game = Game(court, model, month_model=model.month_model)
-            game.emit = partial(self.emit, source=game)
         self.menu()
         self.game = game
+        game.emit = partial(self.emit, source=game)
         self.navigation += 1
-        presentation = game.refresh(reopening=True) if opening else None
+        presentation = game.refresh(reopening=True, present=True)[0] if opening else None
         self.emit({"event": "state", "data": presentation}, saves=saves)
         return {"save": game.court.db_path.name, "navigation": self.navigation}
 

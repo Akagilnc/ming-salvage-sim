@@ -37,8 +37,7 @@ class Month:
         self.secrets = Secrets(court, model)
         self.lock = asyncio.Lock()
 
-    def opened(self, calendar: EntityView | None = None) -> bool:
-        calendar = self.court.read.calendar() if calendar is None else calendar
+    def opened(self, calendar: EntityView) -> bool:
         return self.court.read.has_facts(calendar.id, "month_open", date=calendar.data)
 
     def open(self, calendar: EntityView) -> EntityView:
@@ -84,9 +83,8 @@ class Month:
         }
 
     async def resume(
-        self, *, speculative: bool = False, date: dict[str, Any] | None = None, opened: bool = False,
+        self, *, date: dict[str, Any], speculative: bool = False, opened: bool = False,
     ) -> tuple[PendingPetition, ...]:
-        date = self.court.read.calendar().data if date is None else date
         async with self.lock:
             calendar = self.court.read.calendar()
             # The lock can wait behind a month that advances the calendar.

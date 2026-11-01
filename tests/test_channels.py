@@ -312,8 +312,7 @@ def assert_scene(state: dict[str, object], events: asyncio.Queue) -> None:
     assert deltas
     live = ""
     for data in deltas:
-        assert set(data) == {"text", "hall"}
-        assert isinstance(data["hall"], list)
+        assert set(data) == {"text"}
         text = data["text"]
         assert isinstance(text, str) or (
             isinstance(text, dict) and set(text) == {"replace"}
@@ -651,6 +650,9 @@ def test_background_call_keeps_its_model_across_tools_validation_and_retry(game_
                 return codex_response(request, read_args={"kind": "person", "key": "王承恩"})
         assert body["model"] == ("new-model" if name == "scene" else "new-month-model")
         assert body["reasoning_effort"] == ("high" if name == "scene" else "medium")
+        if reopen and name == "Declaration":
+            async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app), base_url="http://test") as http:
+                (await http.post("/actions", json={"action": "menu"})).raise_for_status()
         return codex_response(request)
 
     install_codex(monkeypatch, exchange, OpenAIProvider)
@@ -664,6 +666,9 @@ def test_background_call_keeps_its_model_across_tools_validation_and_retry(game_
         assert tools and all(t["entities"][0]["key"] == "王承恩" for t in tools)
         assert clock == [5]
         client.post("/actions", json={"action": "month"}).raise_for_status()
+        if reopen:
+            assert client.get("/state").json()["game"] is None
+            client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
         state = client.get("/state").json()["game"]
         assert (state["failure"], state["date"]["month"]) == (None, 11)
         client.post("/actions", json={"action": "open"}).raise_for_status()
