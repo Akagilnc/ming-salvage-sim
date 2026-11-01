@@ -293,7 +293,7 @@ class Game:
             if self.busy():
                 raise InvalidAction("这一步还在进行")
             if self.audience.open(date=date):
-                state = self.presentation() if present or self.emit is not None else None
+                state = self.presentation() if present else None
                 self.notify("state", state)
                 return state
         return None
@@ -395,9 +395,7 @@ class Game:
             self.live.pop("delta" if action == "say" else "gazette", None)
         if self.active is asyncio.current_task():
             self.active = None
-        if action == "translation":
-            state, failed = None, output is None
-        elif action in {"month", "choose"} and self.busy() and self.emit is None:
+        if action == "translation" or (action in {"month", "choose"} and self.busy() and self.emit is None):
             # The active chain owns continuation; these callers consume no failure result.
             state, failed = None, False
         else:

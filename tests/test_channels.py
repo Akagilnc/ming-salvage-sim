@@ -655,12 +655,13 @@ def test_background_call_keeps_its_model_across_tools_validation_and_retry(game_
                 return codex_response(request, read_args={"kind": "person", "key": "王承恩"})
         assert body["model"] == ("new-model" if name == "scene" else "new-month-model")
         assert body["reasoning_effort"] == ("high" if name == "scene" else "medium")
-        if reopen and name == "Declaration":
+        if name == "Declaration":
             async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app), base_url="http://test") as http:
                 (await http.post("/actions", json={"action": "menu"})).raise_for_status()
                 assert (await http.get("/state")).json()["game"] is None
                 app.state.web.listeners.add(events)
-                (await http.post("/actions", json={"action": "load", "save": other.name})).raise_for_status()
+                target = other if reopen else game_db
+                (await http.post("/actions", json={"action": "load", "save": target.name})).raise_for_status()
         return codex_response(request)
 
     install_codex(monkeypatch, exchange, OpenAIProvider)
@@ -674,14 +675,17 @@ def test_background_call_keeps_its_model_across_tools_validation_and_retry(game_
         assert tools and all(t["entities"][0]["key"] == "王承恩" for t in tools)
         assert clock == [5]
         client.post("/actions", json={"action": "month"}).raise_for_status()
+        updates = state_updates(events)
+        assert updates
         if reopen:
             state = client.get("/state").json()
             assert (state["save"], state["game"]["date"]["month"]) == (other.name, 10)
-            updates = state_updates(events)
-            assert updates
             assert all(update["save"] == other.name and update["game"]["night"] is None
                        and update["game"]["date"]["month"] == 10 for update in updates)
             client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
+        else:
+            latest = updates[-1]
+            assert (latest["save"], latest["game"]["date"]["month"], latest["game"]["running"]) == (game_db.name, 11, False)
         state = client.get("/state").json()["game"]
         assert (state["failure"], state["date"]["month"]) == (None, 11)
         client.post("/actions", json={"action": "open"}).raise_for_status()
