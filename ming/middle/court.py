@@ -74,7 +74,8 @@ class Court:
         self._ledger.commit([night])
         return night.id, True
 
-    def set_hall(self, night_id: UUID, add: list[str], remove: list[str]) -> HallResult:
+    def set_hall(self, night_id: UUID, add: list[str], remove: list[str]) -> tuple[HallResult, bool]:
+        """Apply a hall change and report whether the list actually differs."""
         night = self._ledger.get(night_id)
         people = {
             e["key"]: e
@@ -100,8 +101,9 @@ class Court:
                     "required_location": CAPITAL,
                 })
         if failures or night.data["closed"]:
-            return HallResult(ok=False, hall=night.data["hall"], failures=failures)
+            return HallResult(ok=False, hall=night.data["hall"], failures=failures), False
         hall = change_hall(night.data["hall"], add, remove)
+        changed = hall != night.data["hall"]
         night.record("hall", "", {"add": add, "remove": remove}, {"hall": hall})
         admitted = [
             self._ledger.get(people[name]["id"])
@@ -111,7 +113,7 @@ class Court:
         for person in admitted:
             person.record("audience_admitted", "", {"night_id": str(night_id)}, {"waiting_audience": False})
         self._ledger.commit([night, *admitted])
-        return HallResult(ok=True, hall=hall)
+        return HallResult(ok=True, hall=hall), changed
 
     def settle_journeys(self, date: Item) -> None:
         changed: list[Entity] = []

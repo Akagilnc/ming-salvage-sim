@@ -180,8 +180,15 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
         for part in message.parts
         if isinstance(part, ToolReturnPart)
     }
+    # Rejected and unchanged successful set_hall calls have no visible transition.
     assert [event["data"] for event in (events.get_nowait() for _ in range(events.qsize()))
-            if event["event"] == "hall"] == [value["hall"] for name, value in returned.values() if name == "set_hall"]
+            if event["event"] == "hall"] == [
+        ["王承恩", "王体乾"],
+        ["王承恩"],
+        ["王承恩", "杨嗣昌", "王绍徽"],
+        ["王承恩", "王绍徽", "郭允厚"],
+        ["王承恩", "郭允厚"],
+    ]
     assert [result["status"] for result in returned["offices"][1]["offices"]] == ["occupied", "occupied"]
     assert [result["appointments"][0]["holders"] for result in returned["offices"][1]["offices"]] == [["黄立极"], ["郭允厚"]]
     before, after = (returned[key][1]["entities"][0] for key in ("before", "after"))

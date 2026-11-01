@@ -159,8 +159,9 @@ async def set_hall(
     ctx: RunContext[Audience], add: list[str], remove: list[str]
 ) -> HallResult:
     """有人入殿或退下时先改名单；不在京师的人加不进殿。"""
-    result = ctx.deps.court.set_hall(ctx.deps.night_id, add, remove)
-    ctx.deps.on_hall(result.hall)
+    result, changed = ctx.deps.court.set_hall(ctx.deps.night_id, add, remove)
+    if changed:
+        ctx.deps.on_hall(result.hall)
     return result
 
 
