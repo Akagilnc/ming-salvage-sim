@@ -5,6 +5,7 @@ import json
 import sqlite3
 from collections import defaultdict
 from contextlib import asynccontextmanager, closing
+from functools import partial
 from pathlib import Path
 
 import pytest
@@ -542,6 +543,20 @@ def counted(steps):
     return invocations
 
 
+def committed(db, product, action, snapshots, session):
+    with closing(sqlite3.connect(db)) as source:
+        kind, detail = source.execute(
+            "SELECT kind, detail FROM facts WHERE kind IN ('interaction', ?) ORDER BY position DESC LIMIT 1", (product,),
+        ).fetchone()
+        detail = json.loads(detail)
+        stage = "product" if kind == product else "accepted" if (
+            kind == "interaction" and detail["action"] == action and detail["status"] != "failed"
+        ) else None
+        if stage is not None and not snapshots[stage].exists():
+            with closing(sqlite3.connect(snapshots[stage])) as target:
+                source.backup(target)
+
+
 @pytest.mark.parametrize("case,game_db", [
     (("say", "turn", False), "first_night"),
     (("say", "turn", True), "first_night"),
@@ -565,18 +580,7 @@ def test_http_reopens_committed_action_gaps(game_db, case, audit, steps):
     for path in snapshots.values():
         path.parent.mkdir()
 
-    def committed(session):
-        with closing(sqlite3.connect(game_db)) as source:
-            kind, detail = source.execute(
-                "SELECT kind, detail FROM facts WHERE kind IN ('interaction', ?) ORDER BY position DESC LIMIT 1", (product,),
-            ).fetchone()
-            detail = json.loads(detail)
-            stage = "product" if kind == product else "accepted" if (
-                kind == "interaction" and detail["action"] == action and detail["status"] != "failed"
-            ) else None
-            if stage is not None and not snapshots[stage].exists():
-                with closing(sqlite3.connect(snapshots[stage])) as target:
-                    source.backup(target)
+    capture = partial(committed, game_db, product, action, snapshots)
 
     with TestClient(create_app(game_db.parent)) as client:
         client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
@@ -586,12 +590,12 @@ def test_http_reopens_committed_action_gaps(game_db, case, audit, steps):
         if action == "choose":
             request.update(petition=client.get("/state").json()["game"]["petitions"][0]["id"],
                            option=3 if product == "advanced" else 0)
-        event.listen(Session, "after_commit", committed)
+        event.listen(Session, "after_commit", capture)
         try:
             client.post("/actions", json=request).raise_for_status()
             client.portal.call(client.app.state.web.game.drain)
         finally:
-            event.remove(Session, "after_commit", committed)
+            event.remove(Session, "after_commit", capture)
         assert client.get("/state").json()["game"]["failure"] is None
     model_invocations = counted(steps)
     for stage, path in snapshots.items():

@@ -3,18 +3,21 @@
 import asyncio
 import io
 import json
+from functools import partial
 from pathlib import Path
 from shutil import copyfile
 
 import pytest
 from pydantic_ai.models.test import TestModel
 from starlette.testclient import TestClient
+from sqlalchemy import event
+from sqlalchemy.orm import Session
 
 from ming.web import create_app
 
 from ming.__main__ import main
 from tests.test_court import replaying
-from tests.test_web import counted, state_updates
+from tests.test_web import committed, counted, state_updates
 
 RECORDED = Path(__file__).parent / "recorded"
 
@@ -120,7 +123,7 @@ def test_cli_preserves_jsonl_and_resumes_failed_month(
         with pytest.raises(SystemExit) as stopped:
             main(["month", "--db", db, "--backend", "claude-cli"])
         assert stopped.value.code == 1
-        failed_date = json.loads(capsys.readouterr().out)["date"]
+        pending = json.loads(capsys.readouterr().out)
         main(["read", "--db", db, "--identity", "audit"])
         ledger = json.loads(capsys.readouterr().out)
         assert any(
@@ -131,8 +134,8 @@ def test_cli_preserves_jsonl_and_resumes_failed_month(
             monkeypatch.setattr("sys.stdin", io.StringIO('{"action":"month"}\n{"action":"drain"}\n{"action":"state"}\n'))
         main([entry, "--db", db, "--backend", "claude-cli"])
         resumed = json.loads(capsys.readouterr().out.splitlines()[-1])
-        assert resumed["date"]["month"] == failed_date["month"] % 12 + 1
-        assert resumed["date"]["year"] == failed_date["year"] + (failed_date["month"] == 12)
+        assert resumed["date"]["month"] == pending["date"]["month"] % 12 + 1
+        assert resumed["date"]["year"] == pending["date"]["year"] + (pending["date"]["month"] == 12)
         assert resumed["petitions"] == []
     main(["read", "--db", db, "--identity", "audit"])
     ledger = json.loads(capsys.readouterr().out)
@@ -149,17 +152,55 @@ def test_cli_preserves_jsonl_and_resumes_failed_month(
     )
     main(["month", "--db", db, "--backend", "claude-cli"])
     petition = json.loads(capsys.readouterr().out)["petitions"][0]
-    steps["scene"] = replaying([
-        RuntimeError("scene unavailable"),
-        json.loads((RECORDED / "night_invalid.json").read_text())["cases"]["missing_fields"]["scene"],
-    ])
+    steps["scene"] = replaying([RuntimeError("scene unavailable")])
     monkeypatch.setattr("sys.stdin", io.StringIO("\n".join(json.dumps(r) for r in [
         {"action": "open"}, {"action": "say", "words": "召对"},
         {"action": "choose", "petition": petition["id"], "option": 0},
-        *({"action": action} for action in ("retry", "drain", "state")),
     ])))
     main(["audience", "--db", db, "--backend", "claude-cli"])
     rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     assert rows[0] == {"night": None}
+    # Preserve the accepted retry and its turn commit, with month still pending.
+    snapshots = {entry: Path(db).with_name(f"retry-{entry}.sqlite") for entry in ("accepted", "product")}
+    capture = partial(committed, db, "turn", "say", snapshots)
+    steps["scene"] = TestModel(call_tools=["dismiss"], custom_output_text=case["cases"]["missing_fields"]["scene"])
+    monkeypatch.setattr("sys.stdin", io.StringIO('{"action":"retry"}\n{"action":"drain"}\n{"action":"state"}\n'))
+    event.listen(Session, "after_commit", capture)
+    try:
+        main(["audience", "--db", db, "--backend", "claude-cli"])
+    finally:
+        event.remove(Session, "after_commit", capture)
+    rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     assert rows[-1]["date"]["month"] == 11
     assert rows[-1]["month_error"] is None
+    for entry, alternate in snapshots.items():
+        steps["scene"] = replaying([RuntimeError("scene unavailable")])
+        monkeypatch.setattr("sys.stdin", io.StringIO('{"action":"state"}\n'))
+        main(["audience", "--db", str(alternate), "--backend", "claude-cli"])
+        rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+        if entry == "accepted":
+            assert rows[-1]["date"]["month"] == 10
+            assert rows[-1]["month_error"]["type"] == "RuntimeError"
+            steps["scene"] = TestModel(call_tools=["dismiss"], custom_output_text=case["cases"]["missing_fields"]["scene"])
+            monkeypatch.setattr("sys.stdin", io.StringIO('{"action":"retry"}\n{"action":"drain"}\n{"action":"state"}\n'))
+            main(["audience", "--db", str(alternate), "--backend", "claude-cli"])
+            rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+        else:
+            assert rows[-1]["night"]["closed"] is False
+            assert rows[-1]["night"]["date"] == {"year": 1627, "month": 11}
+            assert rows[0]["night"] == rows[-1]["night"]["id"]
+        assert rows[-1]["date"]["month"] == 11
+        assert rows[-1]["month_error"] is None
+    steps["NightDeclaration"] = replaying([RuntimeError("translation unavailable")])
+    monkeypatch.setattr("sys.stdin", io.StringIO('{"action":"dismiss"}\n{"action":"drain"}\n'))
+    main(["audience", "--db", db, "--backend", "claude-cli"])
+    rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    before = rows[-1]["night"]
+    assert before["closed"] is True
+    assert rows[-1]["month_error"]["type"] == "RuntimeError"
+    monkeypatch.setattr("sys.stdin", io.StringIO('{"action":"state"}\n'))
+    main(["audience", "--db", db, "--backend", "claude-cli"])
+    rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert rows[0] == {"night": before["id"]}
+    assert rows[-1]["night"]["closed"] is True
+    assert rows[-1]["month_error"]["type"] == "RuntimeError"

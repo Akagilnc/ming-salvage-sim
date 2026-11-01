@@ -291,7 +291,7 @@ class Game:
             self.audience.open(night)
             self.audience.dismiss()
             if not self.busy():
-                state, _ = self.refresh(present=present or self.emit is not None)
+                state, _ = self.refresh(present=True)
                 if not self.busy():
                     self.notify("state", state)
                 return state
@@ -378,7 +378,7 @@ class Game:
 
     async def execute(
         self, action: str, payload: dict[str, Any], *, starting: bool = False,
-    ) -> tuple[str | bool | None, bool | None]:
+    ) -> tuple[str | bool | None, bool]:
         """Return output and a failure conclusion when continuation consumes it."""
         try:
             output = await self.work(action, payload, starting=starting)
@@ -405,7 +405,7 @@ class Game:
             state, failed = None, output is None
         elif action in {"month", "choose"} and self.busy() and self.emit is None:
             # The active chain owns continuation; these callers consume no failure result.
-            state, failed = None, None
+            state, failed = None, False
         else:
             state, failed = self.refresh(present=self.emit is not None)
         self.notify("state", state)

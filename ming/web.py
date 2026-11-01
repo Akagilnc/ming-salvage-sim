@@ -4,7 +4,6 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from functools import partial
 from pathlib import Path
 from typing import Any, Literal
 from starlette.applications import Starlette
@@ -65,11 +64,8 @@ class Web:
         }
 
     def emit(
-        self, event: dict[str, Any] | None = None, *, source: Game | None = None,
-        saves: list[str] | None = None,
+        self, event: dict[str, Any] | None = None, *, saves: list[str] | None = None,
     ) -> None:
-        if source is not None and source is not self.game:
-            return
         event = event or {"event": "state", "data": None}
         if event["event"] == "delta":
             event = {**event, "data": {"text": event["data"]}}
@@ -135,7 +131,7 @@ class Web:
             game = Game(court, model, month_model=model.month_model)
         self.menu()
         self.game = game
-        game.emit = partial(self.emit, source=game)
+        game.emit = self.emit
         self.navigation += 1
         presentation = game.refresh(reopening=True, present=True)[0] if opening else None
         self.emit({"event": "state", "data": presentation}, saves=saves)
