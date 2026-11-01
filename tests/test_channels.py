@@ -35,6 +35,7 @@ from ming.middle.cli_model import GROK_OFF
 from ming.middle.opening import opening_template
 from ming.web import create_app
 from tests.conftest import INVALID_NIGHT, RECORDED, RECORDED_REPLIES
+from tests.test_web import state_updates
 
 CODEX_MODEL = "gpt-6.1-sol"
 PI_MODEL = f"openai-codex/{CODEX_MODEL}"
@@ -618,6 +619,10 @@ def test_optional_channel_falls_back_and_configure_reopens(game_db, monkeypatch,
 @pytest.mark.parametrize(("failure", "reopen"), [(500, False), ("timeout", True)])
 def test_background_call_keeps_its_model_across_tools_validation_and_retry(game_db, monkeypatch, clock, failure, reopen):
     app = create_app(game_db.parent)
+    other = game_db.with_name("other.sqlite")
+    if reopen:
+        copyfile(game_db, other)
+    events = asyncio.Queue()
     models = []
     tools = []
 
@@ -653,6 +658,9 @@ def test_background_call_keeps_its_model_across_tools_validation_and_retry(game_
         if reopen and name == "Declaration":
             async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app), base_url="http://test") as http:
                 (await http.post("/actions", json={"action": "menu"})).raise_for_status()
+                assert (await http.get("/state")).json()["game"] is None
+                app.state.web.listeners.add(events)
+                (await http.post("/actions", json={"action": "load", "save": other.name})).raise_for_status()
         return codex_response(request)
 
     install_codex(monkeypatch, exchange, OpenAIProvider)
@@ -667,7 +675,12 @@ def test_background_call_keeps_its_model_across_tools_validation_and_retry(game_
         assert clock == [5]
         client.post("/actions", json={"action": "month"}).raise_for_status()
         if reopen:
-            assert client.get("/state").json()["game"] is None
+            state = client.get("/state").json()
+            assert (state["save"], state["game"]["date"]["month"]) == (other.name, 10)
+            updates = state_updates(events)
+            assert updates
+            assert all(update["save"] == other.name and update["game"]["night"] is None
+                       and update["game"]["date"]["month"] == 10 for update in updates)
             client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
         state = client.get("/state").json()["game"]
         assert (state["failure"], state["date"]["month"]) == (None, 11)

@@ -51,6 +51,7 @@ class ActionFacts(NamedTuple):
     night: NightHeader | None
     interactions: dict[str, Any]
     pending_nights: tuple[UUID, ...] | None
+    failures: tuple[dict[str, Any], ...]
 
 
 class Game:
@@ -121,11 +122,10 @@ class Game:
         pending = self.audience.pending_actions(
             items, night, pending_nights=pending_nights or (),
         ) | self.month.pending_actions(items)
-        return ActionFacts(calendar, night, {key: item for key, item in items.items() if key in pending}, pending_nights)
-
-    def failures(self, interactions: dict[str, Any]) -> tuple[dict[str, Any], ...]:
-        return tuple(sorted((i for i in interactions.values() if i["status"] == "failed"),
-                            key=lambda i: i["action"] == "translation"))
+        items = {key: item for key, item in items.items() if key in pending}
+        failures = tuple(sorted((i for i in items.values() if i["status"] == "failed"),
+                                key=lambda i: i["action"] == "translation"))
+        return ActionFacts(calendar, night, items, pending_nights, failures)
 
     def running(self, interactions: dict[str, Any], *, waiting: bool) -> tuple[dict[str, Any], ...]:
         return tuple(i for i in interactions.values()
@@ -141,16 +141,15 @@ class Game:
 
     def presentation(
         self, facts: ActionFacts | None = None, monthly: dict[str, Any] | None = None,
-        *, opened: bool | None = None, failures: tuple[dict[str, Any], ...] | None = None,
+        *, opened: bool | None = None,
     ) -> dict[str, Any]:
         facts = self.actions(full_night=True) if facts is None else facts
-        calendar, latest, interactions, _ = facts
+        calendar, latest, interactions, _, failures = facts
         night = latest.model_dump(mode="json") if latest else None
         monthly = self.month.presentation(calendar) if monthly is None else monthly
         opened = self.month.opened(calendar) if opened is None else opened
         running = self.running(interactions, waiting=self.month.waiting(calendar, opened=opened, has_petitions=bool(monthly["petitions"])))
         pending = next((i for i in running if i["action"] == "month"), next(iter(running), None))
-        failures = self.failures(interactions) if failures is None else failures
         failure = next(iter(failures), None)
         return {
             "face": self.face(facts, opened=opened),
@@ -166,29 +165,25 @@ class Game:
         monthly = self.month.presentation(facts.calendar) if present else None
         opened = self.month.opened(facts.calendar) if present else None
         resume = self.reopen if reopening else self.resume
-        failures = resume(facts, has_petitions=bool(monthly["petitions"]) if monthly is not None else None, opened=opened)
-        return (self.presentation(facts, monthly, opened=opened, failures=failures) if present else None,
-                bool(failures))
+        resume(facts, has_petitions=bool(monthly["petitions"]) if monthly is not None else None, opened=opened)
+        return self.presentation(facts, monthly, opened=opened) if present else None, bool(facts.failures)
 
-    def reopen(self, facts: ActionFacts | None = None, *, has_petitions: bool | None = None, opened: bool | None = None) -> tuple[dict[str, Any], ...]:
+    def reopen(self, facts: ActionFacts | None = None, *, has_petitions: bool | None = None, opened: bool | None = None) -> None:
         facts = self.actions() if facts is None else facts
         has_petitions = has_pending_petitions(self.court) if has_petitions is None else has_petitions
-        failures = self.resume(facts, has_petitions=has_petitions, opened=opened)
+        self.resume(facts, has_petitions=has_petitions, opened=opened)
         if has_petitions or (facts.pending_nights if facts.pending_nights is not None else self.court.pending_nights()):
             self.start_background()
-        return failures
 
-    def resume(self, facts: ActionFacts | None = None, *, has_petitions: bool | None = None, opened: bool | None = None) -> tuple[dict[str, Any], ...]:
-        facts = self.actions() if facts is None else facts
-        calendar, _, interactions, _ = facts
-        failures = self.failures(interactions)
+    def resume(self, facts: ActionFacts | None = None, *, has_petitions: bool | None = None, opened: bool | None = None) -> None:
         if self.busy():
-            return failures
+            return
+        facts = self.actions() if facts is None else facts
+        calendar, _, interactions, _, failures = facts
         waiting = "month" in interactions and self.month.waiting(calendar, has_petitions=has_petitions, opened=opened)
         pending = [i for i in self.running(interactions, waiting=waiting) if not failures or i["action"] == "choose"]
         if pending:
             self.active = asyncio.create_task(self._resume(pending))
-        return failures
 
     async def _resume(self, pending: list[dict[str, Any]]) -> None:
         async def ordered() -> None:
@@ -251,8 +246,7 @@ class Game:
             calendar = facts.calendar if facts is not None else self.court.read.calendar()
         else:
             facts = self.actions() if facts is None else facts
-            calendar, night, interactions, pending_nights = facts
-            failures = self.failures(interactions)
+            calendar, night, interactions, pending_nights, failures = facts
             failure = (next(iter(failures), None) if action == "retry" else
                        next((i for i in failures if same_call(i, action, payload)), None) if retry_same else None)
             if action == "retry" and failure is None:
@@ -365,7 +359,7 @@ class Game:
         while self.active is not None and not self.active.done():
             await asyncio.shield(self.active)
         facts = self.actions()
-        if self.failures(facts.interactions):
+        if facts.failures:
             return
         calendar = await self.translate(calendar=facts.calendar, pending=facts.pending_nights)
         if calendar is None:

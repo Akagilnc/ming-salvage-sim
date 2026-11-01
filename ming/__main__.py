@@ -60,14 +60,13 @@ def parser() -> argparse.ArgumentParser:
 async def conversation(court: Court, settings: Configuration) -> None:
     game = Game(court, settings, month_model=settings.month_model)
     facts = game.actions()
-    failures = game.reopen(facts)
+    game.reopen(facts)
     if game.busy() or game.background:
         await game.drain()
         facts = game.actions()
-        failures = game.failures(facts.interactions)
     latest = facts.night or court.latest_night()
     night = str(latest.id) if latest else None
-    if not failures and game.face(facts._replace(night=latest)) != "month":
+    if not facts.failures and game.face(facts._replace(night=latest)) != "month":
         game.night_action("open", date=facts.calendar.data)
         night = str(game.audience.night_id)
     try:
