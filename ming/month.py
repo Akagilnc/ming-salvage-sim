@@ -40,14 +40,13 @@ class Month:
     def opened(self, calendar: EntityView) -> bool:
         return self.court.read.has_facts(calendar.id, "month_open", date=calendar.data)
 
-    def open(self, calendar: EntityView) -> EntityView:
+    def open(self, calendar: EntityView) -> None:
         snapshot = self.court.read.opening_snapshot()
         if snapshot is not None:
             record_product(self.court, calendar.id, "month_open", {
                 "date": calendar.data,
                 "entities": [e.model_dump(mode="json") for e in snapshot],
             })
-        return calendar
 
     def waiting(
         self, calendar: EntityView, *, opened: bool | None = None,
@@ -129,4 +128,5 @@ class Month:
             return ()
 
     async def advance(self, calendar: EntityView) -> tuple[PendingPetition, ...]:
-        return await self.resume(date=self.open(calendar).data, opened=True)
+        self.open(calendar)
+        return await self.resume(date=calendar.data, opened=True)
