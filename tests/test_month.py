@@ -492,6 +492,7 @@ DEBT = {
             {
                 "recording": "month_empty.txt",
                 "prestige": 100,
+                "interrupt": True,
             },
             id="prestige",
         ),
@@ -513,10 +514,27 @@ def test_month_keeps_debt_separate_from_reduction_and_temporary_deferral(
         ModelMessagesTypeAdapter.validate_python(json.loads((RECORDED / "declarations_1972.json").read_text())["cases"]["shared_obligation"])
         if case["recording"] == "shared_obligation" else [recording]
     )
-    with TestClient(create_app(game_db.parent)) as client:
+    with reopening(game_db.parent) as reopen:
+        client = reopen()
         client.post("/actions", json={"action": "load", "save": game_db.name})
         for index, due in enumerate(case["dues"]):
+            if case.get("interrupt") and index == 0:
+                with sqlite3.connect(game_db) as connection:
+                    connection.execute("CREATE TRIGGER interrupt BEFORE INSERT ON facts WHEN NEW.kind='month_accounts' BEGIN SELECT RAISE(ABORT, 'injected settlement failure'); END")
             assert client.post("/actions", json={"action": "month"}).status_code == 204
+            if case.get("interrupt") and index == 0:
+                ledger = client.get("/state").json()["game"]
+                assert (ledger["failure"]["payload"]["type"], ledger["date"]["month"]) == ("IntegrityError", 10)
+                ledger = audit(game_db)
+                assert not [f for f in ledger["facts"] if f["kind"] in {
+                    "monthly_assessment", "monthly_income", "monthly_output", "monthly_payment", "month_accounts",
+                }]
+                assert audit(game_db, replay=True) == ledger
+                with sqlite3.connect(game_db) as connection:
+                    connection.execute("DROP TRIGGER interrupt")
+                client = reopen()
+                client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
+                client.post("/actions", json={"action": "retry"}).raise_for_status()
             assert client.get("/state").json()["game"]["failure"] is None
             ledger = audit(game_db)
             rows = {(e["kind"], e["key"]): e["data"] for e in ledger["entities"]}
@@ -563,6 +581,11 @@ def test_month_keeps_debt_separate_from_reduction_and_temporary_deferral(
             assert army_payments[-1]["paid"] + army_payments[-1][
                 "prior_paid"
             ] == pytest.approx(14.4)
+            assert len([f for f in ledger["facts"] if f["kind"] == "month_accounts"]) == index + 1
+            payments = [(f["entity_id"], f["detail"]["date"]["year"], f["detail"]["date"]["month"],
+                         f["detail"]["account"], f["detail"]["recipient"])
+                        for f in ledger["facts"] if f["kind"] == "monthly_payment"]
+            assert len(payments) == len(set(payments))
             account = rows[("account", "国库")]
             assert account["payment_order"] == case["payment_order"]
             assert account["army_order"] == case["army_order"]
@@ -647,7 +670,8 @@ def test_fiscal_petition_lands_only_declared_outcome_without_readding_levies(
     opening_db, game_db: Path, steps, audit, case: tuple
 ) -> None:
     recording = json.loads((RECORDED / case[0]).read_text())
-    steps["simulation"] = replaying(recording["simulation"][:1])
+    drafted = []
+    steps["simulation"] = replaying(recording["simulation"][:1], drafted)
     steps["month_final"] = replaying(recording["simulation"][1:])
     steps["Declaration"] = replaying(recording["Declaration"])
     if case[5] is not None:
@@ -660,6 +684,7 @@ def test_fiscal_petition_lands_only_declared_outcome_without_readding_levies(
         assert state["failure"] is None
         assert state["date"]["month"] == 1
         assert state["petitions"][0]["blocking"] is True
+        assert [e["entity"] for e in json.loads(drafted[-1].parts[0].content)["context"]["fiscal_events"]] == [case[1]]
         client.post(
             "/actions",
             json={

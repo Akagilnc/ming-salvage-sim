@@ -37,17 +37,19 @@ export function App() {
       }
       setLive(value.game?.live.delta ?? ''); setLiveGazette(value.game?.live.gazette ?? '');
       if (before?.navigation !== value.navigation) {
-        setSnapshot(value); setBook({ entities: [], facts: [] });
+        setBook({ entities: [], facts: [] });
         setPendingWords(''); setBusy(false);
         setPanel(null); setReading(current => current?.navigation === value.navigation ? current : null); setInput(''); setError('');
         choosingNow.current.clear(); setChoosing(new Set());
       }
       previous.current = value;
+      // Apply stream state in arrival order; a later hall event must not be
+      // overwritten when this state's slower records request finishes.
+      setSnapshot(value);
+      if (!value.game?.running) { setLive(''); setPendingWords(''); setLiveGazette(''); }
       const contents = value.save ? await records() : { entities: [], facts: [] };
       if (request !== refreshing.current) return;
       setBook(contents);
-      setSnapshot(value);
-      if (!value.game?.running) { setLive(''); setPendingWords(''); setLiveGazette(''); }
     } catch (reason) {
       // Only the current refresh owns either results or errors on this page.
       if (request === refreshing.current) setError(String(reason));
@@ -57,10 +59,13 @@ export function App() {
   React.useEffect(() => {
     const events = new EventSource('/stream');
     events.addEventListener('delta', event => {
-      const chunk = JSON.parse((event as MessageEvent).data) as { text: TextUpdate; hall: string[] };
+      const chunk = JSON.parse((event as MessageEvent).data) as { text: TextUpdate };
       setLive(text => typeof chunk.text === 'string' ? text + chunk.text : chunk.text.replace);
+    });
+    events.addEventListener('hall', event => {
+      const hall = JSON.parse((event as MessageEvent).data) as string[];
       setSnapshot(value => value?.game?.night ? {
-        ...value, game: { ...value.game, night: { ...value.game.night, hall: chunk.hall } },
+        ...value, game: { ...value.game, night: { ...value.game.night, hall } },
       } : value);
     });
     events.addEventListener('gazette', event => {

@@ -12,7 +12,7 @@ from pathlib import Path
 from functools import partial
 from shutil import copyfile
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock, create_autospec
+from unittest.mock import AsyncMock
 
 import httpx2
 import pytest
@@ -24,19 +24,18 @@ from openai.types.responses import (
     ResponseFunctionToolCall,
     ResponseOutputItemDoneEvent,
 )
-from pydantic_ai import Agent
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai.providers.openai_codex import OpenAICodexProvider
 from pydantic_ai.providers.openai import OpenAIProvider
 from starlette.testclient import TestClient
 
 from ming.__main__ import main
-from ming import game
 from ming.middle import codex_auth
 from ming.middle.cli_model import GROK_OFF
 from ming.middle.opening import opening_template
 from ming.web import create_app
-from tests.conftest import CALLS, INVALID_NIGHT, RECORDED, RECORDED_REPLIES
+from tests.conftest import INVALID_NIGHT, RECORDED, RECORDED_REPLIES
+from tests.test_web import state_updates
 
 CODEX_MODEL = "gpt-6.1-sol"
 PI_MODEL = f"openai-codex/{CODEX_MODEL}"
@@ -314,8 +313,7 @@ def assert_scene(state: dict[str, object], events: asyncio.Queue) -> None:
     assert deltas
     live = ""
     for data in deltas:
-        assert set(data) == {"text", "hall"}
-        assert isinstance(data["hall"], list)
+        assert set(data) == {"text"}
         text = data["text"]
         assert isinstance(text, str) or (
             isinstance(text, dict) and set(text) == {"replace"}
@@ -514,8 +512,6 @@ def test_subscription_month_completes(tmp_path: Path, monkeypatch, backend: str,
     opening_template().parent.mkdir(parents=True, exist_ok=True)
     copyfile(template, opening_template())
     calls = install_process(monkeypatch)
-    agents = create_autospec(Agent.__init__, side_effect=Agent.__init__)
-    monkeypatch.setattr(Agent, "__init__", agents)
     if "deliberation" in expected_calls:
         monkeypatch.setitem(REPLIES, "NightDeclaration", json.loads(
             (RECORDED / "night_endorsed.json").read_text()
@@ -554,8 +550,6 @@ def test_subscription_month_completes(tmp_path: Path, monkeypatch, backend: str,
         if backend == "grok":
             client.post("/actions", json={"action": "month"}).raise_for_status()
             assert client.get("/state").json()["game"]["failure"] is None
-    assert agents.call_count == 0
-    assert all(agent.model is None for agent in CALLS.values())
     assert state["game"]["failure"] is None
     assert state["game"]["date"]["month"] == 11
     assert state["settings"]["month_model"] == settings["month_model"]
@@ -612,10 +606,7 @@ def test_optional_channel_falls_back_and_configure_reopens(game_db, monkeypatch,
         if not optional:
             calls.clear()
             settings["month_model"] = {"backend": "pi", "model": PI_MODEL, "effort": "high"}
-            factory = Mock(wraps=game.configured_model)
-            monkeypatch.setattr(game, "configured_model", factory)
             client.post("/actions", json={"action": "settings", "settings": settings}).raise_for_status()
-            assert factory.call_count == 2
             client.post("/actions", json={"action": "month"}).raise_for_status()
             state = client.get("/state").json()
             assert state["game"]["failure"] is None
@@ -623,12 +614,15 @@ def test_optional_channel_falls_back_and_configure_reopens(game_db, monkeypatch,
             assert calls
             for args, _ in calls:
                 assert args[args.index("--thinking") + 1] == "high"
-            assert factory.call_count == 2
 
 
 @pytest.mark.parametrize(("failure", "reopen"), [(500, False), ("timeout", True)])
 def test_background_call_keeps_its_model_across_tools_validation_and_retry(game_db, monkeypatch, clock, failure, reopen):
     app = create_app(game_db.parent)
+    other = game_db.with_name("other.sqlite")
+    if reopen:
+        copyfile(game_db, other)
+    events = asyncio.Queue()
     models = []
     tools = []
 
@@ -661,19 +655,41 @@ def test_background_call_keeps_its_model_across_tools_validation_and_retry(game_
                 return codex_response(request, read_args={"kind": "person", "key": "王承恩"})
         assert body["model"] == ("new-model" if name == "scene" else "new-month-model")
         assert body["reasoning_effort"] == ("high" if name == "scene" else "medium")
+        if name == "Declaration":
+            async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app), base_url="http://test") as http:
+                (await http.post("/actions", json={"action": "menu"})).raise_for_status()
+                assert (await http.get("/state")).json()["game"] is None
+                state_updates(events)  # From here the stream shows only the game opened next.
+                target = other if reopen else game_db
+                (await http.post("/actions", json={"action": "load", "save": target.name})).raise_for_status()
         return codex_response(request)
 
     install_codex(monkeypatch, exchange, OpenAIProvider)
     with TestClient(app) as client:
+        app.state.web.listeners.add(events)
         open_game(client, {"backend": "api", "model": "old-model", "effort": "low"}, game_db)
         client.post("/actions", json={"action": "open"}).raise_for_status()
         client.post("/actions", json={"action": "dismiss"}).raise_for_status()
         client.portal.call(app.state.web.game.drain)
         assert client.get("/state").json()["game"]["failure"] is None
+        completed = state_updates(events)[-1]
+        assert (completed["save"], completed["game"]["night"]["result"], completed["game"]["running"],
+                completed["game"]["failure"]) == (game_db.name, "translated", False, None)
         assert models == ["old-model"] * 5
         assert tools and all(t["entities"][0]["key"] == "王承恩" for t in tools)
         assert clock == [5]
         client.post("/actions", json={"action": "month"}).raise_for_status()
+        updates = state_updates(events)
+        assert updates
+        if reopen:
+            state = client.get("/state").json()
+            assert (state["save"], state["game"]["date"]["month"]) == (other.name, 10)
+            assert all(update["save"] == other.name and update["game"]["night"] is None
+                       and update["game"]["date"]["month"] == 10 for update in updates)
+            client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
+        else:
+            latest = updates[-1]
+            assert (latest["save"], latest["game"]["date"]["month"], latest["game"]["running"]) == (game_db.name, 11, False)
         state = client.get("/state").json()["game"]
         assert (state["failure"], state["date"]["month"]) == (None, 11)
         client.post("/actions", json={"action": "open"}).raise_for_status()

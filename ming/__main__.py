@@ -59,32 +59,37 @@ def parser() -> argparse.ArgumentParser:
 
 async def conversation(court: Court, settings: Configuration) -> None:
     game = Game(court, settings, month_model=settings.month_model)
-    game.reopen()
-    await game.drain()
-    state = game.presentation()
-    night = state["night"]["id"] if state["night"] else None
-    if state["face"] != "month" and not state["failure"]:
-        game.start("open")
+    facts = game.actions()
+    game.reopen(facts)
+    if game.busy() or game.background:
+        await game.drain()
+        facts = game.actions()
+    latest = facts.night or court.latest_night()
+    night = str(latest.id) if latest else None
+    if not facts.failures and game.face(facts._replace(night=latest)) != "month":
+        game.night_action("open", date=facts.calendar.data)
         night = str(game.audience.night_id)
     try:
         print(json.dumps({"night": night}), flush=True)
         while line := await asyncio.to_thread(sys.stdin.readline):
-            scene = None
+            scene, state = None, None
             try:
                 request = Action[ActionName | Literal["drain", "state"]].parse(line)
                 if request.action == "drain":
                     await game.drain()
+                elif request.action in {"open", "dismiss"}:
+                    state = game.night_action(request.action, present=True)
                 elif request.action != "state":
                     task = game.start(
                         request.action, request.model_dump(mode="json", exclude={"action"}, exclude_unset=True),
                         retry_same=True,
                     )
                     if task is not None and request.action != "month":
-                        scene = await asyncio.shield(task)
+                        scene, _ = await asyncio.shield(task)
             except InvalidAction as error:
                 print(json.dumps({"error": {"status": error.status, "message": str(error)}}, ensure_ascii=False), flush=True)
                 continue
-            state = game.presentation()
+            state = game.presentation() if state is None else state
             failure = state["failure"]
             print(
                 json.dumps(

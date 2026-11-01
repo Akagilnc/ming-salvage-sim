@@ -4,7 +4,8 @@ from copy import deepcopy
 from collections.abc import Sequence
 from typing import cast
 
-from ming.ledger import ENTITY_COLUMNS as E, ENTITY_ROWS, Entity, Item, Ledger
+from ming.ledger import Entity, Item, Ledger
+from ming.middle.view import EntityView
 from ming.middle.declaration import EntityRef, FiscalEnd, MonthlyFunding, PaymentPolicy
 from ming.middle.queries import FUNDED_AFFAIRS
 from ming.middle.fields import FIELDS
@@ -104,9 +105,11 @@ def obligation(pair: tuple[str, str], existing: dict[tuple[str, str], Item]) -> 
 
 class Accounts:
     def __init__(self, ledger: Ledger) -> None:
+        self.ledger = ledger
+        self.changed: dict[tuple[str, str], Entity] = {}
         self.rows = [
-            ledger.get(row["id"])
-            for row in [*ledger.entities(query=FUNDED_AFFAIRS.with_only_columns(E.id)), *ledger.entities(
+            EntityView.model_validate(row)
+            for row in [*ledger.entities(query=FUNDED_AFFAIRS), *ledger.entities(
                 kind=(
                     "calendar",
                     "account",
@@ -116,7 +119,7 @@ class Accounts:
                     "building",
                     "world",
                     "historical_event",
-                ), query=ENTITY_ROWS.with_only_columns(E.id),
+                ),
             )]
         ]
         self.calendar = next(e for e in self.rows if e.kind == "calendar")
@@ -124,10 +127,19 @@ class Accounts:
         self.accounts = {e.key: e for e in self.rows if e.kind == "account"}
         self.config = {e.key: e for e in self.rows if e.kind == "fiscal"}
         self.buildings = [e for e in self.rows if e.kind == "building"]
-        self.existing = {(e.kind, e.key): e.snapshot() for e in self.rows}
+        self.existing = {(e.kind, e.key): e.model_dump() for e in self.rows}
+
+    def record(self, row: EntityView, kind: str, detail: Item, changes: Item | None = None) -> None:
+        pair = row.kind, row.key
+        if pair not in self.changed:
+            self.changed[pair] = self.ledger.get(row.id)
+        entity = self.changed[pair]
+        entity.record(kind, "", detail, changes)
+        # Later fiscal steps consume this entity's uncommitted state, not the read table.
+        row.data = entity.data
 
     def income(
-        self, source: Entity, account: str, amount: float, category: str
+        self, source: EntityView, account: str, amount: float, category: str
     ) -> None:
         target = self.accounts[account]
         detail = {
@@ -139,8 +151,8 @@ class Accounts:
             "unit": "万两",
         }
         # One flow row on the receiving account; the detail names the source.
-        target.record(
-            "monthly_income", "", detail, {"taels": target.data["taels"] + amount * WAN}
+        self.record(
+            target, "monthly_income", detail, {"taels": target.data["taels"] + amount * WAN}
         )
 
     def taxes(self) -> None:
@@ -188,9 +200,8 @@ class Accounts:
                     ),
                 }
             )
-            region.record(
-                "monthly_assessment",
-                "",
+            self.record(
+                region, "monthly_assessment",
                 {
                     "date": self.date,
                     "levies": levies,
@@ -259,7 +270,7 @@ class Accounts:
                     "nominal": amount,
                     "actual": actual - world.data[field],
                 }
-                world.record("monthly_output", "", detail, {field: actual})
+                self.record(world, "monthly_output", detail, {field: actual})
 
     def expenses(self) -> None:
         armies = {
@@ -282,7 +293,7 @@ class Accounts:
                 for target in targets:
                     self.pay(target, account, category)
 
-    def pay(self, target: Entity, account: Entity, category: str) -> None:
+    def pay(self, target: EntityView, account: EntityView, category: str) -> None:
         due = obligation((target.kind, target.key), self.existing)
         prior = current_paid(target.data, self.date)
         remaining = max(0, due - prior)
@@ -301,15 +312,13 @@ class Accounts:
             "unpaid": remaining - paid,
             "unit": "万两",
         }
-        account.record(
-            "monthly_payment",
-            "",
+        self.record(
+            account, "monthly_payment",
             detail,
             {"taels": max(0, account.data["taels"] - paid * WAN)},
         )
-        target.record(
-            "monthly_payment",
-            "",
+        self.record(
+            target, "monthly_payment",
             detail,
             {
                 "arrears": target.data.get("arrears", 0) + (remaining - paid),

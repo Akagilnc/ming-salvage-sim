@@ -4,7 +4,6 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from functools import partial
 from pathlib import Path
 from typing import Any, Literal
 from starlette.applications import Starlette
@@ -53,43 +52,32 @@ class Web:
             )
         ]
 
-    def snapshot(self, saves: list[str] | None = None) -> dict[str, Any]:
+    def snapshot(self, saves: list[str] | None = None, presentation: dict[str, Any] | None = None) -> dict[str, Any]:
         return {
             "navigation": self.navigation,
             "saves": self.saves() if saves is None else saves,
             "settings": self.configuration.model_dump(),
             "required_settings": REQUIRED_SETTINGS,
             "save": self.game.court.db_path.name if self.game else None,
-            "game": {**self.game.presentation(), "live": dict(self.game.live)}
+            "game": {**(self.game.presentation() if presentation is None else presentation), "live": dict(self.game.live)}
             if self.game else None,
         }
 
     def emit(
-        self, event: dict[str, Any] | None = None, *, source: Game | None = None,
-        saves: list[str] | None = None,
+        self, event: dict[str, Any] | None = None, *, saves: list[str] | None = None,
     ) -> None:
-        if source is not None and source is not self.game:
-            return
         event = event or {"event": "state", "data": None}
         if event["event"] == "delta":
-            assert self.game is not None
-            event = {
-                **event,
-                "data": {
-                    "text": event["data"],
-                    "hall": list(
-                        self.game.court.read.entities("audit", ids=[self.game.audience.night_id])[0].data["hall"]
-                    ),
-                },
-            }
+            event = {**event, "data": {"text": event["data"]}}
         elif event["event"] == "state":
-            event = {**event, "data": self.snapshot(saves)}
+            event = {**event, "data": self.snapshot(saves, event["data"])}
         for queue in self.listeners:
             queue.put_nowait(event)
 
     def menu(self) -> None:
         game, self.game = self.game, None
         if game is not None:
+            game.emit = None
             self.navigation += 1
             save = game.court.db_path.name
             self.departed[save] = game
@@ -141,13 +129,12 @@ class Web:
             else:
                 court = Court(self.directory / save)
             game = Game(court, model, month_model=model.month_model)
-            game.emit = partial(self.emit, source=game)
         self.menu()
         self.game = game
+        game.emit = self.emit
         self.navigation += 1
-        if opening:
-            game.reopen()
-        self.emit(saves=saves)
+        presentation = game.refresh(reopening=True, present=True)[0] if opening else None
+        self.emit({"event": "state", "data": presentation}, saves=saves)
         return {"save": game.court.db_path.name, "navigation": self.navigation}
 
     async def state(self, request: Request) -> JSONResponse:

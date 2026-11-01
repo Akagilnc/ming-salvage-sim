@@ -63,18 +63,19 @@ class Court:
                 copyfileobj(source, destination)
         return cls(path)
 
-    def open_night(self) -> tuple[UUID, bool]:
+    def open_night(self, *, date: dict[str, object] | None = None) -> tuple[UUID, bool]:
         for row in self._ledger.entities(query=queries.LATEST_NIGHT.with_only_columns(E.id, E.data["closed"].as_boolean().label("closed"))):
             if not row["closed"]:
                 return row["id"], False
-        date = calendar_row(self._ledger)["data"]
+        current = calendar_row(self._ledger)["data"] if date is None else date
         night = Entity(
-            "night", str(uuid4()), "", {"closed": False, "hall": list(INITIAL_HALL), "date": {k: date[k] for k in ("year", "month")}}
+            "night", str(uuid4()), "", {"closed": False, "hall": list(INITIAL_HALL), "date": {k: current[k] for k in ("year", "month")}}
         )
         self._ledger.commit([night])
         return night.id, True
 
-    def set_hall(self, night_id: UUID, add: list[str], remove: list[str]) -> HallResult:
+    def set_hall(self, night_id: UUID, add: list[str], remove: list[str]) -> tuple[HallResult, bool]:
+        """Apply a hall change and report whether the list actually differs."""
         night = self._ledger.get(night_id)
         people = {
             e["key"]: e
@@ -100,8 +101,9 @@ class Court:
                     "required_location": CAPITAL,
                 })
         if failures or night.data["closed"]:
-            return HallResult(ok=False, hall=night.data["hall"], failures=failures)
+            return HallResult(ok=False, hall=night.data["hall"], failures=failures), False
         hall = change_hall(night.data["hall"], add, remove)
+        changed = hall != night.data["hall"]
         night.record("hall", "", {"add": add, "remove": remove}, {"hall": hall})
         admitted = [
             self._ledger.get(people[name]["id"])
@@ -111,7 +113,7 @@ class Court:
         for person in admitted:
             person.record("audience_admitted", "", {"night_id": str(night_id)}, {"waiting_audience": False})
         self._ledger.commit([night, *admitted])
-        return HallResult(ok=True, hall=hall)
+        return HallResult(ok=True, hall=hall), changed
 
     def settle_journeys(self, date: Item) -> None:
         changed: list[Entity] = []
@@ -127,8 +129,8 @@ class Court:
             changed.append(person)
         self._ledger.commit(changed)
 
-    def night(self, night_id: UUID) -> NightView:
-        return read_nights(self._ledger, self._ledger.entities(entity_id=night_id))[0]
+    def night(self, night_id: UUID, *, complete: bool = True) -> NightView:
+        return read_nights(self._ledger, self._ledger.entities(entity_id=night_id), complete=complete)[0]
 
     def latest_night(self) -> NightHeader | None:
         return next((NightHeader(id=row["id"], **row["data"]) for row in self._ledger.read(queries.LATEST_NIGHT)), None)
@@ -152,14 +154,13 @@ class Court:
             kind="person",
             query=ENTITY_ROWS.with_only_columns(E.key).where(E.data["waiting_audience"].as_boolean().is_(True)),
         )
-        gazette = self.read.entities("audit", kind="gazette")[0].data["text"]
         calendar = self.read.calendar()
-        for fact in self._ledger.facts(
+        latest = self._ledger.facts(
             entity_id=calendar.id,
             kind="gazette",
             query=FACT_ROWS.order_by(None).order_by(F.position.desc()).limit(1),
-        ):
-            gazette = fact["detail"]["text"]
+        )
+        gazette = latest[0]["detail"]["text"] if latest else self.read.entities("audit", kind="gazette")[0].data["text"]
         return {
             "date": calendar.data,
             "imperial_prestige": character_input(
@@ -181,8 +182,8 @@ class Court:
         accounts.revenues()
         accounts.production()
         accounts.expenses()
-        accounts.calendar.record("month_accounts", "", {"date": accounts.date})
-        self._ledger.commit(accounts.rows)
+        accounts.record(accounts.calendar, "month_accounts", {"date": accounts.date})
+        self._ledger.commit(list(accounts.changed.values()))
 
     def record(
         self,

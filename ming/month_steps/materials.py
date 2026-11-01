@@ -105,10 +105,7 @@ def landing_materials(court: Court, *, include_history: bool = True, date: dict[
         deliberations = [FactView(**event) for event in events]
         current = mode is not None or bool(deliberations)
         materials.append({
-            "decree": decree.model_dump(mode="json") if current else {
-                "id": str(decree.id), "kind": decree.kind, "key": decree.key,
-                "data": {"secret": False},
-            },
+            "decree": decree.model_dump(mode="json", exclude={"source"} if not current else None),
             "mode": mode,
             "deliberations": [f.model_dump(mode="json") for f in deliberations],
             "prior_interim": prior[decree.id] if current else [],

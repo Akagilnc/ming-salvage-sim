@@ -4,7 +4,7 @@ Ledger executes selections; it has no night, inbox, identity or workflow modes.
 """
 
 from typing import Any
-from sqlalchemy import Select, and_, case, false, func, or_, select, true, tuple_
+from sqlalchemy import JSON, Select, and_, case, false, func, or_, select, true, tuple_, type_coerce
 from sqlalchemy.sql.base import ReadOnlyColumnCollection
 from sqlalchemy.sql.elements import ColumnElement, KeyedColumnElement
 from ming.ledger import (
@@ -149,7 +149,9 @@ def landing_rows(date: Item | ColumnElement[Any], *, include_history: bool = Tru
     """One source set and order for complete materials, landing and reference counts."""
     errand = E.id.in_(without_events("decree", {"secret": True}, "completed", date).with_only_columns(E.id).order_by(None)).label("errand")
     deliberated = E.id.in_(decrees_with("deliberation", date).with_only_columns(E.id).order_by(None)).label("deliberated")
-    return ENTITY_ROWS.add_columns(errand, deliberated).where(or_(
+    # History rows only number decree references: public by definition, bodies unread.
+    data = type_coerce(case((or_(errand, deliberated), E.data), else_='{"secret": false}'), JSON).label("data")
+    return ENTITY_ROWS.with_only_columns(E.id, E.kind, E.key, E.source, data, errand, deliberated).where(or_(
         errand, deliberated, public_decree() if include_history else false(),
     )).order_by(None).order_by(case((errand, 0), (deliberated, 1), else_=2), ENTITY_ORDER)
 

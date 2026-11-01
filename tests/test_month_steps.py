@@ -357,6 +357,7 @@ def test_two_nights_feed_world_and_arrivals_wait_for_audience(tmp_path, game_db,
         )
         client.post("/actions", json={"action": "open"})
         client.post("/actions", json={"action": "say", "words": "宣毕自严、徐光启入殿。"})
+        assert json.loads(received[0].parts[0].content[0])["gazette"] == [f for f in ledger["facts"] if f["kind"] == "gazette"][-1]["detail"]["text"]
         results = {p.tool_call_id: p.model_response_object() for m in received for p in m.parts if isinstance(p, ToolReturnPart) and p.tool_name == "read_records"}
         for night in prior:
             data = results[night["id"]]["entities"][0]["data"]

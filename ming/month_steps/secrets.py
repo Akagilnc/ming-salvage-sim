@@ -28,9 +28,9 @@ class Secrets:
         self.court, self.model = court, model
 
     async def report(self, decrees: tuple[EntityView, ...], date: dict[str, Any]) -> None:
-        reported = {f.entity_id for f in self.court.read.facts(
-            "audit", entity_id=[d.id for d in decrees], kind="secret_report", date=date,
-        )}
+        if not decrees:
+            return
+        reported = set(self.court.read.fact_ids("audit", "secret_report", date=date))
         pending = {index: Officials(people=[decree.data["handler"]])
                    for index, decree in enumerate(decrees) if decree.id not in reported}
         await gather_or_raise(*(
