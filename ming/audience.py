@@ -60,7 +60,8 @@ class Audience:
         if item := items.get("say"):
             payload = item["payload"]
             if night and not night.closed and str(night.id) == payload["night_id"]:
-                said = self.court.read.has_facts(night.id, "turn", date=None, detail={"id": payload["turn_id"]})
+                said = (any(t.id == payload["turn_id"] for t in night.turns) if isinstance(night, NightView)
+                        else self.court.read.has_facts(night.id, "turn", date=None, detail={"id": payload["turn_id"]}))
                 if not said or self.court.read.has_facts(night.id, "dismiss_requested", date=None):
                     pending["say"] = item
         if item := items.get("translation"):

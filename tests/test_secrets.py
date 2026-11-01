@@ -224,7 +224,7 @@ def test_every_model_call_reads_identity_scoped_records(game_db, steps):
         client.portal.call(client.app.state.web.game.drain)
         precompute = False
         court = client.app.state.web.game.court.read
-        with measure_reads() as reads:
+        with measure_reads(count_rows=False) as reads:
             client.post("/actions", json={"action": "month"}).raise_for_status()
             assert {p["entity_id"] for p in client.get("/state").json()["game"]["petitions"]} == {
                 str(d.id) for d in court.entities("audit", kind="decree") if d.data["origin"] == "minister"

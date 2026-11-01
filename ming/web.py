@@ -53,14 +53,14 @@ class Web:
             )
         ]
 
-    def snapshot(self, saves: list[str] | None = None) -> dict[str, Any]:
+    def snapshot(self, saves: list[str] | None = None, presentation: dict[str, Any] | None = None) -> dict[str, Any]:
         return {
             "navigation": self.navigation,
             "saves": self.saves() if saves is None else saves,
             "settings": self.configuration.model_dump(),
             "required_settings": REQUIRED_SETTINGS,
             "save": self.game.court.db_path.name if self.game else None,
-            "game": {**self.game.presentation(), "live": dict(self.game.live)}
+            "game": {**(self.game.presentation() if presentation is None else presentation), "live": dict(self.game.live)}
             if self.game else None,
         }
 
@@ -83,7 +83,7 @@ class Web:
                 },
             }
         elif event["event"] == "state":
-            event = {**event, "data": self.snapshot(saves)}
+            event = {**event, "data": self.snapshot(saves, event["data"])}
         for queue in self.listeners:
             queue.put_nowait(event)
 
@@ -145,9 +145,8 @@ class Web:
         self.menu()
         self.game = game
         self.navigation += 1
-        if opening:
-            game.reopen()
-        self.emit(saves=saves)
+        presentation = game.refresh(reopening=True) if opening else None
+        self.emit({"event": "state", "data": presentation}, saves=saves)
         return {"save": game.court.db_path.name, "navigation": self.navigation}
 
     async def state(self, request: Request) -> JSONResponse:

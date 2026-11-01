@@ -127,8 +127,8 @@ class Court:
             changed.append(person)
         self._ledger.commit(changed)
 
-    def night(self, night_id: UUID) -> NightView:
-        return read_nights(self._ledger, self._ledger.entities(entity_id=night_id))[0]
+    def night(self, night_id: UUID, *, include_result: bool = True) -> NightView:
+        return read_nights(self._ledger, self._ledger.entities(entity_id=night_id), include_result=include_result)[0]
 
     def latest_night(self) -> NightHeader | None:
         return next((NightHeader(id=row["id"], **row["data"]) for row in self._ledger.read(queries.LATEST_NIGHT)), None)
@@ -181,8 +181,8 @@ class Court:
         accounts.revenues()
         accounts.production()
         accounts.expenses()
-        accounts.calendar.record("month_accounts", "", {"date": accounts.date})
-        self._ledger.commit(accounts.rows)
+        accounts.record(accounts.calendar, "month_accounts", {"date": accounts.date})
+        self._ledger.commit(list(accounts.changed.values()))
 
     def record(
         self,

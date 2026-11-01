@@ -91,7 +91,7 @@ TURN_HALL = select(func.json_group_array(func.json_object(
 TURN_ROWS = FACT_ROWS.add_columns(TURN_HALL.label("hall"))
 
 
-def read_nights(ledger: Ledger, nights: Sequence[Item]) -> tuple[NightView, ...]:
+def read_nights(ledger: Ledger, nights: Sequence[Item], *, include_result: bool = True) -> tuple[NightView, ...]:
     if not nights:
         return ()
     ids = [night["id"] for night in nights]
@@ -103,8 +103,8 @@ def read_nights(ledger: Ledger, nights: Sequence[Item]) -> tuple[NightView, ...]
         ))
     results = {row["id"]: row["result"] for row in ledger.read(
         select(E.id, NIGHT_RESULT.label("result")).where(E.id.in_(ids)),
-    )}
-    return tuple(NightView(id=night["id"], **night["data"], turns=tuple(turns[night["id"]]), result=results[night["id"]])
+    )} if include_result else {}
+    return tuple(NightView(id=night["id"], **night["data"], turns=tuple(turns[night["id"]]), result=results.get(night["id"]))
                  for night in nights)
 
 

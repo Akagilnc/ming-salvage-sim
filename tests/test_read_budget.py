@@ -24,7 +24,7 @@ RECORDED = Path(__file__).parent / "recorded"
 
 
 @contextmanager
-def measure_reads():
+def measure_reads(*, count_rows=True):
     """Observe SQL without consuming or replacing its real cursor."""
     result = {"budget": [0, 0], "entity_writes": 0, "event_rows": 0, "catalogues": Counter()}
 
@@ -35,19 +35,21 @@ def measure_reads():
         if compiled.statement.is_insert and compiled.statement.table.name == "entities":
             result["entity_writes"] += len(query["parameters"]) if query["executemany"] else 1
         if compiled.statement.is_select:
+            result["budget"][0] += 1
+            # Catalogue counts need only the real cursor's metadata, not a second query.
+            if (tuple(column[0] for column in query["cursor"].description) == ("kind", "key", "event_count")
+                    and "read_people" in compiled.params):
+                parameters = query["context"].compiled_parameters[0]
+                identity = (tuple(value for key, value in parameters.items() if key.startswith("read_people_")),
+                            parameters.get("exclude_secrets", False))
+                result["catalogues"][identity] += 1
+            if not count_rows:
+                return
             probe = query["conn"].connection.cursor()
             try:
                 probe.execute(query["statement"], query["parameters"])
-                result["budget"][0] += 1
                 row_count = len(probe.fetchall())
                 result["budget"][1] += row_count
-                # The public catalogue's projection, not SQL text or a total-query ceiling.
-                if (tuple(column[0] for column in probe.description) == ("kind", "key", "event_count")
-                        and "read_people" in query["context"].compiled.params):
-                    parameters = query["context"].compiled_parameters[0]
-                    identity = (tuple(value for key, value in parameters.items() if key.startswith("read_people_")),
-                                parameters.get("exclude_secrets", False))
-                    result["catalogues"][identity] += 1
                 if any(getattr(table, "name", None) == "ledger_events"
                        for table in compiled.statement.get_final_froms()):
                     result["event_rows"] += row_count

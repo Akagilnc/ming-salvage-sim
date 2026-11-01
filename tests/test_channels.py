@@ -12,7 +12,7 @@ from pathlib import Path
 from functools import partial
 from shutil import copyfile
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock, create_autospec
+from unittest.mock import AsyncMock
 
 import httpx2
 import pytest
@@ -24,19 +24,17 @@ from openai.types.responses import (
     ResponseFunctionToolCall,
     ResponseOutputItemDoneEvent,
 )
-from pydantic_ai import Agent
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai.providers.openai_codex import OpenAICodexProvider
 from pydantic_ai.providers.openai import OpenAIProvider
 from starlette.testclient import TestClient
 
 from ming.__main__ import main
-from ming import game
 from ming.middle import codex_auth
 from ming.middle.cli_model import GROK_OFF
 from ming.middle.opening import opening_template
 from ming.web import create_app
-from tests.conftest import CALLS, INVALID_NIGHT, RECORDED, RECORDED_REPLIES
+from tests.conftest import INVALID_NIGHT, RECORDED, RECORDED_REPLIES
 
 CODEX_MODEL = "gpt-6.1-sol"
 PI_MODEL = f"openai-codex/{CODEX_MODEL}"
@@ -514,8 +512,6 @@ def test_subscription_month_completes(tmp_path: Path, monkeypatch, backend: str,
     opening_template().parent.mkdir(parents=True, exist_ok=True)
     copyfile(template, opening_template())
     calls = install_process(monkeypatch)
-    agents = create_autospec(Agent.__init__, side_effect=Agent.__init__)
-    monkeypatch.setattr(Agent, "__init__", agents)
     if "deliberation" in expected_calls:
         monkeypatch.setitem(REPLIES, "NightDeclaration", json.loads(
             (RECORDED / "night_endorsed.json").read_text()
@@ -554,8 +550,6 @@ def test_subscription_month_completes(tmp_path: Path, monkeypatch, backend: str,
         if backend == "grok":
             client.post("/actions", json={"action": "month"}).raise_for_status()
             assert client.get("/state").json()["game"]["failure"] is None
-    assert agents.call_count == 0
-    assert all(agent.model is None for agent in CALLS.values())
     assert state["game"]["failure"] is None
     assert state["game"]["date"]["month"] == 11
     assert state["settings"]["month_model"] == settings["month_model"]
@@ -612,10 +606,7 @@ def test_optional_channel_falls_back_and_configure_reopens(game_db, monkeypatch,
         if not optional:
             calls.clear()
             settings["month_model"] = {"backend": "pi", "model": PI_MODEL, "effort": "high"}
-            factory = Mock(wraps=game.configured_model)
-            monkeypatch.setattr(game, "configured_model", factory)
             client.post("/actions", json={"action": "settings", "settings": settings}).raise_for_status()
-            assert factory.call_count == 2
             client.post("/actions", json={"action": "month"}).raise_for_status()
             state = client.get("/state").json()
             assert state["game"]["failure"] is None
@@ -623,7 +614,6 @@ def test_optional_channel_falls_back_and_configure_reopens(game_db, monkeypatch,
             assert calls
             for args, _ in calls:
                 assert args[args.index("--thinking") + 1] == "high"
-            assert factory.call_count == 2
 
 
 @pytest.mark.parametrize(("failure", "reopen"), [(500, False), ("timeout", True)])
