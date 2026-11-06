@@ -169,8 +169,6 @@ class Game:
         return self.presentation(facts, monthly, opened=opened) if present else None, bool(facts.failures)
 
     def reopen(self, facts: ActionFacts, *, has_petitions: bool | None = None, opened: bool | None = None) -> None:
-        if facts.night is not None and not facts.night.closed:
-            self.audience.open(facts.night)
         has_petitions = has_pending_petitions(self.court) if has_petitions is None else has_petitions
         self.resume(facts, has_petitions=has_petitions, opened=opened)
         if has_petitions or (facts.pending_nights if facts.pending_nights is not None else self.court.pending_nights()):

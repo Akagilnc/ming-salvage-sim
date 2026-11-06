@@ -415,7 +415,6 @@ class CliHost(FunctionModel):
         self.effort = effort
         self.session_id = session_id
         super().__init__(
-            function=self._request,
             stream_function=self._stream,
             model_name=name or self.host,
         )
@@ -452,11 +451,17 @@ class CliHost(FunctionModel):
                 return ["--resume", self.session_id]
         return opening
 
-    async def _request(
-        self, messages: list[ModelMessage], info: AgentInfo
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
-        text = "".join([part async for part in self._stream(messages, info)])
-        return ModelResponse(parts=[TextPart(text)], model_name=self.model_name)
+        """Prepare once in the streaming path, then return its final response."""
+        async with self.request_stream(messages, model_settings, model_request_parameters) as response:
+            async for _ in response:
+                pass
+            return response.get()
 
     async def _stream(
         self, messages: list[ModelMessage], info: AgentInfo
@@ -609,6 +614,7 @@ class PiStreamedResponse(StreamedResponse):
 
 class PiCliModel(CliHost):
     host = "pi"
+    directory: Path | None = None
 
     def argv(self, instructions: str, tools: bool) -> list[str]:
         argv = [
@@ -635,19 +641,6 @@ class PiCliModel(CliHost):
             argv.extend(["--model", self.cli_name])
         return argv
 
-    async def _stream(
-        self, messages: list[ModelMessage], info: AgentInfo
-    ) -> AsyncIterator[str]:
-        """Use the same final response for non-streaming FunctionModel requests."""
-        async with self.request_stream(
-            messages, info.model_settings, info.model_request_parameters
-        ) as response:
-            async for _ in response:
-                pass
-            for part in response.get().parts:
-                if isinstance(part, TextPart):
-                    yield part.content
-
     @asynccontextmanager
     async def request_stream(
         self,
@@ -658,7 +651,7 @@ class PiCliModel(CliHost):
     ) -> AsyncGenerator[StreamedResponse]:
         _, parameters = self.prepare_request(model_settings, model_request_parameters)
         instructions, content = cli_input(messages, get_instructions(messages, parameters))
-        directory = Path.home() / ".ming" / "pi" / self.session_id
+        directory = self.directory or Path.home() / ".ming" / "pi" / self.session_id
         config = directory / ".pi"
         config.mkdir(parents=True, exist_ok=True)
         (config / "settings.json").write_text(json.dumps({"compaction": {"enabled": False}}))

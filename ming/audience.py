@@ -23,7 +23,6 @@ from ming.middle.concepts import ACTING, AUDIENCE, DECREE, DECREE_EVENT, DISCOVE
 from ming.middle.translate import INSTRUCTIONS, declaration_agent
 from ming.middle.declaration import NightDeclaration
 from ming.middle.invoke import TextUpdate, invoke, stream_text
-from ming.middle.cli_model import CliHost
 from ming.middle.night import NightHeader, NightView
 from ming.middle.opening import CONTENT
 from ming.middle.scene import HallResult
@@ -83,9 +82,10 @@ class Audience:
         if previous != self._night_id:
             self._system = None
         if not closed and self._system is None:
-            self._system = ModelRequest(parts=[SystemPromptPart(
-                SCENE_RULES + "\n" + json.dumps(self.court.scene_material(), ensure_ascii=False)
-            )])
+            self._system = ModelRequest(parts=[
+                SystemPromptPart(SCENE_RULES),
+                SystemPromptPart(json.dumps(self.court.scene_material(), ensure_ascii=False)),
+            ])
         if not closed and not created and self.court.read.has_facts(self.night_id, "dismiss_requested", date=None):
             self._dismiss_requested = self.night_id
         return created
@@ -134,12 +134,11 @@ class Audience:
     ) -> str:
         assert self._system is not None
         history: list[ModelMessage] = [self._system]
-        if not isinstance(self.model, CliHost):
-            for turn in night.turns:
-                history.extend([
-                    ModelRequest(parts=[UserPromptPart(turn.emperor_words)]),
-                    ModelResponse(parts=[TextPart(turn.scene)]),
-                ])
+        for turn in night.turns:
+            history.extend([
+                ModelRequest(parts=[UserPromptPart(turn.emperor_words)]),
+                ModelResponse(parts=[TextPart(turn.scene)]),
+            ])
         try:
             result = await invoke(
                 scene,
