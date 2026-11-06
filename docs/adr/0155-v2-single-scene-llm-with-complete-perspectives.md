@@ -24,3 +24,7 @@ Status: W2A 施工中（2026-09-09 owner 已拍首期取舍；W1A #1827 / #1830 
 ## 2026-10-26 补：见 0163
 
 成旨判据只留一处定义、各调用引用，转译不另加限制，见 [0163](0163-one-month-timeline-forks-at-once-travel-by-day.md)。
+
+## 2026-11-06 补：首轮回话定本夜时地（#2006）
+
+召对夜的时辰与地点（[0035](0035-audience-night-open-story-ledger.md) 的夜容器属性，[0044](0044-audience-stage-is-night-scroll-reading-story-ledger.md) 卷名由此长出）由本夜第一次正常场景回话一并定下，成功的那一轮随原轮记在本夜上；不恢复独立的开夜模型调用。皇帝开口前、或首轮失败未交时地时，卷名只有年月，不编时地；失败照既有失败／重试路径续上。「场景只维护殿上名单」由此多一项例外：首轮声明本夜时地。依据：源卷 `~/.claude/projects/-Users-akagilnc-WorkSpace-Ming-LLM/a45c2e6b-8c9a-4f56-85fb-73324ee40299.jsonl`，owner `26204a19-a170-478b-a0cb-ef703e0941b6`「2 用2」（恢复时辰地点）、`c48a14c3-8779-43f4-9901-357828df3696`「B就行」（随首轮回话定）。
