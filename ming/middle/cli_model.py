@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
 from tempfile import TemporaryDirectory, TemporaryFile
+from uuid import uuid4
 
 import uvicorn
 from mcp.server.mcpserver import MCPServer
@@ -454,12 +455,12 @@ class CliHost(FunctionModel):
         return self.host
 
     def commands(self, argv: list[str], instructions: str) -> list[list[str]]:
-        # Pi opens-or-creates but rebuilds its prompt at process launch.
+        # Only an existing identity needs a resume attempt; Pi opens-or-creates.
+        resume = [[*argv, "--resume", self.session_id]] if self.session_id and self.host != "pi" else []
+        self.session_id = self.session_id or str(uuid4())
         opening = [*argv, "--session-id", self.session_id,
                    "--system-prompt-override" if self.host == "grok" else "--system-prompt", instructions]
-        if self.host == "pi":
-            return [opening]
-        return [[*argv, "--resume", self.session_id], opening]
+        return [*resume, opening]
 
     async def request(
         self,

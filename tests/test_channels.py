@@ -182,13 +182,21 @@ def install_process(monkeypatch, *, mode: str = "ok"):
             return finished(asyncio.StreamReader())
         if mode == "missing":
             raise FileNotFoundError(2, "No such file or directory", args[0])
+        if mode == "retry" and get_current_run_context().agent.name == "NightDeclaration":
+            translations = [info for _, info in calls if info["agent"] == "NightDeclaration"]
+            translations[-1]["prompt"] = kwargs["stdin"].read()
+            kwargs["stdin"].seek(0)
+            if len(translations) == 2:
+                raise TimeoutError("transport timeout")
         output = asyncio.StreamReader(limit=kwargs["limit"])
         if mode == "exit" or ("--model" in args and args[args.index("--model") + 1] == "rejected-model"):
             output.feed_eof()
             return finished(output, 1)
         url = mcp_url(args, kwargs)
-        chunks = await chunks_for(url) if mode == "ok" else []
-        for line in host_lines(args[0], chunks, mode=mode):
+        chunks = await chunks_for(url) if mode in {"ok", "retry"} else []
+        if mode == "retry" and get_current_run_context().agent.name == "NightDeclaration" and len(translations) == 1:
+            chunks = [INVALID_NIGHT["reply"]]
+        for line in host_lines(args[0], chunks, mode="ok" if mode == "retry" else mode):
             output.feed_data(line)
         output.feed_eof()
         if args[0] == "grok" and mode == "ok":
@@ -324,20 +332,21 @@ def assert_scene(state: dict[str, object], events: asyncio.Queue) -> None:
 
 
 @pytest.mark.parametrize(
-    ("backend", "model", "effort"),
-    [("claude-cli", "", ""), ("claude-cli", "sonnet", "native-unknown"),
-     ("grok", "", ""), ("grok", "grok-4.7", "medium"),
-     ("pi", "", ""), ("pi", f"{PI_MODEL}:high", "native-unknown")],
+    ("channel", "mode"),
+    [(("claude-cli", "", ""), "ok"), (("claude-cli", "sonnet", "native-unknown"), "ok"),
+     (("grok", "", ""), "ok"), (("grok", "grok-4.7", "medium"), "ok"),
+     (("pi", "", ""), "ok"), (("pi", f"{PI_MODEL}:high", "native-unknown"), "ok"),
+     (("claude-cli", "", ""), "retry")],
 )
 def test_process_subscription_scene_lands_and_streams(
-    game_db: Path, monkeypatch, backend: str, model: str, effort: str
+    game_db: Path, monkeypatch, clock, channel: tuple[str, str, str], mode: str
 ) -> None:
-    tmp_path = game_db.parent
+    backend, model, effort = channel
     before = {path: stamp(path) for path in USER_FILES}
-    monkeypatch.setenv("GROK_HOME", str(tmp_path / "grok-home"))
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("USERPROFILE", str(tmp_path))
-    calls = install_process(monkeypatch)
+    monkeypatch.setenv("GROK_HOME", str(game_db.parent / "grok-home"))
+    monkeypatch.setenv("HOME", str(game_db.parent))
+    monkeypatch.setenv("USERPROFILE", str(game_db.parent))
+    calls = install_process(monkeypatch, mode=mode)
     app = create_app(game_db.parent)
     events = asyncio.Queue()
     app.state.web.listeners.add(events)
@@ -364,9 +373,19 @@ def test_process_subscription_scene_lands_and_streams(
             assert args[args.index(flag) + 1] == effort
         else:
             assert flag not in args
-    scene_args = next(args for args, kwargs in calls if kwargs["agent"] == "scene")
-    session_flag = "--session-id" if backend == "pi" else "--resume"
-    assert scene_args[scene_args.index(session_flag) + 1] == state["game"]["night"]["id"]
+    args = next(args for args, kwargs in calls if kwargs["agent"] == "scene")
+    assert args[args.index("--session-id" if backend == "pi" else "--resume") + 1] == state["game"]["night"]["id"]
+    translation_args = next(args for args, kwargs in calls if kwargs["agent"] == "NightDeclaration")
+    assert "--session-id" in translation_args
+    assert "--resume" not in translation_args
+    assert translation_args[translation_args.index("--session-id") + 1] != state["game"]["night"]["id"]
+    if mode == "retry":
+        translations = [(args, info) for args, info in calls if info["agent"] == "NightDeclaration"]
+        assert len(translations) == 3
+        assert clock == [5]
+        assert all(args[args.index("--resume") + 1] == translation_args[translation_args.index("--session-id") + 1]
+                   for args, _ in translations[1:])
+        assert translations[0][1]["prompt"] == translations[2][1]["prompt"]
     if backend == "grok":
         args, kwargs = next((args, kwargs) for args, kwargs in calls if "--trust" not in args)
         assert args[args.index("--tools") + 1] == "search_tool,use_tool"
@@ -767,8 +786,8 @@ def test_process_failure_stops_month(tmp_path: Path, monkeypatch, backend: str, 
     for args in model_calls:
         assert args[0] == ("claude" if backend == "claude-cli" else backend)
         assert args[args.index("--model") + 1] == "unknown-native"
-        if backend != "pi":
-            assert "--session-id" not in args
+        assert "--session-id" in args
+        assert "--resume" not in args
         flag = {"grok": "--reasoning-effort", "pi": "--thinking", "claude-cli": "--effort"}[backend]
         assert args[args.index(flag) + 1] == "native-unknown"
     failure = state["game"]["failure"]

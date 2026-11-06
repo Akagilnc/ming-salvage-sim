@@ -7,7 +7,6 @@ from contextlib import ExitStack
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Literal, TypeVar, cast
-from uuid import uuid4
 
 from httpx2 import TimeoutException
 from openai import APIConnectionError
@@ -133,7 +132,7 @@ async def stream_text(
 
 
 async def invoke(
-    agent: Agent[D, T], prompt: str | list[str] | dict[str, Any],
+    agent: Agent[D, T], prompt: str | dict[str, Any],
     *, model: Model, session_id: str | None = None, **kwargs: Any,
 ) -> AgentRunResult[T]:
     with ExitStack() as resources:
@@ -142,7 +141,7 @@ async def invoke(
                 tool for toolset in agent.toolsets if isinstance(toolset, FunctionToolset)
                 for tool in toolset.tools.values()
             ]
-            model = type(model)(model.cli_name, tools, effort=model.effort, session_id=session_id or str(uuid4()))
+            model = type(model)(model.cli_name, tools, effort=model.effort, session_id=session_id or "")
             if isinstance(model, PiCliModel) and session_id is None:
                 # Keep the cwd through declaration and transport retries, not beyond this run.
                 model.directory = Path(resources.enter_context(TemporaryDirectory(prefix="ming-pi-")))
