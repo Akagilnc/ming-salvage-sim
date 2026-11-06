@@ -17,3 +17,7 @@ Status: accepted（2026-10-25 北极星终验逐条过后 owner grill 定：`e96
 
 - [0160](0160-read-tables-by-library-projection.md)「合理查询」中「模型用 `read_records` 的读法现由 #1970 取代……」一句的射程扩到所有模型调用，并加官职三态。
 - [0155](0155-v2-single-scene-llm-with-complete-perspectives.md)「读取形态」中「场景模型经中间层四个工具」：按人名查档案的工具由统一读账取代，其余三件（看殿上名单、改殿上名单、退朝）照留。
+
+## 2026-11-06 补：人物状态在皇帝面前怎么显示（#2006）
+
+皇帝读到的人物状态在读账投影一处排版：`active`、`offstage` 不显示，开局就有的其余状态代码显示中文，模型新写的值原样显示、不猜语义；账本原值不变，`active` 只表示活动状态、不等于在职。要模型把新写的非 `active` 状态写成中文（`active` 照旧写原代码，引擎靠它判活动），只改 `person.status` 字段说明、不改它交来的字，模型偶尔写英文会露出，是刻意接受的代价。依据：源卷 `~/.claude/projects/-Users-akagilnc-WorkSpace-Ming-LLM/a45c2e6b-8c9a-4f56-85fb-73324ee40299.jsonl`，owner `26204a19-a170-478b-a0cb-ef703e0941b6`「别的都按你建议」（第 1 题：active、offstage 不显示，罢官、下狱、身故显示中文）、`b428e355-e9e5-4ef4-96e4-d0756b1ca6e4`「A」（预设之外的状态照原文显示并要求模型用中文写）。
