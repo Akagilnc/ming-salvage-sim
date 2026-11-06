@@ -28,7 +28,10 @@ from pydantic_ai._instrumentation import get_instructions
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai.messages import (
     ModelMessage,
-    ModelMessagesTypeAdapter,
+    ModelRequest,
+    RetryPromptPart,
+    SystemPromptPart,
+    UserPromptPart,
     ModelResponse,
     ModelResponseStreamEvent,
     TextPart,
@@ -114,8 +117,22 @@ async def court_server(
             await asyncio.shield(serving)
 
 
-def prompt_bytes(messages: list[ModelMessage]) -> bytes:
-    return ModelMessagesTypeAdapter.dump_json(messages, indent=2)
+def cli_input(messages: list[ModelMessage], instructions: str | None) -> tuple[str, bytes]:
+    """Only the current request goes to a host; history belongs to its session."""
+    system = [part.content for message in messages if isinstance(message, ModelRequest)
+              for part in message.parts if isinstance(part, SystemPromptPart)]
+    if instructions:
+        system.append(instructions)
+    current = messages[-1]
+    assert isinstance(current, ModelRequest)
+    parts: list[str] = []
+    for part in current.parts:
+        if isinstance(part, UserPromptPart):
+            assert isinstance(part.content, str)
+            parts.append(part.content)
+        elif isinstance(part, RetryPromptPart):
+            parts.append(part.model_response())
+    return "\n".join(system), "\n".join(parts).encode("utf-8")
 
 
 async def stream_process[T](
@@ -391,11 +408,12 @@ class CliHost(FunctionModel):
     host = "cli"
 
     def __init__(
-        self, name: str = "", tools: Sequence[Tool[Any]] = (), *, effort: str = ""
+        self, name: str = "", tools: Sequence[Tool[Any]] = (), *, effort: str = "", session_id: str = ""
     ) -> None:
         self.tools = tools
         self.cli_name = name
         self.effort = effort
+        self.session_id = session_id
         super().__init__(
             function=self._request,
             stream_function=self._stream,
@@ -405,6 +423,34 @@ class CliHost(FunctionModel):
     @property
     def system(self) -> str:
         return self.host
+
+    def session_flags(self, instructions: str) -> list[str]:
+        opening = ["--session-id", self.session_id,
+                   "--system-prompt-override" if self.host == "grok" else "--system-prompt", instructions]
+        if self.host == "pi":
+            # Pi opens-or-creates by ID, but rebuilds its prompt at process launch.
+            # Supply the current opening's system message, not a new ledger read.
+            return opening
+        # Read only the native session locator, never its messages or progress.
+        # stat(), unlike glob()/exists(), does not hide permission/I/O failures.
+        root = (grok_home() / "sessions" if self.host == "grok" else
+                Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "projects")
+        relative = (Path(self.session_id) / "chat_history.jsonl" if self.host == "grok"
+                    else Path(self.session_id + ".jsonl"))
+        try:
+            projects = os.scandir(root)
+        except FileNotFoundError:
+            return opening
+        with projects:
+            for project in projects:
+                if not project.is_dir():
+                    continue
+                try:
+                    (Path(project.path) / relative).stat()
+                except FileNotFoundError:
+                    continue
+                return ["--resume", self.session_id]
+        return opening
 
     async def _request(
         self, messages: list[ModelMessage], info: AgentInfo
@@ -422,7 +468,7 @@ class CliHost(FunctionModel):
 class ClaudeCliModel(CliHost):
     host = "claude-cli"
 
-    def argv(self, config: dict[str, Any], info: AgentInfo) -> list[str]:
+    def argv(self, config: dict[str, Any], instructions: str) -> list[str]:
         return [
             "claude",
             "-p",
@@ -430,7 +476,7 @@ class ClaudeCliModel(CliHost):
             *(["--model", self.cli_name] if self.cli_name else []),
             "--tools",
             "",
-            "--no-session-persistence",
+            *self.session_flags(instructions),
             "--setting-sources",
             "",
             "--strict-mcp-config",
@@ -449,13 +495,12 @@ class ClaudeCliModel(CliHost):
             "--verbose",
             "--include-partial-messages",
             "--disable-slash-commands",
-            "--system-prompt",
-            info.instructions or "",
         ]
 
     async def _stream(
         self, messages: list[ModelMessage], info: AgentInfo
     ) -> AsyncIterator[str]:
+        instructions, content = cli_input(messages, info.instructions)
         async with court_server(self.tools) as url:
             config: dict[str, Any] = {"mcpServers": {}}
             if url is not None:
@@ -464,13 +509,14 @@ class ClaudeCliModel(CliHost):
                 TemporaryDirectory(prefix="ming-claude-") as directory,
                 TemporaryFile() as prompt,
             ):
-                prompt.write(prompt_bytes(messages))
+                prompt.write(content)
                 prompt.seek(0)
                 async for text in stream_process(
-                    self.argv(config, info),
+                    self.argv(config, instructions),
                     cwd=directory,
                     prompt=prompt,
                     events=ClaudeEvents(),
+                    env={**os.environ, "DISABLE_COMPACT": "1"},
                 ):
                     yield text
 
@@ -478,9 +524,10 @@ class ClaudeCliModel(CliHost):
 class GrokCliModel(CliHost):
     host = "grok"
 
-    def argv(self, slot: Path, prompt_path: Path, info: AgentInfo) -> list[str]:
+    def argv(self, slot: Path, prompt_path: Path, info: AgentInfo, instructions: str) -> list[str]:
         argv = [
             "grok",
+            *self.session_flags(instructions),
             *(["--reasoning-effort", self.effort] if self.effort else []),
             "--cwd",
             str(slot),
@@ -490,8 +537,6 @@ class GrokCliModel(CliHost):
             "--output-format",
             "streaming-json",
             "--always-approve",
-            "--system-prompt-override",
-            info.instructions or "",
             "--tools",
             "search_tool,use_tool",
             "--no-subagents",
@@ -507,14 +552,15 @@ class GrokCliModel(CliHost):
     async def _stream(
         self, messages: list[ModelMessage], info: AgentInfo
     ) -> AsyncIterator[str]:
+        instructions, content = cli_input(messages, info.instructions)
         pool = slots()
         slot = await pool.acquire()
         prompt_path = slot / "prompt.txt"
         try:
             async with court_server(self.tools) as url:
                 write_grok_config(slot, url)
-                prompt_path.write_bytes(prompt_bytes(messages))
-                argv = self.argv(slot, prompt_path, info)
+                prompt_path.write_bytes(content)
+                argv = self.argv(slot, prompt_path, info, instructions)
                 async for text in stream_process(
                     argv,
                     cwd=str(slot),
@@ -571,15 +617,13 @@ class PiCliModel(CliHost):
             "--mode",
             "json",
             "-p",
-            "--no-session",
+            *self.session_flags(instructions),
             "--approve",
             "--no-skills",
             "--no-prompt-templates",
             "--no-context-files",
             "--no-builtin-tools",
             "--no-extensions",
-            "--system-prompt",
-            instructions,
         ]
         if tools:
             argv.extend(
@@ -613,21 +657,21 @@ class PiCliModel(CliHost):
         run_context: RunContext[Any] | None = None,
     ) -> AsyncGenerator[StreamedResponse]:
         _, parameters = self.prepare_request(model_settings, model_request_parameters)
+        instructions, content = cli_input(messages, get_instructions(messages, parameters))
+        directory = Path.home() / ".ming" / "pi" / self.session_id
+        config = directory / ".pi"
+        config.mkdir(parents=True, exist_ok=True)
+        (config / "settings.json").write_text(json.dumps({"compaction": {"enabled": False}}))
         async with court_server(self.tools) as url:
-            with (
-                TemporaryDirectory(prefix="ming-pi-") as directory,
-                TemporaryFile() as prompt,
-            ):
+            with TemporaryFile() as prompt:
                 if url is not None:
-                    write_pi_mcp(Path(directory), url)
-                prompt.write(prompt_bytes(messages))
+                    write_pi_mcp(directory, url)
+                prompt.write(content)
                 prompt.seek(0)
                 async with aclosing(
                     stream_process(
-                        self.argv(
-                            get_instructions(messages, parameters) or "", url is not None
-                        ),
-                        cwd=directory,
+                        self.argv(instructions, url is not None),
+                        cwd=str(directory),
                         prompt=prompt,
                         events=PiEvents(),
                     )

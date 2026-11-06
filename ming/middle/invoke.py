@@ -4,6 +4,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterable, Awaitable, Callable
 from typing import Any, Literal, TypeVar, cast
+from uuid import uuid4
 
 from httpx2 import TimeoutException
 from openai import APIConnectionError
@@ -130,14 +131,14 @@ async def stream_text(
 
 async def invoke(
     agent: Agent[D, T], prompt: str | list[str] | dict[str, Any],
-    *, model: Model, **kwargs: Any,
+    *, model: Model, session_id: str | None = None, **kwargs: Any,
 ) -> AgentRunResult[T]:
     if isinstance(model, CliHost):
         tools = [
             tool for toolset in agent.toolsets if isinstance(toolset, FunctionToolset)
             for tool in toolset.tools.values()
         ]
-        model = type(model)(model.cli_name, tools, effort=model.effort)
+        model = type(model)(model.cli_name, tools, effort=model.effort, session_id=session_id or str(uuid4()))
     if isinstance(prompt, dict):
         prompt = json.dumps(prompt, ensure_ascii=False)
     async for attempt in AsyncRetrying(
