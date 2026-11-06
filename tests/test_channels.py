@@ -336,7 +336,9 @@ def assert_scene(state: dict[str, object], events: asyncio.Queue) -> None:
     [(("claude-cli", "", ""), "ok"), (("claude-cli", "sonnet", "native-unknown"), "ok"),
      (("grok", "", ""), "ok"), (("grok", "grok-4.7", "medium"), "ok"),
      (("pi", "", ""), "ok"), (("pi", f"{PI_MODEL}:high", "native-unknown"), "ok"),
-     (("claude-cli", "", ""), "retry")],
+     (("claude-cli", "", ""), "retry"),
+     (("claude-cli", "", ""), "exit"), (("claude-cli", "", ""), "error"),
+     (("grok", "", ""), "exit")],
 )
 def test_process_subscription_scene_lands_and_streams(
     game_db: Path, monkeypatch, clock, channel: tuple[str, str, str], mode: str
@@ -354,10 +356,11 @@ def test_process_subscription_scene_lands_and_streams(
         open_game(client, {"backend": backend, "model": model, "effort": effort}, game_db)
         client.post("/actions", json={"action": "open"}).raise_for_status()
         client.post("/actions", json={"action": "say", "words": "宣王承恩"}).raise_for_status()
-        client.post("/actions", json={"action": "dismiss"}).raise_for_status()
-        client.portal.call(app.state.web.game.drain)
+        if mode not in {"exit", "error"}:
+            client.post("/actions", json={"action": "dismiss"}).raise_for_status()
+            client.portal.call(app.state.web.game.drain)
         state = client.get("/state").json()
-    assert_scene(state, events)
+    assert {path: stamp(path) for path in USER_FILES} == before
     assert state["settings"]["backend"] == backend
     assert state["settings"]["model"] == model
     model_calls = [args for args, _kwargs in calls if "--trust" not in args]
@@ -375,6 +378,16 @@ def test_process_subscription_scene_lands_and_streams(
             assert flag not in args
     args = next(args for args, kwargs in calls if kwargs["agent"] == "scene")
     assert args[args.index("--session-id" if backend == "pi" else "--resume") + 1] == state["game"]["night"]["id"]
+    if mode in {"exit", "error"}:
+        assert len(model_calls) == 1
+        assert "--session-id" not in args
+        assert state["game"]["night"]["turns"] == []
+        assert state["game"]["failure"]["status"] == "failed"
+        assert state["game"]["failure"]["action"] == "say"
+        assert state["game"]["failure"]["payload"]["type"] == "RuntimeError"
+        assert Path(state["game"]["failure"]["payload"]["log"]).is_file()
+        return
+    assert_scene(state, events)
     translation_args = next(args for args, kwargs in calls if kwargs["agent"] == "NightDeclaration")
     assert "--session-id" in translation_args
     assert "--resume" not in translation_args
@@ -403,7 +416,6 @@ def test_process_subscription_scene_lands_and_streams(
         assert "--approve" in args and "--no-mcp" not in args
         assert args[args.index("--tools") + 1] == "mcp__court__*"
         assert "-e" in args and args[args.index("-e") + 1] == "builtin:mcp"
-    assert {path: stamp(path) for path in USER_FILES} == before
 
 
 @pytest.mark.parametrize("channel", [
