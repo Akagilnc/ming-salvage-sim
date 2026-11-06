@@ -364,6 +364,9 @@ def test_process_subscription_scene_lands_and_streams(
             assert args[args.index(flag) + 1] == effort
         else:
             assert flag not in args
+    scene_args = next(args for args, kwargs in calls if kwargs["agent"] == "scene")
+    session_flag = "--session-id" if backend == "pi" else "--resume"
+    assert scene_args[scene_args.index(session_flag) + 1] == state["game"]["night"]["id"]
     if backend == "grok":
         args, kwargs = next((args, kwargs) for args, kwargs in calls if "--trust" not in args)
         assert args[args.index("--tools") + 1] == "search_tool,use_tool"
@@ -739,7 +742,10 @@ def test_pi_empty_assistant_is_not_a_transport_failure(
     assert state["game"]["failure"]["status"] == "failed"
 
 
-@pytest.mark.parametrize(("backend", "mode"), [("grok", "exit"), ("grok", "missing"), ("pi", "error")])
+@pytest.mark.parametrize(("backend", "mode"), [
+    ("grok", "exit"), ("grok", "missing"), ("pi", "error"),
+    ("claude-cli", "exit"), ("claude-cli", "error"),
+])
 def test_process_failure_stops_month(tmp_path: Path, monkeypatch, backend: str, mode: str, game_db: Path) -> None:
     monkeypatch.setenv("GROK_HOME", str(tmp_path / "grok-home"))
     monkeypatch.setenv("HOME", str(tmp_path))
@@ -759,9 +765,11 @@ def test_process_failure_stops_month(tmp_path: Path, monkeypatch, backend: str, 
     model_calls = [args for args, _ in calls if "--trust" not in args]
     assert model_calls
     for args in model_calls:
-        assert args[0] == backend
+        assert args[0] == ("claude" if backend == "claude-cli" else backend)
         assert args[args.index("--model") + 1] == "unknown-native"
-        flag = "--reasoning-effort" if backend == "grok" else "--thinking"
+        if backend != "pi":
+            assert "--session-id" not in args
+        flag = {"grok": "--reasoning-effort", "pi": "--thinking", "claude-cli": "--effort"}[backend]
         assert args[args.index(flag) + 1] == "native-unknown"
     failure = state["game"]["failure"]
     assert {"type", "message", "log"} <= failure["payload"].keys()
