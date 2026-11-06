@@ -3,6 +3,9 @@
 import asyncio
 import json
 from collections.abc import AsyncIterable, Awaitable, Callable
+from contextlib import ExitStack
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any, Literal, TypeVar, cast
 
 from httpx2 import TimeoutException
@@ -129,26 +132,30 @@ async def stream_text(
 
 
 async def invoke(
-    agent: Agent[D, T], prompt: str | list[str] | dict[str, Any],
-    *, model: Model, **kwargs: Any,
+    agent: Agent[D, T], prompt: str | dict[str, Any],
+    *, model: Model, session_id: str | None = None, **kwargs: Any,
 ) -> AgentRunResult[T]:
-    if isinstance(model, CliHost):
-        tools = [
-            tool for toolset in agent.toolsets if isinstance(toolset, FunctionToolset)
-            for tool in toolset.tools.values()
-        ]
-        model = type(model)(model.cli_name, tools, effort=model.effort)
-    if isinstance(prompt, dict):
-        prompt = json.dumps(prompt, ensure_ascii=False)
-    async for attempt in AsyncRetrying(
-        stop=stop_after_attempt(3),
-        wait=wait_fixed(5),
-        retry=retry_if_exception(transient),
-        reraise=True,
-    ):
-        with attempt:
-            return await agent.run(prompt, model=model, **kwargs)
-    raise AssertionError("tenacity completed without a result")
+    with ExitStack() as resources:
+        if isinstance(model, CliHost):
+            tools = [
+                tool for toolset in agent.toolsets if isinstance(toolset, FunctionToolset)
+                for tool in toolset.tools.values()
+            ]
+            model = type(model)(model.cli_name, tools, effort=model.effort, session_id=session_id or "")
+            if isinstance(model, PiCliModel) and session_id is None:
+                # Keep the cwd through declaration and transport retries, not beyond this run.
+                model.directory = Path(resources.enter_context(TemporaryDirectory(prefix="ming-pi-")))
+        if isinstance(prompt, dict):
+            prompt = json.dumps(prompt, ensure_ascii=False)
+        async for attempt in AsyncRetrying(
+            stop=stop_after_attempt(3),
+            wait=wait_fixed(5),
+            retry=retry_if_exception(transient),
+            reraise=True,
+        ):
+            with attempt:
+                return await agent.run(prompt, model=model, **kwargs)
+        raise AssertionError("tenacity completed without a result")
 
 
 async def gather_or_raise(*awaitables: Awaitable[T]) -> list[T]:

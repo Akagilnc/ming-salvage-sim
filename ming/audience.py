@@ -14,6 +14,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     TextPart,
+    SystemPromptPart,
     UserPromptPart,
 )
 
@@ -41,6 +42,7 @@ class Audience:
         self.on_hall = on_hall
         self.model: Model
         self._night_id: UUID | None = None
+        self._system: ModelRequest | None = None
         self._turn: asyncio.Task[str] | None = None
         self._dismiss_requested: UUID | None = None
 
@@ -71,11 +73,19 @@ class Audience:
         return pending
 
     def open(self, night: NightHeader | None = None, *, date: dict[str, Any] | None = None) -> bool:
+        previous = self._night_id
         if night is None:
             self._night_id, created = self.court.open_night(date=date)
             closed = False
         else:
             self._night_id, created, closed = night.id, False, night.closed
+        if previous != self._night_id:
+            self._system = None
+        if not closed and self._system is None:
+            self._system = ModelRequest(parts=[
+                SystemPromptPart(SCENE_RULES),
+                SystemPromptPart(json.dumps(self.court.scene_material(), ensure_ascii=False)),
+            ])
         if not closed and not created and self.court.read.has_facts(self.night_id, "dismiss_requested", date=None):
             self._dismiss_requested = self.night_id
         return created
@@ -122,19 +132,18 @@ class Audience:
         self, words: str, turn_id: str, on_delta: Callable[[TextUpdate], None] | None,
         night: NightView,
     ) -> str:
-        history: list[ModelMessage] = []
+        assert self._system is not None
+        history: list[ModelMessage] = [self._system]
         for turn in night.turns:
-            history.extend(
-                [
-                    ModelRequest(parts=[UserPromptPart(turn.emperor_words)]),
-                    ModelResponse(parts=[TextPart(turn.scene)]),
-                ]
-            )
+            history.extend([
+                ModelRequest(parts=[UserPromptPart(turn.emperor_words)]),
+                ModelResponse(parts=[TextPart(turn.scene)]),
+            ])
         try:
             result = await invoke(
                 scene,
-                [json.dumps({**self.court.scene_material(), "catalogue": self.court.read.record_catalogue(Officials(people=list(night.hall)))}, ensure_ascii=False), words],
-                deps=self, model=self.model,
+                words,
+                deps=self, model=self.model, session_id=str(self.night_id),
                 message_history=history,
                 event_stream_handler=partial(stream_text, on_delta)
                 if on_delta
@@ -170,10 +179,11 @@ async def dismiss(ctx: RunContext[Audience]) -> None:
     ctx.deps.dismiss()
 
 
+SCENE_RULES = "\n".join(((CONTENT / "prompts/scene_agent.md").read_text(), DECREE, SECRET, HANDLER, PEOPLE, ACTING, INTERIM))
+
 scene = Agent(
     name="scene",
     output_type=str,
     deps_type=Audience,
-    instructions="\n".join(((CONTENT / "prompts/scene_agent.md").read_text(), DECREE, SECRET, HANDLER, PEOPLE, ACTING, INTERIM)),
     tools=[read_records, get_hall, set_hall, dismiss],
 )

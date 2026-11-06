@@ -182,13 +182,21 @@ def install_process(monkeypatch, *, mode: str = "ok"):
             return finished(asyncio.StreamReader())
         if mode == "missing":
             raise FileNotFoundError(2, "No such file or directory", args[0])
+        if mode == "retry" and get_current_run_context().agent.name == "NightDeclaration":
+            translations = [info for _, info in calls if info["agent"] == "NightDeclaration"]
+            translations[-1]["prompt"] = kwargs["stdin"].read()
+            kwargs["stdin"].seek(0)
+            if len(translations) == 2:
+                raise TimeoutError("transport timeout")
         output = asyncio.StreamReader(limit=kwargs["limit"])
         if mode == "exit" or ("--model" in args and args[args.index("--model") + 1] == "rejected-model"):
             output.feed_eof()
             return finished(output, 1)
         url = mcp_url(args, kwargs)
-        chunks = await chunks_for(url) if mode == "ok" else []
-        for line in host_lines(args[0], chunks, mode=mode):
+        chunks = await chunks_for(url) if mode in {"ok", "retry"} else []
+        if mode == "retry" and get_current_run_context().agent.name == "NightDeclaration" and len(translations) == 1:
+            chunks = [INVALID_NIGHT["reply"]]
+        for line in host_lines(args[0], chunks, mode="ok" if mode == "retry" else mode):
             output.feed_data(line)
         output.feed_eof()
         if args[0] == "grok" and mode == "ok":
@@ -324,20 +332,23 @@ def assert_scene(state: dict[str, object], events: asyncio.Queue) -> None:
 
 
 @pytest.mark.parametrize(
-    ("backend", "model", "effort"),
-    [("claude-cli", "", ""), ("claude-cli", "sonnet", "native-unknown"),
-     ("grok", "", ""), ("grok", "grok-4.7", "medium"),
-     ("pi", "", ""), ("pi", f"{PI_MODEL}:high", "native-unknown")],
+    ("channel", "mode"),
+    [(("claude-cli", "", ""), "ok"), (("claude-cli", "sonnet", "native-unknown"), "ok"),
+     (("grok", "", ""), "ok"), (("grok", "grok-4.7", "medium"), "ok"),
+     (("pi", "", ""), "ok"), (("pi", f"{PI_MODEL}:high", "native-unknown"), "ok"),
+     (("claude-cli", "", ""), "retry"),
+     (("claude-cli", "", ""), "exit"), (("claude-cli", "", ""), "error"),
+     (("grok", "", ""), "exit")],
 )
 def test_process_subscription_scene_lands_and_streams(
-    game_db: Path, monkeypatch, backend: str, model: str, effort: str
+    game_db: Path, monkeypatch, clock, channel: tuple[str, str, str], mode: str
 ) -> None:
-    tmp_path = game_db.parent
+    backend, model, effort = channel
     before = {path: stamp(path) for path in USER_FILES}
-    monkeypatch.setenv("GROK_HOME", str(tmp_path / "grok-home"))
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("USERPROFILE", str(tmp_path))
-    calls = install_process(monkeypatch)
+    monkeypatch.setenv("GROK_HOME", str(game_db.parent / "grok-home"))
+    monkeypatch.setenv("HOME", str(game_db.parent))
+    monkeypatch.setenv("USERPROFILE", str(game_db.parent))
+    calls = install_process(monkeypatch, mode=mode)
     app = create_app(game_db.parent)
     events = asyncio.Queue()
     app.state.web.listeners.add(events)
@@ -345,10 +356,11 @@ def test_process_subscription_scene_lands_and_streams(
         open_game(client, {"backend": backend, "model": model, "effort": effort}, game_db)
         client.post("/actions", json={"action": "open"}).raise_for_status()
         client.post("/actions", json={"action": "say", "words": "宣王承恩"}).raise_for_status()
-        client.post("/actions", json={"action": "dismiss"}).raise_for_status()
-        client.portal.call(app.state.web.game.drain)
+        if mode not in {"exit", "error"}:
+            client.post("/actions", json={"action": "dismiss"}).raise_for_status()
+            client.portal.call(app.state.web.game.drain)
         state = client.get("/state").json()
-    assert_scene(state, events)
+    assert {path: stamp(path) for path in USER_FILES} == before
     assert state["settings"]["backend"] == backend
     assert state["settings"]["model"] == model
     model_calls = [args for args, _kwargs in calls if "--trust" not in args]
@@ -364,6 +376,29 @@ def test_process_subscription_scene_lands_and_streams(
             assert args[args.index(flag) + 1] == effort
         else:
             assert flag not in args
+    args = next(args for args, kwargs in calls if kwargs["agent"] == "scene")
+    assert args[args.index("--session-id" if backend == "pi" else "--resume") + 1] == state["game"]["night"]["id"]
+    if mode in {"exit", "error"}:
+        assert len(model_calls) == 1
+        assert "--session-id" not in args
+        assert state["game"]["night"]["turns"] == []
+        assert state["game"]["failure"]["status"] == "failed"
+        assert state["game"]["failure"]["action"] == "say"
+        assert state["game"]["failure"]["payload"]["type"] == "RuntimeError"
+        assert Path(state["game"]["failure"]["payload"]["log"]).is_file()
+        return
+    assert_scene(state, events)
+    translation_args = next(args for args, kwargs in calls if kwargs["agent"] == "NightDeclaration")
+    assert "--session-id" in translation_args
+    assert "--resume" not in translation_args
+    assert translation_args[translation_args.index("--session-id") + 1] != state["game"]["night"]["id"]
+    if mode == "retry":
+        translations = [(args, info) for args, info in calls if info["agent"] == "NightDeclaration"]
+        assert len(translations) == 3
+        assert clock == [5]
+        assert all(args[args.index("--resume") + 1] == translation_args[translation_args.index("--session-id") + 1]
+                   for args, _ in translations[1:])
+        assert translations[0][1]["prompt"] == translations[2][1]["prompt"]
     if backend == "grok":
         args, kwargs = next((args, kwargs) for args, kwargs in calls if "--trust" not in args)
         assert args[args.index("--tools") + 1] == "search_tool,use_tool"
@@ -381,7 +416,6 @@ def test_process_subscription_scene_lands_and_streams(
         assert "--approve" in args and "--no-mcp" not in args
         assert args[args.index("--tools") + 1] == "mcp__court__*"
         assert "-e" in args and args[args.index("-e") + 1] == "builtin:mcp"
-    assert {path: stamp(path) for path in USER_FILES} == before
 
 
 @pytest.mark.parametrize("channel", [
@@ -739,7 +773,10 @@ def test_pi_empty_assistant_is_not_a_transport_failure(
     assert state["game"]["failure"]["status"] == "failed"
 
 
-@pytest.mark.parametrize(("backend", "mode"), [("grok", "exit"), ("grok", "missing"), ("pi", "error")])
+@pytest.mark.parametrize(("backend", "mode"), [
+    ("grok", "exit"), ("grok", "missing"), ("pi", "error"),
+    ("claude-cli", "exit"), ("claude-cli", "error"),
+])
 def test_process_failure_stops_month(tmp_path: Path, monkeypatch, backend: str, mode: str, game_db: Path) -> None:
     monkeypatch.setenv("GROK_HOME", str(tmp_path / "grok-home"))
     monkeypatch.setenv("HOME", str(tmp_path))
@@ -759,9 +796,11 @@ def test_process_failure_stops_month(tmp_path: Path, monkeypatch, backend: str, 
     model_calls = [args for args, _ in calls if "--trust" not in args]
     assert model_calls
     for args in model_calls:
-        assert args[0] == backend
+        assert args[0] == ("claude" if backend == "claude-cli" else backend)
         assert args[args.index("--model") + 1] == "unknown-native"
-        flag = "--reasoning-effort" if backend == "grok" else "--thinking"
+        assert "--session-id" in args
+        assert "--resume" not in args
+        flag = {"grok": "--reasoning-effort", "pi": "--thinking", "claude-cli": "--effort"}[backend]
         assert args[args.index(flag) + 1] == "native-unknown"
     failure = state["game"]["failure"]
     assert {"type", "message", "log"} <= failure["payload"].keys()

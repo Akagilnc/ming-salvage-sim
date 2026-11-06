@@ -35,7 +35,7 @@ async def read_records(
     ctx: RunContext[Materials], kind: str | None = None,
     key: str | list[str] | None = None, date: RecordMonth | None = None,
 ) -> dict[str, object]:
-    """按输入 catalogue 取阅。须带类、正名或日期，不空参读全账。
+    """按类查目录，再按正名取阅；也可按日期查。须带类、正名或日期，不空参读全账。
 
     Args:
         kind: 实体类；只给类返回正名与事件数清单，不给全文。office 或 incumbency 点名查官职与现任。

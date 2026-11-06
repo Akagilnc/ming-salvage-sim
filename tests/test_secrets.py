@@ -189,7 +189,11 @@ def test_every_model_call_reads_identity_scoped_records(game_db, steps):
                     overlap.add(name)
                 await asyncio.sleep(0)  # Yield at the model boundary, never wait on a wall clock.
                 running[name] -= 1
-            if any(isinstance(p, ToolReturnPart) for m in messages for p in m.parts):
+            returned = {p.tool_call_id: p.model_response_object() for m in messages for p in m.parts
+                        if isinstance(p, ToolReturnPart)}
+            if name == "scene" and not returned:
+                return ModelResponse(parts=[ToolCallPart("read_records", {"kind": "account"}, tool_call_id="account")])
+            if "office" in returned:
                 # Distinct recorded verdicts are assigned by the task's structured
                 # origin, not call order or the prose of either decree.
                 if name == "deliberation":
@@ -204,9 +208,10 @@ def test_every_model_call_reads_identity_scoped_records(game_db, steps):
                 return outputs[name]
             return ModelResponse(parts=[
                 *(ToolCallPart("read_records", args, tool_call_id=label)
-                  for label, args in (record_queries(json.loads(
-                      messages[0].parts[0].content[0] if name == "scene" else messages[0].parts[0].content,
-                  )["catalogue"]) if name in {"scene", "simulation", "gazette"} else {}).items()),
+                  for label, args in (record_queries(
+                      returned["account"]["catalogue"]
+                      if name == "scene" else json.loads(messages[0].parts[0].content)["catalogue"]
+                  ) if name in {"scene", "simulation", "gazette"} else {}).items()),
                 ToolCallPart("read_records", {"kind": "incumbency", "key": "户部尚书"}, tool_call_id="office"),
                 *([] if name == "impeachment" else [
                     ToolCallPart("read_records", {"kind": "person", "key": "王体乾"}, tool_call_id="person"),

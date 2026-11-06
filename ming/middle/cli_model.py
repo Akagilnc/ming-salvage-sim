@@ -11,7 +11,7 @@ import os
 import socket
 import sys
 import tomllib
-from collections.abc import AsyncGenerator, AsyncIterator, Iterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterator, Sequence
 from typing import Any, Protocol, cast
 from concurrent.futures import Future
 from contextlib import aclosing, asynccontextmanager
@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
 from tempfile import TemporaryDirectory, TemporaryFile
+from uuid import uuid4
 
 import uvicorn
 from mcp.server.mcpserver import MCPServer
@@ -28,7 +29,10 @@ from pydantic_ai._instrumentation import get_instructions
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai.messages import (
     ModelMessage,
-    ModelMessagesTypeAdapter,
+    ModelRequest,
+    RetryPromptPart,
+    SystemPromptPart,
+    UserPromptPart,
     ModelResponse,
     ModelResponseStreamEvent,
     TextPart,
@@ -56,6 +60,10 @@ GROK_OFF = (
     "GROK_CURSOR_RULES_ENABLED",
 )
 _SLOT_POOLS: dict[tuple[str, int], "SlotPool"] = {}
+
+
+class SessionNotFound(RuntimeError):
+    """The native host explicitly reported the requested session absent."""
 
 
 class HostEvents[T](Protocol):
@@ -114,49 +122,75 @@ async def court_server(
             await asyncio.shield(serving)
 
 
-def prompt_bytes(messages: list[ModelMessage]) -> bytes:
-    return ModelMessagesTypeAdapter.dump_json(messages, indent=2)
+def cli_input(messages: list[ModelMessage], instructions: str | None) -> tuple[str, bytes]:
+    """Only the current request goes to a host; history belongs to its session."""
+    system = [part.content for message in messages if isinstance(message, ModelRequest)
+              for part in message.parts if isinstance(part, SystemPromptPart)]
+    if instructions:
+        system.append(instructions)
+    current = messages[-1]
+    assert isinstance(current, ModelRequest)
+    parts: list[str] = []
+    for part in current.parts:
+        if isinstance(part, UserPromptPart):
+            assert isinstance(part.content, str)
+            parts.append(part.content)
+        elif isinstance(part, RetryPromptPart):
+            parts.append(part.model_response())
+    return "\n".join(system), "\n".join(parts).encode("utf-8")
 
 
 async def stream_process[T](
-    argv: list[str],
+    argv: Sequence[list[str]],
     *,
     cwd: str,
     prompt: Any,
-    events: HostEvents[T],
+    events: Callable[[], HostEvents[T]],
     env: dict[str, str] | None = None,
 ) -> AsyncGenerator[T]:
-    with TemporaryFile() as errors:
-        proc = await asyncio.create_subprocess_exec(
-            *argv,
-            cwd=cwd,
-            stdin=prompt,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=errors,
-            env=env,
-            limit=sys.maxsize,
-        )
-        assert proc.stdout is not None
-        message: dict[str, Any] | None = None
-        try:
-            async for line in proc.stdout:
-                message = cast(dict[str, Any], json.loads(line))
-                for text in events.observe(message):
-                    yield text
-        except asyncio.CancelledError:
-            if proc.returncode is None:
-                proc.terminate()
-            raise
-        finally:
-            await asyncio.shield(proc.communicate())
-        errors.seek(0)
-        failure = events.failure(proc.returncode, errors.read().decode())
-    if failure is not None:
-        raise RuntimeError(f"{failure}\n{json.dumps(message, ensure_ascii=False)}")
+    """Try the opening command only after an explicit native missing-session error."""
+    for index, command in enumerate(argv):
+        observer = events()
+        if not isinstance(prompt, int):
+            prompt.seek(0)
+        with TemporaryFile() as errors:
+            proc = await asyncio.create_subprocess_exec(
+                *command,
+                cwd=cwd,
+                stdin=prompt,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=errors,
+                env=env,
+                limit=sys.maxsize,
+            )
+            assert proc.stdout is not None
+            message: dict[str, Any] | None = None
+            try:
+                async for line in proc.stdout:
+                    message = cast(dict[str, Any], json.loads(line))
+                    for text in observer.observe(message):
+                        yield text
+            except asyncio.CancelledError:
+                if proc.returncode is None:
+                    proc.terminate()
+                raise
+            finally:
+                await asyncio.shield(proc.communicate())
+            errors.seek(0)
+            try:
+                failure = observer.failure(proc.returncode, errors.read().decode())
+            except SessionNotFound:
+                if index == len(argv) - 1:
+                    raise
+                continue
+        if failure is not None:
+            raise RuntimeError(f"{failure}\n{json.dumps(message, ensure_ascii=False)}")
+        return
 
 
 class ClaudeEvents:
-    def __init__(self) -> None:
+    def __init__(self, session_id: str) -> None:
+        self.session_id = session_id
         self.result: dict[str, Any] | None = None
 
     def observe(self, message: dict[str, Any]) -> Iterator[str]:
@@ -176,15 +210,22 @@ class ClaudeEvents:
     def failure(self, code: int | None, stderr: str) -> str | None:
         result = self.result
         if code or result is None or result.get("is_error"):
-            return (
+            failure = (
                 f"claude CLI exited {code}\n{stderr}\n"
                 f"{json.dumps(result, ensure_ascii=False)}"
             )
+            if (code == 1 and result is not None
+                    and result.get("subtype") == "error_during_execution"
+                    and result.get("num_turns") == 0
+                    and result.get("errors") == [f"No conversation found with session ID: {self.session_id}"]):
+                raise SessionNotFound(failure)
+            return failure
         return None
 
 
 class GrokEvents:
-    def __init__(self, *, structured: bool = False) -> None:
+    def __init__(self, session_id: str, *, structured: bool = False) -> None:
+        self.session_id = session_id
         self.terminal: dict[str, Any] | None = None
         self.error: dict[str, Any] | None = None
         self.structured = structured
@@ -205,10 +246,17 @@ class GrokEvents:
 
     def failure(self, code: int | None, stderr: str) -> str | None:
         if code or self.error is not None or self.terminal is None:
-            return (
+            failure = (
                 f"grok exited {code}\n{stderr}\n"
                 f"{json.dumps(self.error or self.terminal, ensure_ascii=False)}"
             )
+            if (code == 1 and self.error is not None and self.terminal is self.error
+                    and self.error.get("message") == (
+                        f"No saved copy of session {self.session_id} was found remotely. "
+                        "Check the id, or run `grok --resume` to pick a session."
+                    )):
+                raise SessionNotFound(failure)
+            return failure
         return None
 
 
@@ -391,13 +439,13 @@ class CliHost(FunctionModel):
     host = "cli"
 
     def __init__(
-        self, name: str = "", tools: Sequence[Tool[Any]] = (), *, effort: str = ""
+        self, name: str = "", tools: Sequence[Tool[Any]] = (), *, effort: str = "", session_id: str = ""
     ) -> None:
         self.tools = tools
         self.cli_name = name
         self.effort = effort
+        self.session_id = session_id
         super().__init__(
-            function=self._request,
             stream_function=self._stream,
             model_name=name or self.host,
         )
@@ -406,11 +454,25 @@ class CliHost(FunctionModel):
     def system(self) -> str:
         return self.host
 
-    async def _request(
-        self, messages: list[ModelMessage], info: AgentInfo
+    def commands(self, argv: list[str], instructions: str) -> list[list[str]]:
+        # Only an existing identity needs a resume attempt; Pi opens-or-creates.
+        resume = [[*argv, "--resume", self.session_id]] if self.session_id and self.host != "pi" else []
+        self.session_id = self.session_id or str(uuid4())
+        opening = [*argv, "--session-id", self.session_id,
+                   "--system-prompt-override" if self.host == "grok" else "--system-prompt", instructions]
+        return [*resume, opening]
+
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
-        text = "".join([part async for part in self._stream(messages, info)])
-        return ModelResponse(parts=[TextPart(text)], model_name=self.model_name)
+        """Prepare once in the streaming path, then return its final response."""
+        async with self.request_stream(messages, model_settings, model_request_parameters) as response:
+            async for _ in response:
+                pass
+            return response.get()
 
     async def _stream(
         self, messages: list[ModelMessage], info: AgentInfo
@@ -422,15 +484,14 @@ class CliHost(FunctionModel):
 class ClaudeCliModel(CliHost):
     host = "claude-cli"
 
-    def argv(self, config: dict[str, Any], info: AgentInfo) -> list[str]:
-        return [
+    def argv(self, config: dict[str, Any], instructions: str) -> list[list[str]]:
+        argv = [
             "claude",
             "-p",
             *(["--effort", self.effort] if self.effort else []),
             *(["--model", self.cli_name] if self.cli_name else []),
             "--tools",
             "",
-            "--no-session-persistence",
             "--setting-sources",
             "",
             "--strict-mcp-config",
@@ -449,13 +510,13 @@ class ClaudeCliModel(CliHost):
             "--verbose",
             "--include-partial-messages",
             "--disable-slash-commands",
-            "--system-prompt",
-            info.instructions or "",
         ]
+        return self.commands(argv, instructions)
 
     async def _stream(
         self, messages: list[ModelMessage], info: AgentInfo
     ) -> AsyncIterator[str]:
+        instructions, content = cli_input(messages, info.instructions)
         async with court_server(self.tools) as url:
             config: dict[str, Any] = {"mcpServers": {}}
             if url is not None:
@@ -464,13 +525,13 @@ class ClaudeCliModel(CliHost):
                 TemporaryDirectory(prefix="ming-claude-") as directory,
                 TemporaryFile() as prompt,
             ):
-                prompt.write(prompt_bytes(messages))
-                prompt.seek(0)
+                prompt.write(content)
                 async for text in stream_process(
-                    self.argv(config, info),
+                    self.argv(config, instructions),
                     cwd=directory,
                     prompt=prompt,
-                    events=ClaudeEvents(),
+                    events=partial(ClaudeEvents, self.session_id),
+                    env={**os.environ, "DISABLE_COMPACT": "1"},
                 ):
                     yield text
 
@@ -478,7 +539,7 @@ class ClaudeCliModel(CliHost):
 class GrokCliModel(CliHost):
     host = "grok"
 
-    def argv(self, slot: Path, prompt_path: Path, info: AgentInfo) -> list[str]:
+    def argv(self, slot: Path, prompt_path: Path, info: AgentInfo, instructions: str) -> list[list[str]]:
         argv = [
             "grok",
             *(["--reasoning-effort", self.effort] if self.effort else []),
@@ -490,8 +551,6 @@ class GrokCliModel(CliHost):
             "--output-format",
             "streaming-json",
             "--always-approve",
-            "--system-prompt-override",
-            info.instructions or "",
             "--tools",
             "search_tool,use_tool",
             "--no-subagents",
@@ -502,24 +561,25 @@ class GrokCliModel(CliHost):
         output = info.model_request_parameters.output_object
         if output is not None:
             argv.extend(["--json-schema", json.dumps(output.json_schema)])
-        return argv
+        return self.commands(argv, instructions)
 
     async def _stream(
         self, messages: list[ModelMessage], info: AgentInfo
     ) -> AsyncIterator[str]:
+        instructions, content = cli_input(messages, info.instructions)
         pool = slots()
         slot = await pool.acquire()
         prompt_path = slot / "prompt.txt"
         try:
             async with court_server(self.tools) as url:
                 write_grok_config(slot, url)
-                prompt_path.write_bytes(prompt_bytes(messages))
-                argv = self.argv(slot, prompt_path, info)
+                prompt_path.write_bytes(content)
+                argv = self.argv(slot, prompt_path, info, instructions)
                 async for text in stream_process(
                     argv,
                     cwd=str(slot),
                     prompt=asyncio.subprocess.DEVNULL,
-                    events=GrokEvents(structured="--json-schema" in argv),
+                    events=partial(GrokEvents, self.session_id, structured="--json-schema" in argv[0]),
                     env=grok_env(),
                 ):
                     yield text
@@ -563,23 +623,21 @@ class PiStreamedResponse(StreamedResponse):
 
 class PiCliModel(CliHost):
     host = "pi"
+    directory: Path | None = None
 
-    def argv(self, instructions: str, tools: bool) -> list[str]:
+    def argv(self, instructions: str, tools: bool) -> list[list[str]]:
         argv = [
             "pi",
             *(["--thinking", self.effort] if self.effort else []),
             "--mode",
             "json",
             "-p",
-            "--no-session",
             "--approve",
             "--no-skills",
             "--no-prompt-templates",
             "--no-context-files",
             "--no-builtin-tools",
             "--no-extensions",
-            "--system-prompt",
-            instructions,
         ]
         if tools:
             argv.extend(
@@ -589,20 +647,7 @@ class PiCliModel(CliHost):
             argv.append("--no-mcp")
         if self.cli_name:
             argv.extend(["--model", self.cli_name])
-        return argv
-
-    async def _stream(
-        self, messages: list[ModelMessage], info: AgentInfo
-    ) -> AsyncIterator[str]:
-        """Use the same final response for non-streaming FunctionModel requests."""
-        async with self.request_stream(
-            messages, info.model_settings, info.model_request_parameters
-        ) as response:
-            async for _ in response:
-                pass
-            for part in response.get().parts:
-                if isinstance(part, TextPart):
-                    yield part.content
+        return self.commands(argv, instructions)
 
     @asynccontextmanager
     async def request_stream(
@@ -613,23 +658,22 @@ class PiCliModel(CliHost):
         run_context: RunContext[Any] | None = None,
     ) -> AsyncGenerator[StreamedResponse]:
         _, parameters = self.prepare_request(model_settings, model_request_parameters)
+        instructions, content = cli_input(messages, get_instructions(messages, parameters))
+        directory = self.directory or Path.home() / ".ming" / "pi" / self.session_id
+        config = directory / ".pi"
+        config.mkdir(parents=True, exist_ok=True)
+        (config / "settings.json").write_text(json.dumps({"compaction": {"enabled": False}}))
         async with court_server(self.tools) as url:
-            with (
-                TemporaryDirectory(prefix="ming-pi-") as directory,
-                TemporaryFile() as prompt,
-            ):
+            with TemporaryFile() as prompt:
                 if url is not None:
-                    write_pi_mcp(Path(directory), url)
-                prompt.write(prompt_bytes(messages))
-                prompt.seek(0)
+                    write_pi_mcp(directory, url)
+                prompt.write(content)
                 async with aclosing(
                     stream_process(
-                        self.argv(
-                            get_instructions(messages, parameters) or "", url is not None
-                        ),
-                        cwd=directory,
+                        self.argv(instructions, url is not None),
+                        cwd=str(directory),
                         prompt=prompt,
-                        events=PiEvents(),
+                        events=PiEvents,
                     )
                 ) as parts:
                     yield PiStreamedResponse(parameters, self.model_name, parts)

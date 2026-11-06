@@ -150,10 +150,6 @@ class Court:
         )
 
     def scene_material(self) -> dict[str, object]:
-        rows = self._ledger.entities(
-            kind="person",
-            query=ENTITY_ROWS.with_only_columns(E.key).where(E.data["waiting_audience"].as_boolean().is_(True)),
-        )
         calendar = self.read.calendar()
         latest = self._ledger.facts(
             entity_id=calendar.id,
@@ -166,12 +162,7 @@ class Court:
             "imperial_prestige": character_input(
                 self.read.entities("audit", kind="world")[0].data
             )["imperial_prestige"],
-            "waiting_audience": [row["key"] for row in rows],
             "gazette": gazette,
-            "unhandled": [
-                {"kind": "unhandled", "entity_id": str(entity_id)}
-                for entity_id in self.read.fact_ids("emperor", "unhandled")
-            ],
         }
 
     def settle_accounts(self, calendar: EntityView) -> None:

@@ -156,10 +156,14 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
             game = client.get("/state").json()["game"]
             assert game["failure"] is None
             assert set(game["night"]["hall"]) == hall
-        scene_input = json.loads(received[0].parts[0].content[0])
-        assert isinstance(scene_input["imperial_prestige"], str)
+            assert next(part.content for message in reversed(received)
+                        for part in message.parts if part.part_kind == "user-prompt") == turn["emperor_words"]
+        assert received[0].parts[0].part_kind == "system-prompt"
+        assert received[0].parts[1].part_kind == "system-prompt"
+        material = json.loads(received[0].parts[1].content)
+        assert isinstance(material["imperial_prestige"], str)
         court = client.app.state.web.game.court
-        assert scene_input["gazette"] == court.read.entities("audit", kind="gazette")[0].data["text"]
+        assert material["gazette"] == court.read.entities("audit", kind="gazette")[0].data["text"]
         assert court.nights()[0].result == "translated"
         assert _declaration_prompt(translated)["turns"] == [t.model_dump(mode="json") for t in court.nights()[0].turns]
         first, second = sorted(
