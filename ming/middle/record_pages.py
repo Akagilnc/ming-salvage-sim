@@ -9,7 +9,7 @@ from typing import Any, Literal, cast
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
-from sqlalchemy import Select, case, func, select, true, type_coerce
+from sqlalchemy import JSON, Select, case, func, literal, select, true, type_coerce
 from sqlalchemy.sql.elements import ColumnElement
 
 from ming.ledger import Item, Ledger
@@ -28,6 +28,7 @@ class RecordPosition(BaseModel):
     character: int = Field(default=0, ge=0)
     grouped: bool = False
     item: int = Field(default=0, ge=0)
+    clipped: bool = Field(default=False, description="Resume the pending row with its whole-detail reference; returned by next.")
 
 
 class RecordCursor(RecordPosition):
@@ -43,6 +44,8 @@ class RecordScope(BaseModel):
 
 
 MAX_BYTES = 20_000
+PAGE_BYTES = MAX_BYTES - 1024
+PageRow = Item | tuple[Item, str, int, bool]
 
 
 def large_field(column: ColumnElement[Any]) -> ColumnElement[bool]:
@@ -61,6 +64,12 @@ class TextPage:
         self.source: Select[Any] | None = None
         self.dossier_source: Select[Any] | None = None
 
+    def whole(self, column: str, dossier: bool = False) -> Item:
+        """One internal root marker for both SQL clipping and delivery fallback."""
+        return {self.prefix: self.prefix + RecordText.model_validate({
+            "column": column, "path": "$", "container": True, "dossier": dossier,
+        }).model_dump_json()}
+
     def clip(self, query: Select[Any], dossier: bool = False) -> Select[Any]:
         if dossier:
             self.dossier_source = query
@@ -70,11 +79,8 @@ class TextPage:
         for index, column in enumerate(columns):
             if column.key not in {"data", "detail", "emperor_words"}:
                 continue
-            whole = func.json_object(self.prefix, self.prefix + func.json_object(
-                "column", column.key, "path", "$", "container", True, "dossier", dossier,
-            ))
             if dossier:
-                clipped = whole
+                clipped = literal(self.whole(column.key, dossier), type_=JSON)
             elif column.key == "emperor_words":
                 clipped = self.prefix + func.json_object("column", column.key)
             else:
@@ -89,12 +95,13 @@ class TextPage:
                     else_=children.c.value,
                 )
                 clipped = select(func.json_group_object(children.c.key, func.json(encoded))).correlate_except(children).scalar_subquery()
-                if column.key == "detail" and "exposure" in query.selected_columns:
-                    # Full detail has no field projection to preserve. Read the
-                    # object by its existing container cursor, including wide
-                    # objects whose individual fields are all small.
-                    clipped = case((query.selected_columns.exposure == "full", whole), else_=clipped)
-            columns[index] = type_coerce(case((large_field(column), clipped), else_=column), column.type).label(column.key)
+            clipped = case((large_field(column), clipped), else_=column)
+            if column.key == "detail" and "exposure" in query.selected_columns:
+                # First delivery measures the projected row. Continuations read
+                # only the root marker, then the requested container or field.
+                full = literal(self.whole(column.key), type_=JSON) if self.cursor.text or self.cursor.clipped else column
+                clipped = case((query.selected_columns.exposure == "full", full), else_=clipped)
+            columns[index] = type_coerce(clipped, column.type).label(column.key)
         return query.with_only_columns(*columns)
 
     def replace(self, value: Any) -> Any:
@@ -131,10 +138,15 @@ class TextPage:
                     value = character_input({"field": metadata["field"], "value": value})["value"]
                 yield ({"object": {row["key"]: value}} if metadata["container"] == "object" else {"items": [value]})
 
-    def render(self, value: Item) -> Item:
+    def render(self, value: Item, *, full: bool = False) -> PageRow:
+        self.allowed.clear()
         result = self.replace(value)
         if self.cursor.text is None:
-            return result
+            prepared = page_row(result, clipped=full and self.cursor.clipped)
+            if full and prepared[2] > PAGE_BYTES:
+                result["facts"][0]["detail"] = self.replace(self.whole("detail"))
+                prepared = page_row(result, clipped=True)
+            return prepared
         reference = self.cursor.text
         self.source = self.dossier_source if reference.dossier else self.source
         if reference not in self.allowed or self.source is None:
@@ -174,8 +186,14 @@ def fit_text(text: str, start: int, budget: int) -> int:
     )
 
 
+def page_row(row: Item, *, raw: bool = False, clipped: bool = False) -> tuple[Item, str, int, bool]:
+    """Carry the measured serialization into the one page assembler."""
+    text = row["text"] if raw else json.dumps(row, ensure_ascii=False, indent=2)
+    return row, text, len(text.encode()), clipped
+
+
 def record_page(
-    rows: Callable[[RecordCursor], Generator[Item]], cursor: RecordCursor,
+    rows: Callable[[RecordCursor], Generator[PageRow]], cursor: RecordCursor,
     *, empty: Item | None = None, raw: bool = False,
 ) -> Item:
     """Validate positions and combine bounded pieces (or a raw field substring).
@@ -186,13 +204,13 @@ def record_page(
     """
     result: Item = {}
     empty = empty or {"catalogue": []}
-    remaining = MAX_BYTES - 1024 - 2
+    remaining = PAGE_BYTES - 2
     empty_sizes: dict[tuple[tuple[str, bool], ...], int] = {}
     with closing(rows(cursor)) as pieces:
-        for index, row in enumerate(pieces, start=cursor.row):
-            text = row["text"] if raw else json.dumps(row, ensure_ascii=False, indent=2)
-            size = len(text.encode())
-            cost = size - (3 if result else 2)
+        for index, piece in enumerate(pieces, start=cursor.row):
+            piece = piece if isinstance(piece, tuple) else page_row(piece, raw=raw)
+            row, text = piece[:2]
+            cost = piece[2] - (3 if result else 2)
             start = cursor.character if index == cursor.row else 0
             if start > (row["length"] if raw else len(text)) or (start and not raw and cost <= remaining):
                 return {"status": "invalid_cursor"}
@@ -204,8 +222,8 @@ def record_page(
             if row.keys() <= result.keys() and all(isinstance(value, (list, dict)) for value in row.values()):
                 shape = tuple((field, isinstance(value, list)) for field, value in row.items())
                 if shape not in empty_sizes:
-                    empty_sizes[shape] = len(json.dumps({field: [] if array else {} for field, array in shape}, ensure_ascii=False, indent=2).encode())
-                cost = size - empty_sizes[shape] - 2 * sum(bool(value) and bool(result[field]) for field, value in row.items())
+                    empty_sizes[shape] = page_row({field: [] if array else {} for field, array in shape})[2]
+                cost = piece[2] - empty_sizes[shape] - 2 * sum(bool(value) and bool(result[field]) for field, value in row.items())
             if not start and cost <= remaining:
                 for field, value in row.items():
                     if isinstance(value, list):
@@ -217,12 +235,13 @@ def record_page(
                 remaining -= cost
                 continue
             if result:
-                result["next"] = cursor.model_copy(update={"row": index, "character": start}).model_dump(exclude={"text"})
+                result["next"] = cursor.model_copy(update={"row": index, "character": start, "clipped": piece[3]}).model_dump(exclude={"text"})
                 break
             low = fit_text(text, start, remaining)
             result["fragment"] = {"row": index, "character": start, "text": text[start:low]}
             result["next"] = cursor.model_copy(update={
                 "row": index if low < len(text) else index + 1, "character": low if low < len(text) else 0,
+                "clipped": piece[3] and low < len(text),
             }).model_dump(exclude={"text"})
             break
         if not result and not raw and cursor.row and not cursor.character:

@@ -1,17 +1,17 @@
 """Model navigation and row-wise reads through the existing identity projections."""
 
 from collections.abc import Generator
-from contextlib import closing
+from contextlib import ExitStack, closing
 from functools import partial
-from itertools import batched
-from typing import TYPE_CHECKING, Any
+from itertools import batched, islice
+from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import Select, case, func, literal, or_, select, true, type_coerce, union_all
 
 from ming.ledger import ENTITY_COLUMNS as E, FACT_COLUMNS as F, ENTITY_ROWS, ENTITY_ORDER, FACT_ROWS, Item, Ledger, facts_in_month
 from ming.middle.appointments import ALIASES, catalogue, incumbency_record, named, office_pairs
 from ming.middle.night import TURN_ROWS, turn_view
-from ming.middle.record_pages import RecordCursor, RecordScope, TextPage, record_page
+from ming.middle.record_pages import PageRow, RecordCursor, RecordScope, TextPage, record_page
 from ming.middle.rules import matching_names
 from ming.middle.view import ENTITY_EXPOSURE, ENTITY_SOURCES, VISIBLE_IDS, EntityView, character_input, entities, identity_key, project, view_parameters, visible_appointments
 
@@ -84,14 +84,15 @@ class RecordQuery:
         with closing(self.ledger.scan(query.offset(cursor.row))) as rows:
             yield from ({"catalogue": [row]} for row in rows)
 
-    def office_material(self, names: list[str], date: Item | None, cursor: RecordCursor) -> Generator[Item]:
+    def office_material(self, names: list[str], date: Item | None, cursor: RecordCursor) -> Generator[PageRow]:
         if cursor.text is not None and cursor.row < len(names):
             yield {"status": "invalid_cursor"}
             return
         prepared: dict[str, Item] = {}
         for name in names[cursor.row:]:
             if name not in prepared:
-                prepared[name] = self.reader.office_record(self.identity, name)
+                record = self.reader.office_record(self.identity, name)
+                prepared[name] = record if self.numeric else character_input(record)
             yield {"offices": [prepared[name]]} if len(names) > 1 else prepared[name]
         # Header pages stop the generator above. History needs only resolved
         # appointment keys, not all earlier offices' complete descriptions.
@@ -106,10 +107,9 @@ class RecordQuery:
             keys.extend(incumbency_record(pair, [])[0] for pair in pairs)
         yield from self.material("incumbency", keys, date, cursor, len(names))
 
-    def material(self, kind: str | None, keys: list[str], date: Item | None, cursor: RecordCursor, prefix: int | None = None) -> Generator[Item]:
+    def material(self, kind: str | None, keys: list[str], date: Item | None, cursor: RecordCursor, prefix: int | None = None) -> Generator[PageRow]:
         visible = self.visible(kind, None)
-        selected = named(self.ledger, kind, keys, query=visible.with_only_columns(E.id, E.kind, E.key, ALIASES))
-        names = catalogue(selected)
+        names = catalogue(named(self.ledger, kind, keys, query=visible.with_only_columns(E.id, E.kind, E.key, ALIASES)))
         canonical = {name for entries in names.values() for name in entries}
         resolved = {value: {value} if value in canonical else {
             name for entries in names.values() for name, aliases in entries.items() if value in aliases
@@ -149,33 +149,40 @@ class RecordQuery:
             **view_parameters(self.identity, kind or "office"),
         )
         with closing(self.ledger.scan(query)) as rows:
-            for batch in batched(enumerate(rows, start=max(cursor.row, prefix)), 1 if cursor.text or cursor.character else 64):
+            positions = enumerate(rows, start=max(cursor.row, prefix))
+            if cursor.clipped:
+                # A previously measured row that did not fit the preceding page.
+                yield from self.pieces(tuple(islice(positions, 1)), cursor, facts, kind)
+                cursor = cursor.model_copy(update={"clipped": False})
+            for batch in batched(positions, 1 if cursor.text or cursor.character else 64):
                 yield from self.pieces(batch, cursor, facts, kind)
 
-    def pieces(self, batch: tuple[tuple[int, Item], ...], cursor: RecordCursor, facts: Select[Any], kind: str | None) -> Generator[Item]:
-        for category in ("entity", "fact", "turn"):
-            selected = [(index, row) for index, row in batch if row["type"] == category]
-            if not selected:
-                continue
-            page = TextPage(self.ledger, cursor, numeric=self.numeric)
-            if category == "entity":
-                ids = [row["id"] for _, row in selected]
-                views = (entities(self.ledger, self.identity, {"ids": ids, "kind": kind, "night_turns": False}, prepare=page.clip)
-                         if self.snapshot is None else (EntityView.model_validate(row) for row in self.ledger.read(page.clip(
-                             self.snapshot.where(self.snapshot.selected_columns.id.in_(ids)),
-                         ))))
-                records = ({"entities": [entity.model_dump(mode="json")], "facts": []} for entity in views)
-            elif category == "turn":
-                records = ({"turns": [{"night_id": str(item["entity_id"]), **turn_view(item).model_dump(mode="json")}]}
-                           for item in self.ledger.read(page.clip(TURN_ROWS.where(F.position.in_([row["position"] for _, row in selected])))))
-            else:
-                records = ({"entities": [], "facts": [fact.model_dump(mode="json")]} for fact in project(
-                    self.ledger, self.identity, {}, page.clip(facts.where(F.position.in_([row["position"] for _, row in selected]))
-                    .order_by(None).order_by(ENTITY_ORDER, F.position).params(**view_parameters(self.identity))),
-                ))
-            for (index, _row), record in zip(selected, records, strict=True):
-                page.cursor = cursor.model_copy(update={"row": index})
-                yield page.render(record)
+    def pieces(self, batch: tuple[tuple[int, Item], ...], cursor: RecordCursor, facts: Select[Any], kind: str | None) -> Generator[PageRow]:
+        with ExitStack() as stack:
+            for category in ("entity", "fact", "turn"):
+                selected = [(index, row) for index, row in batch if row["type"] == category]
+                if not selected:
+                    continue
+                page = TextPage(self.ledger, cursor, numeric=self.numeric)
+                if category == "entity":
+                    ids = [row["id"] for _, row in selected]
+                    views = (entities(self.ledger, self.identity, {"ids": ids, "kind": kind, "night_turns": False}, prepare=page.clip)
+                             if self.snapshot is None else (EntityView.model_validate(row) for row in self.ledger.read(page.clip(
+                                 self.snapshot.where(self.snapshot.selected_columns.id.in_(ids)),
+                             ))))
+                    records = (({"entities": [entity.model_dump(mode="json")], "facts": []}, False) for entity in views)
+                elif category == "turn":
+                    records = (({"turns": [{"night_id": str(item["entity_id"]), **turn_view(item).model_dump(mode="json")}]}, False)
+                               for item in self.ledger.read(page.clip(TURN_ROWS.where(F.position.in_([row["position"] for _, row in selected])))))
+                else:
+                    rows = stack.enter_context(closing(self.ledger.scan(page.clip(facts.where(
+                        F.position.in_([row["position"] for _, row in selected]),
+                    ).order_by(None).order_by(ENTITY_ORDER, F.position)), view_parameters(self.identity))))
+                    records = (({"entities": [], "facts": [project(self.identity, item).model_dump(mode="json")]}, item["exposure"] == "full")
+                               for item in rows)
+                for (index, _row), (record, full) in zip(selected, records, strict=True):
+                    page.cursor = cursor.model_copy(update={"row": index})
+                    yield page.render(record if self.numeric else character_input(record), full=full)
 
     def run(
         self, kind: str | None, key: str | list[str] | None, date: Item | None,
@@ -193,6 +200,7 @@ class RecordQuery:
             return self.navigation(kind, date, scope, cursor)
         if cursor.text is not None:
             with closing(source(cursor)) as rows:
-                result = next(rows, {"status": "invalid_cursor"})
+                # Field reads bypass row preparation in TextPage.render.
+                result = cast(Item, next(rows, {"status": "invalid_cursor"}))
             return result if self.numeric else character_input(result)
-        return record_page(lambda position: (row if self.numeric else character_input(row) for row in source(position)), cursor)
+        return record_page(source, cursor)

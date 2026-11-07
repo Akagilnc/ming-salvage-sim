@@ -385,31 +385,27 @@ def fact_sources(
     return query
 
 
-def project(
-    ledger: Ledger, identity: Identity, selection: Item, query: Select[Any],
-) -> tuple[FactView, ...]:
-    result: list[FactView] = []
-    for item in ledger.facts(**selection, query=query, parameters=view_parameters(identity)):
-        detail = item["detail"]
-        if identity not in ("audit", "world"):
-            if item["exposure"] in ("text", "dated"):
-                detail = {
-                    "text": detail.get("text", ""),
-                    **{
-                        k: v
-                        for k, v in detail.items()
-                        if item["exposure"] == "dated"
-                        and k in (
-                            {"date", "office", "territory", "holders", "acting", "role"}
-                            | ({"decree_id", "endorser", "form"} if item["kind"] == "endorsed" else set())
-                        )
-                    },
-                }
-            elif item["exposure"] == "empty":
-                detail = {}
-        result.append(FactView.model_validate({**item, "detail": detail,
-                                              "emperor_words": item["emperor_words"] if identity in ("audit", "world") else ""}))
-    return tuple(result)
+def project(identity: Identity, item: Item) -> FactView:
+    """Project one row, shared by complete reads and demand-driven model pages."""
+    detail = item["detail"]
+    if identity not in ("audit", "world"):
+        if item["exposure"] in ("text", "dated"):
+            detail = {
+                "text": detail.get("text", ""),
+                **{
+                    k: v
+                    for k, v in detail.items()
+                    if item["exposure"] == "dated"
+                    and k in (
+                        {"date", "office", "territory", "holders", "acting", "role"}
+                        | ({"decree_id", "endorser", "form"} if item["kind"] == "endorsed" else set())
+                    )
+                },
+            }
+        elif item["exposure"] == "empty":
+            detail = {}
+    return FactView.model_validate({**item, "detail": detail,
+                                   "emperor_words": item["emperor_words"] if identity in ("audit", "world") else ""})
 
 
 # Construct permission expressions once. Only parameter values vary at execution;

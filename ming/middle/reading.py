@@ -132,8 +132,8 @@ class Records:
             "entities": [e.model_dump(mode="json") for e in entities(
                 self._ledger, identity, {k: v for k, v in selection.items() if k != "date"}, opening=opening,
             )],
-            "facts": [f.model_dump(mode="json") for f in project(
-                self._ledger, identity, {"date": selection["date"]} if "date" in selection else {}, query,
+            "facts": [project(identity, row).model_dump(mode="json") for row in self._ledger.facts(
+                **({"date": selection["date"]} if "date" in selection else {}), query=query, parameters=view_parameters(identity),
             )],
         }
 
@@ -145,10 +145,11 @@ class Records:
     ) -> tuple[FactView, ...]:
         if entity_id == [] or any(value == [] for value in (detail or {}).values()):
             return ()
-        selection = {k: v for k, v in {"entity_id": entity_id, "kind": kind, "date": date}.items() if v is not None}
         query, _ = self._sources(identity)
         query = query.where(*queries.matching_details(F.detail, detail or {}))
-        return project(self._ledger, identity, selection, query)
+        return tuple(project(identity, row) for row in self._ledger.facts(
+            entity_id=entity_id, kind=kind, date=date, query=query, parameters=view_parameters(identity),
+        ))
 
     def has_facts(
         self, entity_id: UUID, kind: str | tuple[str, ...], *, date: Item | None,
@@ -182,7 +183,7 @@ class Records:
         query = self._unmatched_query(identity, kind, response, link).where(
             *queries.matching_details(F.detail, detail or {}),
         ).order_by(None).order_by(F.position)
-        return project(self._ledger, identity, {}, query)
+        return tuple(project(identity, row) for row in self._ledger.facts(query=query, parameters=view_parameters(identity)))
 
     def has_unmatched(self, identity: Identity, kind: str, response: str, link: tuple[str, str]) -> bool:
         query = self._unmatched_query(identity, kind, response, link)
