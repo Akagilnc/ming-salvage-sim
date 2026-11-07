@@ -22,7 +22,7 @@ from ming.middle.record_pages import RecordCursor, RecordScope
 from ming.middle.record_queries import RecordQuery
 from ming.middle.view import (
     EntityView, FactView, Identity, VISIBLE_IDS, MONTH_OPEN_QUERY,
-    entities, fact_sources, identity_key, project, visible_appointments,
+    entities, fact_sources, identity_key, project_facts, visible_appointments,
     view_parameters,
 )
 
@@ -132,9 +132,7 @@ class Records:
             "entities": [e.model_dump(mode="json") for e in entities(
                 self._ledger, identity, {k: v for k, v in selection.items() if k != "date"}, opening=opening,
             )],
-            "facts": [project(identity, row).model_dump(mode="json") for row in self._ledger.facts(
-                **({"date": selection["date"]} if "date" in selection else {}), query=query, parameters=view_parameters(identity),
-            )],
+            "facts": [fact.model_dump(mode="json") for fact in project_facts(self._ledger, identity, {"date": selection.get("date")}, query)],
         }
 
     def facts(
@@ -147,9 +145,7 @@ class Records:
             return ()
         query, _ = self._sources(identity)
         query = query.where(*queries.matching_details(F.detail, detail or {}))
-        return tuple(project(identity, row) for row in self._ledger.facts(
-            entity_id=entity_id, kind=kind, date=date, query=query, parameters=view_parameters(identity),
-        ))
+        return project_facts(self._ledger, identity, {"entity_id": entity_id, "kind": kind, "date": date}, query)
 
     def has_facts(
         self, entity_id: UUID, kind: str | tuple[str, ...], *, date: Item | None,
@@ -183,7 +179,7 @@ class Records:
         query = self._unmatched_query(identity, kind, response, link).where(
             *queries.matching_details(F.detail, detail or {}),
         ).order_by(None).order_by(F.position)
-        return tuple(project(identity, row) for row in self._ledger.facts(query=query, parameters=view_parameters(identity)))
+        return project_facts(self._ledger, identity, {}, query)
 
     def has_unmatched(self, identity: Identity, kind: str, response: str, link: tuple[str, str]) -> bool:
         query = self._unmatched_query(identity, kind, response, link)

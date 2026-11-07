@@ -408,6 +408,10 @@ def project(identity: Identity, item: Item) -> FactView:
                                    "emperor_words": item["emperor_words"] if identity in ("audit", "world") else ""})
 
 
+def project_facts(ledger: Ledger, identity: Identity, selection: Item, query: Select[Any]) -> tuple[FactView, ...]:
+    return tuple(project(identity, row) for row in ledger.facts(**selection, query=query, parameters=view_parameters(identity)))
+
+
 # Construct permission expressions once. Only parameter values vary at execution;
 # correlated queries evaluate the current ledger, including same-say hall changes.
 IDENTITIES: dict[str, Identity] = {
