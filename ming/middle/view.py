@@ -163,13 +163,13 @@ def person_projection(dossiers: Item, row: Item, identity: Identity, appointment
 
 def entities(
     ledger: Ledger, identity: Identity, selection: Item | None = None,
-    *, opening: Item | None = None, prepare: Callable[[Select[Any], bool], Select[Any]] | None = None,
+    *, opening: Item | Select[Any] | None = None, prepare: Callable[[Select[Any], bool], Select[Any]] | None = None,
 ) -> tuple[EntityView, ...]:
     selection = dict(selection or {})
     night_turns = selection.pop("night_turns", True)
     keys = selection.pop("keys", None)
     ids = selection.pop("ids", None)
-    if opening is not None:
+    if isinstance(opening, dict):
         return tuple(
             EntityView.model_validate(e)
             for e in opening["detail"]["entities"]
@@ -178,12 +178,14 @@ def entities(
             and (ids is None or UUID(e["id"]) in ids)
         )
     parameters = view_parameters(identity, selection.get("kind") or ("office" if prepare is not None else None))
-    query = ENTITY_SOURCES[identity_key(identity)]
-    query = query.where(E.kind == selection["kind"]) if selection.get("kind") is not None else query
-    query = query.where(E.key == selection["key"]) if selection.get("key") is not None else query
-    query = query.where(E.key.in_(keys)) if keys is not None else query
-    query = query.where(E.id.in_(ids)) if ids is not None else query
+    query = opening if isinstance(opening, Select) else ENTITY_SOURCES[identity_key(identity)]
+    query = query.where(query.selected_columns.kind == selection["kind"]) if selection.get("kind") is not None else query
+    query = query.where(query.selected_columns.key == selection["key"]) if selection.get("key") is not None else query
+    query = query.where(query.selected_columns.key.in_(keys)) if keys is not None else query
+    query = query.where(query.selected_columns.id.in_(ids)) if ids is not None else query
     rows = ledger.read(prepare(query.params(**parameters), False) if prepare is not None else query, parameters)
+    if isinstance(opening, Select):
+        return tuple(EntityView.model_validate(row) for row in rows)
     people = [row["key"] for row in rows if row["kind"] == "person" and identity != "audit"]
     appointments = {row["id"]: row for row in rows if row["kind"] == "incumbency"} if people else {}
     if people and (selection or keys is not None or ids is not None):
@@ -217,10 +219,7 @@ def entities(
         row["data"] = ({destination: travel_days(distance) for destination, distance in row["data"].items()}
                        if row["kind"] == "distance" and identity != "audit" else row["data"])
         if identity not in ("audit", "world"):
-            if row["exposure"] == "faction":
-                if row["key"] not in factions:
-                    row["data"] = {"name": row["key"]}
-            elif row["exposure"] == "account_name":
+            if row["exposure"] == "account_name" or (row["exposure"] == "faction" and row["key"] not in factions):
                 row["data"] = {"name": row["key"]}
             elif row["exposure"] == "night":
                 row["data"] = nights[row["id"]]

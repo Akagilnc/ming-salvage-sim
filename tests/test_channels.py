@@ -36,6 +36,7 @@ from ming.middle.opening import opening_template
 from ming.web import create_app
 from tests.conftest import INVALID_NIGHT, RECORDED, RECORDED_REPLIES
 from tests.test_web import state_updates
+from tests.test_court import record_objects
 
 CODEX_MODEL = "gpt-6.1-sol"
 PI_MODEL = f"openai-codex/{CODEX_MODEL}"
@@ -259,8 +260,7 @@ def codex_response(
     next_args = read_args if not called else None
     if outputs is not None and name == "simulation":
         assert all(len(item["output"].encode("utf-8")) <= 20_000 for item in records)
-        objects = []
-        outputs[:] = [json.loads(item["output"], object_hook=lambda value: objects.append(value) or value) for item in records]
+        outputs[:], objects = record_objects(item["output"] for item in records)
         calls = [json.loads(item["arguments"]) for item in body.get("input") or []
                  if isinstance(item, dict) and item.get("type") == "function_call"]
         asked = [call.get("scope", {}).get("read") for call in calls]

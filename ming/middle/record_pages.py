@@ -17,10 +17,11 @@ from ming.middle.view import CHARACTER_BANDS, character_input
 
 
 class RecordText(BaseModel):
-    column: Literal["data", "detail", "emperor_words"]
+    column: Literal["data", "detail", "emperor_words", "aliases"]
     path: str | None = None
     container: bool = False
     dossier: bool = False
+    entity: tuple[str, str] | None = Field(default=None, description="Alias or office field's (kind, canonical key), returned by read.")
 
 
 class RecordPosition(BaseModel):
@@ -64,11 +65,11 @@ class TextPage:
         self.source: Select[Any] | None = None
         self.dossier_source: Select[Any] | None = None
 
-    def whole(self, column: str, dossier: bool = False) -> Item:
+    def whole(self, column: str, dossier: bool = False, entity: tuple[str, str] | None = None) -> Item:
         """One internal root marker for both SQL clipping and delivery fallback."""
         return {self.prefix: self.prefix + RecordText.model_validate({
-            "column": column, "path": "$", "container": True, "dossier": dossier,
-        }).model_dump_json()}
+            "column": column, "path": "$", "container": True, "dossier": dossier, "entity": entity,
+        }).model_dump_json(exclude_none=True)}
 
     def clip(self, query: Select[Any], dossier: bool = False) -> Select[Any]:
         if dossier:
@@ -77,6 +78,9 @@ class TextPage:
             self.source = query
         columns = list(query.selected_columns)
         for index, column in enumerate(columns):
+            if column.key == "aliases" and self.cursor.text is not None:
+                columns[index] = literal(self.whole("aliases", entity=self.cursor.text.entity), type_=JSON).label("aliases")
+                continue
             if column.key not in {"data", "detail", "emperor_words"}:
                 continue
             if dossier:
@@ -87,6 +91,9 @@ class TextPage:
                 children = func.json_each(column).table_valued("key", "value", "type", "fullkey")
                 marker = self.prefix + func.json_object(
                     "column", column.key, "path", children.c.fullkey, "container", children.c.type.in_(("object", "array")), "dossier", dossier,
+                    "entity", func.json(case((query.selected_columns.kind == "office", func.json_array(
+                        query.selected_columns.kind, query.selected_columns.key,
+                    )))) if column.key == "data" else None,
                 )
                 encoded = case(
                     (large_field(children.c.value), func.json_quote(marker)),
@@ -108,7 +115,7 @@ class TextPage:
         if isinstance(value, str) and value.startswith(self.prefix):
             reference = RecordText.model_validate_json(value[len(self.prefix):])
             self.allowed.append(reference)
-            return {"read": {"row": self.cursor.row, "character": 0, "text": reference.model_dump()}}
+            return {"read": {"row": self.cursor.row, "character": 0, "text": reference.model_dump(exclude_none=True)}}
         if isinstance(value, dict):
             if self.prefix in value:
                 return self.replace(value[self.prefix])
@@ -129,7 +136,7 @@ class TextPage:
             for row in rows:
                 # json_each preserves JSON null's type; other NULLs were clipped.
                 if row["value"] is None and row["type"] != "null":
-                    target = RecordText(column=reference.column, path=row["fullkey"], container=row["type"] in {"object", "array"}, dossier=reference.dossier)
+                    target = reference.model_copy(update={"path": row["fullkey"], "container": row["type"] in {"object", "array"}})
                     value = {"read": self.cursor.model_copy(update={"character": 0, "item": 0, "text": target}).model_dump(exclude_none=True)}
                 else:
                     value = (json.loads(cast(str, row["value"])) if row["type"] in {"object", "array"} else
@@ -144,7 +151,14 @@ class TextPage:
         if self.cursor.text is None:
             prepared = page_row(result, clipped=full and self.cursor.clipped)
             if full and prepared[2] > PAGE_BYTES:
-                result["facts"][0]["detail"] = self.replace(self.whole("detail"))
+                if "facts" in result:
+                    result["facts"][0]["detail"] = self.replace(self.whole("detail"))
+                else:
+                    record = result["offices"][0] if "offices" in result else result
+                    record["names_and_aliases"] = {
+                        kind: {key: self.replace(self.whole("aliases", entity=(kind, key))) if aliases else aliases for key, aliases in names.items()}
+                        for kind, names in record["names_and_aliases"].items()
+                    }
                 prepared = page_row(result, clipped=True)
             return prepared
         reference = self.cursor.text

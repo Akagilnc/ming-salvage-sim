@@ -1,6 +1,6 @@
 """Model navigation and row-wise reads through the existing identity projections."""
 
-from collections.abc import Collection, Generator
+from collections.abc import Callable, Collection, Generator
 from contextlib import ExitStack, closing
 from functools import partial
 from itertools import batched, islice
@@ -14,7 +14,7 @@ from ming.middle.appointments import ALIASES, incumbency_record, named, office_p
 from ming.middle.night import TURN_ROWS, turn_view
 from ming.middle.record_pages import PageRow, RecordCursor, RecordScope, TextPage, record_page
 from ming.middle.rules import matching_names
-from ming.middle.view import ENTITY_EXPOSURE, ENTITY_SOURCES, VISIBLE_IDS, EntityView, character_input, entities, identity_key, project, view_parameters, visible_appointments
+from ming.middle.view import ENTITY_EXPOSURE, ENTITY_SOURCES, VISIBLE_IDS, character_input, entities, identity_key, project, view_parameters, visible_appointments
 
 if TYPE_CHECKING:
     from ming.middle.reading import Records
@@ -91,16 +91,17 @@ class RecordQuery:
         )))
 
     def office_material(self, names: list[str], date: Item | None, cursor: RecordCursor) -> Generator[PageRow]:
-        if cursor.text is not None and cursor.row < len(names):
-            yield {"status": "invalid_cursor"}
-            return
+        page = TextPage(self.ledger, cursor, numeric=self.numeric)
         ids: dict[UUID, None] = {}
         previous = dict.fromkeys(names[:cursor.row])
-        for index, record in enumerate(self.reader.office_records(self.identity, names[cursor.row:]), start=cursor.row):
+        for index, record in enumerate(self.reader.office_records(self.identity, names[cursor.row:], office_view=lambda office: entities(
+            self.ledger, self.identity, {"kind": "office", "key": office}, opening=self.snapshot, prepare=page.clip,
+        )), start=cursor.row):
             previous.pop(names[index], None)
             ids.update((UUID(item["entity_id"]), None) for item in record.get("appointments", ()) if item["entity_id"] is not None)
             record = record if self.numeric else character_input(record)
-            yield {"offices": [record]} if len(names) > 1 else record
+            page.cursor = cursor.model_copy(update={"row": index})
+            yield page.render({"offices": [record]} if len(names) > 1 else record, full="names_and_aliases" in record)
         # Prior-page headers need only a batch of visible IDs, not their bodies.
         keys: list[str] = []
         for name in previous:
@@ -158,10 +159,7 @@ class RecordQuery:
                 page = TextPage(self.ledger, cursor, numeric=self.numeric)
                 if category == "entity":
                     ids = [row["id"] for _, row in selected]
-                    views = (entities(self.ledger, self.identity, {"ids": ids, "kind": kind, "night_turns": False}, prepare=page.clip)
-                             if self.snapshot is None else (EntityView.model_validate(row) for row in self.ledger.read(page.clip(
-                                 self.snapshot.where(self.snapshot.selected_columns.id.in_(ids)),
-                             ))))
+                    views = entities(self.ledger, self.identity, {"ids": ids, "kind": kind, "night_turns": False}, opening=self.snapshot, prepare=page.clip)
                     records = (({"entities": [entity.model_dump(mode="json")], "facts": []}, False) for entity in views)
                 elif category == "turn":
                     records = (({"turns": [{"night_id": str(item["entity_id"]), **turn_view(item).model_dump(mode="json")}]}, False)
@@ -183,22 +181,38 @@ class RecordQuery:
         if (scope.department is not None and kind != "office" or
                 (scope.region is not None or scope.level is not None) and kind != "territory"):
             return {"status": "invalid_scope"}
-        if key and kind in {"office", "incumbency"}:
+        source: Callable[[RecordCursor], Generator[PageRow]]
+        if key and cursor.text is not None and cursor.text.entity is not None:
+            entity = cursor.text.entity
+            page = TextPage(self.ledger, cursor, numeric=self.numeric)
+            if cursor.text.column == "aliases":
+                visible = self.reader.office_names(self.identity) if kind in {"office", "incumbency"} else self.visible(kind, None)
+                source = lambda _: (page.render(row) for row in self.ledger.read(page.clip(visible.where(
+                    E.kind == entity[0], E.key == entity[1],
+                ).with_only_columns(ALIASES))))
+            elif cursor.text.column == "data" and entity[0] == "office" and kind in {None, "office", "incumbency"}:
+                source = lambda _: (page.render({"entities": [row.model_dump(mode="json")]}) for row in entities(
+                    self.ledger, self.identity, {"kind": "office", "key": entity[1]}, opening=self.snapshot, prepare=page.clip,
+                ))
+            else:
+                return {"status": "invalid_cursor"}
+        elif key and kind in {"office", "incumbency"}:
             names = [key] if isinstance(key, str) else key
             source = partial(self.office_material, names, date)
         elif key:
             keys = list(dict.fromkeys([key] if isinstance(key, str) else key))
             visible = self.visible(kind, None)
-            names = named(self.ledger, kind, keys, query=visible.with_only_columns(E.id, E.kind, E.key, ALIASES))
+            names = named(self.ledger, kind, keys, query=visible.with_only_columns(E.id, E.kind, E.key))
             canonical = {row["key"] for row in names}
             resolved = {value: {value} if value in canonical else {
-                row["key"] for row in names if value in row["aliases"]
+                row["key"] for row in names if value in row["matches"]
             } for value in keys}
             if any(len(matches) != 1 for matches in resolved.values()):
                 with closing(self.ledger.scan(visible.with_only_columns(E.kind, E.key, ALIASES))) as rows:
                     candidates = matching_names(rows, keys)
                 result = {"status": "not_found", **({"names_and_aliases": candidates} if candidates else {})}
-                return record_page(lambda position: (row for row in (result,)[position.row:]), cursor) if candidates else result
+                page = TextPage(self.ledger, cursor, numeric=self.numeric)
+                return record_page(lambda position: (page.render(row, full=True) for row in (result,)[position.row:]), cursor) if candidates else result
             ids = [row["id"] for row in names if any(row["key"] in matches for matches in resolved.values())]
             # Unscoped aliases also select other visible kinds sharing the canonical
             # key (e.g. a person's dossier), but never read an already resolved ID.

@@ -50,10 +50,11 @@ def named(
                          for name in values
                      ))
     aliases = func.json_each(ALIASES).table_valued("value")
-    return ledger.entities(kind=kind, query=query.where(or_(
-        E.key.in_(values),
-        select(aliases.c.value).where(aliases.c.value.in_(values)).exists(),
-    )))
+    return ledger.entities(kind=kind, query=query.add_columns(type_coerce(
+        func.json_group_array(aliases.c.value).filter(aliases.c.value.is_not(None)), JSON,
+    ).label("matches")).outerjoin(aliases, aliases.c.value.in_(values)).where(or_(
+        E.key.in_(values), aliases.c.value.is_not(None),
+    )).group_by(E.id))
 
 
 def office_pairs(

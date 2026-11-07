@@ -1,7 +1,7 @@
 """Complete identity reads: resolution, visibility, opening view and projection."""
 
 from collections import defaultdict
-from collections.abc import Generator, Sequence
+from collections.abc import Callable, Generator, Sequence
 from functools import partial
 from typing import Any
 from uuid import UUID
@@ -63,11 +63,18 @@ class Records:
     def catalogue(self) -> dict[str, dict[str, list[str]]]:
         return names_and_aliases(self._ledger.read(queries.CATALOGUE.with_only_columns(E.kind, E.key, ALIASES)))
 
+    def office_names(self, identity: Identity) -> Select[Any]:
+        return ENTITY_ROWS.with_only_columns(E.kind, E.key, ALIASES).where(
+            E.kind.in_(("office", "territory")), E.id.in_(VISIBLE_IDS[identity_key(identity)]),
+        ).params(**view_parameters(identity, "office"))
+
     def office_record(self, identity: Identity, key: str | list[str]) -> Item:
         records = list(self.office_records(identity, [key] if isinstance(key, str) else key))
         return records[0] if isinstance(key, str) or len(key) == 1 else {"offices": records}
 
-    def office_records(self, identity: Identity, keys: list[str]) -> Generator[Item]:
+    def office_records(
+        self, identity: Identity, keys: list[str], *, office_view: Callable[[str], tuple[EntityView, ...]] | None = None,
+    ) -> Generator[Item]:
         """Resolve lazily, sharing appointment and office projections within one request."""
         results: dict[str, Item] = {}
         resolved: dict[tuple[str, str], Item] = {}
@@ -80,9 +87,7 @@ class Records:
                     results[name] = resolution
                 elif resolution["status"] == "office_not_found":
                     if names is None:
-                        names = names_and_aliases(self._ledger.read(ENTITY_ROWS.with_only_columns(E.kind, E.key, ALIASES).where(
-                            E.kind.in_(("office", "territory")), E.id.in_(VISIBLE_IDS[identity_key(identity)]),
-                        ), view_parameters(identity, "office")))
+                        names = names_and_aliases(self._ledger.read(self.office_names(identity)))
                     results[name] = {"status": "office_not_found", "names_and_aliases": matching_offices(names, name)}
                 elif pairs[0] in resolved:
                     results[name] = resolved[pairs[0]]
@@ -102,7 +107,9 @@ class Records:
             if "appointments" in results[name]:
                 office = results[name]["appointments"][0]["office"]
                 if office not in offices:
-                    offices[office] = [e.model_dump(mode="json") for e in self.entities(identity, kind="office", key=office)]
+                    offices[office] = [e.model_dump(mode="json") for e in (
+                        self.entities(identity, kind="office", key=office) if office_view is None else office_view(office)
+                    )]
                 results[name]["entities"] = offices[office]
             yield results[name]
 

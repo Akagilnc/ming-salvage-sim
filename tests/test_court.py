@@ -18,6 +18,11 @@ from ming.middle.view import Officials
 RECORDED = Path(__file__).parent / "recorded"
 
 
+def record_objects(contents):
+    objects = []
+    return [json.loads(content, object_hook=lambda value: objects.append(value) or value) for content in contents], objects
+
+
 def replaying(
     replies: Sequence[str | ModelResponse | Exception]
     | Callable[[list[ModelMessage]], str | ModelResponse | Exception | Awaitable[str | ModelResponse | Exception]],
@@ -41,10 +46,25 @@ def replaying(
             pending = [p for p in _messages[-1].parts if isinstance(p, ToolReturnPart)
                        and p.tool_name == "read_records" and "next" in p.model_response_object()]
             continuations.update({p.tool_call_id + "-next": continuations.get(p.tool_call_id, p.tool_call_id) for p in pending})
-            if pending:
-                return ModelResponse(parts=[ToolCallPart("read_records", {
-                    **queries[p.tool_call_id], "scope": {**queries[p.tool_call_id].get("scope", {}), "after": p.model_response_object()["next"]},
-                }, tool_call_id=p.tool_call_id + "-next") for p in pending])
+            calls = [ToolCallPart("read_records", {
+                **queries[p.tool_call_id], "scope": {**queries[p.tool_call_id].get("scope", {}), "after": p.model_response_object()["next"]},
+            }, tool_call_id=p.tool_call_id + "-next") for p in pending]
+            # Static scripts consume field references too; callbacks own their field requests.
+            if not callable(replies):
+                for part in _messages[-1].parts:
+                    if not isinstance(part, ToolReturnPart) or part.tool_name != "read_records":
+                        continue
+                    _, objects = record_objects([part.model_response_str()])
+                    for index, value in enumerate(value for value in objects if "read" in value):
+                        call_id = f"{part.tool_call_id}-read-{index}"
+                        continuations[call_id] = continuations.get(part.tool_call_id, part.tool_call_id)
+                        calls.append(ToolCallPart("read_records", {
+                            **queries[part.tool_call_id], "scope": {
+                                **{k: v for k, v in queries[part.tool_call_id].get("scope", {}).items() if k != "after"}, "read": value["read"],
+                            },
+                        }, tool_call_id=call_id))
+            if calls:
+                return ModelResponse(parts=calls)
         result = replies(_messages) if callable(replies) else next(remaining)
         if isawaitable(result):
             result = await result
@@ -60,6 +80,32 @@ def replaying(
                 yield {index: DeltaToolCall(name=part.tool_name, json_args=part.args_as_json_str(), tool_call_id=part.tool_call_id)}
 
     return FunctionModel(reply, stream_function=stream_response)
+
+
+def candidate_results(messages, continuations):
+    """Reassemble a candidate row and its alias array/string field reads."""
+    messages = {id(message): message for message in messages}.values()
+    queries = {p.tool_call_id: p.args_as_dict() for message in messages for p in message.parts if isinstance(p, ToolCallPart)}
+    returned = {p.tool_call_id: p.model_response_object() for message in messages for p in message.parts if isinstance(p, ToolReturnPart)}
+    pages = {}
+    for call_id, value in returned.items():
+        key = continuations.get(call_id, call_id), json.dumps(queries[call_id].get("scope", {}).get("read"), sort_keys=True)
+        pages.setdefault(key, []).append(value)
+    assert all("next" not in parts[-1] for parts in pages.values())
+
+    def resolve(value, root):
+        if isinstance(value, list):
+            return [resolve(item, root) for item in value]
+        if isinstance(value, dict):
+            if "read" in value:
+                parts = pages[root, json.dumps(value["read"], sort_keys=True)]
+                return resolve([item for page in parts for item in page.get("items", [])], root) if value["read"]["text"]["container"] else "".join(page.get("text", "") for page in parts)
+            return {key: resolve(item, root) for key, item in value.items()}
+        return value
+
+    return {root: resolve(json.loads("".join(page["fragment"]["text"] for page in parts if "fragment" in page))
+                          if "fragment" in parts[0] else parts[0], root)
+            for (root, reference), parts in pages.items() if reference == "null"}
 
 
 @contextmanager
@@ -539,9 +585,6 @@ def test_translation_queries_preserve_two_table_permissions(game_db, steps, audi
     results = {p.tool_call_id: p for m in received for p in m.parts if isinstance(p, ToolReturnPart)}
     assert queries.keys() <= results.keys()
     assert all(len(p.model_response_str().encode("utf-8")) <= 20_000 for p in results.values())
-    results = {name: [p.model_response_object() for call_id, p in results.items() if continuations.get(call_id, call_id) == name]
-               for name in queries}
-    assert all(json.loads("".join(page["fragment"]["text"] for page in pages if "fragment" in page)) == {
+    assert all(result == {
         "status": "not_found", "names_and_aliases": {"territory": candidates if name != "partial" else {"保定府新城县": candidates["保定府新城县"]}},
-    } for name, pages in results.items())
-    assert all("next" not in pages[-1] for pages in results.values())
+    } for name, result in candidate_results(received, continuations).items())
