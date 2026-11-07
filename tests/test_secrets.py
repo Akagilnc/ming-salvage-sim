@@ -124,7 +124,6 @@ def assert_model_read_tools(received, tools, model_invocations, court, continuat
                 assert accounts == {}
                 assert not [f for f in responses["many"]["facts"] if f["kind"] == "reported"]
             else:
-                assert "next" in pages["many"][0] and "next" not in pages["many"][-1]
                 assert {key: data["taels"] for key, data in accounts.items()} == {
                     "国库": 3200000, "内库": 4400000, "节慎库": 600000, "常盈库": 1200000,
                 }

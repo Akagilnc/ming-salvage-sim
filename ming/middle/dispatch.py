@@ -101,7 +101,7 @@ def check_endorsements(
                     endorsement.endorser,
                     allowed if endorsement.form == "御笔手敕" else name_expected("person", endorsement.endorser, names),
                     names,
-                    "参照 expected 的正名清单或输入目录指针核对 endorser，重交整份。",
+                    "参照 expected 的正名清单或用 read_records 查 person 核对 endorser，重交整份。",
                 )
 
 

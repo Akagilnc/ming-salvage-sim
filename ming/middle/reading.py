@@ -6,7 +6,7 @@ from functools import partial
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import JSON, Select, func, select, tuple_
+from sqlalchemy import JSON, Select, func, select
 
 from ming.ledger import (
     ENTITY_COLUMNS as E, FACT_COLUMNS as F, ENTITY_ROWS,
@@ -60,11 +60,8 @@ class Records:
     def calendar(self) -> EntityView:
         return EntityView.model_validate(calendar_row(self._ledger))
 
-    def catalogue(self, records: Sequence[Item] | None = None) -> dict[str, dict[str, list[str]]]:
-        query = queries.CATALOGUE if records is None else ENTITY_ROWS.where(
-            tuple_(E.kind, E.key).in_([(e["kind"], e["key"]) for e in records])
-        )
-        return names_and_aliases(self._ledger.read(query.with_only_columns(E.kind, E.key, ALIASES)))
+    def catalogue(self) -> dict[str, dict[str, list[str]]]:
+        return names_and_aliases(self._ledger.read(queries.CATALOGUE.with_only_columns(E.kind, E.key, ALIASES)))
 
     def office_record(self, identity: Identity, key: str | list[str]) -> Item:
         results: dict[str, Item] = {}

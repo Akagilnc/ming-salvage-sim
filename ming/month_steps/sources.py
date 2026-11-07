@@ -166,7 +166,7 @@ def names(ctx: RunContext[SourceMaterials], output: Urgencies | Impeachments):
                 fail(
                     f"petitions[{index}].{field}", name,
                     allowed if isinstance(output, Urgencies) else name_expected("person", "", catalogue), catalogue,
-                    "参照 expected 的正名清单或输入目录指针核对人名，重交整份。确无此人不得换成另一人。",
+                    "参照 expected 的正名清单或用 read_records 查 person 核对人名，重交整份。确无此人不得换成另一人。",
                 )
         if isinstance(item, UrgentPetition) and item.revision_of is not None:
             if str(item.revision_of) not in originals:

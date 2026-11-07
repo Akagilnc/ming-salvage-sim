@@ -20,7 +20,7 @@ class Gazette:
         output_type=str,
         deps_type=Materials,
         tools=[read_records],
-        instructions="按输入本月日期，以朝廷公开口径写本月邸报。按输入 catalogue 的正名与事件数，用 read_records 带本月日期先列有事件的实体，再点正名并带本月日期取各衙门奏报全文；不空参读全账，保留官员奏报说法，不套模板。",
+        instructions="按输入本月日期，以朝廷公开口径写本月邸报。输入 catalogue 是可查类别的根目录；用 read_records 带本月日期与类别查目录，按需下钻，再点正名并带本月日期取各衙门奏报全文，按 next 和字段的 read 续取。保留官员奏报说法，不套模板。",
     )
 
     def __init__(

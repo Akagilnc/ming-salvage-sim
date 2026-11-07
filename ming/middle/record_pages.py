@@ -88,6 +88,13 @@ class TextPage:
                     else_=children.c.value,
                 )
                 clipped = select(func.json_group_object(children.c.key, func.json(encoded))).correlate_except(children).scalar_subquery()
+                if column.key == "detail" and "exposure" in query.selected_columns:
+                    # Full detail has no field projection to preserve. Read the
+                    # object by its existing container cursor, including wide
+                    # objects whose individual fields are all small.
+                    clipped = case((query.selected_columns.exposure == "full", func.json_object(
+                        self.prefix, self.prefix + func.json_object("column", column.key, "path", "$", "container", True),
+                    )), else_=clipped)
             columns[index] = type_coerce(case((large_field(column), clipped), else_=column), column.type).label(column.key)
         return query.with_only_columns(*columns)
 
@@ -97,6 +104,8 @@ class TextPage:
             self.allowed.append(reference)
             return {"read": {"row": self.cursor.row, "character": 0, "text": reference.model_dump()}}
         if isinstance(value, dict):
+            if self.prefix in value:
+                return self.replace(value[self.prefix])
             return {key: self.replace(item) for key, item in cast(dict[str, Any], value).items()}
         if isinstance(value, list):
             return [self.replace(item) for item in cast(list[Any], value)]
@@ -162,7 +171,7 @@ class TextPage:
 def fit_text(text: str, start: int, budget: int) -> int:
     return start + bisect_right(
         range(start + 1, min(len(text), start + budget) + 1), budget,
-        key=lambda end: len(json.dumps(text[start:end], ensure_ascii=True).encode()),
+        key=lambda end: len(json.dumps(text[start:end], ensure_ascii=False).encode()),
     )
 
 
@@ -182,7 +191,7 @@ def record_page(
     empty_sizes: dict[tuple[tuple[str, bool], ...], int] = {}
     with closing(rows(cursor)) as pieces:
         for index, row in enumerate(pieces, start=cursor.row):
-            text = row["text"] if raw else json.dumps(row, ensure_ascii=True, indent=2)
+            text = row["text"] if raw else json.dumps(row, ensure_ascii=False, indent=2)
             size = len(text.encode())
             cost = size - (3 if result else 2)
             start = cursor.character if index == cursor.row else 0
@@ -196,7 +205,7 @@ def record_page(
             if row.keys() <= result.keys() and all(isinstance(value, (list, dict)) for value in row.values()):
                 shape = tuple((field, isinstance(value, list)) for field, value in row.items())
                 if shape not in empty_sizes:
-                    empty_sizes[shape] = len(json.dumps({field: [] if array else {} for field, array in shape}, ensure_ascii=True, indent=2).encode())
+                    empty_sizes[shape] = len(json.dumps({field: [] if array else {} for field, array in shape}, ensure_ascii=False, indent=2).encode())
                 cost = size - empty_sizes[shape] - 2 * sum(bool(value) and bool(result[field]) for field, value in row.items())
             if not start and cost <= remaining:
                 for field, value in row.items():

@@ -101,7 +101,7 @@ def check(ledger: Ledger, out: Declaration, records: dict[tuple[str, str], Item]
                 True,
                 {"create": False, **name_expected(fact.entity_type, fact.entity, names)},
                 names,
-                "这类实体不能新建。create 改 false，参照 expected 的输入目录指针或候选核对 entity，重交整份。",
+                "这类实体不能新建。create 改 false，按 expected 类别用 read_records 查正名或参考候选核对 entity，重交整份。",
             )
         if fact.entity_type == "incumbency":
             check_appointment(ledger, fact, path, names, appointments)
@@ -111,7 +111,7 @@ def check(ledger: Ledger, out: Declaration, records: dict[tuple[str, str], Item]
                 fact.entity,
                 {"create": fact.entity not in known, **name_expected(fact.entity_type, fact.entity, names)},
                 names,
-                "参照 expected 的输入目录指针或候选核对 entity 与 create；确无该实体不得换成另一实体，重交整份。",
+                "按 expected 类别用 read_records 查正名或参考候选核对 entity 与 create；确无该实体不得换成另一实体，重交整份。",
             )
         if fact.create or fact.entity_type == "incumbency":
             known[fact.entity] = []
@@ -275,7 +275,7 @@ def check_appointment(
             fail(field, holders, {"maxItems": 1}, names, "一员只能任一人，重交整份。")
         for k, person in enumerate(holders):
             if person not in names.get("person", {}):
-                fail(f"{field}[{k}]", person, name_expected("person", person, names), names, "在任者用 expected 指向的输入人物目录中的正名，重交整份。")
+                fail(f"{field}[{k}]", person, name_expected("person", person, names), names, "在任者用 read_records 查 person 正名，重交整份。")
 
 
 def check_references(ledger: Ledger, out: Declaration, names: Names) -> None:
@@ -294,7 +294,7 @@ def check_references(ledger: Ledger, out: Declaration, names: Names) -> None:
                         change.value,
                         name_expected(kind, str(change.value), names),
                         names,
-                        "参照 expected 的输入目录指针或候选填写 value，重交整份。确无该实体不得换成另一实体。",
+                        "按 expected 类别用 read_records 查正名或参考候选填写 value，重交整份。确无该实体不得换成另一实体。",
                     )
             if (fact.entity_type, change.field) == ("decree", "people"):
                 people.append((f"facts[{i}].changes[{j}].value", change.value))
@@ -306,7 +306,7 @@ def check_references(ledger: Ledger, out: Declaration, names: Names) -> None:
                 report.entity,
                 name_expected(report.entity_type, report.entity, names),
                 names,
-                "参照 expected 的输入目录指针或候选填写 entity，重交整份。确无该实体不得换成另一实体。",
+                "按 expected 类别用 read_records 查正名或参考候选填写 entity，重交整份。确无该实体不得换成另一实体。",
             )
     if isinstance(out, NightDeclaration):
         people.extend((f"decrees[{i}].people", decree.people) for i, decree in enumerate(out.decrees))
@@ -317,14 +317,14 @@ def check_references(ledger: Ledger, out: Declaration, names: Names) -> None:
                 value,
                 name_expected("person", "", names),
                 names,
-                "people 改成名单，成员用 expected 指向的输入人物目录中的正名，重交整份。",
+                "people 改成名单，用 read_records 查 person 正名填入成员，重交整份。",
             )
         members = cast(list[Any], value)
         for i, person in enumerate(members):
             members[i] = person = reference_key(ledger, "person", person, names) if isinstance(person, str) else person
             if not isinstance(person, str) or person not in names.get("person", {}):
                 fail(f"{path}[{i}]", person, name_expected("person", str(person), names), names,
-                     "people 里的名字用 expected 指向的输入人物目录中的正名，重交整份。确无此人不得换成另一人。")
+                     "people 里的名字用 read_records 查 person 正名，重交整份。确无此人不得换成另一人。")
 
 
 def declaration_agent(
@@ -346,25 +346,9 @@ def declaration_agent(
         name=output_type.__name__,
         deps_type=TranslationMaterials,
         output_type=PromptedOutput(accept),
-        instructions=instructions + "\n" + APPOINTMENT_RULES + "\n官职和属地不混在实况名册里；需要核对官名、地名、别名、所属衙门或员额时，用 read_records 带类 office、territory 或正名查询；空参查根目录，按目录下钻，next 续页，字段的 read 续取长文本。",
+        instructions=instructions + "\n" + APPOINTMENT_RULES + "\n输入 catalogue 是根目录；需要核对官名、地名、别名、所属衙门或员额时，用 read_records 带类 office、territory 或正名查询；空参查根目录，按目录下钻，next 续页，字段的 read 续取长文本。",
         retries=1,
     )
-
-    @agent.instructions
-    async def names(ctx: RunContext[TranslationMaterials]) -> str:
-        # Queries and JSON encoding stay on the caller's loop, like tools;
-        # only model I/O yields.
-        return json.dumps(
-            {
-                "catalogue": ctx.deps.court.read.query(ctx.deps.identity),
-                "field_schemas": {"payment_policy": PaymentPolicy.model_json_schema(), "monthly_funding": MonthlyFunding.model_json_schema()},
-                "allowed_fields": {
-                    kind: {field: asdict(rule) for field, rule in rules.items()}
-                    for kind, rules in FIELDS_BY_KIND.items()
-                },
-            },
-            ensure_ascii=False,
-        )
 
     return agent
 
@@ -375,12 +359,23 @@ async def translate(
     materials: TranslationMaterials,
     model: Model,
 ) -> Translation | Unhandled:
+    inputs = json.dumps(
+        {
+            "catalogue": materials.court.read.query(materials.identity),
+            "field_schemas": {"payment_policy": PaymentPolicy.model_json_schema(), "monthly_funding": MonthlyFunding.model_json_schema()},
+            "allowed_fields": {
+                kind: {field: asdict(rule) for field, rule in rules.items()}
+                for kind, rules in FIELDS_BY_KIND.items()
+            },
+        },
+        ensure_ascii=False,
+    )
     with capture_run_messages() as messages:
         try:
             return (
                 await invoke(
                     agent, "请按 JSON schema 提交完整声明。\n" + prompt,
-                    deps=materials, model=model,
+                    deps=materials, model=model, instructions=inputs,
                 )
             ).output
         except UnexpectedModelBehavior as exhausted:

@@ -259,12 +259,12 @@ def codex_response(
     next_args = read_args if not called else None
     if outputs is not None and name == "simulation":
         assert all(len(item["output"].encode("utf-8")) <= 20_000 for item in records)
-        outputs[:] = [json.loads(item["output"]) for item in records]
+        objects = []
+        outputs[:] = [json.loads(item["output"], object_hook=lambda value: objects.append(value) or value) for item in records]
         calls = [json.loads(item["arguments"]) for item in body.get("input") or []
                  if isinstance(item, dict) and item.get("type") == "function_call"]
         asked = [call.get("scope", {}).get("read") for call in calls]
-        references = [value["read"] for record in outputs for fact in record.get("facts", [])
-                      for value in fact.get("detail", {}).values() if isinstance(value, dict) and "read" in value]
+        references = [value["read"] for value in objects if "read" in value]
         after = outputs[-1].get("next") if outputs else None
         if after is not None:
             next_args = {**calls[-1], "scope": {**calls[-1].get("scope", {}), "after": after}}
@@ -767,8 +767,9 @@ def test_codex_forwards_a_ledger_sized_tool_result(tmp_path: Path, monkeypatch, 
     assert [item["office"] for record in outputs for office in record.get("offices", []) for item in office["appointments"]] == offices
     assert [value for record in outputs for value in record.get("items", [])] == planted["samples"]
     assert "".join(record.get("text", "") for record in outputs) == planted["body"]
-    axis = {key: value for record in outputs for key, value in record.get("object", {}).items()}
-    assert axis == {**planted["axis"], "value": "可托腹心"}
+    objects = {key: value for record in outputs for key, value in record.get("object", {}).items()}
+    assert objects.keys() == planted.keys() | planted["axis"].keys()
+    assert {key: objects[key] for key in planted["axis"]} == {**planted["axis"], "value": "可托腹心"}
 
 
 def test_pi_empty_assistant_is_not_a_transport_failure(
