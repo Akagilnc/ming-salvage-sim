@@ -197,7 +197,8 @@ class RecordQuery:
             if any(len(matches) != 1 for matches in resolved.values()):
                 with closing(self.ledger.scan(visible.with_only_columns(E.kind, E.key, ALIASES))) as rows:
                     candidates = matching_names(rows, keys)
-                return {"status": "not_found", **({"names_and_aliases": candidates} if candidates else {})}
+                result = {"status": "not_found", **({"names_and_aliases": candidates} if candidates else {})}
+                return record_page(lambda position: (row for row in (result,)[position.row:]), cursor) if candidates else result
             ids = [row["id"] for row in names if any(row["key"] in matches for matches in resolved.values())]
             # Unscoped aliases also select other visible kinds sharing the canonical
             # key (e.g. a person's dossier), but never read an already resolved ID.

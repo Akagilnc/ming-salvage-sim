@@ -512,3 +512,36 @@ def test_translation_queries_preserve_two_table_permissions(game_db, steps, audi
         else:
             assert result["status"] == "not_found"
             assert "names_and_aliases" not in result
+
+    candidates = {row["key"]: row["data"]["aliases"] for row in audit(game_db)["entities"]
+                  if row["kind"] == "territory" and row["key"] in {
+                      "保定府新城县", "济南府新城县", "建昌府新城县", "杭州府新城县",
+                  }}
+    candidates["保定府新城县"].append("候选" * 3500)
+    received = []
+    continuations = {}
+    queries = {
+        "typed": {"kind": "territory", "key": "新城县"},
+        "untyped": {"key": "新城县"},
+        "batch": {"key": ["保定府新城县", "新城县"]},
+        "partial": {"kind": "territory", "key": "候选"},
+    }
+    steps["scene"] = replaying([
+        ModelResponse(parts=[ToolCallPart("read_records", args, tool_call_id=name) for name, args in queries.items()]),
+        json.loads((RECORDED / "night_invalid.json").read_text())["cases"]["missing_fields"]["scene"],
+    ], received, continuations=continuations)
+    with TestClient(create_app(game_db.parent)) as client:
+        client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
+        client.app.state.web.game.court.record(("territory", "保定府新城县"), [("changed", {})], {"aliases": candidates["保定府新城县"]})
+        client.post("/actions", json={"action": "open"}).raise_for_status()
+        client.post("/actions", json={"action": "say", "words": "查阅属地。"}).raise_for_status()
+        assert client.get("/state").json()["game"]["failure"] is None
+    results = {p.tool_call_id: p for m in received for p in m.parts if isinstance(p, ToolReturnPart)}
+    assert queries.keys() <= results.keys()
+    assert all(len(p.model_response_str().encode("utf-8")) <= 20_000 for p in results.values())
+    results = {name: [p.model_response_object() for call_id, p in results.items() if continuations.get(call_id, call_id) == name]
+               for name in queries}
+    assert all(json.loads("".join(page["fragment"]["text"] for page in pages if "fragment" in page)) == {
+        "status": "not_found", "names_and_aliases": {"territory": candidates if name != "partial" else {"保定府新城县": candidates["保定府新城县"]}},
+    } for name, pages in results.items())
+    assert all("next" not in pages[-1] for pages in results.values())
