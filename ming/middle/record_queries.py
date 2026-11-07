@@ -90,6 +90,12 @@ class RecordQuery:
             E.key.in_(keys), ~E.id.in_(known),
         )))
 
+    def candidate_fields(self, page: TextPage, candidates: Item) -> Item:
+        """Locate paths only for candidates already selected by the visible read."""
+        return {kind: {key: page.whole("aliases", entity=(kind, key)) | {
+            "value": aliases, "source": ENTITY_ROWS.where(E.kind == kind, E.key == key).with_only_columns(ALIASES),
+        } if aliases else aliases for key, aliases in names.items()} for kind, names in candidates.items()}
+
     def office_material(self, names: list[str], date: Item | None, cursor: RecordCursor) -> Generator[PageRow]:
         page = TextPage(self.ledger, cursor, numeric=self.numeric)
         ids: dict[UUID, None] = {}
@@ -101,7 +107,9 @@ class RecordQuery:
             ids.update((UUID(item["entity_id"]), None) for item in record.get("appointments", ()) if item["entity_id"] is not None)
             record = record if self.numeric else character_input(record)
             page.cursor = cursor.model_copy(update={"row": index})
-            yield page.render({"offices": [record]} if len(names) > 1 else record, full="names_and_aliases" in record)
+            if "names_and_aliases" in record:
+                record = {**record, "names_and_aliases": self.candidate_fields(page, record["names_and_aliases"])}
+            yield page.render({"offices": [record]} if len(names) > 1 else record)
         # Prior-page headers need only a batch of visible IDs, not their bodies.
         keys: list[str] = []
         for name in previous:
@@ -172,7 +180,13 @@ class RecordQuery:
                                for item in rows)
                 for (index, _row), (record, full) in zip(selected, records, strict=True):
                     page.cursor = cursor.model_copy(update={"row": index})
-                    yield page.render(record if self.numeric else character_input(record), full=full)
+                    record = record if self.numeric else character_input(record)
+                    if full and not cursor.clipped and cursor.text is None:
+                        record["facts"][0]["detail"] = page.whole("detail") | {
+                            "value": record["facts"][0]["detail"],
+                            "source": cast(Select[Any], page.source).where(F.position == _row["position"]),
+                        }
+                    yield page.render(record)
 
     def run(
         self, kind: str | None, key: str | list[str] | None, date: Item | None,
@@ -210,9 +224,9 @@ class RecordQuery:
             if any(len(matches) != 1 for matches in resolved.values()):
                 with closing(self.ledger.scan(visible.with_only_columns(E.kind, E.key, ALIASES))) as rows:
                     candidates = matching_names(rows, keys)
-                result = {"status": "not_found", **({"names_and_aliases": candidates} if candidates else {})}
                 page = TextPage(self.ledger, cursor, numeric=self.numeric)
-                return record_page(lambda position: (page.render(row, full=True) for row in (result,)[position.row:]), cursor) if candidates else result
+                result = {"status": "not_found", **({"names_and_aliases": self.candidate_fields(page, candidates)} if candidates else {})}
+                return record_page(lambda position: (page.render(row) for row in (result,)[position.row:]), cursor) if candidates else result
             ids = [row["id"] for row in names if any(row["key"] in matches for matches in resolved.values())]
             # Unscoped aliases also select other visible kinds sharing the canonical
             # key (e.g. a person's dossier), but never read an already resolved ID.

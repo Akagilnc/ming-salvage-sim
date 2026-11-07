@@ -585,6 +585,12 @@ def test_translation_queries_preserve_two_table_permissions(game_db, steps, audi
     results = {p.tool_call_id: p for m in received for p in m.parts if isinstance(p, ToolReturnPart)}
     assert queries.keys() <= results.keys()
     assert all(len(p.model_response_str().encode("utf-8")) <= 20_000 for p in results.values())
+    firsts = {name: results[name].model_response_object()["names_and_aliases"]["territory"] for name in queries}
+    assert all(first.keys() == ({"保定府新城县"} if name == "partial" else candidates.keys()) for name, first in firsts.items())
+    assert all(isinstance(aliases, list) and (
+        aliases[:-1] == candidates[key][:-1] and aliases[-1]["read"]["text"]["container"] is False
+        if key == "保定府新城县" else aliases == candidates[key]
+    ) for first in firsts.values() for key, aliases in first.items())
     assert all(result == {
         "status": "not_found", "names_and_aliases": {"territory": candidates if name != "partial" else {"保定府新城县": candidates["保定府新城县"]}},
     } for name, result in candidate_results(received, continuations).items())

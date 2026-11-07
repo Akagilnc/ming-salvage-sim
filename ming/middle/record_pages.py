@@ -62,6 +62,7 @@ class TextPage:
         self.numeric = numeric
         self.prefix = uuid4().hex
         self.allowed: list[RecordText] = []
+        self.full: list[Item] = []
         self.source: Select[Any] | None = None
         self.dossier_source: Select[Any] | None = None
 
@@ -118,6 +119,9 @@ class TextPage:
             return {"read": {"row": self.cursor.row, "character": 0, "text": reference.model_dump(exclude_none=True)}}
         if isinstance(value, dict):
             if self.prefix in value:
+                if "value" in value:
+                    self.full.append(cast(Item, value))
+                    return self.replace(value["value"])
                 return self.replace(value[self.prefix])
             return {key: self.replace(item) for key, item in cast(dict[str, Any], value).items()}
         if isinstance(value, list):
@@ -145,22 +149,68 @@ class TextPage:
                     value = character_input({"field": metadata["field"], "value": value})["value"]
                 yield ({"object": {row["key"]: value}} if metadata["container"] == "object" else {"items": [value]})
 
-    def render(self, value: Item, *, full: bool = False) -> PageRow:
+    def shrink(self, value: Any, field: Item, keys: tuple[str | int, ...] = ()) -> Any:
+        """Keep fitting children inline, using the existing page assembler."""
+        pieces: Callable[[RecordCursor], Generator[Item]]
+        if isinstance(value, dict):
+            reduced = {key: self.shrink(item, field, (*keys, key)) for key, item in cast(Item, value).items()}
+            pieces = lambda _: ({"object": {key: self.replace(item)}} for key, item in reduced.items())
+            if "next" not in record_page(pieces, RecordCursor(), empty={"object": {}}):
+                return reduced
+        elif isinstance(value, list):
+            items = [self.shrink(item, field, (*keys, index)) for index, item in enumerate(cast(list[Any], value))]
+            pieces = lambda _: ({"items": [self.replace(item)]} for item in items)
+            if "next" not in record_page(pieces, RecordCursor(), empty={"items": []}):
+                return items
+        elif not isinstance(value, str) or fit_text(value, 0, PAGE_BYTES) == len(value):
+            return value
+        if not keys:
+            return field[self.prefix]
+        if "paths" not in field:
+            field["reference"] = RecordText.model_validate_json(field[self.prefix][len(self.prefix):])
+            source: Select[Any] = field["source"]
+            tree = func.json_tree(source.selected_columns[field["reference"].column]).table_valued("id", "parent", "key", "fullkey")
+            # Ask SQLite for native paths only when a child needs a reference.
+            field["paths"] = {(row["parent"], row["key"]): row for row in self.ledger.read(
+                source.with_only_columns(*tree.c, maintain_column_froms=True).join(tree, true()).order_by(None),
+            )}
+        node = field["paths"][None, None]
+        for key in keys:
+            node = field["paths"][node["id"], key]
+        reference: RecordText = field["reference"]
+        return self.prefix + reference.model_copy(update={
+            "path": node["fullkey"], "container": isinstance(value, (dict, list)),
+        }).model_dump_json(exclude_none=True)
+
+    def compact(self, value: Item, prepared: tuple[Item, str, int, bool]) -> PageRow:
+        fields = self.full[:]
+        changed = False
+        for field in fields:
+            reduced = self.shrink(field["value"], field)
+            changed |= reduced != field["value"]
+            field["value"] = reduced
+        if changed:
+            self.full.clear()
+            prepared = page_row(self.replace(value), clipped=True)
+        if prepared[2] <= PAGE_BYTES:
+            return prepared
+        # Each field is now bounded. If their combination still cannot fit,
+        # defer only the largest necessary fields, not every sibling.
+        for field in sorted(fields, key=lambda field: page_row({"value": self.replace(field["value"])})[2], reverse=True):
+            del field["value"]
+            self.full.clear()
+            prepared = page_row(self.replace(value), clipped=True)
+            if prepared[2] <= PAGE_BYTES:
+                break
+        return prepared
+
+    def render(self, value: Item) -> PageRow:
         self.allowed.clear()
+        self.full.clear()
         result = self.replace(value)
         if self.cursor.text is None:
-            prepared = page_row(result, clipped=full and self.cursor.clipped)
-            if full and prepared[2] > PAGE_BYTES:
-                if "facts" in result:
-                    result["facts"][0]["detail"] = self.replace(self.whole("detail"))
-                else:
-                    record = result["offices"][0] if "offices" in result else result
-                    record["names_and_aliases"] = {
-                        kind: {key: self.replace(self.whole("aliases", entity=(kind, key))) if aliases else aliases for key, aliases in names.items()}
-                        for kind, names in record["names_and_aliases"].items()
-                    }
-                prepared = page_row(result, clipped=True)
-            return prepared
+            prepared = page_row(result, clipped=self.cursor.clipped)
+            return self.compact(value, prepared) if self.full and prepared[2] > PAGE_BYTES else prepared
         reference = self.cursor.text
         self.source = self.dossier_source if reference.dossier else self.source
         if reference not in self.allowed or self.source is None:
