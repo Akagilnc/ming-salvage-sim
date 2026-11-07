@@ -70,10 +70,11 @@ class TextPage:
         for index, column in enumerate(columns):
             if column.key not in {"data", "detail", "emperor_words"}:
                 continue
+            whole = func.json_object(self.prefix, self.prefix + func.json_object(
+                "column", column.key, "path", "$", "container", True, "dossier", dossier,
+            ))
             if dossier:
-                clipped = func.json_quote(self.prefix + func.json_object(
-                    "column", column.key, "path", "$", "container", True, "dossier", True,
-                ))
+                clipped = whole
             elif column.key == "emperor_words":
                 clipped = self.prefix + func.json_object("column", column.key)
             else:
@@ -92,9 +93,7 @@ class TextPage:
                     # Full detail has no field projection to preserve. Read the
                     # object by its existing container cursor, including wide
                     # objects whose individual fields are all small.
-                    clipped = case((query.selected_columns.exposure == "full", func.json_object(
-                        self.prefix, self.prefix + func.json_object("column", column.key, "path", "$", "container", True),
-                    )), else_=clipped)
+                    clipped = case((query.selected_columns.exposure == "full", whole), else_=clipped)
             columns[index] = type_coerce(case((large_field(column), clipped), else_=column), column.type).label(column.key)
         return query.with_only_columns(*columns)
 
