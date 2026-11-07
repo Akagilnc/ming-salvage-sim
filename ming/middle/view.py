@@ -1,6 +1,6 @@
 """Identity-specific structured read boundary; no summaries of model prose."""
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from typing import Any, Literal, cast
 from uuid import UUID
 
@@ -163,9 +163,10 @@ def person_projection(dossiers: Item, row: Item, identity: Identity, appointment
 
 def entities(
     ledger: Ledger, identity: Identity, selection: Item | None = None,
-    *, opening: Item | None = None,
+    *, opening: Item | None = None, prepare: Callable[[Select[Any], bool], Select[Any]] | None = None,
 ) -> tuple[EntityView, ...]:
     selection = dict(selection or {})
+    night_turns = selection.pop("night_turns", True)
     keys = selection.pop("keys", None)
     ids = selection.pop("ids", None)
     if opening is not None:
@@ -176,13 +177,13 @@ def entities(
             and (keys is None or e["key"] in keys)
             and (ids is None or UUID(e["id"]) in ids)
         )
+    parameters = view_parameters(identity, selection.get("kind") or ("office" if prepare is not None else None))
     query = ENTITY_SOURCES[identity_key(identity)]
     query = query.where(E.kind == selection["kind"]) if selection.get("kind") is not None else query
     query = query.where(E.key == selection["key"]) if selection.get("key") is not None else query
     query = query.where(E.key.in_(keys)) if keys is not None else query
     query = query.where(E.id.in_(ids)) if ids is not None else query
-    parameters = view_parameters(identity, selection.get("kind"))
-    rows = ledger.read(query, parameters)
+    rows = ledger.read(prepare(query.params(**parameters), False) if prepare is not None else query, parameters)
     people = [row["key"] for row in rows if row["kind"] == "person" and identity != "audit"]
     appointments = {row["id"]: row for row in rows if row["kind"] == "incumbency"} if people else {}
     if people and (selection or keys is not None or ids is not None):
@@ -194,8 +195,9 @@ def entities(
             parameters={**parameters, "appointed_people": people},
         )}
     own: set[str] = set(identity.people) if isinstance(identity, Officials) else set()
-    dossiers = {r["key"]: r["data"] for r in ledger.entities(
-        kind="dossier", query=ENTITY_ROWS.where(E.key.in_(own.intersection(people))),
+    dossier_query = ENTITY_ROWS.where(E.kind == "dossier", E.key.in_(own.intersection(people)))
+    dossiers = {r["key"]: r["data"] for r in ledger.read(
+        prepare(dossier_query, True) if prepare is not None else dossier_query,
     )} if own.intersection(people) else {}
     factions: set[Any] = set()
     if any(row["exposure"] == "faction" for row in rows):
@@ -206,7 +208,7 @@ def entities(
                 kind="person", query=ENTITY_ROWS.with_only_columns(E.data["faction"].as_string().label("faction")).where(E.key.in_(own)),
             ))
     nights = {night.id: night.model_dump(mode="json") for night in read_nights(
-        ledger, [row for row in rows if row["exposure"] == "night"],
+        ledger, [row for row in rows if row["exposure"] == "night"], include_turns=night_turns,
     )}
     result: list[EntityView] = []
     for row in map(dict, rows):

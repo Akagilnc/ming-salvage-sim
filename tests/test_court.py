@@ -378,12 +378,29 @@ def test_translation_queries_preserve_two_table_permissions(game_db, steps):
     recording = json.loads((RECORDED / "declarations_1972.json").read_text())["cases"]
     received = []
     offices = ["陕西巡抚", "巡抚", "新城知县", "西安知府", "内阁大学士", "陕西巡府", "不存在的官职", "内阁大学士"]
+    probes = {
+        "departments": {"kind": "office"},
+        "nanjing-group": {"kind": "office", "scope": {"department": "南京守备"}},
+        "nanjing-office": {"kind": "office", "key": "南京守备"},
+        "sili": {"kind": "office", "scope": {"department": "司礼监"}},
+        "largest-group": {"kind": "office", "scope": {"department": "户部"}},
+        "sili-holder": {"kind": "office", "key": "司礼监掌印太监"},
+        "east-holder": {"kind": "office", "key": "东厂提督"},
+        "canonical": {"key": "户部尚书"},
+        "capital-army": {"kind": "army", "key": "京营"},
+        "capital-offices": {"kind": "office", "scope": {"department": "京营"}},
+        "counties": {"kind": "territory", "scope": {"region": "北直隶 / 京师", "level": "县"}},
+        "empty-root": {"date": {"year": 1400, "month": 1}},
+        "single-root": {"date": {"year": 1500, "month": 1}},
+        "bad-cursor": {"kind": "office", "scope": {"after": {"row": 1_000_000}}},
+    }
     for name, case in (("NightDeclaration", "night_catalogue_queries"), ("Declaration", "catalogue_queries")):
         steps[name] = replaying(ModelMessagesTypeAdapter.validate_python(recording[case]), received)
     steps["simulation"] = replaying(
         [ModelResponse(parts=[ToolCallPart("read_records", {"kind": "incumbency", "key": offices}, tool_call_id="batch"),
                               ToolCallPart("read_records", {"kind": "person", "key": ["郭允厚", "郭允厚"], "date": {"year": 1600, "month": 1}}, tool_call_id="people"),
                               ToolCallPart("read_records", {}, tool_call_id="empty"),
+                              *(ToolCallPart("read_records", args, tool_call_id=label) for label, args in probes.items()),
                               *(ToolCallPart("read_records", {"key": key}, tool_call_id=f"names-{i}")
                                 for i, key in enumerate(["郭允厚", "郭尚书", "毕自严", "南户部", ["郭允厚", "毕自严"], ["郭尚书", "毕尚书"]])),
                               *(ToolCallPart("read_records", {"kind": "incumbency", "key": name}, tool_call_id=name)
@@ -392,12 +409,34 @@ def test_translation_queries_preserve_two_table_permissions(game_db, steps):
     )
     with TestClient(create_app(game_db.parent)) as client:
         client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
+        client.app.state.web.game.court.record(("person", "郭允厚"), [("reported", {
+            "date": {"year": 1500, "month": 1}, "audience": "public", "text": "",
+        })], {"aliases": ["郭允厚", "郭尚书", "郭户部", "户部尚书"]})
         client.post("/actions", json={"action": "dismiss"}).raise_for_status()
         client.portal.call(client.app.state.web.game.drain)
         client.post("/actions", json={"action": "month"}).raise_for_status()
         assert client.get("/state").json()["game"]["failure"] is None
     queries = {p.tool_call_id: p.args_as_dict() for m in received for p in m.parts if isinstance(p, ToolCallPart)}
     results = {p.tool_call_id: p.model_response_object() for m in received for p in m.parts if isinstance(p, ToolReturnPart)}
+    assert all(len(p.model_response_str().encode("utf-8")) <= 20_000 for m in received for p in m.parts if isinstance(p, ToolReturnPart))
+    observed = {name: results.pop(name) for name in probes}
+    queries = {name: args for name, args in queries.items() if name not in probes}
+    assert {row["department"] for row in observed["departments"]["catalogue"]} >= {"司礼监", "南京守备", "京营"}
+    assert {row["key"] for row in observed["nanjing-group"]["catalogue"]} >= {"南京守备"}
+    assert observed["nanjing-office"]["status"] in {"occupied", "vacant", "acting"}
+    assert {row["key"] for row in observed["sili"]["catalogue"]} >= {"司礼监掌印太监", "司礼监秉笔太监"}
+    assert all("description" in row for row in observed["sili"]["catalogue"])
+    assert "户部尚书" in {row["key"] for row in observed["largest-group"]["catalogue"]}
+    assert observed["sili-holder"]["appointments"][0]["holders"] == ["王体乾"]
+    assert observed["east-holder"]["appointments"][0]["holders"] == ["魏忠贤"]
+    assert {"description", "description_source"} <= observed["sili-holder"]["entities"][0]["data"].keys()
+    assert [(row["kind"], row["key"]) for row in observed["canonical"]["entities"]] == [("office", "户部尚书")]
+    assert {row["kind"] for row in observed["capital-army"]["entities"]} == {"army"}
+    assert {row["kind"] for row in observed["capital-offices"]["catalogue"]} == {"office"}
+    assert "保定府新城县" in {row["key"] for row in observed["counties"]["catalogue"]}
+    assert observed["empty-root"] == {"catalogue": []}
+    assert observed["single-root"] == {"catalogue": [{"kind": "person"}]}
+    assert observed["bad-cursor"] == {"status": "invalid_cursor"}
     batches = [[(
         {field: result.get(field) for field in ("status", "appointments", "territories", "pairs", "names_and_aliases")},
         [e["id"] for e in result.get("entities", [])],
@@ -405,7 +444,7 @@ def test_translation_queries_preserve_two_table_permissions(game_db, steps):
     ) for result in batch] for batch in (results.pop("batch")["offices"], [results[name] for name in offices])]
     assert batches[0] == batches[1]
     queries.pop("batch")
-    assert results.pop("empty")["status"] == "query_required"
+    assert {row["kind"] for row in results.pop("empty")["catalogue"]} >= {"office", "territory", "person"}
     queries.pop("empty")
     people = results.pop("people")
     queries.pop("people")
@@ -438,11 +477,11 @@ def test_translation_queries_preserve_two_table_permissions(game_db, steps):
                 assert result["appointments"][0]["holders"] == ["郭允厚"]
         elif query.get("key") in {"新城县", "县"}:
             assert result["status"] == "not_found"
-            assert len(result["names_and_aliases"]["territory"]) == (4 if query["key"] == "新城县" else 1172)
+            assert 1 <= len(result["names_and_aliases"]["territory"]) <= 5
             assert set(result["names_and_aliases"]) == {"territory"}
         elif query.get("kind") == "territory" and "key" not in query:
-            assert len(result["catalogue"]) == 1733
-            assert {item["kind"] for item in result["catalogue"]} == {"territory"}
+            assert result["catalogue"]
+            assert all("region" in item for item in result["catalogue"])
         elif query.get("kind") == "person":
             assert result["entities"][0]["key"] == "郭允厚"
         elif "date" in query:

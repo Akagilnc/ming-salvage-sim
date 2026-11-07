@@ -346,7 +346,7 @@ def declaration_agent(
         name=output_type.__name__,
         deps_type=TranslationMaterials,
         output_type=PromptedOutput(accept),
-        instructions=instructions + "\n" + APPOINTMENT_RULES + "\n官职和属地不混在实况名册里；需要核对官名、地名、别名、所属衙门或员额时，用 read_records 带类 office、territory 或正名查询；空参不返回目录。",
+        instructions=instructions + "\n" + APPOINTMENT_RULES + "\n官职和属地不混在实况名册里；需要核对官名、地名、别名、所属衙门或员额时，用 read_records 带类 office、territory 或正名查询；空参查根目录，按目录下钻，next 续页，字段的 read 续取长文本。",
         retries=1,
     )
 
@@ -356,7 +356,7 @@ def declaration_agent(
         # only model I/O yields.
         return json.dumps(
             {
-                "catalogue": ctx.deps.court.read.record_catalogue(ctx.deps.identity),
+                "catalogue": ctx.deps.court.read.query(ctx.deps.identity),
                 "field_schemas": {"payment_policy": PaymentPolicy.model_json_schema(), "monthly_funding": MonthlyFunding.model_json_schema()},
                 "allowed_fields": {
                     kind: {field: asdict(rule) for field, rule in rules.items()}

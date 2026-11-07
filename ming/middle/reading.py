@@ -6,21 +6,23 @@ from functools import partial
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import JSON, Select, func, or_, select, tuple_
+from sqlalchemy import JSON, Select, func, select, tuple_
 
 from ming.ledger import (
-    ENTITY_COLUMNS as E, FACT_COLUMNS as F, ENTITY_ROWS, ENTITY_ORDER,
-    FACT_ROWS, Item, Ledger, facts_in_month,
+    ENTITY_COLUMNS as E, FACT_COLUMNS as F, ENTITY_ROWS,
+    FACT_ROWS, Item, Ledger,
 )
 from ming.middle import queries
-from ming.middle.appointments import ALIASES, catalogue as names_and_aliases, office_pairs, incumbency_record, named
+from ming.middle.appointments import ALIASES, catalogue as names_and_aliases, office_pairs, incumbency_record
 from ming.middle.calendar import calendar_row, journeys_due
 from ming.middle.declaration import LandingMode
 from ming.middle.night import known_people
-from ming.middle.rules import matching_names, matching_offices
+from ming.middle.rules import matching_offices
+from ming.middle.record_pages import RecordCursor, RecordScope
+from ming.middle.record_queries import RecordQuery
 from ming.middle.view import (
     EntityView, FactView, Identity, VISIBLE_IDS, MONTH_OPEN_QUERY,
-    character_input, entities, fact_sources, identity_key, project, visible_appointments,
+    entities, fact_sources, identity_key, project, visible_appointments,
     view_parameters,
 )
 
@@ -58,46 +60,13 @@ class Records:
     def calendar(self) -> EntityView:
         return EntityView.model_validate(calendar_row(self._ledger))
 
-    def record_catalogue(
-        self, identity: Identity, date: Item | None = None, kind: str | None = None,
-    ) -> tuple[Item, ...]:
-        source = fact_sources(identity)
-        visible = VISIBLE_IDS[identity_key(identity)]
-        if kind is not None:
-            source, visible = source.where(E.kind == kind), visible.where(E.kind == kind)
-        query = source.where(facts_in_month(date)) if date is not None else source
-        counts = query.with_only_columns(
-            F.entity_id, func.count().label("event_count"), maintain_column_froms=True,
-        ).order_by(None).group_by(F.entity_id).subquery()
-        visible_entities = visible.order_by(None).distinct().subquery()
-        eligible = or_(visible_entities.c.id.is_not(None), (
-            counts.c.entity_id.is_not(None) if date is None else E.id.in_(
-                source.with_only_columns(F.entity_id).order_by(None).limit(1).correlate(None),
-            )
-        ))
-        names = ENTITY_ROWS.outerjoin(counts, counts.c.entity_id == E.id).outerjoin(
-            visible_entities, visible_entities.c.id == E.id,
-        ).with_only_columns(
-            E.kind, E.key, func.coalesce(counts.c.event_count, 0).label("event_count"),
-        )
-        parameters = view_parameters(identity, kind)
-        result = self._ledger.read(
-            names.where(eligible if date is None else counts.c.entity_id.is_not(None)), parameters,
-        )
-        if date is not None and kind is not None and not result:
-            result = self._ledger.read(
-                names.where(eligible).order_by(None).order_by(visible_entities.c.id.is_(None), ENTITY_ORDER).limit(1),
-                parameters,
-            )
-        return result
-
     def catalogue(self, records: Sequence[Item] | None = None) -> dict[str, dict[str, list[str]]]:
         query = queries.CATALOGUE if records is None else ENTITY_ROWS.where(
             tuple_(E.kind, E.key).in_([(e["kind"], e["key"]) for e in records])
         )
         return names_and_aliases(self._ledger.read(query.with_only_columns(E.kind, E.key, ALIASES)))
 
-    def office_record(self, identity: Identity, key: str | list[str], date: Item | None = None) -> Item:
+    def office_record(self, identity: Identity, key: str | list[str], date: Item | None = None, *, history: bool = True) -> Item:
         results: dict[str, Item] = {}
         resolved: dict[tuple[str, str], Item] = {}
         offices: dict[str, list[Item]] = {}
@@ -108,7 +77,9 @@ class Records:
                 results[name] = resolution
             elif resolution["status"] == "office_not_found":
                 if names is None:
-                    names = self.catalogue([*self.record_catalogue(identity, kind="office"), *self.record_catalogue(identity, kind="territory")])
+                    names = names_and_aliases(self._ledger.read(ENTITY_ROWS.with_only_columns(E.kind, E.key, ALIASES).where(
+                        E.kind.in_(("office", "territory")), E.id.in_(VISIBLE_IDS[identity_key(identity)]),
+                    ), view_parameters(identity, "office")))
                 results[name] = {"status": "office_not_found", "names_and_aliases": matching_offices(names, name)}
             else:
                 if pairs[0] in resolved:
@@ -126,52 +97,23 @@ class Records:
                     offices[pairs[0][0]] = [e.model_dump(mode="json") for e in self.entities(identity, kind="office", key=pairs[0][0])]
                 results[name] = resolved[pairs[0]] = {
                     "status": "occupied" if data["holders"] else "acting" if data["acting"] else "vacant",
-                    "appointments": [data],
+                    "appointments": [data if history else {**data, "entity_id": str(visible[0]["id"]) if visible else None}],
                     "entities": offices[pairs[0][0]],
-                    "facts": [f.model_dump(mode="json") for f in self.facts(identity, entity_id=[e["id"] for e in visible], date=date)],
+                    "facts": [f.model_dump(mode="json") for f in self.facts(identity, entity_id=[e["id"] for e in visible], date=date)] if history else [],
                 }
         return results[key] if isinstance(key, str) else results[key[0]] if len(key) == 1 else {"offices": [results[name] for name in key]}
 
     def query(
         self, identity: Identity, kind: str | None = None,
         key: str | list[str] | None = None, date: Item | None = None,
-        *, numeric: bool = False,
+        *, options: tuple[RecordScope, bool] | None = None,
     ) -> Item:
         """The model query contract, independent of Agent transport and deps."""
-        if kind is None and not key and date is None:
-            return {"status": "query_required", "message": "须带类、正名或日期之一，目录见输入"}
-        if kind in {"office", "incumbency"} and key:
-            return self.office_record(identity, key, date)
-        keys = list(dict.fromkeys([key] if isinstance(key, str) else key or [])) or None
-        if keys:
-            source = fact_sources(identity)
-            visible = VISIBLE_IDS[identity_key(identity)]
-            rows = ENTITY_ROWS.with_only_columns(E.kind, E.key, ALIASES)
-            selected = named(self._ledger, kind, keys, query=rows.where(or_(
-                E.id.in_(visible), E.id.in_(source.with_only_columns(F.entity_id).order_by(None)),
-            )).params(**view_parameters(identity, kind)))
-        else:
-            selected = self.record_catalogue(identity, date, kind)
-        names = names_and_aliases(selected) if keys else {}
-        resolved = {
-            value: ([value] if any(value in entries for entries in names.values()) else
-                    list(dict.fromkeys(name for entries in names.values() for name, aliases in entries.items()
-                                       if value in aliases)))
-            for value in keys or []
-        }
-        if (kind is not None and not selected) or any(len(v) != 1 for v in resolved.values()):
-            candidates = matching_names(
-                self.catalogue(self.record_catalogue(identity, date, kind)), keys,
-            ) if keys else {}
-            return {"status": "not_found", "message": "未找到",
-                    **({"names_and_aliases": candidates} if candidates else {})}
-        if not keys:
-            return {"catalogue": [e for e in selected if date is None or e["event_count"]]}
-        selection = {k: v for k, v in {
-            "kind": kind, "keys": list(dict.fromkeys(v[0] for v in resolved.values())), "date": date,
-        }.items() if v is not None}
-        result = self._material(identity, selection)
-        return result if numeric else character_input(result)
+        scope, numeric = options or (RecordScope(), False)
+        cursor = (scope.read or RecordCursor()).model_copy(update=scope.after.model_dump(exclude_unset=True) if scope.after else {})
+        return RecordQuery(self, self._ledger, identity, self._sources(identity), numeric=numeric).run(
+            kind, key, date, scope=scope, cursor=cursor,
+        )
 
     def read_records(
         self, identity: Identity, kind: str | None = None,

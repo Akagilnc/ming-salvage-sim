@@ -37,7 +37,7 @@ def measure_reads(*, count_rows=True):
         if compiled.statement.is_select:
             result["budget"][0] += 1
             # Catalogue counts need only the real cursor's metadata, not a second query.
-            if (tuple(column[0] for column in query["cursor"].description) == ("kind", "key", "event_count")
+            if (tuple(column[0] for column in query["cursor"].description) == ("kind",)
                     and "read_people" in compiled.params):
                 parameters = query["context"].compiled_parameters[0]
                 identity = (tuple(value for key, value in parameters.items() if key.startswith("read_people_")),

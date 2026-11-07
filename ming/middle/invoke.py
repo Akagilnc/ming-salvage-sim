@@ -22,6 +22,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 from pydantic_ai.models import Model
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.usage import UsageLimits
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
@@ -147,6 +148,7 @@ async def invoke(
                 model.directory = Path(resources.enter_context(TemporaryDirectory(prefix="ming-pi-")))
         if isinstance(prompt, dict):
             prompt = json.dumps(prompt, ensure_ascii=False)
+        kwargs.setdefault("usage_limits", UsageLimits(request_limit=None))
         async for attempt in AsyncRetrying(
             stop=stop_after_attempt(3),
             wait=wait_fixed(5),

@@ -2,8 +2,10 @@
 
 import json
 import math
+from collections.abc import Iterable
 from difflib import get_close_matches
-from typing import Any, Never
+from itertools import islice
+from typing import Any, Never, cast
 
 from pydantic_ai import ModelRetry
 
@@ -16,14 +18,16 @@ from ming.middle.travel import SPEEDS, journey_route
 Names = dict[str, dict[str, list[str]]]
 
 
-def matching_names(names: Names, queries: list[str]) -> Names:
-    """All substring candidates within the caller's already visible names."""
-    return {
-        kind: matches for kind, entries in names.items()
-        if (matches := {name: aliases for name, aliases in entries.items()
-                        if any(query and any(query in label for label in [name, *aliases])
-                               for query in queries)})
-    }
+def matching_names(names: Names | Iterable[Item], queries: list[str]) -> Names:
+    """A few candidates within the caller's already visible names; never auto-resolve."""
+    matches: Names = {}
+    entries = (((kind, name, aliases) for kind, values in cast(Names, names).items() for name, aliases in values.items())
+               if isinstance(names, dict) else ((row["kind"], row["key"], row["aliases"]) for row in names))
+    candidates = ((kind, name, aliases) for kind, name, aliases in entries
+                  if any(query and any(query in label for label in [name, *aliases]) for query in queries))
+    for kind, name, aliases in islice(candidates, 5):
+        matches.setdefault(kind, {})[name] = aliases
+    return matches
 
 
 def matching_offices(names: Names, key: str) -> Names:
@@ -33,7 +37,7 @@ def matching_offices(names: Names, key: str) -> Names:
     prefix = max((label for name, aliases in names.get("territory", {}).items()
                   for label in [name, *aliases] if key.startswith(label)), key=len, default="")
     candidates = {name: names["office"][name] for name in get_close_matches(
-        key[len(prefix):], list(names.get("office", {})), n=len(names.get("office", {})) + 1, cutoff=0.5,
+        key[len(prefix):], list(names.get("office", {})), n=5, cutoff=0.5,
     )}
     return {"office": candidates} if candidates else {}
 
