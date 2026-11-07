@@ -35,4 +35,4 @@ Status: #1992 修订待独立评审（此前版本 accepted）
 
 ## 2026-11-07 补：模型读账单次有界，可续取取齐（#2017）
 
-上文「材料不裁减」对模型读账改为：每次交付有上界，超出的部分模型接着取，直到取齐；原文字节与可见性不变。模型读账的目录不再按「kind、key、计数」平铺整类，改按 [0162](0162-every-model-reads-one-way-and-speaks-as-a-person.md)「2026-11-07 补」逐层给出；前端 `/records` 与审计照旧。依据：源卷 `~/.claude/projects/-Users-akagilnc-WorkSpace-Ming-LLM/a45c2e6b-8c9a-4f56-85fb-73324ee40299.jsonl`，owner `2815b9bc-5ce2-49fe-a038-e1e30acfcdd7`「什么东西查个官职 接近两万字还不够？？？？」、`cae1b539-3268-41c7-8a06-50c691ce65a0`「可以就按照你说的」（答 runner `d6faf296-0267-4d65-a7dc-128b7c9b697d` 所呈：目录与详情都定单次交付量，超出可续取）。
+上文「材料不裁减」对模型读账改为：每次交付有上界，超出的部分由模型决定是否按需续取，可分次完整取齐；原文字节与可见性不变。模型读账的目录不再按「kind、key、计数」平铺整类，改按 [0162](0162-every-model-reads-one-way-and-speaks-as-a-person.md)「2026-11-07 补：读账逐层查」给出；前端 `/records` 与审计照旧。依据：源卷 `~/.claude/projects/-Users-akagilnc-WorkSpace-Ming-LLM/a45c2e6b-8c9a-4f56-85fb-73324ee40299.jsonl`，owner `2815b9bc-5ce2-49fe-a038-e1e30acfcdd7`「什么东西查个官职 接近两万字还不够？？？？」、`cae1b539-3268-41c7-8a06-50c691ce65a0`「可以就按照你说的」（答 runner `d6faf296-0267-4d65-a7dc-128b7c9b697d` 所呈：目录与详情都定单次交付量，超出可续取）。
