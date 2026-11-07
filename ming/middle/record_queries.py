@@ -1,6 +1,6 @@
 """Model navigation and row-wise reads through the existing identity projections."""
 
-from collections.abc import Generator
+from collections.abc import Collection, Generator
 from contextlib import ExitStack, closing
 from functools import partial
 from itertools import batched, islice
@@ -85,6 +85,11 @@ class RecordQuery:
         with closing(self.ledger.scan(query.offset(cursor.row))) as rows:
             yield from ({"catalogue": [row]} for row in rows)
 
+    def additional_ids(self, visible: Select[Any], keys: Collection[str], known: Collection[UUID]) -> Generator[UUID]:
+        yield from (row["id"] for row in self.ledger.read(visible.with_only_columns(E.id).where(
+            E.key.in_(keys), ~E.id.in_(known),
+        )))
+
     def office_material(self, names: list[str], date: Item | None, cursor: RecordCursor) -> Generator[PageRow]:
         if cursor.text is not None and cursor.row < len(names):
             yield {"status": "invalid_cursor"}
@@ -103,9 +108,7 @@ class RecordQuery:
             if resolution["status"] == "resolved":
                 keys.extend(incumbency_record(pair, [])[0] for pair in pairs)
         if keys:
-            ids.update((row["id"], None) for row in self.ledger.read(self.visible("incumbency", None).with_only_columns(E.id).where(
-                E.key.in_(keys), ~E.id.in_(ids),
-            )))
+            ids.update((entity_id, None) for entity_id in self.additional_ids(self.visible("incumbency", None), keys, ids))
         yield from self.material("incumbency", list(ids), date, cursor, len(names))
 
     def material(self, kind: str | None, ids: list[UUID], date: Item | None, cursor: RecordCursor, prefix: int | None = None) -> Generator[PageRow]:
@@ -200,9 +203,7 @@ class RecordQuery:
             # key (e.g. a person's dossier), but never read an already resolved ID.
             aliases = {name for matches in resolved.values() for name in matches} - set(keys)
             if kind is None and aliases:
-                ids.extend(row["id"] for row in self.ledger.read(visible.with_only_columns(E.id).where(
-                    E.key.in_(aliases), ~E.id.in_(ids),
-                )))
+                ids.extend(self.additional_ids(visible, aliases, ids))
             source = partial(self.material, kind, ids, date)
         else:
             return self.navigation(kind, date, scope, cursor)
