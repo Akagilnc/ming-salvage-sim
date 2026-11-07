@@ -5,11 +5,12 @@ from contextlib import ExitStack, closing
 from functools import partial
 from itertools import batched, islice
 from typing import TYPE_CHECKING, Any, cast
+from uuid import UUID
 
 from sqlalchemy import Select, case, func, literal, or_, select, true, type_coerce, union_all
 
 from ming.ledger import ENTITY_COLUMNS as E, FACT_COLUMNS as F, ENTITY_ROWS, ENTITY_ORDER, FACT_ROWS, Item, Ledger, facts_in_month
-from ming.middle.appointments import ALIASES, catalogue, incumbency_record, named, office_pairs
+from ming.middle.appointments import ALIASES, incumbency_record, named, office_pairs
 from ming.middle.night import TURN_ROWS, turn_view
 from ming.middle.record_pages import PageRow, RecordCursor, RecordScope, TextPage, record_page
 from ming.middle.rules import matching_names
@@ -53,7 +54,7 @@ class RecordQuery:
 
     def directory(self, kind: str | None, date: Item | None, scope: RecordScope) -> Select[Any]:
         query = self.visible(kind, date)
-        if kind is None:
+        if kind is None and date is None:
             return query.with_only_columns(E.kind).order_by(None).distinct().order_by(E.kind)
         for field, value in scope.model_dump(exclude_none=True, include={"department", "region", "level"}).items():
             query = query.where(E.data[field].as_string() == value)
@@ -88,40 +89,28 @@ class RecordQuery:
         if cursor.text is not None and cursor.row < len(names):
             yield {"status": "invalid_cursor"}
             return
-        prepared: dict[str, Item] = {}
-        for name in names[cursor.row:]:
-            if name not in prepared:
-                record = self.reader.office_record(self.identity, name)
-                prepared[name] = record if self.numeric else character_input(record)
-            yield {"offices": [prepared[name]]} if len(names) > 1 else prepared[name]
-        # Header pages stop the generator above. History needs only resolved
-        # appointment keys, not all earlier offices' complete descriptions.
+        ids: dict[UUID, None] = {}
+        previous = dict.fromkeys(names[:cursor.row])
+        for index, record in enumerate(self.reader.office_records(self.identity, names[cursor.row:]), start=cursor.row):
+            previous.pop(names[index], None)
+            ids.update((UUID(item["entity_id"]), None) for item in record.get("appointments", ()) if item["entity_id"] is not None)
+            record = record if self.numeric else character_input(record)
+            yield {"offices": [record]} if len(names) > 1 else record
+        # Prior-page headers need only a batch of visible IDs, not their bodies.
         keys: list[str] = []
-        for name in dict.fromkeys(names):
-            if name in prepared:
-                pairs = [(item["office"], item["territory"]) for item in prepared[name].get("appointments", ())]
-            else:
-                pairs, resolution = office_pairs(self.ledger, name, partial(visible_appointments, self.ledger, self.identity))
-                if resolution["status"] != "resolved":
-                    continue
-            keys.extend(incumbency_record(pair, [])[0] for pair in pairs)
-        yield from self.material("incumbency", keys, date, cursor, len(names))
+        for name in previous:
+            pairs, resolution = office_pairs(self.ledger, name, partial(visible_appointments, self.ledger, self.identity))
+            if resolution["status"] == "resolved":
+                keys.extend(incumbency_record(pair, [])[0] for pair in pairs)
+        if keys:
+            ids.update((row["id"], None) for row in self.ledger.read(self.visible("incumbency", None).with_only_columns(E.id).where(
+                E.key.in_(keys), ~E.id.in_(ids),
+            )))
+        yield from self.material("incumbency", list(ids), date, cursor, len(names))
 
-    def material(self, kind: str | None, keys: list[str], date: Item | None, cursor: RecordCursor, prefix: int | None = None) -> Generator[PageRow]:
-        visible = self.visible(kind, None)
-        names = catalogue(named(self.ledger, kind, keys, query=visible.with_only_columns(E.id, E.kind, E.key, ALIASES)))
-        canonical = {name for entries in names.values() for name in entries}
-        resolved = {value: {value} if value in canonical else {
-            name for entries in names.values() for name, aliases in entries.items() if value in aliases
-        } for value in keys}
-        if prefix is None and any(len(matches) != 1 for matches in resolved.values()):
-            with closing(self.ledger.scan(visible.with_only_columns(E.kind, E.key, ALIASES))) as rows:
-                candidates = matching_names(rows, keys)
-            yield {"status": "not_found", **({"names_and_aliases": candidates} if candidates else {})}
+    def material(self, kind: str | None, ids: list[UUID], date: Item | None, cursor: RecordCursor, prefix: int | None = None) -> Generator[PageRow]:
+        if not ids:
             return
-        ids = [row["id"] for row in self.ledger.read(visible.with_only_columns(E.id).where(
-            E.key.in_({name for matches in resolved.values() for name in matches}),
-        ))]
         facts = self.facts.where(F.entity_id.in_(ids))
         if date is not None:
             facts = facts.where(facts_in_month(date))
@@ -177,7 +166,7 @@ class RecordQuery:
                 else:
                     rows = stack.enter_context(closing(self.ledger.scan(page.clip(facts.where(
                         F.position.in_([row["position"] for _, row in selected]),
-                    ).order_by(None).order_by(ENTITY_ORDER, F.position)), view_parameters(self.identity))))
+                    ).order_by(None).order_by(ENTITY_ORDER, F.position).params(**view_parameters(self.identity))))))
                     records = (({"entities": [], "facts": [project(self.identity, item).model_dump(mode="json")]}, item["exposure"] == "full")
                                for item in rows)
                 for (index, _row), (record, full) in zip(selected, records, strict=True):
@@ -195,7 +184,26 @@ class RecordQuery:
             names = [key] if isinstance(key, str) else key
             source = partial(self.office_material, names, date)
         elif key:
-            source = partial(self.material, kind, list(dict.fromkeys([key] if isinstance(key, str) else key)), date)
+            keys = list(dict.fromkeys([key] if isinstance(key, str) else key))
+            visible = self.visible(kind, None)
+            names = named(self.ledger, kind, keys, query=visible.with_only_columns(E.id, E.kind, E.key, ALIASES))
+            canonical = {row["key"] for row in names}
+            resolved = {value: {value} if value in canonical else {
+                row["key"] for row in names if value in row["aliases"]
+            } for value in keys}
+            if any(len(matches) != 1 for matches in resolved.values()):
+                with closing(self.ledger.scan(visible.with_only_columns(E.kind, E.key, ALIASES))) as rows:
+                    candidates = matching_names(rows, keys)
+                return {"status": "not_found", **({"names_and_aliases": candidates} if candidates else {})}
+            ids = [row["id"] for row in names if any(row["key"] in matches for matches in resolved.values())]
+            # Unscoped aliases also select other visible kinds sharing the canonical
+            # key (e.g. a person's dossier), but never read an already resolved ID.
+            aliases = {name for matches in resolved.values() for name in matches} - set(keys)
+            if kind is None and aliases:
+                ids.extend(row["id"] for row in self.ledger.read(visible.with_only_columns(E.id).where(
+                    E.key.in_(aliases), ~E.id.in_(ids),
+                )))
+            source = partial(self.material, kind, ids, date)
         else:
             return self.navigation(kind, date, scope, cursor)
         if cursor.text is not None:

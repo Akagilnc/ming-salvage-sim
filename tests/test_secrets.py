@@ -214,12 +214,6 @@ def test_every_model_call_reads_identity_scoped_records(game_db, steps):
                         if isinstance(p, ToolReturnPart)}
             calls = ([ToolCallPart("read_records", {"kind": kind}, tool_call_id=kind) for kind in ("account", "army")]
                      if name in {"scene", "simulation", "gazette"} and not returned else [])
-            queries = {p.tool_call_id: p.args_as_dict() for m in messages for p in m.parts if isinstance(p, ToolCallPart)}
-            pending = [p for p in messages[-1].parts if isinstance(p, ToolReturnPart) and "next" in p.model_response_object()]
-            continuations.update({p.tool_call_id + "-next": continuations.get(p.tool_call_id, p.tool_call_id) for p in pending})
-            calls.extend(ToolCallPart("read_records", {
-                **queries[p.tool_call_id], "scope": {**queries[p.tool_call_id].get("scope", {}), "after": p.model_response_object()["next"]},
-            }, tool_call_id=p.tool_call_id + "-next") for p in pending)
             if calls:
                 return ModelResponse(parts=calls)
             if "office" in returned:
@@ -248,7 +242,7 @@ def test_every_model_call_reads_identity_scoped_records(game_db, steps):
                 ]),
             ])
 
-        steps[name] = replaying(respond, received[name], tools[name], model_invocations[name])
+        steps[name] = replaying(respond, received[name], tools[name], model_invocations[name], continuations)
     with TestClient(create_app(game_db.parent)) as client:
         client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
         client.post("/actions", json={"action": "open"}).raise_for_status()

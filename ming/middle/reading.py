@@ -1,7 +1,7 @@
 """Complete identity reads: resolution, visibility, opening view and projection."""
 
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Generator, Sequence
 from functools import partial
 from typing import Any
 from uuid import UUID
@@ -64,41 +64,47 @@ class Records:
         return names_and_aliases(self._ledger.read(queries.CATALOGUE.with_only_columns(E.kind, E.key, ALIASES)))
 
     def office_record(self, identity: Identity, key: str | list[str]) -> Item:
+        records = list(self.office_records(identity, [key] if isinstance(key, str) else key))
+        return records[0] if isinstance(key, str) or len(key) == 1 else {"offices": records}
+
+    def office_records(self, identity: Identity, keys: list[str]) -> Generator[Item]:
+        """Resolve lazily, sharing appointment and office projections within one request."""
         results: dict[str, Item] = {}
         resolved: dict[tuple[str, str], Item] = {}
         offices: dict[str, list[Item]] = {}
         names: dict[str, dict[str, list[str]]] | None = None
-        for name in dict.fromkeys([key] if isinstance(key, str) else key):
-            pairs, resolution = office_pairs(self._ledger, name, partial(visible_appointments, self._ledger, identity))
-            if resolution["status"] == "territory_required":
-                results[name] = resolution
-            elif resolution["status"] == "office_not_found":
-                if names is None:
-                    names = names_and_aliases(self._ledger.read(ENTITY_ROWS.with_only_columns(E.kind, E.key, ALIASES).where(
-                        E.kind.in_(("office", "territory")), E.id.in_(VISIBLE_IDS[identity_key(identity)]),
-                    ), view_parameters(identity, "office")))
-                results[name] = {"status": "office_not_found", "names_and_aliases": matching_offices(names, name)}
-            else:
-                if pairs[0] in resolved:
+        for name in keys:
+            if name not in results:
+                pairs, resolution = office_pairs(self._ledger, name, partial(visible_appointments, self._ledger, identity))
+                if resolution["status"] == "territory_required":
+                    results[name] = resolution
+                elif resolution["status"] == "office_not_found":
+                    if names is None:
+                        names = names_and_aliases(self._ledger.read(ENTITY_ROWS.with_only_columns(E.kind, E.key, ALIASES).where(
+                            E.kind.in_(("office", "territory")), E.id.in_(VISIBLE_IDS[identity_key(identity)]),
+                        ), view_parameters(identity, "office")))
+                    results[name] = {"status": "office_not_found", "names_and_aliases": matching_offices(names, name)}
+                elif pairs[0] in resolved:
                     results[name] = resolved[pairs[0]]
-                    continue
-                record_key, data = incumbency_record(pairs[0], [])
-                rows = self._ledger.entities(kind="incumbency", key=record_key)
-                visible = visible_appointments(self._ledger, identity, rows)
-                if rows and not visible:
-                    results[name] = resolved[pairs[0]] = {"status": "not_found", "message": "未找到"}
-                    continue
-                if visible:
-                    data = visible[0]["data"]
-                if pairs[0][0] not in offices:
-                    offices[pairs[0][0]] = [e.model_dump(mode="json") for e in self.entities(identity, kind="office", key=pairs[0][0])]
-                results[name] = resolved[pairs[0]] = {
-                    "status": "occupied" if data["holders"] else "acting" if data["acting"] else "vacant",
-                    "appointments": [{**data, "entity_id": str(visible[0]["id"]) if visible else None}],
-                    "entities": offices[pairs[0][0]],
-                    "facts": [],
-                }
-        return results[key] if isinstance(key, str) else results[key[0]] if len(key) == 1 else {"offices": [results[name] for name in key]}
+                else:
+                    record_key, data = incumbency_record(pairs[0], [])
+                    rows = self._ledger.entities(kind="incumbency", key=record_key)
+                    visible = visible_appointments(self._ledger, identity, rows)
+                    if rows and not visible:
+                        results[name] = resolved[pairs[0]] = {"status": "not_found", "message": "未找到"}
+                    else:
+                        data = visible[0]["data"] if visible else data
+                        results[name] = resolved[pairs[0]] = {
+                            "status": "occupied" if data["holders"] else "acting" if data["acting"] else "vacant",
+                            "appointments": [{**data, "entity_id": str(visible[0]["id"]) if visible else None}],
+                            "entities": [], "facts": [],
+                        }
+            if "appointments" in results[name]:
+                office = results[name]["appointments"][0]["office"]
+                if office not in offices:
+                    offices[office] = [e.model_dump(mode="json") for e in self.entities(identity, kind="office", key=office)]
+                results[name]["entities"] = offices[office]
+            yield results[name]
 
     def query(
         self, identity: Identity, kind: str | None = None,

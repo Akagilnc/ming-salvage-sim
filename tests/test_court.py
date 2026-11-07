@@ -24,6 +24,7 @@ def replaying(
     received: list[ModelMessage] | None = None,
     toolsets: list[list[str]] | None = None,
     identities: list | None = None,
+    continuations: dict[str, str] | None = None,
 ) -> FunctionModel:
     remaining = iter(replies) if not callable(replies) else iter(())
 
@@ -35,6 +36,15 @@ def replaying(
             received.extend(_messages)
         if toolsets is not None:
             toolsets.append([tool.name for tool in _info.function_tools])
+        if continuations is not None:
+            queries = {p.tool_call_id: p.args_as_dict() for m in _messages for p in m.parts if isinstance(p, ToolCallPart)}
+            pending = [p for p in _messages[-1].parts if isinstance(p, ToolReturnPart)
+                       and p.tool_name == "read_records" and "next" in p.model_response_object()]
+            continuations.update({p.tool_call_id + "-next": continuations.get(p.tool_call_id, p.tool_call_id) for p in pending})
+            if pending:
+                return ModelResponse(parts=[ToolCallPart("read_records", {
+                    **queries[p.tool_call_id], "scope": {**queries[p.tool_call_id].get("scope", {}), "after": p.model_response_object()["next"]},
+                }, tool_call_id=p.tool_call_id + "-next") for p in pending])
         result = replies(_messages) if callable(replies) else next(remaining)
         if isawaitable(result):
             result = await result
@@ -374,7 +384,7 @@ def test_recorded_r2_reply_lands(game_db, steps, audit, case):
 
 
 @pytest.mark.parametrize("game_db", ["first_night"], indirect=True)
-def test_translation_queries_preserve_two_table_permissions(game_db, steps):
+def test_translation_queries_preserve_two_table_permissions(game_db, steps, audit):
     recording = json.loads((RECORDED / "declarations_1972.json").read_text())["cases"]
     received = []
     offices = ["陕西巡抚", "巡抚", "新城知县", "西安知府", "内阁大学士", "陕西巡府", "不存在的官职", "内阁大学士"]
@@ -390,10 +400,10 @@ def test_translation_queries_preserve_two_table_permissions(game_db, steps):
         "capital-army": {"kind": "army", "key": "京营"},
         "capital-offices": {"kind": "office", "scope": {"department": "京营"}},
         "counties": {"kind": "territory", "scope": {"region": "北直隶 / 京师", "level": "县"}},
-        "empty-root": {"date": {"year": 1400, "month": 1}},
-        "single-root": {"date": {"year": 1500, "month": 1}},
-        "root-end": {"date": {"year": 1500, "month": 1}, "scope": {"after": {"row": 1}}},
-        "bad-root-end": {"date": {"year": 1500, "month": 1}, "scope": {"after": {"row": 2}}},
+        "empty-date": {"date": {"year": 1400, "month": 1}},
+        "single-date": {"date": {"year": 1500, "month": 1}},
+        "date-end": {"date": {"year": 1500, "month": 1}, "scope": {"after": {"row": 1}}},
+        "bad-date-end": {"date": {"year": 1500, "month": 1}, "scope": {"after": {"row": 2}}},
         "bad-cursor": {"kind": "office", "scope": {"after": {"row": 1_000_000}}},
         "bad-office-character": {"kind": "office", "scope": {"after": {"character": 5}}},
         "bad-person-character": {"kind": "person", "scope": {"after": {"character": 5}}},
@@ -440,11 +450,15 @@ def test_translation_queries_preserve_two_table_permissions(game_db, steps):
     assert {row["kind"] for row in observed["capital-army"]["entities"]} == {"army"}
     assert {row["kind"] for row in observed["capital-offices"]["catalogue"]} == {"office"}
     assert "保定府新城县" in {row["key"] for row in observed["counties"]["catalogue"]}
-    assert observed["empty-root"] == observed["root-end"] == {"catalogue": []}
-    assert observed["single-root"] == {"catalogue": [{"kind": "person"}]}
+    catalogue = {(row["kind"], row["key"]): row["data"] for row in audit(game_db)["entities"]}
+    assert all(catalogue[row["kind"], row["key"]][field] == value
+               for name, args in probes.items() for field, value in args.get("scope", {}).items()
+               if field in {"department", "region", "level"} for row in observed[name]["catalogue"])
+    assert observed["empty-date"] == observed["date-end"] == {"catalogue": []}
+    assert [(row["kind"], row["key"]) for row in observed["single-date"]["catalogue"]] == [("person", "郭允厚")]
     assert observed["missing-after"]["status"] == "not_found"
     assert all(observed[label] == {"status": "invalid_cursor"} for label in (
-        "bad-cursor", "bad-root-end", "bad-office-character", "bad-person-character", "bad-material-character",
+        "bad-cursor", "bad-date-end", "bad-office-character", "bad-person-character", "bad-material-character",
     ))
     batches = [[(
         {field: result.get(field) for field in ("status", "appointments", "territories", "pairs", "names_and_aliases")},
