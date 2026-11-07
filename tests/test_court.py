@@ -392,7 +392,13 @@ def test_translation_queries_preserve_two_table_permissions(game_db, steps):
         "counties": {"kind": "territory", "scope": {"region": "北直隶 / 京师", "level": "县"}},
         "empty-root": {"date": {"year": 1400, "month": 1}},
         "single-root": {"date": {"year": 1500, "month": 1}},
+        "root-end": {"date": {"year": 1500, "month": 1}, "scope": {"after": {"row": 1}}},
+        "bad-root-end": {"date": {"year": 1500, "month": 1}, "scope": {"after": {"row": 2}}},
         "bad-cursor": {"kind": "office", "scope": {"after": {"row": 1_000_000}}},
+        "bad-office-character": {"kind": "office", "scope": {"after": {"character": 5}}},
+        "bad-person-character": {"kind": "person", "scope": {"after": {"character": 5}}},
+        "bad-material-character": {"kind": "person", "key": "郭允厚", "scope": {"after": {"character": 5}}},
+        "missing-after": {"kind": "person", "key": "不存在的人", "scope": {"after": {"row": 1_000_000}}},
     }
     for name, case in (("NightDeclaration", "night_catalogue_queries"), ("Declaration", "catalogue_queries")):
         steps[name] = replaying(ModelMessagesTypeAdapter.validate_python(recording[case]), received)
@@ -434,9 +440,12 @@ def test_translation_queries_preserve_two_table_permissions(game_db, steps):
     assert {row["kind"] for row in observed["capital-army"]["entities"]} == {"army"}
     assert {row["kind"] for row in observed["capital-offices"]["catalogue"]} == {"office"}
     assert "保定府新城县" in {row["key"] for row in observed["counties"]["catalogue"]}
-    assert observed["empty-root"] == {"catalogue": []}
+    assert observed["empty-root"] == observed["root-end"] == {"catalogue": []}
     assert observed["single-root"] == {"catalogue": [{"kind": "person"}]}
-    assert observed["bad-cursor"] == {"status": "invalid_cursor"}
+    assert observed["missing-after"]["status"] == "not_found"
+    assert all(observed[label] == {"status": "invalid_cursor"} for label in (
+        "bad-cursor", "bad-root-end", "bad-office-character", "bad-person-character", "bad-material-character",
+    ))
     batches = [[(
         {field: result.get(field) for field in ("status", "appointments", "territories", "pairs", "names_and_aliases")},
         [e["id"] for e in result.get("entities", [])],

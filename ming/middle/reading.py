@@ -66,7 +66,7 @@ class Records:
         )
         return names_and_aliases(self._ledger.read(query.with_only_columns(E.kind, E.key, ALIASES)))
 
-    def office_record(self, identity: Identity, key: str | list[str], date: Item | None = None, *, history: bool = True) -> Item:
+    def office_record(self, identity: Identity, key: str | list[str]) -> Item:
         results: dict[str, Item] = {}
         resolved: dict[tuple[str, str], Item] = {}
         offices: dict[str, list[Item]] = {}
@@ -97,9 +97,9 @@ class Records:
                     offices[pairs[0][0]] = [e.model_dump(mode="json") for e in self.entities(identity, kind="office", key=pairs[0][0])]
                 results[name] = resolved[pairs[0]] = {
                     "status": "occupied" if data["holders"] else "acting" if data["acting"] else "vacant",
-                    "appointments": [data if history else {**data, "entity_id": str(visible[0]["id"]) if visible else None}],
+                    "appointments": [{**data, "entity_id": str(visible[0]["id"]) if visible else None}],
                     "entities": offices[pairs[0][0]],
-                    "facts": [f.model_dump(mode="json") for f in self.facts(identity, entity_id=[e["id"] for e in visible], date=date)] if history else [],
+                    "facts": [],
                 }
         return results[key] if isinstance(key, str) else results[key[0]] if len(key) == 1 else {"offices": [results[name] for name in key]}
 

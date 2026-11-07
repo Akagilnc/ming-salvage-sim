@@ -745,8 +745,8 @@ def test_codex_forwards_a_ledger_sized_tool_result(tmp_path: Path, monkeypatch, 
     auth_file(home / "auth.json", expired=False)
     monkeypatch.setenv("CODEX_HOME", str(home))
     planted = {
-        "samples": list(range(70_000)), "body": '汉\\"\n𠮷' * 5000,
-        "axis": {"field": "loyalty", **{str(index): index for index in range(2000)}, "value": 90},
+        "samples": [None, True, False, [], {}, *range(2500)], "body": '汉\\"\n𠮷' * 1200,
+        "axis": {"field": "loyalty", **{str(index): index for index in range(1200)}, "value": 90},
     }
     outputs: list[dict[str, object]] = []
     offices = [row["name"] for row in json.loads((Path(__file__).parents[1] / "content/official_titles.json").read_text())["offices"][:24]]

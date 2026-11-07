@@ -70,7 +70,7 @@ class RecordQuery:
             "region" if kind == "territory" and scope.region is None else "level" if kind == "territory" else None
         )
         if not cursor.grouped:
-            page = self.listing(query, cursor)
+            page = record_page(partial(self.listing, query), cursor)
             if "next" not in page or field is None or getattr(scope, field) is not None:
                 return {"status": "not_found"} if page == {"catalogue": []} and kind and date is None and not scope.after else page
             cursor = cursor.model_copy(update={"row": 0, "character": 0, "grouped": True})
@@ -78,16 +78,11 @@ class RecordQuery:
             return {"status": "invalid_cursor"}
         group = E.data[field].as_string()
         query = query.with_only_columns(group.label(field), func.count().label("count")).order_by(None).group_by(group).order_by(group)
-        return self.listing(query, cursor)
+        return record_page(partial(self.listing, query), cursor)
 
-    def listing(self, query: Select[Any], cursor: RecordCursor) -> Item:
+    def listing(self, query: Select[Any], cursor: RecordCursor) -> Generator[Item]:
         with closing(self.ledger.scan(query.offset(cursor.row))) as rows:
-            page = record_page(({"catalogue": [row]} for row in rows), cursor)
-        if page == {"catalogue": []} and (cursor.character or cursor.row and not self.ledger.read(
-            select(literal(1)).select_from(query.subquery()).offset(cursor.row - 1).limit(1),
-        )):
-            return {"status": "invalid_cursor"}
-        return page
+            yield from ({"catalogue": [row]} for row in rows)
 
     def office_material(self, names: list[str], date: Item | None, cursor: RecordCursor) -> Generator[Item]:
         if cursor.text is not None and cursor.row < len(names):
@@ -96,7 +91,7 @@ class RecordQuery:
         prepared: dict[str, Item] = {}
         for name in names[cursor.row:]:
             if name not in prepared:
-                prepared[name] = self.reader.office_record(self.identity, name, date, history=False)
+                prepared[name] = self.reader.office_record(self.identity, name)
             yield {"offices": [prepared[name]]} if len(names) > 1 else prepared[name]
         # Header pages stop the generator above. History needs only resolved
         # appointment keys, not all earlier offices' complete descriptions.
@@ -153,15 +148,9 @@ class RecordQuery:
         query = select(source).order_by(source.c.type, source.c.entity_order, source.c.position).offset(max(0, cursor.row - prefix)).params(
             **view_parameters(self.identity, kind or "office"),
         )
-        found = False
         with closing(self.ledger.scan(query)) as rows:
             for batch in batched(enumerate(rows, start=max(cursor.row, prefix)), 1 if cursor.text or cursor.character else 64):
-                found = True
                 yield from self.pieces(batch, cursor, facts, kind)
-        if not found and cursor.row >= prefix and (cursor.character or cursor.row > prefix and not self.ledger.read(
-            query.offset(cursor.row - prefix - 1).limit(1),
-        )):
-            yield {"status": "invalid_cursor"}
 
     def pieces(self, batch: tuple[tuple[int, Item], ...], cursor: RecordCursor, facts: Select[Any], kind: str | None) -> Generator[Item]:
         for category in ("entity", "fact", "turn"):
@@ -197,14 +186,13 @@ class RecordQuery:
             return {"status": "invalid_scope"}
         if key and kind in {"office", "incumbency"}:
             names = [key] if isinstance(key, str) else key
-            rows = self.office_material(names, date, cursor)
+            source = partial(self.office_material, names, date)
         elif key:
-            rows = self.material(kind, list(dict.fromkeys([key] if isinstance(key, str) else key)), date, cursor)
+            source = partial(self.material, kind, list(dict.fromkeys([key] if isinstance(key, str) else key)), date)
         else:
             return self.navigation(kind, date, scope, cursor)
-        if not self.numeric:
-            rows = (character_input(row) for row in rows)
-        with closing(rows):
-            if cursor.text is not None:
-                return next(rows, {"status": "invalid_cursor"})
-            return record_page(rows, cursor)
+        if cursor.text is not None:
+            with closing(source(cursor)) as rows:
+                result = next(rows, {"status": "invalid_cursor"})
+            return result if self.numeric else character_input(result)
+        return record_page(lambda position: (row if self.numeric else character_input(row) for row in source(position)), cursor)

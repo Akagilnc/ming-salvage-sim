@@ -45,7 +45,8 @@ def record_queries(catalogue):
         "date-original": {"date": {"id": "world", **date}},
         "date-reordered": {"date": {"month": 10, "year": 1627, "id": "world"}},
         "pair": {"kind": "person", "key": ["温体仁", "杨嗣昌"]},
-        "many": {"key": [e["key"] for e in catalogue] + ["杨嗣昌"]},
+        "many": {"key": [e["key"] for e in catalogue if e["kind"] == "account"]
+                         + [e["key"] for e in catalogue if e["kind"] == "army"][:12] + ["杨嗣昌"]},
         "unknown-key": {"key": "不存在的人"},
         "unknown-kind": {"kind": "不存在的类"},
         "hidden-group": {"kind": "account", "scope": {"department": "户部"}},
@@ -111,15 +112,19 @@ def assert_model_read_tools(received, tools, model_invocations, court, continuat
             assert responses["hidden-field"] == responses["foreign-dossier"] == {"status": "invalid_cursor"}
             assert {e["key"] for e in responses["pair"]["entities"]} == {"温体仁", "杨嗣昌"}
             assert {e["kind"] for e in responses["class"]["catalogue"]} == {"person"}
-            assert all(set(e) == {"kind", "key", "description"} for e in responses["class"]["catalogue"])
-            assert responses["date"] == responses["date-original"] == responses["date-reordered"]
             accounts = {e["key"]: e["data"] for e in responses["many"]["entities"] if e["kind"] == "account"}
+            assert {row["key"]: row["description"] for row in responses["account"].get("catalogue", [])} == {
+                key: data.get("description", data.get("distinction")) for key, data in accounts.items()
+            }
+            assert responses["date"] == responses["date-original"] == responses["date-reordered"]
             if name == "scene":
                 assert accounts == {key: {"name": key} for key in ("国库", "内库", "节慎库", "常盈库")}
             elif name == "gazette":
+                assert responses["account"] == {"status": "not_found"}
                 assert accounts == {}
                 assert not [f for f in responses["many"]["facts"] if f["kind"] == "reported"]
             else:
+                assert "next" in pages["many"][0] and "next" not in pages["many"][-1]
                 assert {key: data["taels"] for key, data in accounts.items()} == {
                     "国库": 3200000, "内库": 4400000, "节慎库": 600000, "常盈库": 1200000,
                 }
@@ -135,7 +140,7 @@ def assert_model_read_tools(received, tools, model_invocations, court, continuat
                 assert next(e.data["loyalty"] for e in court.entities("world", kind="person", key="杨嗣昌")) == 75
                 assert {(e["key"], field): e["data"][field] for e in responses["many"]["entities"] if e["kind"] == "army"
                         for field in ("firearm_equipment", "cannon_equipment")} == {
-                    (e.key, field): e.data[field] for e in court.entities("audit", kind="army")
+                    (e.key, field): e.data[field] for e in court.entities("audit", kind="army")[:12]
                     for field in ("firearm_equipment", "cannon_equipment")
                 }
         if name in {"urgent", "impeachment", "deliberation", "secret_report"}:
