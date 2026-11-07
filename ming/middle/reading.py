@@ -1,7 +1,7 @@
 """Complete identity reads: resolution, visibility, opening view and projection."""
 
 from collections import defaultdict
-from collections.abc import Callable, Generator, Sequence
+from collections.abc import Callable, Generator, Iterable, Sequence
 from functools import partial
 from typing import Any
 from uuid import UUID
@@ -55,7 +55,7 @@ class Records:
         """Capture the emperor's entities only if no current opening exists; never write."""
         if self._opening("emperor") is not None:
             return None
-        return entities(self._ledger, "emperor")
+        return tuple(entities(self._ledger, "emperor"))
 
     def calendar(self) -> EntityView:
         return EntityView.model_validate(calendar_row(self._ledger))
@@ -73,7 +73,7 @@ class Records:
         return records[0] if isinstance(key, str) or len(key) == 1 else {"offices": records}
 
     def office_records(
-        self, identity: Identity, keys: list[str], *, office_view: Callable[[str], tuple[EntityView, ...]] | None = None,
+        self, identity: Identity, keys: list[str], *, office_view: Callable[[str], Iterable[EntityView]] | None = None,
     ) -> Generator[Item]:
         """Resolve lazily, sharing appointment and office projections within one request."""
         results: dict[str, Item] = {}
@@ -179,7 +179,7 @@ class Records:
         if ids == []:
             return ()
         selection: Item = {k: v for k, v in {"kind": kind, "keys" if isinstance(key, list) else "key": key, "ids": ids}.items() if v is not None}
-        return entities(self._ledger, identity, selection, opening=self._opening(identity, snapshot=True))
+        return tuple(entities(self._ledger, identity, selection, opening=self._opening(identity, snapshot=True)))
 
     def _unmatched_query(self, identity: Identity, kind: str, response: str, link: tuple[str, str]) -> Select[Any]:
         return fact_sources(identity).where(queries.unmatched(kind, response, link))

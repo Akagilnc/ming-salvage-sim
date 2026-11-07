@@ -9,7 +9,7 @@ from typing import Any, Literal, cast
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
-from sqlalchemy import JSON, Select, case, func, literal, select, true, type_coerce
+from sqlalchemy import JSON, LargeBinary, Select, case, cast as sql_cast, func, literal, select, true, type_coerce
 from sqlalchemy.sql.elements import ColumnElement
 
 from ming.ledger import Item, Ledger
@@ -54,7 +54,7 @@ def large_field(column: ColumnElement[Any]) -> ColumnElement[bool]:
 
 
 class TextPage:
-    """Bound stored fields before projection; expose only surviving references."""
+    """Measure projected delivery first; bound rereads and expose only surviving references."""
 
     def __init__(self, ledger: Ledger, cursor: RecordCursor, *, numeric: bool = False) -> None:
         self.ledger = ledger
@@ -63,20 +63,37 @@ class TextPage:
         self.prefix = uuid4().hex
         self.allowed: list[RecordText] = []
         self.full: list[Item] = []
+        self.sources: list[tuple[Select[Any], Any]] = []
         self.source: Select[Any] | None = None
         self.dossier_source: Select[Any] | None = None
 
-    def whole(self, column: str, dossier: bool = False, entity: tuple[str, str] | None = None) -> Item:
-        """One internal root marker for both SQL clipping and delivery fallback."""
-        return {self.prefix: self.prefix + RecordText.model_validate({
-            "column": column, "path": "$", "container": True, "dossier": dossier, "entity": entity,
+    def whole(
+        self, column: str, dossier: bool = False, entity: tuple[str, str] | None = None,
+        *, payload: tuple[Any, Any, Select[Any]] | None = None, path: str | None = None,
+    ) -> Item:
+        """Carry projected values and their source until actual delivery measurement."""
+        result: Item = {self.prefix: self.prefix + RecordText.model_validate({
+            "column": column, "path": path or (None if column == "emperor_words" else "$"),
+            "container": isinstance(payload[0], (dict, list)) if payload else column != "emperor_words",
+            "dossier": dossier, "entity": entity,
         }).model_dump_json(exclude_none=True)}
+        if payload is not None:
+            self.sources.append((payload[2], payload[1]))
+            result.update(value=payload[0], source=len(self.sources) - 1, complete=payload[0] == payload[1])
+        return result
+
+    def entity(self, row: Item, original: Item) -> Item:
+        assert self.source is not None
+        return {**row, "data": self.whole("data", entity=(row["kind"], row["key"]) if row["kind"] == "office" else None,
+                                        payload=(row["data"], original["data"], self.source.where(self.source.selected_columns.id == row["id"])))}
 
     def clip(self, query: Select[Any], dossier: bool = False) -> Select[Any]:
         if dossier:
             self.dossier_source = query
         else:
             self.source = query
+        if self.cursor.text is None and not self.cursor.clipped:
+            return query
         columns = list(query.selected_columns)
         for index, column in enumerate(columns):
             if column.key == "aliases" and self.cursor.text is not None:
@@ -105,10 +122,7 @@ class TextPage:
                 clipped = select(func.json_group_object(children.c.key, func.json(encoded))).correlate_except(children).scalar_subquery()
             clipped = case((large_field(column), clipped), else_=column)
             if column.key == "detail" and "exposure" in query.selected_columns:
-                # First delivery measures the projected row. Continuations read
-                # only the root marker, then the requested container or field.
-                full = literal(self.whole(column.key), type_=JSON) if self.cursor.text or self.cursor.clipped else column
-                clipped = case((query.selected_columns.exposure == "full", full), else_=clipped)
+                clipped = case((query.selected_columns.exposure == "full", literal(self.whole(column.key), type_=JSON)), else_=clipped)
             columns[index] = type_coerce(clipped, column.type).label(column.key)
         return query.with_only_columns(*columns)
 
@@ -121,6 +135,8 @@ class TextPage:
             if self.prefix in value:
                 if "value" in value:
                     self.full.append(cast(Item, value))
+                    if value["complete"]:
+                        self.allowed.append(RecordText.model_validate_json(cast(str, value[self.prefix])[len(self.prefix):]))
                     return self.replace(value["value"])
                 return self.replace(value[self.prefix])
             return {key: self.replace(item) for key, item in cast(dict[str, Any], value).items()}
@@ -128,13 +144,16 @@ class TextPage:
             return [self.replace(item) for item in cast(list[Any], value)]
         return value
 
-    def container(self, metadata: Item, cursor: RecordCursor) -> Generator[Item]:
+    def container(self, metadata: Item, cursor: RecordCursor) -> Generator[PageRow]:
         assert self.source is not None and self.cursor.text is not None
         reference = self.cursor.text
         children = func.json_each(self.source.selected_columns[reference.column], reference.path).table_valued("key", "value", "type", "fullkey")
         query = self.source.with_only_columns(
             children.c.key, children.c.type, children.c.fullkey,
-            case((large_field(children.c.value), None), else_=children.c.value).label("value"), maintain_column_froms=True,
+            # Stored JSON may use six-character Unicode escapes. This is only
+            # an upper read bound; decoded values still use the normal pager.
+            case((case((children.c.type == "text", func.length(sql_cast(children.c.value, LargeBinary)) > PAGE_BYTES),
+                       else_=func.length(children.c.value) > PAGE_BYTES * 6), None), else_=children.c.value).label("value"), maintain_column_froms=True,
         ).join(children, true()).order_by(None).offset(cursor.row)
         with closing(self.ledger.scan(query)) as rows:
             for row in rows:
@@ -145,36 +164,48 @@ class TextPage:
                 else:
                     value = (json.loads(cast(str, row["value"])) if row["type"] in {"object", "array"} else
                              bool(row["value"]) if row["type"] in {"true", "false"} else row["value"])
-                if not self.numeric and row["key"] == "value" and metadata["field"] is not None:
-                    value = character_input({"field": metadata["field"], "value": value})["value"]
-                yield ({"object": {row["key"]: value}} if metadata["container"] == "object" else {"items": [value]})
+                if not self.numeric:
+                    value = (character_input({"field": metadata["field"], "value": value})["value"]
+                             if row["key"] == "value" and metadata["field"] is not None else character_input({row["key"]: value})[row["key"]])
+                page = TextPage(self.ledger, self.cursor.model_copy(update={"text": None, "character": 0}), numeric=self.numeric)
+                if row["value"] is not None:
+                    value = page.whole(reference.column, reference.dossier, reference.entity,
+                                       payload=(value, value, self.source), path=row["fullkey"])
+                yield page.render({"object": {row["key"]: value}} if metadata["container"] == "object" else {"items": [value]})
 
-    def shrink(self, value: Any, field: Item, keys: tuple[str | int, ...] = ()) -> Any:
-        """Keep fitting children inline, using the existing page assembler."""
+    def shrink(self, value: Any, field: Item, keys: tuple[str | int, ...] = (), original: Any = None) -> Any:
+        """Keep fitting children inline; only unchanged source values may become references."""
         pieces: Callable[[RecordCursor], Generator[Item]]
-        if isinstance(value, dict):
-            reduced = {key: self.shrink(item, field, (*keys, key)) for key, item in cast(Item, value).items()}
+        complete = value == original if keys else field["complete"]
+        if isinstance(value, dict) and self.prefix not in value:
+            reduced = {key: self.shrink(item, field, (*keys, key), cast(Item, original).get(key) if isinstance(original, dict) else None)
+                       for key, item in cast(Item, value).items()}
             pieces = lambda _: ({"object": {key: self.replace(item)}} for key, item in reduced.items())
             if "next" not in record_page(pieces, RecordCursor(), empty={"object": {}}):
                 return reduced
+            value = reduced
         elif isinstance(value, list):
-            items = [self.shrink(item, field, (*keys, index)) for index, item in enumerate(cast(list[Any], value))]
+            items = [self.shrink(item, field, (*keys, index), cast(list[Any], original)[index] if isinstance(original, list) and index < len(cast(list[Any], original)) else None)
+                     for index, item in enumerate(cast(list[Any], value))]
             pieces = lambda _: ({"items": [self.replace(item)]} for item in items)
             if "next" not in record_page(pieces, RecordCursor(), empty={"items": []}):
                 return items
+            value = items
         elif not isinstance(value, str) or fit_text(value, 0, PAGE_BYTES) == len(value):
+            return cast(Any, value)
+        if not complete:
             return value
         if not keys:
             return field[self.prefix]
         if "paths" not in field:
             field["reference"] = RecordText.model_validate_json(field[self.prefix][len(self.prefix):])
-            source: Select[Any] = field["source"]
-            tree = func.json_tree(source.selected_columns[field["reference"].column]).table_valued("id", "parent", "key", "fullkey")
+            source = self.sources[cast(int, field["source"])][0]
+            tree = func.json_tree(source.selected_columns[field["reference"].column], field["reference"].path).table_valued("id", "parent", "key", "fullkey")
             # Ask SQLite for native paths only when a child needs a reference.
             field["paths"] = {(row["parent"], row["key"]): row for row in self.ledger.read(
                 source.with_only_columns(*tree.c, maintain_column_froms=True).join(tree, true()).order_by(None),
             )}
-        node = field["paths"][None, None]
+        node = next(node for (parent, _), node in field["paths"].items() if parent is None)
         for key in keys:
             node = field["paths"][node["id"], key]
         reference: RecordText = field["reference"]
@@ -186,7 +217,7 @@ class TextPage:
         fields = self.full[:]
         changed = False
         for field in fields:
-            reduced = self.shrink(field["value"], field)
+            reduced = self.shrink(field["value"], field, original=self.sources[field["source"]][1])
             changed |= reduced != field["value"]
             field["value"] = reduced
         if changed:
@@ -196,7 +227,8 @@ class TextPage:
             return prepared
         # Each field is now bounded. If their combination still cannot fit,
         # defer only the largest necessary fields, not every sibling.
-        for field in sorted(fields, key=lambda field: page_row({"value": self.replace(field["value"])})[2], reverse=True):
+        for field in sorted((field for field in fields if field["complete"]),
+                            key=lambda field: page_row({"value": self.replace(field["value"])})[2], reverse=True):
             del field["value"]
             self.full.clear()
             prepared = page_row(self.replace(value), clipped=True)

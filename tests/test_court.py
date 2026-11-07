@@ -5,6 +5,7 @@ from pathlib import Path
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import ExitStack, contextmanager
 from inspect import isawaitable
+from itertools import groupby
 
 import pytest
 from pydantic_ai._run_context import get_current_run_context
@@ -82,30 +83,42 @@ def replaying(
     return FunctionModel(reply, stream_function=stream_response)
 
 
-def candidate_results(messages, continuations):
-    """Reassemble a candidate row and its alias array/string field reads."""
-    messages = {id(message): message for message in messages}.values()
-    queries = {p.tool_call_id: p.args_as_dict() for message in messages for p in message.parts if isinstance(p, ToolCallPart)}
-    returned = {p.tool_call_id: p.model_response_object() for message in messages for p in message.parts if isinstance(p, ToolReturnPart)}
+def record_results(queries, returned, continuations):
+    """Reassemble the read/next contract, independent of which fields stayed inline."""
     pages = {}
     for call_id, value in returned.items():
         key = continuations.get(call_id, call_id), json.dumps(queries[call_id].get("scope", {}).get("read"), sort_keys=True)
         pages.setdefault(key, []).append(value)
     assert all("next" not in parts[-1] for parts in pages.values())
 
+    def assemble(parts):
+        rows = []
+        for row, group in groupby(parts, lambda part: part.get("fragment", {}).get("row")):
+            rows.extend(group) if row is None else rows.append(json.loads("".join(part["fragment"]["text"] for part in group)))
+        result = {}
+        for row in rows:
+            for key, value in row.items():
+                if isinstance(value, list):
+                    result.setdefault(key, []).extend(value)
+                elif isinstance(value, dict) and key != "next":
+                    result.setdefault(key, {}).update(value)
+                elif key == "text":
+                    result[key] = result.get(key, "") + value
+                elif key != "next":
+                    result[key] = value
+        return result
+
     def resolve(value, root):
         if isinstance(value, list):
             return [resolve(item, root) for item in value]
         if isinstance(value, dict):
             if "read" in value:
-                parts = pages[root, json.dumps(value["read"], sort_keys=True)]
-                return resolve([item for page in parts for item in page.get("items", [])], root) if value["read"]["text"]["container"] else "".join(page.get("text", "") for page in parts)
+                content = assemble(pages[root, json.dumps(value["read"], sort_keys=True)])
+                return resolve(next(content[key] for key in ("items", "object", "text") if key in content), root)
             return {key: resolve(item, root) for key, item in value.items()}
         return value
 
-    return {root: resolve(json.loads("".join(page["fragment"]["text"] for page in parts if "fragment" in page))
-                          if "fragment" in parts[0] else parts[0], root)
-            for (root, reference), parts in pages.items() if reference == "null"}
+    return {root: resolve(assemble(parts), root) for (root, reference), parts in pages.items() if reference == "null"}
 
 
 @contextmanager
@@ -432,6 +445,7 @@ def test_recorded_r2_reply_lands(game_db, steps, audit, case):
 @pytest.mark.parametrize("game_db", ["first_night"], indirect=True)
 def test_translation_queries_preserve_two_table_permissions(game_db, steps, audit):
     recording = json.loads((RECORDED / "declarations_1972.json").read_text())["cases"]
+    catalogue = {("office", "户部尚书"): {"aliases": ["别" * 1500], "description": "明" * 2500}}
     received = []
     offices = ["陕西巡抚", "巡抚", "新城知县", "西安知府", "内阁大学士", "陕西巡府", "不存在的官职", "内阁大学士"]
     probes = {
@@ -443,6 +457,7 @@ def test_translation_queries_preserve_two_table_permissions(game_db, steps, audi
         "sili-holder": {"kind": "office", "key": "司礼监掌印太监"},
         "east-holder": {"kind": "office", "key": "东厂提督"},
         "canonical": {"key": "户部尚书"},
+        "inline-office": {"kind": "office", "key": "户部尚书"},
         "capital-army": {"kind": "army", "key": "京营"},
         "capital-offices": {"kind": "office", "scope": {"department": "京营"}},
         "counties": {"kind": "territory", "scope": {"region": "北直隶 / 京师", "level": "县"}},
@@ -471,6 +486,7 @@ def test_translation_queries_preserve_two_table_permissions(game_db, steps, audi
     )
     with TestClient(create_app(game_db.parent)) as client:
         client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
+        client.app.state.web.game.court.record(("office", "户部尚书"), [("changed", {})], catalogue["office", "户部尚书"])
         client.app.state.web.game.court.record(("person", "郭允厚"), [("reported", {
             "date": {"year": 1500, "month": 1}, "audience": "public", "text": "",
         })], {"aliases": ["郭允厚", "郭尚书", "郭户部", "户部尚书"]})
@@ -493,6 +509,8 @@ def test_translation_queries_preserve_two_table_permissions(game_db, steps, audi
     assert observed["east-holder"]["appointments"][0]["holders"] == ["魏忠贤"]
     assert {"description", "description_source"} <= observed["sili-holder"]["entities"][0]["data"].keys()
     assert [(row["kind"], row["key"]) for row in observed["canonical"]["entities"]] == [("office", "户部尚书")]
+    assert all("next" not in observed[name] and observed[name]["entities"][0]["data"][field] == value
+               for name in ("canonical", "inline-office") for field, value in catalogue["office", "户部尚书"].items())
     assert {row["kind"] for row in observed["capital-army"]["entities"]} == {"army"}
     assert {row["kind"] for row in observed["capital-offices"]["catalogue"]} == {"office"}
     assert "保定府新城县" in {row["key"] for row in observed["counties"]["catalogue"]}
@@ -593,4 +611,7 @@ def test_translation_queries_preserve_two_table_permissions(game_db, steps, audi
     ) for first in firsts.values() for key, aliases in first.items())
     assert all(result == {
         "status": "not_found", "names_and_aliases": {"territory": candidates if name != "partial" else {"保定府新城县": candidates["保定府新城县"]}},
-    } for name, result in candidate_results(received, continuations).items())
+    } for name, result in record_results(
+        {p.tool_call_id: p.args_as_dict() for m in {id(message): message for message in received}.values() for p in m.parts if isinstance(p, ToolCallPart)},
+        {call_id: part.model_response_object() for call_id, part in results.items()}, continuations,
+    ).items())

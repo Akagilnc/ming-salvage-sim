@@ -89,10 +89,13 @@ def office_pairs(
         pairs.update((row["data"]["office"], row["data"]["territory"]) for row in incumbencies)
     else:
         aliases = func.json_each(ALIASES).table_valued("value")
-        query = ENTITY_ROWS.with_only_columns(E.key, ALIASES).where(E.data["external"].as_boolean().is_(True), or_(
-            func.substr(literal(value), -func.length(E.key)) == E.key,
-            select(aliases.c.value).where(func.substr(literal(value), -func.length(aliases.c.value)) == aliases.c.value).exists(),
-        ))
+        query = ENTITY_ROWS.with_only_columns(E.key, type_coerce(
+            func.json_group_array(aliases.c.value).filter(aliases.c.value.is_not(None)), JSON,
+        ).label("aliases")).outerjoin(aliases, func.substr(literal(value), -func.length(aliases.c.value)) == aliases.c.value).where(
+            E.data["external"].as_boolean().is_(True), or_(
+                func.substr(literal(value), -func.length(E.key)) == E.key, aliases.c.value.is_not(None),
+            ),
+        ).group_by(E.id)
         for office in (ledger.entities(kind="office", query=query) if records is None
                        else (row for (kind, _), row in records.items() if kind == "office" and row["external"])):
             for title in dict.fromkeys([office["key"], *office["aliases"]]):

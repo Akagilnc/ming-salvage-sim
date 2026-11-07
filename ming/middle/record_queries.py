@@ -92,16 +92,16 @@ class RecordQuery:
 
     def candidate_fields(self, page: TextPage, candidates: Item) -> Item:
         """Locate paths only for candidates already selected by the visible read."""
-        return {kind: {key: page.whole("aliases", entity=(kind, key)) | {
-            "value": aliases, "source": ENTITY_ROWS.where(E.kind == kind, E.key == key).with_only_columns(ALIASES),
-        } if aliases else aliases for key, aliases in names.items()} for kind, names in candidates.items()}
+        return {kind: {key: page.whole("aliases", entity=(kind, key), payload=(
+            aliases, aliases, ENTITY_ROWS.where(E.kind == kind, E.key == key).with_only_columns(ALIASES),
+        )) if aliases else aliases for key, aliases in names.items()} for kind, names in candidates.items()}
 
     def office_material(self, names: list[str], date: Item | None, cursor: RecordCursor) -> Generator[PageRow]:
         page = TextPage(self.ledger, cursor, numeric=self.numeric)
         ids: dict[UUID, None] = {}
         previous = dict.fromkeys(names[:cursor.row])
         for index, record in enumerate(self.reader.office_records(self.identity, names[cursor.row:], office_view=lambda office: entities(
-            self.ledger, self.identity, {"kind": "office", "key": office}, opening=self.snapshot, prepare=page.clip,
+            self.ledger, self.identity, {"kind": "office", "key": office}, opening=self.snapshot, prepare=page,
         )), start=cursor.row):
             previous.pop(names[index], None)
             ids.update((UUID(item["entity_id"]), None) for item in record.get("appointments", ()) if item["entity_id"] is not None)
@@ -167,26 +167,30 @@ class RecordQuery:
                 page = TextPage(self.ledger, cursor, numeric=self.numeric)
                 if category == "entity":
                     ids = [row["id"] for _, row in selected]
-                    views = entities(self.ledger, self.identity, {"ids": ids, "kind": kind, "night_turns": False}, opening=self.snapshot, prepare=page.clip)
-                    records = (({"entities": [entity.model_dump(mode="json")], "facts": []}, False) for entity in views)
+                    views = stack.enter_context(closing(entities(
+                        self.ledger, self.identity, {"ids": ids, "kind": kind, "night_turns": False}, opening=self.snapshot, prepare=page,
+                    )))
+                    records = (({"entities": [entity.model_dump(mode="json")], "facts": []}, None) for entity in views)
                 elif category == "turn":
-                    records = (({"turns": [{"night_id": str(item["entity_id"]), **turn_view(item).model_dump(mode="json")}]}, False)
+                    records = (({"turns": [{"night_id": str(item["entity_id"]), **turn_view(item).model_dump(mode="json")}]}, item)
                                for item in self.ledger.read(page.clip(TURN_ROWS.where(F.position.in_([row["position"] for _, row in selected])))))
                 else:
                     rows = stack.enter_context(closing(self.ledger.scan(page.clip(facts.where(
                         F.position.in_([row["position"] for _, row in selected]),
                     ).order_by(None).order_by(ENTITY_ORDER, F.position).params(**view_parameters(self.identity))))))
-                    records = (({"entities": [], "facts": [project(self.identity, item).model_dump(mode="json")]}, item["exposure"] == "full")
+                    records = (({"entities": [], "facts": [project(self.identity, item).model_dump(mode="json")]}, item)
                                for item in rows)
-                for (index, _row), (record, full) in zip(selected, records, strict=True):
+                for (index, _row), (record, original) in zip(selected, records, strict=True):
                     page.cursor = cursor.model_copy(update={"row": index})
-                    record = record if self.numeric else character_input(record)
-                    if full and not cursor.clipped and cursor.text is None:
-                        record["facts"][0]["detail"] = page.whole("detail") | {
-                            "value": record["facts"][0]["detail"],
-                            "source": cast(Select[Any], page.source).where(F.position == _row["position"]),
-                        }
-                    yield page.render(record)
+                    if original is not None:
+                        projected = record["turns" if category == "turn" else "facts"][0]
+                        source = cast(Select[Any], page.source).where(F.position == _row["position"])
+                        projected["emperor_words"] = page.whole("emperor_words", payload=(projected["emperor_words"], original["emperor_words"], source))
+                        if category == "turn":
+                            projected["scene"] = page.whole("detail", payload=(projected["scene"], original["detail"]["scene"], source), path="$.scene")
+                        else:
+                            projected["detail"] = page.whole("detail", payload=(projected["detail"], original["detail"], source))
+                    yield page.render(record if self.numeric else character_input(record))
 
     def run(
         self, kind: str | None, key: str | list[str] | None, date: Item | None,
@@ -206,7 +210,7 @@ class RecordQuery:
                 ).with_only_columns(ALIASES))))
             elif cursor.text.column == "data" and entity[0] == "office" and kind in {None, "office", "incumbency"}:
                 source = lambda _: (page.render({"entities": [row.model_dump(mode="json")]}) for row in entities(
-                    self.ledger, self.identity, {"kind": "office", "key": entity[1]}, opening=self.snapshot, prepare=page.clip,
+                    self.ledger, self.identity, {"kind": "office", "key": entity[1]}, opening=self.snapshot, prepare=page,
                 ))
             else:
                 return {"status": "invalid_cursor"}
@@ -240,5 +244,5 @@ class RecordQuery:
             with closing(source(cursor)) as rows:
                 # Field reads bypass row preparation in TextPage.render.
                 result = cast(Item, next(rows, {"status": "invalid_cursor"}))
-            return result if self.numeric else character_input(result)
+            return result
         return record_page(source, cursor)
