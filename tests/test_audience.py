@@ -245,8 +245,8 @@ def assert_twenty_person_set_hall_budget(client, steps) -> None:
     names = [f"测人{i:02d}" for i in range(20)]
     for name in names:
         court.record(("person", name), [("changed", {})], {"location": CAPITAL, "name": name})
-    # One long private file fills the first page; the rest stay short so continuations stay few.
-    court.record(("dossier", names[0]), [("changed", {})], {"pad": "字" * 8000})
+    # Inline pad near PAGE_BYTES so the first page is full (carries next), not deferred to field read.
+    court.record(("dossier", names[0]), [("changed", {})], {"pad": "字" * 6200})
     received: list = []
     cont: dict[str, str] = {}
     steps["scene"] = replaying([
@@ -262,7 +262,7 @@ def assert_twenty_person_set_hall_budget(client, steps) -> None:
     first = parts["twenty"].model_response_object()
     assert first["ok"] is True and "hall" not in first
     assert (first["kind"], first["key"]) == ("person", names)
-    assert "next" in first or any("read" in parts[i].model_response_str() for i in parts)
+    assert "next" in first
     assert all(len(part.model_response_str().encode("utf-8")) <= 20_000 for part in parts.values())
     queries = {
         part.tool_call_id: part.args_as_dict()
