@@ -15,6 +15,7 @@ from pydantic_ai.messages import (
 )
 from starlette.testclient import TestClient
 
+from ming.middle.scene import HallResult
 from ming.middle.view import Officials
 from ming.web import create_app
 from tests.test_court import record_results, replaying
@@ -22,13 +23,15 @@ from tests.test_secrets import _declaration_prompt
 from tests.test_web import state_updates
 
 RECORDED = Path(__file__).parent / "recorded"
-HALL_RESULT = frozenset({"ok", "hall", "failures"})
 ATTACH_QUERY = frozenset({"kind", "key"})
 
 
 def attached_records(value: dict) -> dict:
     """Person page carried on set_hall, without hall wrapper or continuation query."""
-    return {key: value[key] for key in value if key not in HALL_RESULT | ATTACH_QUERY}
+    return {
+        key: value[key] for key in value
+        if key not in HallResult.model_fields and key not in ATTACH_QUERY
+    }
 
 
 def tool_returns(received: list) -> dict:
@@ -115,11 +118,15 @@ def assert_scene_tool_returns(received, events, court, continuations, multi: tup
     assert first_page["ok"] is True
     assert (first_page["kind"], first_page["key"]) == ("person", names)
     assert "next" in first_page
-    pages = {
-        call_id: obj for call_id, (_, obj) in returned.items()
-        if continuations.get(call_id, call_id) == multi_id or call_id == multi_id
+    parts = {
+        part.tool_call_id: part
+        for message in received for part in message.parts if isinstance(part, ToolReturnPart)
     }
-    assert all(len(json.dumps(page, ensure_ascii=False).encode()) <= 20_000 for page in pages.values())
+    assert all(
+        len(part.model_response_str().encode("utf-8")) <= 20_000
+        for call_id, part in parts.items()
+        if continuations.get(call_id, call_id) == multi_id or call_id == multi_id
+    )
     queries = {
         part.tool_call_id: part.args_as_dict()
         for message in received for part in message.parts if isinstance(part, ToolCallPart)
@@ -346,15 +353,7 @@ def test_set_hall_retry_after_model_failure_still_attaches_records(
             for message in retry_calls[0] for part in message.parts
         )
 
-        retry_return = next(
-            part.model_response_object()
-            for message in retry_received
-            for part in message.parts
-            if isinstance(part, ToolReturnPart) and part.tool_name == "set_hall"
-        )
-        expected = court.read.query(Officials(people=retry_return["hall"]), "person", ["杨嗣昌"])
-        assert {key: retry_return[key] for key in expected} == expected
-        assert "dossier" in retry_return["entities"][0]["data"]
+        assert_set_hall_page(tool_returns(retry_received)["retry"][1], court, ["杨嗣昌"])
 
 
 @pytest.mark.parametrize("recording,case,game_db", [
