@@ -3,6 +3,7 @@
 import asyncio
 import json
 from pathlib import Path
+from shutil import copyfile
 
 import pytest
 from pydantic_ai.exceptions import ModelHTTPError
@@ -15,6 +16,7 @@ from pydantic_ai.messages import (
 )
 from starlette.testclient import TestClient
 
+from ming.middle.calendar import CAPITAL
 from ming.middle.scene import HallResult
 from ming.middle.view import Officials
 from ming.web import create_app
@@ -237,8 +239,47 @@ def test_nights_are_persistent_and_translate_only_after_dismissal(
         assert second["turns"] == []
 
 
+def assert_crowded_set_hall_budget(client, steps, multi: list[str]) -> None:
+    """Full hall envelope + near-full first page must still deliver ≤20,000 UTF-8 bytes."""
+    court = client.app.state.web.game.court
+    people = [e.key for e in court.read.entities("audit", kind="person") if e.key != "徐光启"]
+    for name in people:
+        court.record(("person", name), [("changed", {})], {"location": CAPITAL, "transit_to": None})
+    # Extra hall names enlarge the set_hall envelope past the default PAGE_BYTES reserve.
+    extra = [f"压测人物{i:03d}" for i in range(200)]
+    for name in extra:
+        court.record(("person", name), [("changed", {})], {"location": CAPITAL, "name": name})
+    for name in multi:
+        court.record(("dossier", name), [("changed", {})], {"pad": "字" * 5640})
+    night = court.nights()[0]
+    crowded = ["王承恩", *[name for name in people if name != "王承恩"], *extra]
+    court.record(night.id, [("hall", {"add": crowded, "remove": []})], {"hall": crowded})
+    received: list = []
+    cont: dict[str, str] = {}
+    steps["scene"] = replaying([
+        ModelResponse(parts=[ToolCallPart("set_hall", {"add": multi, "remove": []}, tool_call_id="crowd")]),
+        "ok",
+    ], received, continuations=cont)
+    client.post("/actions", json={"action": "say", "words": "宣多人压预算。"})
+    client.portal.call(client.app.state.web.game.drain)
+    parts = {
+        part.tool_call_id: part
+        for message in received for part in message.parts if isinstance(part, ToolReturnPart)
+    }
+    assert parts and all(len(part.model_response_str().encode("utf-8")) <= 20_000 for part in parts.values())
+    assert parts["crowd"].model_response_object()["ok"] is True
+    assert len(parts["crowd"].model_response_object()["hall"]) > 50
+    queries = {
+        part.tool_call_id: part.args_as_dict()
+        for message in received for part in message.parts if isinstance(part, ToolCallPart)
+    }
+    assembled = record_results(queries, {i: p.model_response_object() for i, p in parts.items()}, cont)["crowd"]
+    complete = court.read.read_records(Officials(people=assembled["hall"]), "person", multi)
+    assert {e["key"]: e for e in assembled["entities"]} == {e["key"]: e for e in complete["entities"]}
+    court.record(night.id, [("hall", {"add": [], "remove": crowded})], {"hall": ["王承恩"]})
+
+
 def run_scene_tools_night(client, case, received, translated, multi):
-    client.post("/actions", json={"action": "load", "save": case["save"]})
     court = client.app.state.web.game.court
     # Oversized private files force the recorded multi-admit through #2017 pages.
     for name in multi:
@@ -283,16 +324,21 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
 ) -> None:
     case = json.loads((RECORDED / "night_tools.json").read_text())
     case["offices"] = ["内阁首辅", "户部尚书"]
-    case["save"] = game_db.name
     received: list = []
     continuations: dict[str, str] = {}
     multi = ["杨嗣昌", "王绍徽"]
-    steps["scene"] = replaying(scene_tool_script(case), received, continuations=continuations)
     translated: list = []
-    steps["NightDeclaration"] = replaying(case["replies"], translated)
+    crowded = tmp_path / "crowded.sqlite"
+    copyfile(game_db, crowded)
+    with TestClient(create_app(tmp_path)) as client:
+        client.post("/actions", json={"action": "load", "save": crowded.name})
+        assert_crowded_set_hall_budget(client, steps, multi)
     events = asyncio.Queue()
+    steps["scene"] = replaying(scene_tool_script(case), received, continuations=continuations)
+    steps["NightDeclaration"] = replaying(case["replies"], translated)
     with TestClient(create_app(tmp_path)) as client:
         client.app.state.web.listeners.add(events)
+        client.post("/actions", json={"action": "load", "save": game_db.name})
         court = run_scene_tools_night(client, case, received, translated, multi)
     assert_scene_tool_returns(
         received, events, court, continuations,

@@ -25,6 +25,7 @@ from ming.middle.declaration import NightDeclaration
 from ming.middle.invoke import TextUpdate, invoke, stream_text
 from ming.middle.night import NightHeader, NightView
 from ming.middle.opening import CONTENT
+from ming.middle.record_pages import MAX_BYTES, RecordScope
 from ming.middle.records import read_records
 from ming.middle.view import Officials
 
@@ -176,8 +177,18 @@ async def set_hall(
         ctx.deps.on_hall(result.hall)
     payload = result.model_dump()
     if result.ok and (admitted := [name for name in add if name in result.hall]):
+        # Delivery is compact JSON; deduct hall envelope plus page cursor keys so the full tool result stays ≤ MAX_BYTES.
+        envelope = {
+            **payload, "kind": "person", "key": admitted,
+            "fragment": {"row": 0, "character": 0, "text": ""},
+            "next": {"row": 0, "character": 0, "grouped": False, "item": 0, "clipped": True},
+        }
+        overhead = len(json.dumps(envelope, ensure_ascii=False, separators=(",", ":")).encode())
         payload.update(
-            ctx.deps.court.read.query(ctx.deps.identity, "person", admitted),
+            ctx.deps.court.read.query(
+                ctx.deps.identity, "person", admitted,
+                options=(RecordScope(), False, max(0, MAX_BYTES - overhead)),
+            ),
             kind="person", key=admitted,
         )
     return payload

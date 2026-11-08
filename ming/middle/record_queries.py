@@ -12,7 +12,7 @@ from sqlalchemy import Select, case, func, literal, or_, select, true, type_coer
 from ming.ledger import ENTITY_COLUMNS as E, FACT_COLUMNS as F, ENTITY_ROWS, ENTITY_ORDER, FACT_ROWS, Item, Ledger, facts_in_month
 from ming.middle.appointments import ALIASES, incumbency_record, named, office_pairs
 from ming.middle.night import TURN_ROWS, turn_view
-from ming.middle.record_pages import PageRow, RecordCursor, RecordScope, TextPage, record_page
+from ming.middle.record_pages import PAGE_BYTES, PageRow, RecordCursor, RecordScope, TextPage, record_page
 from ming.middle.rules import matching_names
 from ming.middle.view import ENTITY_EXPOSURE, ENTITY_SOURCES, VISIBLE_IDS, character_input, entities, identity_key, project, view_parameters, visible_appointments
 
@@ -28,6 +28,7 @@ class RecordQuery:
         self.identity: Identity = identity
         self.facts, opening = sources
         self.numeric = numeric
+        self.budget = PAGE_BYTES
         self.snapshot: Select[Any] | None = None
         if opening is not None:
             items = func.json_each(F.detail, "$.entities").table_valued("key", "value")
@@ -71,7 +72,7 @@ class RecordQuery:
             "region" if kind == "territory" and scope.region is None else "level" if kind == "territory" else None
         )
         if not cursor.grouped:
-            page = record_page(partial(self.listing, query), cursor)
+            page = record_page(partial(self.listing, query), cursor, budget=self.budget)
             if "next" not in page or field is None or getattr(scope, field) is not None:
                 return {"status": "not_found"} if page == {"catalogue": []} and kind and date is None and not scope.after else page
             cursor = cursor.model_copy(update={"row": 0, "character": 0, "grouped": True})
@@ -79,7 +80,7 @@ class RecordQuery:
             return {"status": "invalid_cursor"}
         group = E.data[field].as_string()
         query = query.with_only_columns(group.label(field), func.count().label("count")).order_by(None).group_by(group).order_by(group)
-        return record_page(partial(self.listing, query), cursor)
+        return record_page(partial(self.listing, query), cursor, budget=self.budget)
 
     def listing(self, query: Select[Any], cursor: RecordCursor) -> Generator[Item]:
         with closing(self.ledger.scan(query.offset(cursor.row))) as rows:
@@ -104,7 +105,7 @@ class RecordQuery:
         return result
 
     def office_material(self, names: list[str], date: Item | None, cursor: RecordCursor) -> Generator[PageRow]:
-        page = TextPage(self.ledger, cursor, numeric=self.numeric)
+        page = TextPage(self.ledger, cursor, numeric=self.numeric, budget=self.budget)
         ids: dict[UUID, None] = {}
         previous = dict.fromkeys(names[:cursor.row])
         for index, record in enumerate(self.reader.office_records(self.identity, names[cursor.row:], office_view=lambda office: (
@@ -174,7 +175,7 @@ class RecordQuery:
                 selected = [(index, row) for index, row in batch if row["type"] == category]
                 if not selected:
                     continue
-                page = TextPage(self.ledger, cursor, numeric=self.numeric)
+                page = TextPage(self.ledger, cursor, numeric=self.numeric, budget=self.budget)
                 if category == "entity":
                     ids = [row["id"] for _, row in selected]
                     views = stack.enter_context(closing(entities(
@@ -212,7 +213,7 @@ class RecordQuery:
         source: Callable[[RecordCursor], Generator[PageRow]]
         if key and cursor.text is not None and cursor.text.entity is not None:
             entity = cursor.text.entity
-            page = TextPage(self.ledger, cursor, numeric=self.numeric)
+            page = TextPage(self.ledger, cursor, numeric=self.numeric, budget=self.budget)
             if cursor.text.column == "aliases":
                 visible = self.reader.office_names(self.identity) if kind in {"office", "incumbency"} else self.visible(kind, None)
                 source = lambda _: (page.render(row) for row in self.ledger.read(page.clip(visible.where(
@@ -236,10 +237,10 @@ class RecordQuery:
                 row["key"] for row in names if value in row["matches"]
             } for value in keys}
             if any(len(matches) != 1 for matches in resolved.values()):
-                page = TextPage(self.ledger, cursor, numeric=self.numeric)
+                page = TextPage(self.ledger, cursor, numeric=self.numeric, budget=self.budget)
                 candidates = matching_names(visible.with_only_columns(E.kind, E.key, ALIASES), keys, ledger=self.ledger, prepare=page.clip)
                 result = {"status": "not_found", **({"names_and_aliases": self.candidate_fields(page, candidates)} if candidates else {})}
-                return record_page(lambda position: (page.render(row) for row in (result,)[position.row:]), cursor) if candidates else result
+                return record_page(lambda position: (page.render(row) for row in (result,)[position.row:]), cursor, budget=self.budget) if candidates else result
             ids = [row["id"] for row in names if any(row["key"] in matches for matches in resolved.values())]
             # Unscoped aliases also select other visible kinds sharing the canonical
             # key (e.g. a person's dossier), but never read an already resolved ID.
@@ -254,4 +255,4 @@ class RecordQuery:
                 # Field reads bypass row preparation in TextPage.render.
                 result = cast(Item, next(rows, {"status": "invalid_cursor"}))
             return result
-        return record_page(source, cursor)
+        return record_page(source, cursor, budget=self.budget)
