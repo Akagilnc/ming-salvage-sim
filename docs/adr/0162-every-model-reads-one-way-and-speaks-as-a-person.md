@@ -38,6 +38,6 @@ Status: accepted（2026-10-25 北极星终验逐条过后 owner grill 定：`e96
 
 依据：同上源卷，owner `cae1b539-3268-41c7-8a06-50c691ce65a0` 答 runner `d6faf296-0267-4d65-a7dc-128b7c9b697d` 题 4A；落入本 ADR 由 owner `ec29cc30-9fb8-4496-823a-61317659d39e` 答 runner `af4c4d73-3084-4e22-8946-7ce390a43d2e` Q3A 批准。
 
-## 2026-11-08 补：入殿结果附带新入殿者档案（#2008）
+## 2026-11-08 补：入殿结果附带被宣者档案（#2008）
 
-召对改殿上名单成功时，新入殿者的档案经本读口随结果交付，见 [0155](0155-v2-single-scene-llm-with-complete-perspectives.md)「2026-11-08 补」；读口与可见范围不变。
+召对改殿上名单成功时，被宣且在殿者的档案经本读口随结果交付，见 [0155](0155-v2-single-scene-llm-with-complete-perspectives.md)「2026-11-08 补：入殿结果附带被宣者档案」；读口与可见范围不变。
