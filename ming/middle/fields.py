@@ -72,7 +72,7 @@ FIELDS: dict[tuple[str, str], FieldRule] = {
     ("person", "reason_code"): FieldRule("人物当前处境原因代码，原样记录。"),
     ("person", "seed_guilt"): FieldRule("开局罪责与把柄资料。"),
     ("person", "source"): FieldRule("人物资料出处。"),
-    ("person", "status"): FieldRule("人物当前状态；active 为活动状态。已有所在地的人，本份声明非 active 时引擎终止行程、清候见；无所在地时只记状态。"),
+    ("person", "status"): FieldRule("人物当前状态；active 为活动状态。新写的非 active 状态用中文写处境，如下狱、身故；不等于任职。已有所在地的人，本份声明非 active 时引擎终止行程、清候见；无所在地时只记状态。"),
     ("person", "status_reason"): FieldRule("人物状态缘由文字。"),
     ("person", "style"): FieldRule("人物行事说话风格。"),
     ("person", "summary"): FieldRule("人物概况。"),

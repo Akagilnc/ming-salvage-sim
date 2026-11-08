@@ -29,6 +29,9 @@ def test_nights_are_persistent_and_translate_only_after_dismissal(
     tmp_path: Path, game_db: Path, steps, audit, recording
 ) -> None:
     case = json.loads((RECORDED / f"night_{recording}.json").read_text())
+    setting = {"time_of_day": "戌时", "location": "文华殿"}
+    responses = [m for m in ModelMessagesTypeAdapter.validate_python(case["scene_responses"]) if isinstance(m, ModelResponse)]
+    steps["scene"] = replaying([ModelResponse(parts=[ToolCallPart("declare_setting", {"setting": setting})]), *responses])
     with TestClient(create_app(tmp_path)) as client:
         events = asyncio.Queue()
         client.app.state.web.listeners.add(events)
@@ -36,12 +39,14 @@ def test_nights_are_persistent_and_translate_only_after_dismissal(
             "/actions", json={"action": "load", "save": game_db.name}
         ).json()["save"]
         assert [state["game"]["face"] for state in state_updates(events)] == ["audience"]
+        assert client.get("/state").json()["game"]["night"]["setting"] is None
         client.post("/actions", json={"action": "say", "words": case["words"][0]})
         assert [
             (state["game"]["running"], len(state["game"]["night"]["turns"]))
             for state in state_updates(events)
         ] == [(True, 0), (False, 1)]
         first = client.get("/state").json()["game"]["night"]
+        assert first["setting"] == setting
         assert first["closed"] is False
         assert first["result"] is None
         assert not [
@@ -77,9 +82,15 @@ def test_nights_are_persistent_and_translate_only_after_dismissal(
         night = client.get("/state").json()["game"]["night"]
         assert night["closed"] is True
         assert night["result"] == "translated"
+        assert night["setting"] == setting
+        records = client.get("/records").json()["entities"]
+        assert next(e["data"]["setting"] for e in records if e["id"] == first["id"]) == setting
         ledger = audit(tmp_path / save)
         orders = [e for e in ledger["entities"] if e["kind"] == "decree"]
         assert orders
+        shown_orders = [e for e in records if e["kind"] == "decree"]
+        assert {e["data"]["origin"] for e in shown_orders} == {"御旨"}
+        assert {e["data"]["origin"] for e in orders} == {"emperor"}
         if recording == "approved":
             steps["Declaration"] = replaying([json.dumps({"facts": [{
                 "entity_type": "decree", "entity": orders[0]["key"], "create": False,
@@ -121,6 +132,8 @@ def test_nights_are_persistent_and_translate_only_after_dismissal(
         second = client.get("/state").json()["game"]["night"]
         assert first["id"] != second["id"]
         assert second["turns"] == []
+        assert second["setting"] is None
+        assert second["date"] == {"year": 1627, "month": 11}
 
 
 @pytest.mark.parametrize("game_db", ["first_night"], indirect=True)

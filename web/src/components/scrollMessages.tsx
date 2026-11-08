@@ -25,13 +25,13 @@ export function currentSpeaker(turns: Turn[], live: string, hall: string[]): str
   return speaker;
 }
 
-export function Scene({ text }: { text: string }) {
+export function Scene({ text, streaming = false }: { text: string; streaming?: boolean }) {
   return <>{sceneBlocks(text).map((block, index) => {
     const aside = block.speaker === '王承恩·低语';
     const kind = aside ? 'aside' : block.speaker === '旁白' ? 'narration' : block.speaker === '旨' ? 'decree' : 'speech';
     return <section key={index} className={`scene-block ${kind}`}>
       {block.speaker.startsWith('王承恩') && <img className="attendant-avatar" src="/portraits/minister_王承恩.png" alt="王承恩" />}
-      <header><MarkdownText>{block.speaker}</MarkdownText></header><MarkdownText>{block.text}</MarkdownText>
+      <header><MarkdownText>{block.speaker}</MarkdownText></header><MarkdownText streaming={streaming}>{block.text}</MarkdownText>
     </section>;
   })}</>;
 }
