@@ -56,7 +56,8 @@ def replaying(
                     if not isinstance(part, ToolReturnPart) or part.tool_name != "read_records":
                         continue
                     _, objects = record_objects([part.model_response_str()])
-                    for index, value in enumerate(value for value in objects if "read" in value):
+                    # Shared references need one field read, even in repeated requested headers.
+                    for index, value in enumerate({json.dumps(value["read"], sort_keys=True): value for value in objects if "read" in value}.values()):
                         call_id = f"{part.tool_call_id}-read-{index}"
                         continuations[call_id] = continuations.get(part.tool_call_id, part.tool_call_id)
                         calls.append(ToolCallPart("read_records", {
@@ -445,7 +446,12 @@ def test_recorded_r2_reply_lands(game_db, steps, audit, case):
 @pytest.mark.parametrize("game_db", ["first_night"], indirect=True)
 def test_translation_queries_preserve_two_table_permissions(game_db, steps, audit):
     recording = json.loads((RECORDED / "declarations_1972.json").read_text())["cases"]
-    catalogue = {("office", "户部尚书"): {"aliases": ["别" * 1500], "description": "明" * 2500}}
+    catalogue = {
+        ("office", "户部尚书"): {"aliases": ["别" * 1500], "description": "明" * 2500},
+        ("office", "礼部尚书"): {"description": "首" * 5500},
+        ("office", "兵部尚书"): {"aliases": ["短" * 500, "长" * 7000], "description": "中" * 2500},
+        ("office", "刑部尚书"): {"description": "尾" * 2500},
+    }
     received = []
     offices = ["陕西巡抚", "巡抚", "新城知县", "西安知府", "内阁大学士", "陕西巡府", "不存在的官职", "内阁大学士"]
     probes = {
@@ -486,7 +492,8 @@ def test_translation_queries_preserve_two_table_permissions(game_db, steps, audi
     )
     with TestClient(create_app(game_db.parent)) as client:
         client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
-        client.app.state.web.game.court.record(("office", "户部尚书"), [("changed", {})], catalogue["office", "户部尚书"])
+        for name, case in catalogue.items():
+            client.app.state.web.game.court.record(name, [("changed", {})], case)
         client.app.state.web.game.court.record(("person", "郭允厚"), [("reported", {
             "date": {"year": 1500, "month": 1}, "audience": "public", "text": "",
         })], {"aliases": ["郭允厚", "郭尚书", "郭户部", "户部尚书"]})
@@ -559,9 +566,7 @@ def test_translation_queries_preserve_two_table_permissions(game_db, steps, audi
             assert len(result["entities"]) == 1
             assert result["facts"] == []
             assert result["entities"][0]["kind"] in {"office", "territory"}
-            if query.get("key") == "户部尚书":
-                assert result["status"] == "occupied"
-                assert result["appointments"][0]["holders"] == ["郭允厚"]
+            assert query.get("key") != "户部尚书" or (result["status"] == "occupied" and result["appointments"][0]["holders"] == ["郭允厚"])
         elif query.get("key") in {"新城县", "县"}:
             assert result["status"] == "not_found"
             assert 1 <= len(result["names_and_aliases"]["territory"]) <= 5
@@ -589,6 +594,9 @@ def test_translation_queries_preserve_two_table_permissions(game_db, steps, audi
         "untyped": {"key": "新城县"},
         "batch": {"key": ["保定府新城县", "新城县"]},
         "partial": {"kind": "territory", "key": "候选"},
+        "deferred-office": {"kind": "office", "key": ["礼部尚书", "兵部尚书", "兵部尚书", "刑部尚书"]},
+        "deferred-untyped": {"key": ["礼部尚书", "兵部尚书", "刑部尚书"]},
+        "deferred-candidate": {"kind": "office", "key": ["礼部尚书", "兵部", "兵部"]},
     }
     steps["scene"] = replaying([
         ModelResponse(parts=[ToolCallPart("read_records", args, tool_call_id=name) for name, args in queries.items()]),
@@ -603,15 +611,28 @@ def test_translation_queries_preserve_two_table_permissions(game_db, steps, audi
     results = {p.tool_call_id: p for m in received for p in m.parts if isinstance(p, ToolReturnPart)}
     assert queries.keys() <= results.keys()
     assert all(len(p.model_response_str().encode("utf-8")) <= 20_000 for p in results.values())
-    firsts = {name: results[name].model_response_object()["names_and_aliases"]["territory"] for name in queries}
+    firsts = {name: results[name].model_response_object()["names_and_aliases"]["territory"] for name in ("typed", "untyped", "batch", "partial")}
     assert all(first.keys() == ({"保定府新城县"} if name == "partial" else candidates.keys()) for name, first in firsts.items())
     assert all(isinstance(aliases, list) and (
         aliases[:-1] == candidates[key][:-1] and aliases[-1]["read"]["text"]["container"] is False
         if key == "保定府新城县" else aliases == candidates[key]
     ) for first in firsts.values() for key, aliases in first.items())
-    assert all(result == {
+    queries = {p.tool_call_id: p.args_as_dict() for m in {id(message): message for message in received}.values() for p in m.parts if isinstance(p, ToolCallPart)}
+    observed = record_results(queries, {call_id: part.model_response_object() for call_id, part in results.items()}, continuations)
+    assert all(observed[name] == {
         "status": "not_found", "names_and_aliases": {"territory": candidates if name != "partial" else {"保定府新城县": candidates["保定府新城县"]}},
-    } for name, result in record_results(
-        {p.tool_call_id: p.args_as_dict() for m in {id(message): message for message in received}.values() for p in m.parts if isinstance(p, ToolCallPart)},
-        {call_id: part.model_response_object() for call_id, part in results.items()}, continuations,
-    ).items())
+    } for name in firsts)
+    assert all({entity["key"] for record in observed[name].get("offices", [observed[name]]) for entity in record["entities"]} == {"礼部尚书", "兵部尚书", "刑部尚书"}
+               for name in ("deferred-office", "deferred-untyped"))
+    assert all(entity["data"] == catalogue["office", entity["key"]] for name in ("deferred-office", "deferred-untyped")
+               for record in observed[name].get("offices", [observed[name]]) for entity in record["entities"])
+    assert [entity["key"] for record in observed["deferred-office"]["offices"] for entity in record["entities"]] == queries["deferred-office"]["key"]
+    assert len(observed["deferred-candidate"]["offices"]) == len(queries["deferred-candidate"]["key"])
+    assert all(record["names_and_aliases"]["office"]["兵部尚书"] == catalogue["office", "兵部尚书"]["aliases"]
+               for record in observed["deferred-candidate"]["offices"][1:])
+    assert all(entity["data"]["description"] == catalogue["office", entity["key"]]["description"]
+               for call_id, query in queries.items() if continuations.get(call_id, call_id) in {"deferred-office", "deferred-untyped"} and not query.get("scope", {}).get("read")
+               for result in [results[call_id].model_response_object()] for record in result.get("offices", [result]) for entity in record["entities"])
+    assert all(record["names_and_aliases"]["office"]["兵部尚书"][0] == catalogue["office", "兵部尚书"]["aliases"][0]
+               for call_id, query in queries.items() if continuations.get(call_id, call_id) == "deferred-candidate" and not query.get("scope", {}).get("read")
+               for record in results[call_id].model_response_object()["offices"] if "names_and_aliases" in record)

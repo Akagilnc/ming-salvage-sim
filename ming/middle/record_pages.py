@@ -29,7 +29,7 @@ class RecordPosition(BaseModel):
     character: int = Field(default=0, ge=0)
     grouped: bool = False
     item: int = Field(default=0, ge=0)
-    clipped: bool = Field(default=False, description="Resume the pending row with its whole-detail reference; returned by next.")
+    clipped: bool = Field(default=False, description="Resume a previously prepared row without rereading wide values; returned by next.")
 
 
 class RecordCursor(RecordPosition):
@@ -50,7 +50,7 @@ PageRow = Item | tuple[Item, str, int, bool]
 
 
 def large_field(column: ColumnElement[Any]) -> ColumnElement[bool]:
-    return func.length(column) > 2000
+    return func.length(sql_cast(func.json_quote(column), LargeBinary)) > PAGE_BYTES
 
 
 class TextPage:
@@ -72,6 +72,8 @@ class TextPage:
         *, payload: tuple[Any, Any, Select[Any]] | None = None, path: str | None = None,
     ) -> Item:
         """Carry projected values and their source until actual delivery measurement."""
+        if payload is not None and isinstance(payload[0], dict) and self.prefix in payload[0] and "source" in payload[0]:
+            return cast(Item, payload[0])
         result: Item = {self.prefix: self.prefix + RecordText.model_validate({
             "column": column, "path": path or (None if column == "emperor_words" else "$"),
             "container": isinstance(payload[0], (dict, list)) if payload else column != "emperor_words",
@@ -79,7 +81,8 @@ class TextPage:
         }).model_dump_json(exclude_none=True)}
         if payload is not None:
             self.sources.append((payload[2], payload[1]))
-            result.update(value=payload[0], source=len(self.sources) - 1, complete=payload[0] == payload[1])
+            result.update(value=self.replace(payload[0], payload[2]) if self.cursor.clipped and self.cursor.text is None else payload[0],
+                          source=len(self.sources) - 1, complete=payload[0] == payload[1])
         return result
 
     def entity(self, row: Item, original: Item) -> Item:
@@ -96,8 +99,12 @@ class TextPage:
             return query
         columns = list(query.selected_columns)
         for index, column in enumerate(columns):
-            if column.key == "aliases" and self.cursor.text is not None:
-                columns[index] = literal(self.whole("aliases", entity=self.cursor.text.entity), type_=JSON).label("aliases")
+            if column.key == "aliases":
+                columns[index] = (literal(self.whole("aliases", entity=self.cursor.text.entity), type_=JSON) if self.cursor.text is not None else
+                                  case((large_field(column), func.json_object(self.prefix, self.prefix + func.json_object(
+                                      "column", "aliases", "path", "$", "container", True,
+                                      "entity", func.json_array(query.selected_columns.kind, query.selected_columns.key),
+                                  ), type_=JSON)), else_=column)).label("aliases")
                 continue
             if column.key not in {"data", "detail", "emperor_words"}:
                 continue
@@ -126,22 +133,37 @@ class TextPage:
             columns[index] = type_coerce(clipped, column.type).label(column.key)
         return query.with_only_columns(*columns)
 
-    def replace(self, value: Any) -> Any:
+    def replace(self, value: Any, source: Select[Any] | None = None) -> Any:
+        """Restore bounded source values before measurement, or emit surviving references."""
         if isinstance(value, str) and value.startswith(self.prefix):
             reference = RecordText.model_validate_json(value[len(self.prefix):])
-            self.allowed.append(reference)
-            return {"read": {"row": self.cursor.row, "character": 0, "text": reference.model_dump(exclude_none=True)}}
+            if source is None:
+                self.allowed.append(reference)
+                result = {"read": {"row": self.cursor.row, "character": 0, "text": reference.model_dump(exclude_none=True)}}
+            elif not reference.container:
+                column = source.selected_columns[reference.column]
+                text = column if reference.path is None else func.json_extract(column, reference.path)
+                bounded = self.ledger.read(source.with_only_columns(case((large_field(text), None), else_=text).label("value"),
+                                                                   maintain_column_froms=True))[0]["value"]
+                result = value if bounded is None else bounded
+            else:
+                page = TextPage(self.ledger, self.cursor.model_copy(update={"text": reference, "character": 0, "item": 0}), numeric=True)
+                page.source = page.dossier_source = source
+                result = cast(Item, page.render(page.whole(reference.column, reference.dossier, reference.entity, path=reference.path)))
+                result = value if "next" in result else result["object" if "object" in result else "items"]
+            return result
         if isinstance(value, dict):
             if self.prefix in value:
+                if source is not None:
+                    return cast(Item, value) if "value" in value else self.replace(value[self.prefix], source)
                 if "value" in value:
                     self.full.append(cast(Item, value))
                     if value["complete"]:
                         self.allowed.append(RecordText.model_validate_json(cast(str, value[self.prefix])[len(self.prefix):]))
-                    return self.replace(value["value"])
-                return self.replace(value[self.prefix])
-            return {key: self.replace(item) for key, item in cast(dict[str, Any], value).items()}
+                return self.replace(value["value"] if "value" in value else value[self.prefix])
+            return {key: self.replace(item, source) for key, item in cast(dict[str, Any], value).items()}
         if isinstance(value, list):
-            return [self.replace(item) for item in cast(list[Any], value)]
+            return [self.replace(item, source) for item in cast(list[Any], value)]
         return value
 
     def container(self, metadata: Item, cursor: RecordCursor) -> Generator[PageRow]:
@@ -157,17 +179,17 @@ class TextPage:
         ).join(children, true()).order_by(None).offset(cursor.row)
         with closing(self.ledger.scan(query)) as rows:
             for row in rows:
+                page = TextPage(self.ledger, self.cursor.model_copy(update={"text": None, "character": 0, "clipped": False}), numeric=self.numeric)
                 # json_each preserves JSON null's type; other NULLs were clipped.
                 if row["value"] is None and row["type"] != "null":
                     target = reference.model_copy(update={"path": row["fullkey"], "container": row["type"] in {"object", "array"}})
-                    value = {"read": self.cursor.model_copy(update={"character": 0, "item": 0, "text": target}).model_dump(exclude_none=True)}
+                    value = page.prefix + target.model_dump_json(exclude_none=True)
                 else:
                     value = (json.loads(cast(str, row["value"])) if row["type"] in {"object", "array"} else
                              bool(row["value"]) if row["type"] in {"true", "false"} else row["value"])
                 if not self.numeric:
                     value = (character_input({"field": metadata["field"], "value": value})["value"]
                              if row["key"] == "value" and metadata["field"] is not None else character_input({row["key"]: value})[row["key"]])
-                page = TextPage(self.ledger, self.cursor.model_copy(update={"text": None, "character": 0}), numeric=self.numeric)
                 if row["value"] is not None:
                     value = page.whole(reference.column, reference.dossier, reference.entity,
                                        payload=(value, value, self.source), path=row["fullkey"])
@@ -220,6 +242,8 @@ class TextPage:
             reduced = self.shrink(field["value"], field, original=self.sources[field["source"]][1])
             changed |= reduced != field["value"]
             field["value"] = reduced
+            field.pop("paths", None)
+            field.pop("reference", None)
         if changed:
             self.full.clear()
             prepared = page_row(self.replace(value), clipped=True)
@@ -241,7 +265,7 @@ class TextPage:
         self.full.clear()
         result = self.replace(value)
         if self.cursor.text is None:
-            prepared = page_row(result, clipped=self.cursor.clipped)
+            prepared = page_row(result, clipped=True)
             return self.compact(value, prepared) if self.full and prepared[2] > PAGE_BYTES else prepared
         reference = self.cursor.text
         self.source = self.dossier_source if reference.dossier else self.source

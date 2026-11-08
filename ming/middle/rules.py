@@ -2,15 +2,16 @@
 
 import json
 import math
-from collections.abc import Iterable
+from collections.abc import Callable
 from difflib import get_close_matches
 from itertools import islice
-from typing import Any, Never, cast
+from typing import Any, Never
 
 from pydantic_ai import ModelRetry
+from sqlalchemy import JSON, LargeBinary, Select, case, cast as sql_cast, func, literal, or_, select, true
 
-from ming.ledger import Entity, Item
-from ming.middle.appointments import CATALOGUE_KINDS, cabinet_members
+from ming.ledger import ENTITY_COLUMNS as E, Entity, Item, Ledger
+from ming.middle.appointments import ALIASES, CATALOGUE_KINDS, cabinet_members, catalogue
 from ming.middle.declaration import Declaration, Fact
 from ming.middle.fiscal import WAN, current_paid, has_obligation, obligation
 from ming.middle.fields import FIELDS
@@ -18,11 +19,22 @@ from ming.middle.travel import SPEEDS, journey_route
 Names = dict[str, dict[str, list[str]]]
 
 
-def matching_names(names: Names | Iterable[Item], queries: list[str]) -> Names:
+def matching_names(
+    names: Names | Select[Any], queries: list[str], *,
+    ledger: Ledger | None = None, prepare: Callable[[Select[Any]], Select[Any]] | None = None,
+) -> Names:
     """A few candidates within the caller's already visible names; never auto-resolve."""
+    if isinstance(names, Select):
+        assert ledger is not None
+        aliases = func.json_each(ALIASES).table_valued("value")
+        requested = func.json_each(literal(queries, type_=JSON)).table_valued("value")
+        query = names.where(select(requested.c.value).where(requested.c.value != "", or_(
+            func.instr(E.key, requested.c.value) > 0,
+            select(aliases.c.value).where(func.instr(aliases.c.value, requested.c.value) > 0).correlate_except(aliases).exists(),
+        )).correlate_except(requested).exists()).limit(5)
+        return catalogue(ledger.read(prepare(query) if prepare else query))
     matches: Names = {}
-    entries = (((kind, name, aliases) for kind, values in cast(Names, names).items() for name, aliases in values.items())
-               if isinstance(names, dict) else ((row["kind"], row["key"], row["aliases"]) for row in names))
+    entries = ((kind, name, aliases) for kind, values in names.items() for name, aliases in values.items())
     candidates = ((kind, name, aliases) for kind, name, aliases in entries
                   if any(query and any(query in label for label in [name, *aliases]) for query in queries))
     for kind, name, aliases in islice(candidates, 5):
@@ -30,16 +42,37 @@ def matching_names(names: Names | Iterable[Item], queries: list[str]) -> Names:
     return matches
 
 
-def matching_offices(names: Names, key: str) -> Names:
-    candidates = matching_names({"office": names.get("office", {})}, [key])
+def matching_offices(
+    names: Names | Select[Any], key: str, *,
+    ledger: Ledger | None = None, prepare: Callable[[Select[Any]], Select[Any]] | None = None,
+    office_keys: Callable[[], tuple[Item, ...]] | None = None,
+) -> Names:
+    candidates = matching_names(names.where(E.kind == "office") if isinstance(names, Select) else {"office": names.get("office", {})},
+                                [key], ledger=ledger, prepare=prepare)
     if candidates:
         return candidates
-    prefix = max((label for name, aliases in names.get("territory", {}).items()
-                  for label in [name, *aliases] if key.startswith(label)), key=len, default="")
-    candidates = {name: names["office"][name] for name in get_close_matches(
-        key[len(prefix):], list(names.get("office", {})), n=5, cutoff=0.5,
-    )}
-    return {"office": candidates} if candidates else {}
+    if isinstance(names, Select):
+        assert ledger is not None and office_keys is not None
+        aliases = func.json_each(ALIASES).table_valued("value")
+        prefix = ledger.read(names.where(E.kind == "territory").with_only_columns(func.max(func.max(*(
+            case((func.instr(literal(key), label) == 1, func.length(sql_cast(label, LargeBinary))), else_=0)
+            for label in (E.key, aliases.c.value)
+        ))).label("length"), maintain_column_froms=True).outerjoin(aliases, true()).order_by(None))[0]["length"] or 0
+        offices = (row["key"] for row in office_keys())
+        key = key.encode("utf-8")[prefix:].decode("utf-8")
+    else:
+        prefix = len(max((label for name, aliases in names.get("territory", {}).items()
+                          for label in [name, *aliases] if key.startswith(label)), key=len, default=""))
+        offices = names.get("office", {})
+        key = key[prefix:]
+    selected = get_close_matches(key, offices, n=5, cutoff=0.5)
+    if isinstance(names, Select):
+        assert ledger is not None
+        query = names.where(E.kind == "office", E.key.in_(selected))
+        values = catalogue(ledger.read(prepare(query) if prepare else query)).get("office", {}) if selected else {}
+    else:
+        values = names.get("office", {})
+    return {"office": {name: values[name] for name in selected}} if selected else {}
 
 
 def name_expected(

@@ -2,7 +2,7 @@
 
 from collections import defaultdict
 from collections.abc import Callable, Generator, Iterable, Sequence
-from functools import partial
+from functools import cache, partial
 from typing import Any
 from uuid import UUID
 
@@ -74,21 +74,23 @@ class Records:
 
     def office_records(
         self, identity: Identity, keys: list[str], *, office_view: Callable[[str], Iterable[EntityView]] | None = None,
+        prepare: Callable[[Select[Any]], Select[Any]] | None = None,
     ) -> Generator[Item]:
         """Resolve lazily, sharing appointment and office projections within one request."""
         results: dict[str, Item] = {}
         resolved: dict[tuple[str, str], Item] = {}
         offices: dict[str, list[Item]] = {}
-        names: dict[str, dict[str, list[str]]] | None = None
+        names = self.office_names(identity)
+        office_keys = partial(cache(self._ledger.read), names.where(E.kind == "office").with_only_columns(E.key))
         for name in keys:
             if name not in results:
                 pairs, resolution = office_pairs(self._ledger, name, partial(visible_appointments, self._ledger, identity))
                 if resolution["status"] == "territory_required":
                     results[name] = resolution
                 elif resolution["status"] == "office_not_found":
-                    if names is None:
-                        names = names_and_aliases(self._ledger.read(self.office_names(identity)))
-                    results[name] = {"status": "office_not_found", "names_and_aliases": matching_offices(names, name)}
+                    results[name] = {"status": "office_not_found", "names_and_aliases": matching_offices(
+                        names, name, ledger=self._ledger, prepare=prepare, office_keys=office_keys,
+                    )}
                 elif pairs[0] in resolved:
                     results[name] = resolved[pairs[0]]
                 else:

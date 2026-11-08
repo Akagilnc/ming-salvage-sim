@@ -92,24 +92,34 @@ class RecordQuery:
 
     def candidate_fields(self, page: TextPage, candidates: Item) -> Item:
         """Locate paths only for candidates already selected by the visible read."""
-        return {kind: {key: page.whole("aliases", entity=(kind, key), payload=(
-            aliases, aliases, ENTITY_ROWS.where(E.kind == kind, E.key == key).with_only_columns(ALIASES),
-        )) if aliases else aliases for key, aliases in names.items()} for kind, names in candidates.items()}
+        result: Item = {}
+        for kind, names in candidates.items():
+            for key, aliases in names.items():
+                if aliases:
+                    aliases = page.whole("aliases", entity=(kind, key), payload=(
+                        aliases, aliases, ENTITY_ROWS.where(E.kind == kind, E.key == key).with_only_columns(ALIASES),
+                    ))
+                    aliases = cast(list[str], []) if aliases.get("value") == [] else aliases
+                result.setdefault(kind, {})[key] = aliases
+        return result
 
     def office_material(self, names: list[str], date: Item | None, cursor: RecordCursor) -> Generator[PageRow]:
         page = TextPage(self.ledger, cursor, numeric=self.numeric)
         ids: dict[UUID, None] = {}
         previous = dict.fromkeys(names[:cursor.row])
-        for index, record in enumerate(self.reader.office_records(self.identity, names[cursor.row:], office_view=lambda office: entities(
-            self.ledger, self.identity, {"kind": "office", "key": office}, opening=self.snapshot, prepare=page,
-        )), start=cursor.row):
+        for index, record in enumerate(self.reader.office_records(self.identity, names[cursor.row:], office_view=lambda office: (
+            entity if self.numeric else entity.model_copy(update={"data": character_input(entity.data)}) for entity in entities(
+                self.ledger, self.identity, {"kind": "office", "key": office}, opening=self.snapshot, prepare=page,
+            )
+        ), prepare=page.clip), start=cursor.row):
             previous.pop(names[index], None)
             ids.update((UUID(item["entity_id"]), None) for item in record.get("appointments", ()) if item["entity_id"] is not None)
-            record = record if self.numeric else character_input(record)
-            page.cursor = cursor.model_copy(update={"row": index})
+            page.cursor = page.cursor.model_copy(update={"row": index})
             if "names_and_aliases" in record:
-                record = {**record, "names_and_aliases": self.candidate_fields(page, record["names_and_aliases"])}
+                # Identifier-only candidates share prepared fields in the reader's request cache.
+                record["names_and_aliases"] = self.candidate_fields(page, record["names_and_aliases"])
             yield page.render({"offices": [record]} if len(names) > 1 else record)
+            page.cursor = page.cursor.model_copy(update={"clipped": False})
         # Prior-page headers need only a batch of visible IDs, not their bodies.
         keys: list[str] = []
         for name in previous:
@@ -226,9 +236,8 @@ class RecordQuery:
                 row["key"] for row in names if value in row["matches"]
             } for value in keys}
             if any(len(matches) != 1 for matches in resolved.values()):
-                with closing(self.ledger.scan(visible.with_only_columns(E.kind, E.key, ALIASES))) as rows:
-                    candidates = matching_names(rows, keys)
                 page = TextPage(self.ledger, cursor, numeric=self.numeric)
+                candidates = matching_names(visible.with_only_columns(E.kind, E.key, ALIASES), keys, ledger=self.ledger, prepare=page.clip)
                 result = {"status": "not_found", **({"names_and_aliases": self.candidate_fields(page, candidates)} if candidates else {})}
                 return record_page(lambda position: (page.render(row) for row in (result,)[position.row:]), cursor) if candidates else result
             ids = [row["id"] for row in names if any(row["key"] in matches for matches in resolved.values())]
