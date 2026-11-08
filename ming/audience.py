@@ -23,7 +23,7 @@ from ming.middle.concepts import ACTING, AUDIENCE, DECREE, DECREE_EVENT, DISCOVE
 from ming.middle.translate import INSTRUCTIONS, declaration_agent
 from ming.middle.declaration import NightDeclaration
 from ming.middle.invoke import TextUpdate, invoke, stream_text
-from ming.middle.night import NightHeader, NightView
+from ming.middle.night import NightHeader, NightSetting, NightView
 from ming.middle.opening import CONTENT
 from ming.middle.scene import HallResult
 from ming.middle.records import read_records
@@ -44,6 +44,8 @@ class Audience:
         self._night_id: UUID | None = None
         self._system: ModelRequest | None = None
         self._turn: asyncio.Task[str] | None = None
+        # (run_id, setting) from the in-flight agent.run; only that run's success may book it.
+        self.turn_setting: tuple[str, NightSetting] | None = None
         self._dismiss_requested: UUID | None = None
 
     @property
@@ -149,14 +151,28 @@ class Audience:
                 if on_delta
                 else None,
             )
+            declared = (
+                self.turn_setting[1]
+                if self.turn_setting is not None and self.turn_setting[0] == result.run_id
+                else None
+            )
             self.court.record(
                 self.night_id,
                 [("turn", {"id": turn_id, "scene": result.output})],
+                {"setting": declared.model_dump()} if night.setting is None and declared is not None else None,
                 words=words,
             )
             return result.output
         finally:
             self._finish_dismiss()
+
+
+async def declare_setting(ctx: RunContext[Audience], setting: NightSetting) -> NightSetting:
+    """首轮回话前声明本夜实际时辰、地点；随成功回话落账。已定的本夜时地保持不变。"""
+    # Last declaration in this agent.run wins; booking keeps night.setting and matches run_id.
+    assert ctx.run_id is not None
+    ctx.deps.turn_setting = (ctx.run_id, setting)
+    return setting
 
 
 async def get_hall(ctx: RunContext[Audience]) -> tuple[str, ...]:
@@ -185,5 +201,5 @@ scene = Agent(
     name="scene",
     output_type=str,
     deps_type=Audience,
-    tools=[read_records, get_hall, set_hall, dismiss],
+    tools=[read_records, get_hall, set_hall, dismiss, declare_setting],
 )

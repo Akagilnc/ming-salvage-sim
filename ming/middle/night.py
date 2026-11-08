@@ -6,7 +6,7 @@ from operator import itemgetter
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import JSON, CompoundSelect, FromClause, Select, case, func, literal, or_, select, true, union_all
 from sqlalchemy.sql.elements import BindParameter, ColumnElement
 
@@ -31,11 +31,17 @@ class TurnView(BaseModel):
     hall: tuple[str, ...]
 
 
+class NightSetting(BaseModel):
+    time_of_day: str = Field(description="本夜召对的时辰，如戌时；由本场演出确定。")
+    location: str = Field(description="本夜召对的实际地点。")
+
+
 class NightHeader(BaseModel):
     id: UUID
     closed: bool
     hall: tuple[str, ...]
     date: dict[str, int]
+    setting: NightSetting | None
 
 
 class NightView(NightHeader):

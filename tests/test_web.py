@@ -13,6 +13,7 @@ from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
 from pydantic_ai.messages import (
     ModelResponse,
     TextPart,
+    ToolCallPart,
 )
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.function import FunctionModel
@@ -104,6 +105,11 @@ def test_menu_creates_distinct_games_and_opens_only_existing_saves(
             for e in records["entities"]
             if e["kind"] == "person"
         )
+        people = {e["key"]: e["data"] for e in records["entities"] if e["kind"] == "person"}
+        assert "status" not in people["黄道周"]
+        assert "status" not in people["王在晋"]
+        assert "status" not in people["洪承畴"]
+        assert people["胡廷宴"]["status"] == "罢官"
         assert (
             client.post(
                 "/actions", json={"action": "load", "save": "../outside.sqlite"}
@@ -404,6 +410,7 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
     ],
     indirect=["game_db"],
 )
+@pytest.mark.usefixtures("clock")
 def test_settings_survive_reopening_and_failed_scene_retries_in_place(
     tmp_path: Path, game_db: Path, step: str, failure: type[Exception], steps
 ) -> None:
@@ -416,7 +423,21 @@ def test_settings_survive_reopening_and_failed_scene_retries_in_place(
         else "simulation"
     )
     working = steps[name]
-    steps[name] = replaying([failure("external backend unavailable")] * 2)
+    setting = {"time_of_day": "子时", "location": "文华殿"}
+    if step == "say":
+        # Failed attempt declares; successful attempt does not — setting must stay unset
+        # (run_id match is what keeps the failed declaration off the books).
+        stale = {"time_of_day": "亥时", "location": "便殿"}
+        working = replaying([
+            ModelResponse(parts=[ToolCallPart("declare_setting", {"setting": stale})]),
+            ModelHTTPError(503, "recording"),
+            case["cases"]["missing_fields"]["scene"],
+        ])
+        setting = None
+    steps[name] = replaying([
+        *([ModelResponse(parts=[ToolCallPart("declare_setting", {"setting": {"time_of_day": "子时", "location": "文华殿"}})])] if step == "say" else []),
+        *[failure("external backend unavailable")] * 2,
+    ])
     settings = Configuration(backend="claude-cli")
     with TestClient(create_app(tmp_path)) as client:
         assert (
@@ -482,6 +503,7 @@ def test_settings_survive_reopening_and_failed_scene_retries_in_place(
         assert game["date"]["month"] == 10
         if step == "say":
             assert game["night"]["turns"] == []
+            assert game["night"]["setting"] is None
     steps[name] = working
     with TestClient(create_app(tmp_path)) as client:
         events = asyncio.Queue()
@@ -509,6 +531,7 @@ def test_settings_survive_reopening_and_failed_scene_retries_in_place(
         ]
         if step == "say":
             assert len(game["night"]["turns"]) == 1
+            assert game["night"]["setting"] == setting
         elif step == "translation":
             assert game["date"]["month"] == 10
             assert game["night"]["result"] == "unhandled"
@@ -566,16 +589,28 @@ def committed(db, product, action, snapshots, session):
     (("month", "month_draft", False), "opening_db"),
     (("choose", "advanced", False), "rejected_month"),
 ], indirect=["game_db"])
+@pytest.mark.usefixtures("clock")
 def test_http_reopens_committed_action_gaps(game_db, case, audit, steps):
     """Freeze real commits, not a normally drained save or hand-written events."""
     action, product, dismiss = case
     preparing = product == "month_draft" or (action == "choose" and product == "advanced")
-    if dismiss or preparing:
-        steps["scene" if dismiss else "simulation" if product == "month_draft" else "urgent"] = TestModel(
-            call_tools=["dismiss"] if dismiss else [],
-            custom_output_text=(json.loads((RECORDED / "night_invalid.json").read_text())["cases"]["missing_fields"]["scene"]
-                                if dismiss else (RECORDED / ("month_petition.txt" if product == "month_draft" else "sources_urgent.txt")).read_text()),
+    if preparing:
+        steps["simulation" if product == "month_draft" else "urgent"] = TestModel(
+            call_tools=[],
+            custom_output_text=(RECORDED / ("month_petition.txt" if product == "month_draft" else "sources_urgent.txt")).read_text(),
         )
+    setting = {"time_of_day": "子时", "location": "文华殿"}
+    if action == "say":
+        # Two declares across a transient failure: books keep the successful run's setting.
+        stale = {"time_of_day": "亥时", "location": "便殿"}
+        scene = json.loads((RECORDED / "night_invalid.json").read_text())["cases"]["missing_fields"]["scene"]
+        steps["scene"] = replaying([
+            ModelResponse(parts=[ToolCallPart("declare_setting", {"setting": stale})]),
+            ModelHTTPError(503, "recording"),
+            ModelResponse(parts=[ToolCallPart("declare_setting", {"setting": setting}),
+                                 *([ToolCallPart("dismiss", {})] if dismiss else [])]),
+            scene,
+        ] * 2)
     snapshots = {stage: game_db.parent / stage / game_db.name for stage in ("accepted", "product")}
     for path in snapshots.values():
         path.parent.mkdir()
@@ -610,6 +645,7 @@ def test_http_reopens_committed_action_gaps(game_db, case, audit, steps):
             assert state["date"]["month"] == (11 if action in {"month", "choose"} and product != "month_draft" else 10)
             if action == "say":
                 assert len(state["night"]["turns"]) == 1
+                assert state["night"]["setting"] == setting
                 assert state["night"]["turns"][0]["emperor_words"] == request["words"]
             after = audit(path)
             assert len([f for f in after["facts"] if f["kind"] == product]) == 1
@@ -617,8 +653,7 @@ def test_http_reopens_committed_action_gaps(game_db, case, audit, steps):
             if dismiss:
                 assert state["night"]["closed"] is True
                 assert state["night"]["result"] == "unhandled"
-                if stage == "product":
-                    assert not model_invocations["scene"]
+                assert stage != "product" or not model_invocations["scene"]
             elif stage == "product" and action != "choose" and product != "month_draft":
                 assert not model_invocations
                 assert after == before

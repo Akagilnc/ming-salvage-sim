@@ -100,8 +100,10 @@ def test_new_game_imports_complete_world_records_and_separates_identities(
         for p in json.loads((CONTENT / "characters.json").read_text())["characters"]
     }
     for name in ["史可法", "徐光启", "黄道周", "练国事", "郭允厚"]:
-        assert {k: v for k, v in shown[name].items() if k not in {"appointments", "identity_description"}} == {
-            k: v for k, v in canonical(characters[name]).items() if k in visible_fields - {"identity_description"}
+        # status follows emperor projection (active/offstage hidden); covered by test_web labels.
+        assert {k: v for k, v in shown[name].items() if k not in {"appointments", "identity_description", "status"}} == {
+            k: v for k, v in canonical(characters[name]).items()
+            if k in visible_fields - {"identity_description", "status"}
         }
         assert [{k: a[k] for k in ("office", "territory")} for a in shown[name]["appointments"]] == characters[name]["appointments"]
     assert "identity_description" not in shown["郭允厚"]

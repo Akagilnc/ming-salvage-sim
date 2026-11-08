@@ -20,6 +20,8 @@ if TYPE_CHECKING:
     from ming.middle.record_pages import TextPage
 
 OPENING_CONTROLS = {"interaction", "petition", "choice", "gazette", "secret_report"}
+# Emperor projection labels (status at person_projection; origin on decrees).
+EMPEROR_ORIGIN = {"emperor": "御旨", "minister": "臣请"}
 EMPTY_ACCOUNTS = select(E.id).where(literal(False)).correlate(None)
 READ_PEOPLE: BindParameter[str] = bindparam("read_people", expanding=True)
 APPOINTED_PEOPLE: BindParameter[str] = bindparam("appointed_people", expanding=True)
@@ -156,6 +158,11 @@ def person_projection(dossier: Item, row: Item, identity: Identity, appointments
             "name", "location", "status", "identity_description", "transit_to", "waiting_audience",
             "departure_date", "arrival_date", "travel_speed",
         }}
+    if identity == "emperor":
+        if data.get("status") in ("active", "offstage"):
+            data.pop("status")
+        elif data.get("status") == "dismissed":
+            data["status"] = "罢官"
     data.pop("historical_office", None)
     data["appointments"] = [{**r["data"], "role": role}
                             for r in appointments for role in APPOINTMENT_ROLES
@@ -246,7 +253,7 @@ def entities(
                     row["data"] = nights[row["id"]]
                 elif row["exposure"] == "decree":
                     row["data"] = {
-                        k: v
+                        k: EMPEROR_ORIGIN.get(cast(str, v), v) if identity == "emperor" and k == "origin" else v
                         for k, v in row["data"].items()
                         if k in {"text", "origin", "people", "night_id", "secret", "turn", "endorsements", "interim"}
                     }

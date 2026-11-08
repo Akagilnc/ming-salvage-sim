@@ -128,10 +128,11 @@ export function App() {
     ...book.facts.filter(fact => fact.kind === 'gazette').map(fact => fact.detail),
   ];
   const gazettes = gazetteRecords.map(record => String(record.text ?? ''));
-  const monthGazette = String(gazetteRecords.find(record => {
+  const monthGazetteRecord = gazetteRecords.find(record => {
     const date = record.date as typeof game.date | undefined;
     return date?.year === game.date.year && date.month === game.date.month;
-  })?.text ?? liveGazette);
+  });
+  const monthGazette = String(monthGazetteRecord?.text ?? liveGazette);
   const readingPage = reading?.navigation === snapshot.navigation ? reading.page : null;
   const gazette = readingPage === 'latest' ? (liveGazette || gazettes.at(-1))
     : readingPage === null ? null : gazettes[readingPage];
@@ -144,7 +145,7 @@ export function App() {
   if (game.face !== 'month' && readingPage !== null && gazette != null) return <main className="game desk">
     <header className="topbar"><h1>残明朱批</h1><span>{game.date.year} 年 {game.date.month} 月</span></header>
     <div className="court-layout"><section className="paper"><div className="scroll">
-      <article className="gazette"><h2>邸报</h2><MarkdownText>{gazette}</MarkdownText>
+      <article className="gazette"><h2>邸报</h2><MarkdownText streaming={readingPage === 'latest' && Boolean(liveGazette)}>{gazette}</MarkdownText>
         <button onClick={() => setReading(null)}>朕已知悉</button>
       </article>
     </div></section></div>
@@ -179,7 +180,7 @@ export function App() {
           {audience ? <>
             <ScrollMessages turns={turns} />
             {pending && <div className="emperor"><small>朕</small><MarkdownText>{pending}</MarkdownText></div>}
-            {live && <Scene text={live} />}
+            {live && <Scene text={live} streaming />}
             {failure}
           </> : <>
             <h2>{game.face === 'month' && !game.petitions.some(p => p.blocking) ? '核账期' : '案头'}</h2>
@@ -187,7 +188,7 @@ export function App() {
             {game.face === 'month' && game.running && !game.petitions.length && !monthGazette && !failure && <p role="status">正在过月，请稍候。</p>}
           </>}
           {game.face === 'month' && monthGazette && <article className="gazette">
-            <h2>邸报</h2><MarkdownText>{monthGazette}</MarkdownText>
+            <h2>邸报</h2><MarkdownText streaming={!monthGazetteRecord && Boolean(liveGazette)}>{monthGazette}</MarkdownText>
           </article>}
           {!audience && night?.result === 'unhandled' && <p className="unhandled">接不住</p>}
           {game.petitions.map(petition => <article className="petition" key={petition.id}>
@@ -218,7 +219,10 @@ export function App() {
         <button className="close" onClick={() => setPanel(null)}>合上</button>
         {panel === 'settings' ? <SettingsForm initial={snapshot.settings} requiredSettings={snapshot.required_settings} onSave={settings => { void action({ action: 'settings', settings }); }} /> :
           panel === 'roster' ? <><h2>名册</h2>{people.map(person => <article key={person.id}>
-            <header><MarkdownText>{person.key}</MarkdownText></header><MarkdownText>{`${((person.data.appointments ?? []) as { office: string; territory: string; role: string }[]).map(a => `${a.role === 'acting' ? '署' : ''}${a.territory}${a.office}`).join('、') || String(person.data.identity_description ?? '')} · ${String(person.data.location ?? '')} · ${String(person.data.status ?? '')}`}</MarkdownText>
+            <header><MarkdownText>{person.key}</MarkdownText></header><MarkdownText>{[
+              ((person.data.appointments ?? []) as { office: string; territory: string; role: string }[]).map(a => `${a.role === 'acting' ? '署' : ''}${a.territory}${a.office}`).join('、') || String(person.data.identity_description ?? ''),
+              String(person.data.location ?? ''), String(person.data.status ?? ''),
+            ].filter(Boolean).join(' · ')}</MarkdownText>
             {audience && <button disabled={busy || game.running} onClick={() => void action({ action: 'say', words: `宣${person.key}。` })}>宣召</button>}
           </article>)}</> : panel === 'orders' ? <><h2>旨意去向</h2>{book.entities.filter(entity => entity.kind === 'decree').map(entity => <article key={entity.id}>
             <MarkdownText>{String(entity.data.text)}</MarkdownText><MarkdownText>{`${String(entity.data.origin)} · ${String(entity.data.people)}`}</MarkdownText>
@@ -226,10 +230,14 @@ export function App() {
               <summary>密报 · {String((fact.detail.date as { year: number; month: number }).year)} 年 {String((fact.detail.date as { year: number; month: number }).month)} 月</summary>
               <MarkdownText>{String(fact.detail.text)}</MarkdownText>
             </details>)}
-          </article>)}</> : <><h2>起居录</h2>{book.entities.filter(entity => entity.kind === 'night').map(entity => <details key={entity.id}>
-            <summary><MarkdownText>{entity.key}</MarkdownText></summary><ScrollMessages turns={(entity.data as unknown as NonNullable<typeof night>).turns} />
-            {entity.data.result === 'unhandled' && <p className="unhandled">接不住</p>}
-          </details>)}<h2>历期邸报</h2>{gazettes.map((_text, index) => <button key={index} onClick={() => { setReading({ navigation: snapshot.navigation, page: index }); setPanel(null); }}>第 {index + 1} 期</button>)}</>}
+          </article>)}</> : <><h2>起居录</h2>{book.entities.filter(entity => entity.kind === 'night').map(entity => {
+            const record = entity.data as unknown as NonNullable<typeof night>;
+            return <details key={entity.id}>
+              <summary><MarkdownText>{[`${record.date.year} 年 ${record.date.month} 月`, record.setting?.time_of_day, record.setting?.location].filter(Boolean).join(' · ')}</MarkdownText></summary>
+              <ScrollMessages turns={record.turns} />
+              {record.result === 'unhandled' && <p className="unhandled">接不住</p>}
+            </details>;
+          })}<h2>历期邸报</h2>{gazettes.map((_text, index) => <button key={index} onClick={() => { setReading({ navigation: snapshot.navigation, page: index }); setPanel(null); }}>第 {index + 1} 期</button>)}</>}
       </aside>}
     </div>
   </main>;

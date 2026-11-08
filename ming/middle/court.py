@@ -69,7 +69,8 @@ class Court:
                 return row["id"], False
         current = calendar_row(self._ledger)["data"] if date is None else date
         night = Entity(
-            "night", str(uuid4()), "", {"closed": False, "hall": list(INITIAL_HALL), "date": {k: current[k] for k in ("year", "month")}}
+            "night", str(uuid4()), "", {"closed": False, "hall": list(INITIAL_HALL), "setting": None,
+                                      "date": {k: current[k] for k in ("year", "month")}}
         )
         self._ledger.commit([night])
         return night.id, True
