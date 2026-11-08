@@ -66,7 +66,7 @@ class Game:
         self.emit: Callable[[dict[str, Any]], None] | None = None
         self.live: dict[str, str] = {}
         self.audience = Audience(court, self.start_background, partial(self.notify, "hall"))
-        self.month = Month(court, partial(self.notify, "gazette"), on_state=self._month_state)
+        self.month = Month(court, partial(self.notify, "gazette"))
         self.configure(model, month_model=month_model)
         self.active: asyncio.Task[Any] | None = None
         self.background: set[asyncio.Task[Any]] = set()
@@ -89,11 +89,6 @@ class Game:
             )
         if self.emit:
             self.emit({"event": event, "data": data})
-
-    def _month_state(self) -> None:
-        """Push presentation after a month product lands while the action still runs."""
-        if self.emit is not None:
-            self.notify("state", self.presentation())
 
     def interaction(
         self, action: str, status: str, payload: dict[str, Any], *, calendar: EntityView | None = None,
