@@ -107,8 +107,14 @@ class Ledger:
 
     def read(self, query: Select[Any], parameters: Mapping[str, Any] | None = None) -> tuple[Item, ...]:
         """Query the committed read tables for this request."""
+        return tuple(self.scan(query, parameters))
+
+    def scan(self, query: Select[Any], parameters: Mapping[str, Any] | None = None) -> Generator[Item]:
+        """Iterate committed rows without materializing an unbounded query result."""
         with self.sql.transaction(commit=False) as session:
-            return tuple(dict(row) for row in session.execute(query, parameters).mappings())
+            with session.execute(query, parameters) as result:
+                for row in result.mappings():
+                    yield dict(row)
 
     def entities(
         self,

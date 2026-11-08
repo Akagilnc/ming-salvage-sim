@@ -135,7 +135,7 @@ def prompt(court: Court, identity: Identity, context: Any, *, date: dict[str, An
     return character_input({
         "date": date,
         "context": context,
-        "catalogue": court.read.record_catalogue(identity),
+        "catalogue": court.read.query(identity),
         **({"speakers": [speakers[name] for name in identity.people if name in speakers]}
            if isinstance(identity, Officials) else {}),
     })

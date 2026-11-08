@@ -45,13 +45,21 @@ def record_queries(catalogue):
         "date-original": {"date": {"id": "world", **date}},
         "date-reordered": {"date": {"month": 10, "year": 1627, "id": "world"}},
         "pair": {"kind": "person", "key": ["温体仁", "杨嗣昌"]},
-        "many": {"key": [e["key"] for e in catalogue if e["kind"] in {"account", "army"} or e["key"] == "杨嗣昌"]},
+        "many": {"key": [e["key"] for e in catalogue if e["kind"] == "account"]
+                         + [e["key"] for e in catalogue if e["kind"] == "army"][:12] + ["杨嗣昌"]},
         "unknown-key": {"key": "不存在的人"},
         "unknown-kind": {"kind": "不存在的类"},
+        "hidden-group": {"kind": "account", "scope": {"department": "户部"}},
+        "hidden-field": {"kind": "person", "key": "王体乾", "scope": {"read": {
+            "row": 0, "text": {"column": "data", "path": "$.seed_guilt"},
+        }}},
+        "foreign-dossier": {"kind": "person", "key": "王体乾", "scope": {"read": {
+            "row": 0, "text": {"column": "data", "path": "$", "container": True, "dossier": True},
+        }}},
     }
 
 
-def assert_model_read_tools(received, tools, model_invocations, court):
+def assert_model_read_tools(received, tools, model_invocations, court, continuations):
     expected = {
         "scene": Officials(people=["王承恩"]),
         "NightDeclaration": "world", "Declaration": "world", "simulation": "world", "gazette": "public",
@@ -76,8 +84,15 @@ def assert_model_read_tools(received, tools, model_invocations, court):
         returns = [p.model_response_object() for m in messages for p in m.parts
                    if isinstance(p, ToolReturnPart) and p.tool_call_id == "office"]
         assert returns and all(r["appointments"][0]["holders"] == ["郭允厚"] for r in returns)
-        responses = {p.tool_call_id: p.model_response_object() for m in messages for p in m.parts
-                     if isinstance(p, ToolReturnPart)}
+        returned = [p for message in messages for p in message.parts if isinstance(p, ToolReturnPart)]
+        assert all(len(part.model_response_str().encode("utf-8")) <= 20_000 for part in returned)
+        raw = {part.tool_call_id: part.model_response_object() for part in returned}
+        pages = {label: [data, *(page for call_id, page in raw.items() if continuations.get(call_id) == label)]
+                 for label, data in raw.items() if label not in continuations}
+        responses = {label: {**group[0], **{
+            field: [item for page in group for item in page.get(field, [])]
+            for field, value in group[0].items() if isinstance(value, list)
+        }} for label, group in pages.items()}
         if name != "impeachment":
             assert ("dossier" in responses["person"]["entities"][0]["data"]) == (
                 isinstance(identity, Officials) and "王体乾" in identity.people
@@ -90,17 +105,22 @@ def assert_model_read_tools(received, tools, model_invocations, court):
             assert ("satisfaction" in factions["阉党"]) == (name in {"deliberation", "urgent"})
             assert factions["东林"] == {"name": "东林"}
         if name in {"scene", "simulation", "gazette"}:
-            assert responses["empty"]["status"] == "query_required"
+            assert {row["kind"] for row in responses["empty"]["catalogue"]} >= {"office", "territory", "person"}
             assert all(responses[label]["status"] == "not_found" and "names_and_aliases" not in responses[label]
                        for label in ("unknown-key", "unknown-kind"))
+            assert responses["hidden-group"] == {"status": "invalid_scope"}
+            assert responses["hidden-field"] == responses["foreign-dossier"] == {"status": "invalid_cursor"}
             assert {e["key"] for e in responses["pair"]["entities"]} == {"温体仁", "杨嗣昌"}
             assert {e["kind"] for e in responses["class"]["catalogue"]} == {"person"}
-            assert all(set(e) == {"kind", "key", "event_count"} for e in responses["class"]["catalogue"])
-            assert responses["date"] == responses["date-original"] == responses["date-reordered"]
             accounts = {e["key"]: e["data"] for e in responses["many"]["entities"] if e["kind"] == "account"}
+            assert {row["key"]: row["description"] for row in responses["account"].get("catalogue", [])} == {
+                key: data.get("description", data.get("distinction")) for key, data in accounts.items()
+            }
+            assert responses["date"] == responses["date-original"] == responses["date-reordered"]
             if name == "scene":
                 assert accounts == {key: {"name": key} for key in ("国库", "内库", "节慎库", "常盈库")}
             elif name == "gazette":
+                assert responses["account"] == {"status": "not_found"}
                 assert accounts == {}
                 assert not [f for f in responses["many"]["facts"] if f["kind"] == "reported"]
             else:
@@ -109,7 +129,7 @@ def assert_model_read_tools(received, tools, model_invocations, court):
                 }
                 assert {tuple(f["detail"]["date"][k] for k in ("year", "month"))
                         for f in responses["dated"]["facts"]} == {(1627, 10)}
-                assert next(e["event_count"] for e in responses["class-date"]["catalogue"] if e["key"] == "王承恩") == len(responses["dated"]["facts"])
+                assert "王承恩" in {e["key"] for e in responses["class-date"]["catalogue"]}
                 assert responses["prior"]["facts"] == []
                 assert responses["prior-class"]["catalogue"] == []
                 assert next(e["data"] for e in responses["many"]["entities"] if e["key"] == "杨嗣昌").items() >= {
@@ -119,7 +139,7 @@ def assert_model_read_tools(received, tools, model_invocations, court):
                 assert next(e.data["loyalty"] for e in court.entities("world", kind="person", key="杨嗣昌")) == 75
                 assert {(e["key"], field): e["data"][field] for e in responses["many"]["entities"] if e["kind"] == "army"
                         for field in ("firearm_equipment", "cannon_equipment")} == {
-                    (e.key, field): e.data[field] for e in court.entities("audit", kind="army")
+                    (e.key, field): e.data[field] for e in court.entities("audit", kind="army")[:12]
                     for field in ("firearm_equipment", "cannon_equipment")
                 }
         if name in {"urgent", "impeachment", "deliberation", "secret_report"}:
@@ -155,6 +175,7 @@ def test_every_model_call_reads_identity_scoped_records(game_db, steps):
         "impeachment": (RECORDED / "sources_empty.txt").read_text(),
         **{name: (RECORDED / f"{name}.txt").read_text() for name in ("simulation", "deliberation", "secret_report", "gazette")},
     }
+    continuations = {}
     running = Counter()
     overlap = set()
     checked = set()
@@ -182,7 +203,7 @@ def test_every_model_call_reads_identity_scoped_records(game_db, steps):
                     # Check before the test's own visibility query below.
                     assert reads["catalogues"][identity] == 1, identity
                     checked.add(identity)
-                assert data["catalogue"] == character_input(deps.court.read.record_catalogue(deps.identity))
+                assert data["catalogue"] == deps.court.read.query(deps.identity)
             if name in {"deliberation", "impeachment", "secret_report"}:
                 running[name] += 1
                 if running[name] > 1:
@@ -191,8 +212,10 @@ def test_every_model_call_reads_identity_scoped_records(game_db, steps):
                 running[name] -= 1
             returned = {p.tool_call_id: p.model_response_object() for m in messages for p in m.parts
                         if isinstance(p, ToolReturnPart)}
-            if name == "scene" and not returned:
-                return ModelResponse(parts=[ToolCallPart("read_records", {"kind": "account"}, tool_call_id="account")])
+            calls = ([ToolCallPart("read_records", {"kind": kind}, tool_call_id=kind) for kind in ("account", "army")]
+                     if name in {"scene", "simulation", "gazette"} and not returned else [])
+            if calls:
+                return ModelResponse(parts=calls)
             if "office" in returned:
                 # Distinct recorded verdicts are assigned by the task's structured
                 # origin, not call order or the prose of either decree.
@@ -209,8 +232,7 @@ def test_every_model_call_reads_identity_scoped_records(game_db, steps):
             return ModelResponse(parts=[
                 *(ToolCallPart("read_records", args, tool_call_id=label)
                   for label, args in (record_queries(
-                      returned["account"]["catalogue"]
-                      if name == "scene" else json.loads(messages[0].parts[0].content)["catalogue"]
+                      returned["account"].get("catalogue", []) + returned["army"].get("catalogue", [])
                   ) if name in {"scene", "simulation", "gazette"} else {}).items()),
                 ToolCallPart("read_records", {"kind": "incumbency", "key": "户部尚书"}, tool_call_id="office"),
                 *([] if name == "impeachment" else [
@@ -220,7 +242,7 @@ def test_every_model_call_reads_identity_scoped_records(game_db, steps):
                 ]),
             ])
 
-        steps[name] = replaying(respond, received[name], tools[name], model_invocations[name])
+        steps[name] = replaying(respond, received[name], tools[name], model_invocations[name], continuations)
     with TestClient(create_app(game_db.parent)) as client:
         client.post("/actions", json={"action": "load", "save": game_db.name}).raise_for_status()
         client.post("/actions", json={"action": "open"}).raise_for_status()
@@ -248,7 +270,7 @@ def test_every_model_call_reads_identity_scoped_records(game_db, steps):
         }
         assert not court.facts("public", kind="reported")
         assert not court.facts("emperor", kind="reported")
-        assert_model_read_tools(received, tools, model_invocations, court)
+        assert_model_read_tools(received, tools, model_invocations, court, continuations)
 
 
 @pytest.mark.parametrize("game_db", ["secret_night"], indirect=True)

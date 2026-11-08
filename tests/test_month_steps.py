@@ -292,9 +292,8 @@ def test_two_nights_feed_world_and_arrivals_wait_for_audience(tmp_path, game_db,
         client = reopen()
         save = client.post("/actions", json={"action": "load", "save": game_db.name}).json()["save"]
         ledger = audit(tmp_path / save)
-        nights = {e["id"] for e in ledger["entities"] if e["kind"] == "night"}
         assert not [f for f in ledger["facts"] if f["kind"] in {"simulation", "month_draft", "month_final"}]
-        assert len(nights) == 2
+        assert len({e["id"] for e in ledger["entities"] if e["kind"] == "night"}) == 2
         observed = []
         steps["gazette"] = replaying(lambda _: observed.append(audit(tmp_path / save)) or (TimeoutError() if interrupt and len(observed) <= 3 else (RECORDED / "gazette.txt").read_text()))
         for month in (11, 12):
@@ -351,19 +350,21 @@ def test_two_nights_feed_world_and_arrivals_wait_for_audience(tmp_path, game_db,
             assert audit(tmp_path / save) == ledger
         prior = [e for e in ledger["entities"] if e["kind"] == "night"]
         received = []
+        continuations = {}
         steps["scene"] = replaying(
             [ModelResponse(parts=[ToolCallPart("read_records", {"kind": "night", "key": e["key"]}, tool_call_id=e["id"]) for e in prior]),
-             *ModelMessagesTypeAdapter.validate_json((RECORDED / "travel_admission.json").read_bytes())], received,
+             *ModelMessagesTypeAdapter.validate_json((RECORDED / "travel_admission.json").read_bytes())], received, continuations=continuations,
         )
         client.post("/actions", json={"action": "open"})
         client.post("/actions", json={"action": "say", "words": "宣毕自严、徐光启入殿。"})
         assert json.loads(received[0].parts[1].content)["gazette"] == [f for f in ledger["facts"] if f["kind"] == "gazette"][-1]["detail"]["text"]
         results = {p.tool_call_id: p.model_response_object() for m in received for p in m.parts if isinstance(p, ToolReturnPart) and p.tool_name == "read_records"}
         for night in prior:
-            data = results[night["id"]]["entities"][0]["data"]
-            assert data["date"] == {"year": 1627, "month": 10}
-            assert {t["id"] for t in data["turns"]} == {f["detail"]["id"] for f in ledger["facts"] if f["entity_id"] == night["id"] and f["kind"] == "turn"}
-            assert all("hall" in t for t in data["turns"])
+            turns = [turn for call_id, result in results.items() if continuations.get(call_id, call_id) == night["id"]
+                     for turn in result.get("turns", [])]
+            assert results[night["id"]]["entities"][0]["data"]["date"] == {"year": 1627, "month": 10}
+            assert {t["id"] for t in turns} == {f["detail"]["id"] for f in ledger["facts"] if f["entity_id"] == night["id"] and f["kind"] == "turn"}
+            assert all("hall" in t for t in turns)
         assert {"毕自严", "徐光启"} <= set(client.get("/state").json()["game"]["night"]["hall"])
         assert not any(e["data"]["waiting_audience"] for e in audit(tmp_path / save)["entities"] if e["kind"] == "person" and e["key"] in {"毕自严", "徐光启"})
 

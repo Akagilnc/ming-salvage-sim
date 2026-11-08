@@ -91,17 +91,21 @@ TURN_HALL = select(func.json_group_array(func.json_object(
 TURN_ROWS = FACT_ROWS.add_columns(TURN_HALL.label("hall"))
 
 
-def read_nights(ledger: Ledger, nights: Sequence[Item], *, complete: bool = True) -> tuple[NightView, ...]:
+def turn_view(item: Item) -> TurnView:
+    return TurnView(
+        **item["detail"], emperor_words=item["emperor_words"],
+        hall=tuple(member["person"] for member in sorted(item.get("hall", ()), key=itemgetter("position", "ordinal"))),
+    )
+
+
+def read_nights(ledger: Ledger, nights: Sequence[Item], *, complete: bool = True, include_turns: bool = True) -> tuple[NightView, ...]:
     """Complete nights serve presentation, translation and permitted reads; replay needs only speech."""
     if not nights:
         return ()
     ids = [night["id"] for night in nights]
     turns: dict[UUID, list[TurnView]] = defaultdict(list)
-    for item in ledger.facts(entity_id=ids, kind="turn", query=TURN_ROWS if complete else FACT_ROWS):
-        turns[item["entity_id"]].append(TurnView(
-            **item["detail"], emperor_words=item["emperor_words"],
-            hall=tuple(member["person"] for member in sorted(item.get("hall", ()), key=itemgetter("position", "ordinal"))),
-        ))
+    for item in (ledger.facts(entity_id=ids, kind="turn", query=TURN_ROWS if complete else FACT_ROWS) if include_turns else ()):
+        turns[item["entity_id"]].append(turn_view(item))
     results = {row["id"]: row["result"] for row in ledger.read(
         select(E.id, NIGHT_RESULT.label("result")).where(E.id.in_(ids)),
     )} if complete else {}

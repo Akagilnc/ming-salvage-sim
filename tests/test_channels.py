@@ -36,6 +36,7 @@ from ming.middle.opening import opening_template
 from ming.web import create_app
 from tests.conftest import INVALID_NIGHT, RECORDED, RECORDED_REPLIES
 from tests.test_web import state_updates
+from tests.test_court import record_objects, record_results
 
 CODEX_MODEL = "gpt-6.1-sol"
 PI_MODEL = f"openai-codex/{CODEX_MODEL}"
@@ -213,7 +214,7 @@ def codex_stream(name: str) -> httpx2.Response:
 
 
 def codex_response(
-    request: httpx2.Request, outputs: list[dict[str, object]] | None = None,
+    request: httpx2.Request, exchange: dict | None = None,
     *, requests: list[httpx2.Request] | None = None, rejected: bool = False,
     read_args: dict[str, object] | None = None,
 ) -> httpx2.Response:
@@ -254,19 +255,29 @@ def codex_response(
         isinstance(item, dict) and item.get("type") == "function_call"
         for item in body.get("input") or []
     )
-    if outputs is not None:
-        outputs.extend(
-            json.loads(item["output"])
-            for item in body.get("input") or []
-            if isinstance(item, dict) and item.get("type") == "function_call_output"
-            and isinstance(item.get("output"), str)
-        )
-    if name == "simulation" and not called and read_args is not None:
+    records = [item for item in body.get("input") or []
+               if isinstance(item, dict) and item.get("type") == "function_call_output" and isinstance(item.get("output"), str)]
+    next_args = read_args if not called else None
+    if exchange is not None and name == "simulation":
+        assert all(len(item["output"].encode("utf-8")) <= 20_000 for item in records)
+        exchange["returned"], objects = record_objects(item["output"] for item in records)
+        exchange["returned"] = dict(zip((item["call_id"] for item in records), exchange["returned"], strict=True))
+        exchange["queries"] = {item["call_id"]: json.loads(item["arguments"]) for item in body.get("input") or []
+                               if isinstance(item, dict) and item.get("type") == "function_call"}
+        calls = list(exchange["queries"].values())
+        asked = [call.get("scope", {}).get("read") for call in calls]
+        references = [value["read"] for value in objects if "read" in value]
+        after = next(reversed(exchange["returned"].values())).get("next") if records else None
+        if after is not None:
+            next_args = {**calls[-1], "scope": {**calls[-1].get("scope", {}), "after": after}}
+        elif reference := next((reference for reference in references if reference not in asked), None):
+            next_args = {**read_args, "scope": {"read": reference}}
+    if name == "simulation" and next_args is not None:
         # Schema-only boundary input: keep native recordings unchanged and
         # use SDK events for the keyed query required by #1970.
         call = ResponseFunctionToolCall(
-            type="function_call", id="fc_ledger", call_id="call_ledger",
-            name="read_records", arguments=json.dumps(read_args), status="completed",
+            type="function_call", id=f"fc_ledger_{len(records)}", call_id=f"call_ledger_{len(records)}",
+            name="read_records", arguments=json.dumps(next_args), status="completed",
         )
         response = OpenAIResponse(
             id="resp_ledger", created_at=1792748281, model=CODEX_MODEL,
@@ -735,26 +746,33 @@ def test_codex_forwards_a_ledger_sized_tool_result(tmp_path: Path, monkeypatch, 
     home = tmp_path / "codex"
     auth_file(home / "auth.json", expired=False)
     monkeypatch.setenv("CODEX_HOME", str(home))
-    planted = {"samples": list(range(60_000))}
-    outputs: list[dict[str, object]] = []
+    planted = {
+        "samples": [None, True, False, [], {}, *range(2500)], "body": '汉\\"\n𠮷' * 1200,
+        "axis": {"field": "loyalty", **{str(index): index for index in range(1200)}, "value": 90, "loyalty": 90,
+                 "nested": {"ability": 90}},
+    }
+    exchange = {}
+    offices = [row["name"] for row in json.loads((Path(__file__).parents[1] / "content/official_titles.json").read_text())["offices"][:24]]
 
     install_codex(
         monkeypatch,
-        lambda request: codex_response(request, outputs, read_args={"kind": "world", "key": "天下"}),
+        lambda request: codex_response(request, exchange, read_args={"kind": "incumbency", "key": offices}),
     )
     app = create_app(game_db.parent)
     with TestClient(app) as client:
         open_game(client, {"backend": "codex", "model": CODEX_MODEL}, game_db)
-        app.state.web.game.court.record(("world", "天下"), [("note", planted)])
+        court = app.state.web.game.court
+        appointment = next(row for row in court.read.entities("audit", kind="incumbency") if row.data["office"] == "户部尚书")
+        court.record(appointment.id, [("note", planted)])
         client.post("/actions", json={"action": "month"}).raise_for_status()
         state = client.get("/state").json()
     assert state["game"]["failure"] is None
-    assert any(
-        fact.get("kind") == "note" and fact.get("detail") == planted
-        for record in outputs
-        for fact in record.get("facts", [])
-        if isinstance(fact, dict)
-    )
+    root = next(iter(exchange["queries"]))
+    material = record_results(exchange["queries"], exchange["returned"], dict.fromkeys(exchange["queries"], root))[root]
+    assert [item["office"] for office in material["offices"] for item in office["appointments"]] == offices
+    assert [fact["detail"] for fact in material["facts"] if fact["kind"] == "note"] == [
+        {**planted, "axis": {**planted["axis"], "value": "可托腹心", "loyalty": "可托腹心", "nested": {"ability": "足任大事"}}},
+    ]
 
 
 def test_pi_empty_assistant_is_not_a_transport_failure(

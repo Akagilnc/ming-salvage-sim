@@ -1,11 +1,12 @@
 """Identity-specific structured read boundary; no summaries of model prose."""
 
-from collections.abc import Iterable, Sequence
-from typing import Any, Literal, cast
+from collections.abc import Generator, Iterable, Sequence
+from contextlib import ExitStack, closing
+from typing import TYPE_CHECKING, Any, Literal, cast
 from uuid import UUID
 
 from pydantic import BaseModel
-from sqlalchemy import Select, bindparam, case, func, literal, or_, select
+from sqlalchemy import Select, bindparam, case, func, literal, or_, select, type_coerce
 from sqlalchemy.sql.elements import BindParameter, ColumnElement
 
 from ming.ledger import Item, Ledger
@@ -14,6 +15,9 @@ from ming.middle.queries import CALENDAR, available_on, public_decree
 from ming.middle.appointments import APPOINTMENT_ROLES, CATALOGUE_KINDS, held_by
 from ming.middle.night import known_people, read_nights, witnessed_nights
 from ming.middle.travel import travel_days
+
+if TYPE_CHECKING:
+    from ming.middle.record_pages import TextPage
 
 OPENING_CONTROLS = {"interaction", "petition", "choice", "gazette", "secret_report"}
 EMPTY_ACCOUNTS = select(E.id).where(literal(False)).correlate(None)
@@ -138,15 +142,15 @@ def visible_appointments(ledger: Ledger, identity: Identity, rows: Sequence[Item
     return [r for r in rows if r["id"] in visible]
 
 
-def person_projection(dossiers: Item, row: Item, identity: Identity, appointments: Iterable[Item]) -> Item:
+def person_projection(dossier: Item, row: Item, identity: Identity, appointments: Iterable[Item], *, qualitative: bool = True) -> Item:
     """One current-office and character-material projection for UI and every model."""
     data = dict(row["data"])
     if identity == "audit":
         return data
     if isinstance(identity, Officials) and row["key"] in identity.people:
         data.setdefault("seed_guilt", None)
-        data["dossier"] = dossiers.get(row["key"], {})
-        data = character_input(data)
+        data["dossier"] = dossier
+        data = character_input(data) if qualitative else data
     elif identity != "world":
         data = {k: v for k, v in data.items() if k in {
             "name", "location", "status", "identity_description", "transit_to", "waiting_audience",
@@ -163,26 +167,39 @@ def person_projection(dossiers: Item, row: Item, identity: Identity, appointment
 
 def entities(
     ledger: Ledger, identity: Identity, selection: Item | None = None,
-    *, opening: Item | None = None,
-) -> tuple[EntityView, ...]:
+    *, opening: Item | Select[Any] | None = None, prepare: "TextPage | None" = None,
+) -> Generator[EntityView]:
     selection = dict(selection or {})
+    night_turns = selection.pop("night_turns", True)
     keys = selection.pop("keys", None)
     ids = selection.pop("ids", None)
-    if opening is not None:
-        return tuple(
+    if isinstance(opening, dict):
+        yield from (
             EntityView.model_validate(e)
             for e in opening["detail"]["entities"]
             if all(e[k] == v for k, v in selection.items())
             and (keys is None or e["key"] in keys)
             and (ids is None or UUID(e["id"]) in ids)
         )
-    query = ENTITY_SOURCES[identity_key(identity)]
-    query = query.where(E.kind == selection["kind"]) if selection.get("kind") is not None else query
-    query = query.where(E.key == selection["key"]) if selection.get("key") is not None else query
-    query = query.where(E.key.in_(keys)) if keys is not None else query
-    query = query.where(E.id.in_(ids)) if ids is not None else query
-    parameters = view_parameters(identity, selection.get("kind"))
-    rows = ledger.read(query, parameters)
+        return
+    parameters = view_parameters(identity, selection.get("kind") or ("office" if prepare is not None else None))
+    query = opening if isinstance(opening, Select) else ENTITY_SOURCES[identity_key(identity)]
+    query = query.where(query.selected_columns.kind == selection["kind"]) if selection.get("kind") is not None else query
+    query = query.where(query.selected_columns.key == selection["key"]) if selection.get("key") is not None else query
+    query = query.where(query.selected_columns.key.in_(keys)) if keys is not None else query
+    query = query.where(query.selected_columns.id.in_(ids)) if ids is not None else query
+    query = query.params(**parameters)
+    if isinstance(opening, Select):
+        with closing(ledger.scan(prepare.clip(query) if prepare is not None else query)) as rows:
+            yield from (EntityView.model_validate(prepare.entity(row, row) if prepare is not None else row) for row in rows)
+        return
+    # Batch only projection dependencies. Delivery bodies remain lazy, so a
+    # later page does not reread wide entities consumed by an earlier batch.
+    rows = ledger.read(query.with_only_columns(*(
+        type_coerce(case((query.selected_columns.kind.in_(("incumbency", "night")), column),
+                         else_=func.json_object("faction", func.json_extract(column, "$.faction"))), column.type).label("data")
+        if column.key == "data" else column for column in query.selected_columns
+    )) if prepare is not None else query) if prepare is None or selection.get("kind") in (None, "person", "faction", "night") else ()
     people = [row["key"] for row in rows if row["kind"] == "person" and identity != "audit"]
     appointments = {row["id"]: row for row in rows if row["kind"] == "incumbency"} if people else {}
     if people and (selection or keys is not None or ids is not None):
@@ -194,9 +211,11 @@ def entities(
             parameters={**parameters, "appointed_people": people},
         )}
     own: set[str] = set(identity.people) if isinstance(identity, Officials) else set()
-    dossiers = {r["key"]: r["data"] for r in ledger.entities(
-        kind="dossier", query=ENTITY_ROWS.where(E.key.in_(own.intersection(people))),
-    )} if own.intersection(people) else {}
+    dossier_query = ENTITY_ROWS.where(E.kind == "dossier", E.key.in_(own.intersection(people)))
+    dossiers = {r["key"]: r["data"] for r in ledger.read(dossier_query)} if prepare is None and own.intersection(people) else {}
+    if prepare is not None and own.intersection(people):
+        dossier_query = prepare.clip(dossier_query, True).subquery()
+        query = query.add_columns(select(dossier_query.c.data).where(dossier_query.c.key == E.key).scalar_subquery().label("dossier"))
     factions: set[Any] = set()
     if any(row["exposure"] == "faction" for row in rows):
         factions.update(row["data"].get("faction") for row in rows if row["kind"] == "person" and row["key"] in own)
@@ -206,30 +225,32 @@ def entities(
                 kind="person", query=ENTITY_ROWS.with_only_columns(E.data["faction"].as_string().label("faction")).where(E.key.in_(own)),
             ))
     nights = {night.id: night.model_dump(mode="json") for night in read_nights(
-        ledger, [row for row in rows if row["exposure"] == "night"],
+        ledger, [row for row in rows if row["exposure"] == "night"], include_turns=night_turns,
     )}
-    result: list[EntityView] = []
-    for row in map(dict, rows):
-        if row["kind"] == "person":
-            row["data"] = person_projection(dossiers, row, identity, appointments.values())
-        row["data"] = ({destination: travel_days(distance) for destination, distance in row["data"].items()}
-                       if row["kind"] == "distance" and identity != "audit" else row["data"])
-        if identity not in ("audit", "world"):
-            if row["exposure"] == "faction":
-                if row["key"] not in factions:
+    with ExitStack() as stack:
+        for original in (stack.enter_context(closing(ledger.scan(prepare.clip(query)))) if prepare is not None else rows):
+            row = dict(original)
+            if row["kind"] == "person":
+                row["data"] = person_projection(
+                    prepare.whole("data", True, payload=(row["dossier"], row["dossier"],
+                        cast(Select[Any], prepare.dossier_source).where(E.key == row["key"]),
+                    )) if prepare is not None and row.get("dossier") is not None else dossiers.get(row["key"], {}),
+                    row, identity, appointments.values(), qualitative=prepare is None or prepare.numeric,
+                )
+            row["data"] = ({destination: travel_days(distance) for destination, distance in row["data"].items()}
+                           if row["kind"] == "distance" and identity != "audit" else row["data"])
+            if identity not in ("audit", "world"):
+                if row["exposure"] == "account_name" or (row["exposure"] == "faction" and row["key"] not in factions):
                     row["data"] = {"name": row["key"]}
-            elif row["exposure"] == "account_name":
-                row["data"] = {"name": row["key"]}
-            elif row["exposure"] == "night":
-                row["data"] = nights[row["id"]]
-            elif row["exposure"] == "decree":
-                row["data"] = {
-                    k: v
-                    for k, v in row["data"].items()
-                    if k in {"text", "origin", "people", "night_id", "secret", "turn", "endorsements", "interim"}
-                }
-        result.append(EntityView.model_validate(row))
-    return tuple(result)
+                elif row["exposure"] == "night":
+                    row["data"] = nights[row["id"]]
+                elif row["exposure"] == "decree":
+                    row["data"] = {
+                        k: v
+                        for k, v in row["data"].items()
+                        if k in {"text", "origin", "people", "night_id", "secret", "turn", "endorsements", "interim"}
+                    }
+            yield EntityView.model_validate(prepare.entity(row, original) if prepare is not None else row)
 
 
 def appointment_access(identity: Identity) -> ColumnElement[bool]:
@@ -383,31 +404,31 @@ def fact_sources(
     return query
 
 
-def project(
-    ledger: Ledger, identity: Identity, selection: Item, query: Select[Any],
-) -> tuple[FactView, ...]:
-    result: list[FactView] = []
-    for item in ledger.facts(**selection, query=query, parameters=view_parameters(identity)):
-        detail = item["detail"]
-        if identity not in ("audit", "world"):
-            if item["exposure"] in ("text", "dated"):
-                detail = {
-                    "text": detail.get("text", ""),
-                    **{
-                        k: v
-                        for k, v in detail.items()
-                        if item["exposure"] == "dated"
-                        and k in (
-                            {"date", "office", "territory", "holders", "acting", "role"}
-                            | ({"decree_id", "endorser", "form"} if item["kind"] == "endorsed" else set())
-                        )
-                    },
-                }
-            elif item["exposure"] == "empty":
-                detail = {}
-        result.append(FactView.model_validate({**item, "detail": detail,
-                                              "emperor_words": item["emperor_words"] if identity in ("audit", "world") else ""}))
-    return tuple(result)
+def project(identity: Identity, item: Item) -> FactView:
+    """Project one row, shared by complete reads and demand-driven model pages."""
+    detail = item["detail"]
+    if identity not in ("audit", "world"):
+        if item["exposure"] in ("text", "dated"):
+            detail = {
+                "text": detail.get("text", ""),
+                **{
+                    k: v
+                    for k, v in detail.items()
+                    if item["exposure"] == "dated"
+                    and k in (
+                        {"date", "office", "territory", "holders", "acting", "role"}
+                        | ({"decree_id", "endorser", "form"} if item["kind"] == "endorsed" else set())
+                    )
+                },
+            }
+        elif item["exposure"] == "empty":
+            detail = {}
+    return FactView.model_validate({**item, "detail": detail,
+                                   "emperor_words": item["emperor_words"] if identity in ("audit", "world") else ""})
+
+
+def project_facts(ledger: Ledger, identity: Identity, selection: Item, query: Select[Any]) -> tuple[FactView, ...]:
+    return tuple(project(identity, row) for row in ledger.facts(**selection, query=query, parameters=view_parameters(identity)))
 
 
 # Construct permission expressions once. Only parameter values vary at execution;

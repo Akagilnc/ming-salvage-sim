@@ -17,7 +17,7 @@ from ming.middle.invoke import gather_or_raise, invoke
 from ming.month_steps.materials import PETITION_OFFICES, Petition, PendingPetition, next_month, prepare
 from ming.middle.records import Materials, read_records
 from ming.middle.view import EntityView, Officials, character_input
-from ming.middle.rules import Names, fail, name_expected
+from ming.middle.rules import Names, fail
 from ming.month_steps.products import record_product
 from ming.month_steps.petitions import urgent_options
 
@@ -165,8 +165,8 @@ def names(ctx: RunContext[SourceMaterials], output: Urgencies | Impeachments):
             if name not in allowed:
                 fail(
                     f"petitions[{index}].{field}", name,
-                    allowed if isinstance(output, Urgencies) else name_expected("person", "", catalogue), catalogue,
-                    "参照 expected 的正名清单或输入目录指针核对人名，重交整份。确无此人不得换成另一人。",
+                    allowed if isinstance(output, Urgencies) else {"catalogue": "person"}, catalogue,
+                    "参照 expected 的正名清单或用 read_records 查 person 核对人名，重交整份。确无此人不得换成另一人。",
                 )
         if isinstance(item, UrgentPetition) and item.revision_of is not None:
             if str(item.revision_of) not in originals:
