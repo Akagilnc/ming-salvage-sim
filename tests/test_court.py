@@ -44,16 +44,27 @@ def replaying(
             toolsets.append([tool.name for tool in _info.function_tools])
         if continuations is not None:
             queries = {p.tool_call_id: p.args_as_dict() for m in _messages for p in m.parts if isinstance(p, ToolCallPart)}
+
+            def record_query(part: ToolReturnPart) -> dict | None:
+                """Continuation args: read_records keeps its call; set_hall carries kind/key."""
+                if part.tool_name == "read_records":
+                    return queries[part.tool_call_id]
+                result = part.model_response_object()
+                if "kind" in result and "key" in result:
+                    return {"kind": result["kind"], "key": result["key"]}
+                return None
+
             pending = [p for p in _messages[-1].parts if isinstance(p, ToolReturnPart)
-                       and p.tool_name == "read_records" and "next" in p.model_response_object()]
+                       and "next" in p.model_response_object() and record_query(p) is not None]
             continuations.update({p.tool_call_id + "-next": continuations.get(p.tool_call_id, p.tool_call_id) for p in pending})
             calls = [ToolCallPart("read_records", {
-                **queries[p.tool_call_id], "scope": {**queries[p.tool_call_id].get("scope", {}), "after": p.model_response_object()["next"]},
-            }, tool_call_id=p.tool_call_id + "-next") for p in pending]
+                **query, "scope": {**query.get("scope", {}), "after": p.model_response_object()["next"]},
+            }, tool_call_id=p.tool_call_id + "-next")
+                for p in pending if (query := record_query(p)) is not None]
             # Static scripts consume field references too; callbacks own their field requests.
             if not callable(replies):
                 for part in _messages[-1].parts:
-                    if not isinstance(part, ToolReturnPart) or part.tool_name != "read_records":
+                    if not isinstance(part, ToolReturnPart) or (query := record_query(part)) is None:
                         continue
                     _, objects = record_objects([part.model_response_str()])
                     # Shared references need one field read, even in repeated requested headers.
@@ -61,8 +72,8 @@ def replaying(
                         call_id = f"{part.tool_call_id}-read-{index}"
                         continuations[call_id] = continuations.get(part.tool_call_id, part.tool_call_id)
                         calls.append(ToolCallPart("read_records", {
-                            **queries[part.tool_call_id], "scope": {
-                                **{k: v for k, v in queries[part.tool_call_id].get("scope", {}).items() if k != "after"}, "read": value["read"],
+                            **query, "scope": {
+                                **{k: v for k, v in query.get("scope", {}).items() if k != "after"}, "read": value["read"],
                             },
                         }, tool_call_id=call_id))
             if calls:

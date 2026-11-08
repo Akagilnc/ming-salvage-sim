@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 import pytest
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import (
     ModelMessagesTypeAdapter,
     ModelResponse,
@@ -14,13 +15,127 @@ from pydantic_ai.messages import (
 )
 from starlette.testclient import TestClient
 
+from ming.middle.calendar import CAPITAL
+from ming.middle.scene import HallResult
 from ming.middle.view import Officials
 from ming.web import create_app
-from tests.test_court import replaying
+from tests.test_court import record_results, replaying
 from tests.test_secrets import _declaration_prompt
 from tests.test_web import state_updates
 
 RECORDED = Path(__file__).parent / "recorded"
+ATTACH_META = frozenset({"ok", "kind", "key"})
+
+
+def attached_records(value: dict) -> dict:
+    """Person page on set_hall attach success (no hall wrapper)."""
+    return {key: value[key] for key in value if key not in ATTACH_META and key not in HallResult.model_fields}
+
+
+def tool_returns(received: list) -> dict:
+    return {
+        part.tool_call_id: (part.tool_name, part.model_response_object())
+        for message in received
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    }
+
+
+def assert_set_hall_page(value: dict, court, names: list[str], hall: list[str]) -> None:
+    assert value["ok"] is True
+    assert "hall" not in value
+    assert (value["kind"], value["key"]) == ("person", names)
+    expected = court.read.query(Officials(people=hall), "person", names)
+    assert attached_records(value) == expected
+    if value.get("entities"):
+        assert {"dossier", "seed_guilt"} <= value["entities"][0]["data"].keys()
+
+
+def scene_tool_script(case: dict) -> list:
+    return [
+        ModelResponse(parts=[ToolCallPart("read_records", {"kind": "office", "key": case["offices"]}, tool_call_id="offices")]),
+        ModelResponse(parts=[ToolCallPart("read_records", {"kind": "person", "key": "王体乾"}, tool_call_id="before")]),
+        ModelResponse(parts=[ToolCallPart("set_hall", {"add": ["王体乾"], "remove": []}, tool_call_id="admit")]),
+        # Mixed reject while 王体乾 is already in the hall must not attach his dossier.
+        ModelResponse(parts=[ToolCallPart("set_hall", {"add": ["王体乾", "张三"], "remove": []}, tool_call_id="mixed")]),
+        ModelResponse(parts=[ToolCallPart("read_records", {"kind": "person", "key": "王体乾"}, tool_call_id="after")]),
+        ModelResponse(parts=[ToolCallPart("set_hall", {"add": ["王体乾"], "remove": []}, tool_call_id="again")]),
+        ModelResponse(parts=[ToolCallPart("set_hall", {"add": [], "remove": ["王体乾"]}, tool_call_id="remove")]),
+        ModelResponse(parts=[ToolCallPart("set_hall", {"add": ["王体乾"], "remove": ["王体乾"]}, tool_call_id="inout")]),
+        *ModelMessagesTypeAdapter.validate_python(case["scene_responses"]),
+    ]
+
+
+def assert_scene_tool_returns(received, events, court, continuations, multi: tuple) -> None:
+    names, multi_id = multi
+    returned = tool_returns(received)
+    # Rejected and unchanged successful set_hall calls have no visible transition.
+    assert [event["data"] for event in (events.get_nowait() for _ in range(events.qsize()))
+            if event["event"] == "hall"] == [
+        ["王承恩", "王体乾"],
+        ["王承恩"],
+        ["王承恩", "杨嗣昌", "王绍徽"],
+        ["王承恩", "王绍徽", "郭允厚"],
+        ["王承恩", "郭允厚"],
+    ]
+    assert [result["status"] for result in returned["offices"][1]["offices"]] == ["occupied", "occupied"]
+    assert [result["appointments"][0]["holders"] for result in returned["offices"][1]["offices"]] == [["黄立极"], ["郭允厚"]]
+    before, after = (returned[key][1]["entities"][0] for key in ("before", "after"))
+    assert before["key"] == after["key"] == "王体乾"
+    for field in ("name", "location", "appointments"):
+        assert before["data"][field] == after["data"][field]
+    assert not {"dossier", "seed_guilt"}.intersection(before["data"])
+    assert {"dossier", "seed_guilt"} <= after["data"].keys()
+
+    admit_hall = ["王承恩", "王体乾"]
+    for call_id, admitted in (("admit", ["王体乾"]), ("again", ["王体乾"])):
+        assert_set_hall_page(returned[call_id][1], court, admitted, admit_hall)
+    assert returned["remove"][1]["ok"] is True
+    assert attached_records(returned["remove"][1]) == {}
+    assert returned["inout"][1]["ok"] is True
+    assert "王体乾" not in returned["inout"][1]["hall"]
+    assert attached_records(returned["inout"][1]) == {}
+
+    mixed = returned["mixed"][1]
+    assert mixed["ok"] is False
+    assert {(f["name"], f["found"]) for f in mixed["failures"]} == {("张三", False)}
+    assert "王体乾" in mixed["hall"]
+    assert attached_records(mixed) == {}
+
+    absent = next(value for name, value in returned.values()
+                  if name == "set_hall" and not value["ok"] and value is not mixed)
+    assert {(f["name"], f["found"]) for f in absent["failures"]} == {("徐光启", True), ("张三", False)}
+    assert set(absent["hall"]) == {"王承恩", "杨嗣昌", "王绍徽"}
+    assert attached_records(absent) == {}
+    xuguangqi = next(value["entities"][0]["data"] for name, value in returned.values()
+                     if name == "read_records" and value.get("entities") and value["entities"][0]["key"] == "徐光启")
+    assert xuguangqi["location"] == "南直隶 / 南京"
+    assert xuguangqi["status"] == "offstage"
+    assert not {"loyalty", "ability", "integrity", "courage", "intrigue"}.intersection(xuguangqi)
+
+    # Multi-admit first page carries continuation query; pages stay within budget and assemble fully.
+    first_page = returned[multi_id][1]
+    multi_hall = ["王承恩", *names]
+    assert first_page["ok"] is True and "hall" not in first_page
+    assert (first_page["kind"], first_page["key"]) == ("person", names)
+    assert "next" in first_page
+    parts = {
+        part.tool_call_id: part
+        for message in received for part in message.parts if isinstance(part, ToolReturnPart)
+    }
+    assert all(
+        len(part.model_response_str().encode("utf-8")) <= 20_000
+        for call_id, part in parts.items()
+        if continuations.get(call_id, call_id) == multi_id or call_id == multi_id
+    )
+    queries = {
+        part.tool_call_id: part.args_as_dict()
+        for message in received for part in message.parts if isinstance(part, ToolCallPart)
+    }
+    assembled = record_results(queries, {i: o for i, (_, o) in returned.items()}, continuations)[multi_id]
+    assert "next" not in assembled and "hall" not in assembled
+    complete = court.read.read_records(Officials(people=multi_hall), "person", names)
+    assert {e["key"]: e for e in assembled["entities"]} == {e["key"]: e for e in complete["entities"]}
 
 
 @pytest.mark.parametrize("recording,steps", [("approved", "approved"), ("new_office", "new_office")], indirect=["steps"])
@@ -136,92 +251,160 @@ def test_nights_are_persistent_and_translate_only_after_dismissal(
         assert second["date"] == {"year": 1627, "month": 11}
 
 
+def assert_twenty_person_set_hall_budget(client, steps) -> None:
+    """Twenty four-character names with a full first page: set_hall result ≤20,000 UTF-8 bytes."""
+    client.post("/actions", json={"action": "open"}).raise_for_status()
+    court = client.app.state.web.game.court
+    names = [f"测人{i:02d}" for i in range(20)]
+    for name in names:
+        court.record(("person", name), [("changed", {})], {"location": CAPITAL, "name": name})
+    # Inline pad near PAGE_BYTES so the first page is full (carries next), not deferred to field read.
+    court.record(("dossier", names[0]), [("changed", {})], {"pad": "字" * 6200})
+    received: list = []
+    cont: dict[str, str] = {}
+    steps["scene"] = replaying([
+        ModelResponse(parts=[ToolCallPart("set_hall", {"add": names, "remove": []}, tool_call_id="twenty")]),
+        "ok",
+    ], received, continuations=cont)
+    client.post("/actions", json={"action": "say", "words": "宣二十人。"})
+    client.portal.call(client.app.state.web.game.drain)
+    parts = {
+        part.tool_call_id: part
+        for message in received for part in message.parts if isinstance(part, ToolReturnPart)
+    }
+    first = parts["twenty"].model_response_object()
+    assert first["ok"] is True and "hall" not in first
+    assert (first["kind"], first["key"]) == ("person", names)
+    assert "next" in first
+    assert all(len(part.model_response_str().encode("utf-8")) <= 20_000 for part in parts.values())
+    queries = {
+        part.tool_call_id: part.args_as_dict()
+        for message in received for part in message.parts if isinstance(part, ToolCallPart)
+    }
+    assembled = record_results(queries, {i: p.model_response_object() for i, p in parts.items()}, cont)["twenty"]
+    hall = client.get("/state").json()["game"]["night"]["hall"]
+    complete = court.read.read_records(Officials(people=hall), "person", names)
+    assert {e["key"]: e for e in assembled["entities"]} == {e["key"]: e for e in complete["entities"]}
+
+
+def run_scene_tools_night(client, case, received, translated, multi):
+    court = client.app.state.web.game.court
+    # Oversized private files force the recorded multi-admit through #2017 pages.
+    for name in multi:
+        court.record(("dossier", name), [("changed", {})], {"pad": "字" * 5000})
+    for turn, hall in zip(case["turns"], (
+        {"王承恩", "杨嗣昌", "王绍徽"},
+        {"王承恩", "郭允厚", "王绍徽"},
+        {"王承恩", "郭允厚"},
+    ), strict=True):
+        client.post("/actions", json={"action": "say", "words": turn["emperor_words"]})
+        client.portal.call(client.app.state.web.game.drain)
+        game = client.get("/state").json()["game"]
+        assert game["failure"] is None
+        assert set(game["night"]["hall"]) == hall
+        assert next(part.content for message in reversed(received)
+                    for part in message.parts if part.part_kind == "user-prompt") == turn["emperor_words"]
+    assert received[0].parts[0].part_kind == "system-prompt"
+    assert received[0].parts[1].part_kind == "system-prompt"
+    material = json.loads(received[0].parts[1].content)
+    assert isinstance(material["imperial_prestige"], str)
+    assert material["gazette"] == court.read.entities("audit", kind="gazette")[0].data["text"]
+    assert court.nights()[0].result == "translated"
+    assert _declaration_prompt(translated)["turns"] == [t.model_dump(mode="json") for t in court.nights()[0].turns]
+    first, second = sorted(
+        court.read.entities("audit", kind="decree"), key=lambda d: d.data["turn"]
+    )
+    # Knowledge follows the hall at approval, before that turn's scene tools.
+    for person, known in (
+        ("杨嗣昌", {first.id}),
+        ("王绍徽", {first.id, second.id}),
+        ("郭允厚", {second.id}),
+    ):
+        assert {
+            d.id for d in court.read.entities(Officials(people=[person]), kind="decree")
+        } == known
+    return court
+
+
 @pytest.mark.parametrize("game_db", ["first_night"], indirect=True)
 def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
     tmp_path: Path, game_db: Path, steps
 ) -> None:
     case = json.loads((RECORDED / "night_tools.json").read_text())
-    received = []
     case["offices"] = ["内阁首辅", "户部尚书"]
-    steps["scene"] = replaying(
-        [
-            ModelResponse(parts=[ToolCallPart("read_records", {"kind": "office", "key": case["offices"]}, tool_call_id="offices")]),
-            ModelResponse(parts=[ToolCallPart("read_records", {"kind": "person", "key": "王体乾"}, tool_call_id="before")]),
-            ModelResponse(parts=[ToolCallPart("set_hall", {"add": ["王体乾"], "remove": []})]),
-            ModelResponse(parts=[ToolCallPart("read_records", {"kind": "person", "key": "王体乾"}, tool_call_id="after")]),
-            ModelResponse(parts=[ToolCallPart("set_hall", {"add": [], "remove": ["王体乾"]})]),
-            *ModelMessagesTypeAdapter.validate_python(case["scene_responses"]),
-        ], received,
-    )
-    translated = []
-    steps["NightDeclaration"] = replaying(case["replies"], translated)
+    received: list = []
+    continuations: dict[str, str] = {}
+    multi = ["杨嗣昌", "王绍徽"]
+    translated: list = []
     events = asyncio.Queue()
     with TestClient(create_app(tmp_path)) as client:
         client.app.state.web.listeners.add(events)
         client.post("/actions", json={"action": "load", "save": game_db.name})
-        for turn, hall in zip(case["turns"], (
-            {"王承恩", "杨嗣昌", "王绍徽"},
-            {"王承恩", "郭允厚", "王绍徽"},
-            {"王承恩", "郭允厚"},
-        ), strict=True):
-            client.post("/actions", json={"action": "say", "words": turn["emperor_words"]})
-            client.portal.call(client.app.state.web.game.drain)
-            game = client.get("/state").json()["game"]
-            assert game["failure"] is None
-            assert set(game["night"]["hall"]) == hall
-            assert next(part.content for message in reversed(received)
-                        for part in message.parts if part.part_kind == "user-prompt") == turn["emperor_words"]
-        assert received[0].parts[0].part_kind == "system-prompt"
-        assert received[0].parts[1].part_kind == "system-prompt"
-        material = json.loads(received[0].parts[1].content)
-        assert isinstance(material["imperial_prestige"], str)
-        court = client.app.state.web.game.court
-        assert material["gazette"] == court.read.entities("audit", kind="gazette")[0].data["text"]
-        assert court.nights()[0].result == "translated"
-        assert _declaration_prompt(translated)["turns"] == [t.model_dump(mode="json") for t in court.nights()[0].turns]
-        first, second = sorted(
-            court.read.entities("audit", kind="decree"), key=lambda d: d.data["turn"]
+        steps["scene"] = replaying(scene_tool_script(case), received, continuations=continuations)
+        steps["NightDeclaration"] = replaying(case["replies"], translated)
+        court = run_scene_tools_night(client, case, received, translated, multi)
+        assert_scene_tool_returns(
+            received, events, court, continuations,
+            (multi, "toolu_01HpPBW2pUSsbkYWHzFR5vLd"),
         )
-        # Knowledge follows the hall at approval, before that turn's scene tools.
-        for person, known in (
-            ("杨嗣昌", {first.id}),
-            ("王绍徽", {first.id, second.id}),
-            ("郭允厚", {second.id}),
-        ):
-            assert {
-                d.id for d in court.read.entities(Officials(people=[person]), kind="decree")
-            } == known
-    returned = {
-        part.tool_call_id: (part.tool_name, part.model_response_object())
-        for message in received
-        for part in message.parts
-        if isinstance(part, ToolReturnPart)
-    }
-    # Rejected and unchanged successful set_hall calls have no visible transition.
-    assert [event["data"] for event in (events.get_nowait() for _ in range(events.qsize()))
-            if event["event"] == "hall"] == [
-        ["王承恩", "王体乾"],
-        ["王承恩"],
-        ["王承恩", "杨嗣昌", "王绍徽"],
-        ["王承恩", "王绍徽", "郭允厚"],
-        ["王承恩", "郭允厚"],
-    ]
-    assert [result["status"] for result in returned["offices"][1]["offices"]] == ["occupied", "occupied"]
-    assert [result["appointments"][0]["holders"] for result in returned["offices"][1]["offices"]] == [["黄立极"], ["郭允厚"]]
-    before, after = (returned[key][1]["entities"][0] for key in ("before", "after"))
-    assert before["key"] == after["key"] == "王体乾"
-    for field in ("name", "location", "appointments"):
-        assert before["data"][field] == after["data"][field]
-    assert not {"dossier", "seed_guilt"}.intersection(before["data"])
-    assert {"dossier", "seed_guilt"} <= after["data"].keys()
-    absent = next(value for name, value in returned.values() if name == "set_hall" and not value["ok"])
-    assert {(f["name"], f["found"]) for f in absent["failures"]} == {("徐光启", True), ("张三", False)}
-    assert set(absent["hall"]) == {"王承恩", "杨嗣昌", "王绍徽"}
-    dossier = next(value["entities"][0]["data"] for name, value in returned.values()
-                   if name == "read_records" and value.get("entities") and value["entities"][0]["key"] == "徐光启")
-    assert dossier["location"] == "南直隶 / 南京"
-    assert dossier["status"] == "offstage"
-    assert not {"loyalty", "ability", "integrity", "courage", "intrigue"}.intersection(dossier)
+        assert_twenty_person_set_hall_budget(client, steps)
+
+
+@pytest.mark.parametrize("game_db", ["first_night"], indirect=True)
+def test_set_hall_retry_after_model_failure_still_attaches_records(
+    tmp_path: Path, game_db: Path, steps,
+) -> None:
+    first_calls: list[list] = []
+    first_replies = iter([
+        ModelResponse(parts=[ToolCallPart("set_hall", {"add": ["杨嗣昌"], "remove": []}, tool_call_id="first")]),
+        ModelHTTPError(429, "recording"),
+    ])
+    steps["scene"] = replaying(
+        lambda messages: first_calls.append(list(messages)) or next(first_replies),
+    )
+    with TestClient(create_app(tmp_path)) as client:
+        client.post("/actions", json={"action": "load", "save": game_db.name})
+        client.post("/actions", json={"action": "say", "words": "宣杨嗣昌。"})
+        client.portal.call(client.app.state.web.game.drain)
+        game = client.get("/state").json()["game"]
+        assert game["failure"]["action"] == "say"
+        assert game["night"]["turns"] == []
+        assert "杨嗣昌" in game["night"]["hall"]
+
+        retry_calls: list[list] = []
+        retry_received: list = []
+        retry_replies = iter([
+            ModelResponse(parts=[ToolCallPart("set_hall", {"add": ["杨嗣昌"], "remove": []}, tool_call_id="retry")]),
+            "臣杨嗣昌见驾。",
+        ])
+        steps["scene"] = replaying(
+            lambda messages: retry_calls.append(list(messages)) or next(retry_replies),
+            retry_received,
+        )
+        client.post("/actions", json={"action": "retry"}).raise_for_status()
+        client.portal.call(client.app.state.web.game.drain)
+        game = client.get("/state").json()["game"]
+        assert game["failure"] is None
+        assert len(game["night"]["turns"]) == 1
+        assert "杨嗣昌" in game["night"]["hall"]
+        court = client.app.state.web.game.court
+
+        # Retry starts from the same input as the first attempt; failed tool traffic is not history.
+        def prompt_parts(messages):
+            return [
+                (part.part_kind, getattr(part, "content", None))
+                for message in messages for part in message.parts
+                if part.part_kind in {"system-prompt", "user-prompt"}
+            ]
+
+        assert prompt_parts(retry_calls[0]) == prompt_parts(first_calls[0])
+        assert not any(
+            isinstance(part, (ToolCallPart, ToolReturnPart))
+            for message in retry_calls[0] for part in message.parts
+        )
+
+        hall = client.get("/state").json()["game"]["night"]["hall"]
+        assert_set_hall_page(tool_returns(retry_received)["retry"][1], court, ["杨嗣昌"], hall)
 
 
 @pytest.mark.parametrize("recording,case,game_db", [

@@ -25,7 +25,6 @@ from ming.middle.declaration import NightDeclaration
 from ming.middle.invoke import TextUpdate, invoke, stream_text
 from ming.middle.night import NightHeader, NightSetting, NightView
 from ming.middle.opening import CONTENT
-from ming.middle.scene import HallResult
 from ming.middle.records import read_records
 from ming.middle.view import Officials
 
@@ -182,12 +181,19 @@ async def get_hall(ctx: RunContext[Audience]) -> tuple[str, ...]:
 
 async def set_hall(
     ctx: RunContext[Audience], add: list[str], remove: list[str]
-) -> HallResult:
-    """有人入殿或退下时先改名单；不在京师的人加不进殿。"""
+) -> dict[str, object]:
+    """有人入殿或退下时先改名单；不在京师的人加不进殿。成功时对本次加入且在殿者附档案。
+
+    附档与 read_records 同一固定页预算：结果带 ok、kind=person、key=本次加入且在殿者及首屏；超预算时 next 或字段
+    read 用 read_records 按同一 kind、key 续取。附档成功时不回显殿上名单，要看名单用 get_hall。
+    """
     result, changed = ctx.deps.court.set_hall(ctx.deps.night_id, add, remove)
     if changed:
         ctx.deps.on_hall(result.hall)
-    return result
+    if result.ok and (admitted := [name for name in add if name in result.hall]):
+        page = ctx.deps.court.read.query(ctx.deps.identity, "person", admitted)
+        return {"ok": True, "kind": "person", "key": admitted, **page}
+    return result.model_dump()
 
 
 async def dismiss(ctx: RunContext[Audience]) -> None:
