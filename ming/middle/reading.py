@@ -18,7 +18,7 @@ from ming.middle.calendar import calendar_row, journeys_due
 from ming.middle.declaration import LandingMode
 from ming.middle.night import known_people
 from ming.middle.rules import matching_names, matching_offices
-from ming.middle.record_pages import QueryOptions, RecordCursor
+from ming.middle.record_pages import RecordCursor, RecordScope
 from ming.middle.record_queries import RecordQuery
 from ming.middle.view import (
     EntityView, FactView, Identity, VISIBLE_IDS, MONTH_OPEN_QUERY,
@@ -121,16 +121,14 @@ class Records:
     def query(
         self, identity: Identity, kind: str | None = None,
         key: str | list[str] | None = None, date: Item | None = None,
-        *, options: QueryOptions | None = None,
+        *, options: tuple[RecordScope, bool] | None = None,
     ) -> Item:
         """The model query contract, independent of Agent transport and deps."""
-        opts = options or QueryOptions()
-        cursor = (opts.scope.read or RecordCursor()).model_copy(
-            update=opts.scope.after.model_dump(exclude_unset=True) if opts.scope.after else {},
+        scope, numeric = options or (RecordScope(), False)
+        cursor = (scope.read or RecordCursor()).model_copy(update=scope.after.model_dump(exclude_unset=True) if scope.after else {})
+        return RecordQuery(self, self._ledger, identity, self._sources(identity), numeric=numeric).run(
+            kind, key, date, scope=scope, cursor=cursor,
         )
-        return RecordQuery(
-            self, self._ledger, identity, self._sources(identity), options=opts,
-        ).run(kind, key, date, scope=opts.scope, cursor=cursor)
 
     def read_records(
         self, identity: Identity, kind: str | None = None,

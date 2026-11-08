@@ -15,6 +15,7 @@ from pydantic_ai.messages import (
 )
 from starlette.testclient import TestClient
 
+from ming.middle.calendar import CAPITAL
 from ming.middle.scene import HallResult
 from ming.middle.view import Officials
 from ming.web import create_app
@@ -23,15 +24,12 @@ from tests.test_secrets import _declaration_prompt
 from tests.test_web import state_updates
 
 RECORDED = Path(__file__).parent / "recorded"
-ATTACH_QUERY = frozenset({"kind", "key"})
+ATTACH_META = frozenset({"ok", "kind", "key"})
 
 
 def attached_records(value: dict) -> dict:
-    """Person page carried on set_hall, without hall wrapper or continuation query."""
-    return {
-        key: value[key] for key in value
-        if key not in HallResult.model_fields and key not in ATTACH_QUERY
-    }
+    """Person page on set_hall attach success (no hall wrapper)."""
+    return {key: value[key] for key in value if key not in ATTACH_META and key not in HallResult.model_fields}
 
 
 def tool_returns(received: list) -> dict:
@@ -43,10 +41,11 @@ def tool_returns(received: list) -> dict:
     }
 
 
-def assert_set_hall_page(value: dict, court, names: list[str]) -> None:
+def assert_set_hall_page(value: dict, court, names: list[str], hall: list[str]) -> None:
     assert value["ok"] is True
+    assert "hall" not in value
     assert (value["kind"], value["key"]) == ("person", names)
-    expected = court.read.query(Officials(people=value["hall"]), "person", names)
+    expected = court.read.query(Officials(people=hall), "person", names)
     assert attached_records(value) == expected
     if value.get("entities"):
         assert {"dossier", "seed_guilt"} <= value["entities"][0]["data"].keys()
@@ -88,8 +87,9 @@ def assert_scene_tool_returns(received, events, court, continuations, multi: tup
     assert not {"dossier", "seed_guilt"}.intersection(before["data"])
     assert {"dossier", "seed_guilt"} <= after["data"].keys()
 
+    admit_hall = ["王承恩", "王体乾"]
     for call_id, admitted in (("admit", ["王体乾"]), ("again", ["王体乾"])):
-        assert_set_hall_page(returned[call_id][1], court, admitted)
+        assert_set_hall_page(returned[call_id][1], court, admitted, admit_hall)
     assert returned["remove"][1]["ok"] is True
     assert attached_records(returned["remove"][1]) == {}
     assert returned["inout"][1]["ok"] is True
@@ -115,7 +115,8 @@ def assert_scene_tool_returns(received, events, court, continuations, multi: tup
 
     # Multi-admit first page carries continuation query; pages stay within budget and assemble fully.
     first_page = returned[multi_id][1]
-    assert first_page["ok"] is True
+    multi_hall = ["王承恩", *names]
+    assert first_page["ok"] is True and "hall" not in first_page
     assert (first_page["kind"], first_page["key"]) == ("person", names)
     assert "next" in first_page
     parts = {
@@ -132,8 +133,8 @@ def assert_scene_tool_returns(received, events, court, continuations, multi: tup
         for message in received for part in message.parts if isinstance(part, ToolCallPart)
     }
     assembled = record_results(queries, {i: o for i, (_, o) in returned.items()}, continuations)[multi_id]
-    assert "next" not in assembled
-    complete = court.read.read_records(Officials(people=assembled["hall"]), "person", names)
+    assert "next" not in assembled and "hall" not in assembled
+    complete = court.read.read_records(Officials(people=multi_hall), "person", names)
     assert {e["key"]: e for e in assembled["entities"]} == {e["key"]: e for e in complete["entities"]}
 
 
@@ -237,37 +238,39 @@ def test_nights_are_persistent_and_translate_only_after_dismissal(
         assert second["turns"] == []
 
 
-def assert_crowded_set_hall_budget(client, steps, multi: list[str]) -> None:
-    """Large outer hall list + padded dossiers: whole set_hall result stays ≤20,000 UTF-8 bytes."""
+def assert_twenty_person_set_hall_budget(client, steps) -> None:
+    """Twenty four-character names with a full first page: set_hall result ≤20,000 UTF-8 bytes."""
     client.post("/actions", json={"action": "open"}).raise_for_status()
     court = client.app.state.web.game.court
-    for name in multi:
-        court.record(("dossier", name), [("changed", {})], {"pad": "字" * 5640})
-    night = court.nights()[0]
-    # Long hall strings alone grow the outer envelope; no person migration or creates.
-    crowded = ["王承恩", *multi, *[f"压测{i:04d}{'字' * 8}" for i in range(120)]]
-    court.record(night.id, [("hall", {"add": crowded, "remove": []})], {"hall": crowded})
+    names = [f"测人{i:02d}" for i in range(20)]
+    for name in names:
+        court.record(("person", name), [("changed", {})], {"location": CAPITAL, "name": name})
+    # One long private file fills the first page; the rest stay short so continuations stay few.
+    court.record(("dossier", names[0]), [("changed", {})], {"pad": "字" * 8000})
     received: list = []
     cont: dict[str, str] = {}
     steps["scene"] = replaying([
-        ModelResponse(parts=[ToolCallPart("set_hall", {"add": multi, "remove": []}, tool_call_id="crowd")]),
+        ModelResponse(parts=[ToolCallPart("set_hall", {"add": names, "remove": []}, tool_call_id="twenty")]),
         "ok",
     ], received, continuations=cont)
-    client.post("/actions", json={"action": "say", "words": "宣多人压预算。"})
+    client.post("/actions", json={"action": "say", "words": "宣二十人。"})
     client.portal.call(client.app.state.web.game.drain)
     parts = {
         part.tool_call_id: part
         for message in received for part in message.parts if isinstance(part, ToolReturnPart)
     }
-    assert parts and all(len(part.model_response_str().encode("utf-8")) <= 20_000 for part in parts.values())
-    assert parts["crowd"].model_response_object()["ok"] is True
-    assert len(parts["crowd"].model_response_object()["hall"]) > 50
+    first = parts["twenty"].model_response_object()
+    assert first["ok"] is True and "hall" not in first
+    assert (first["kind"], first["key"]) == ("person", names)
+    assert "next" in first or any("read" in parts[i].model_response_str() for i in parts)
+    assert all(len(part.model_response_str().encode("utf-8")) <= 20_000 for part in parts.values())
     queries = {
         part.tool_call_id: part.args_as_dict()
         for message in received for part in message.parts if isinstance(part, ToolCallPart)
     }
-    assembled = record_results(queries, {i: p.model_response_object() for i, p in parts.items()}, cont)["crowd"]
-    complete = court.read.read_records(Officials(people=assembled["hall"]), "person", multi)
+    assembled = record_results(queries, {i: p.model_response_object() for i, p in parts.items()}, cont)["twenty"]
+    hall = client.get("/state").json()["game"]["night"]["hall"]
+    complete = court.read.read_records(Officials(people=hall), "person", names)
     assert {e["key"]: e for e in assembled["entities"]} == {e["key"]: e for e in complete["entities"]}
 
 
@@ -331,7 +334,7 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
             received, events, court, continuations,
             (multi, "toolu_01HpPBW2pUSsbkYWHzFR5vLd"),
         )
-        assert_crowded_set_hall_budget(client, steps, multi)
+        assert_twenty_person_set_hall_budget(client, steps)
 
 
 @pytest.mark.parametrize("game_db", ["first_night"], indirect=True)
@@ -387,7 +390,8 @@ def test_set_hall_retry_after_model_failure_still_attaches_records(
             for message in retry_calls[0] for part in message.parts
         )
 
-        assert_set_hall_page(tool_returns(retry_received)["retry"][1], court, ["杨嗣昌"])
+        hall = client.get("/state").json()["game"]["night"]["hall"]
+        assert_set_hall_page(tool_returns(retry_received)["retry"][1], court, ["杨嗣昌"], hall)
 
 
 @pytest.mark.parametrize("recording,case,game_db", [

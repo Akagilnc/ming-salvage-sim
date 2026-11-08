@@ -8,8 +8,6 @@ from functools import partial
 from typing import Any, Literal, cast
 from uuid import uuid4
 
-from dataclasses import dataclass, field
-
 from pydantic import BaseModel, Field
 from sqlalchemy import JSON, LargeBinary, Select, case, cast as sql_cast, func, literal, select, true, type_coerce
 from sqlalchemy.sql.elements import ColumnElement
@@ -46,32 +44,22 @@ class RecordScope(BaseModel):
     after: RecordPosition | None = None
 
 
-@dataclass(frozen=True)
-class QueryOptions:
-    """Internal read options: model scope plus engine-only page wrap bytes."""
-
-    scope: RecordScope = field(default_factory=RecordScope)
-    numeric: bool = False
-    wrap: int = 0  # Outer tool envelope bytes; deducted from PAGE_BYTES once in RecordQuery.
-
-
 MAX_BYTES = 20_000
 PAGE_BYTES = MAX_BYTES - 1024
 PageRow = Item | tuple[Item, str, int, bool]
 
 
-def large_field(column: ColumnElement[Any], budget: int) -> ColumnElement[bool]:
-    return func.length(sql_cast(func.json_quote(column), LargeBinary)) > budget
+def large_field(column: ColumnElement[Any]) -> ColumnElement[bool]:
+    return func.length(sql_cast(func.json_quote(column), LargeBinary)) > PAGE_BYTES
 
 
 class TextPage:
     """Measure projected delivery first; bound rereads and expose only surviving references."""
 
-    def __init__(self, ledger: Ledger, cursor: RecordCursor, *, numeric: bool = False, budget: int) -> None:
+    def __init__(self, ledger: Ledger, cursor: RecordCursor, *, numeric: bool = False) -> None:
         self.ledger = ledger
         self.cursor = cursor
         self.numeric = numeric
-        self.budget = budget
         self.prefix = uuid4().hex
         self.allowed: list[RecordText] = []
         self.full: list[Item] = []
@@ -113,7 +101,7 @@ class TextPage:
         for index, column in enumerate(columns):
             if column.key == "aliases":
                 columns[index] = (literal(self.whole("aliases", entity=self.cursor.text.entity), type_=JSON) if self.cursor.text is not None else
-                                  case((large_field(column, self.budget), func.json_object(self.prefix, self.prefix + func.json_object(
+                                  case((large_field(column), func.json_object(self.prefix, self.prefix + func.json_object(
                                       "column", "aliases", "path", "$", "container", True,
                                       "entity", func.json_array(query.selected_columns.kind, query.selected_columns.key),
                                   ), type_=JSON)), else_=column)).label("aliases")
@@ -133,13 +121,13 @@ class TextPage:
                     )))) if column.key == "data" else None,
                 )
                 encoded = case(
-                    (large_field(children.c.value, self.budget), func.json_quote(marker)),
+                    (large_field(children.c.value), func.json_quote(marker)),
                     (children.c.type == "text", func.json_quote(children.c.value)),
                     (children.c.type.in_(("true", "false", "null")), children.c.type),
                     else_=children.c.value,
                 )
                 clipped = select(func.json_group_object(children.c.key, func.json(encoded))).correlate_except(children).scalar_subquery()
-            clipped = case((large_field(column, self.budget), clipped), else_=column)
+            clipped = case((large_field(column), clipped), else_=column)
             if column.key == "detail" and "exposure" in query.selected_columns:
                 clipped = case((query.selected_columns.exposure == "full", literal(self.whole(column.key), type_=JSON)), else_=clipped)
             columns[index] = type_coerce(clipped, column.type).label(column.key)
@@ -155,11 +143,11 @@ class TextPage:
             elif not reference.container:
                 column = source.selected_columns[reference.column]
                 text = column if reference.path is None else func.json_extract(column, reference.path)
-                bounded = self.ledger.read(source.with_only_columns(case((large_field(text, self.budget), None), else_=text).label("value"),
+                bounded = self.ledger.read(source.with_only_columns(case((large_field(text), None), else_=text).label("value"),
                                                                    maintain_column_froms=True))[0]["value"]
                 result = value if bounded is None else bounded
             else:
-                page = TextPage(self.ledger, self.cursor.model_copy(update={"text": reference, "character": 0, "item": 0}), numeric=True, budget=self.budget)
+                page = TextPage(self.ledger, self.cursor.model_copy(update={"text": reference, "character": 0, "item": 0}), numeric=True)
                 page.source = page.dossier_source = source
                 result = cast(Item, page.render(page.whole(reference.column, reference.dossier, reference.entity, path=reference.path)))
                 result = value if "next" in result else result["object" if "object" in result else "items"]
@@ -186,12 +174,12 @@ class TextPage:
             children.c.key, children.c.type, children.c.fullkey,
             # Stored JSON may use six-character Unicode escapes. This is only
             # an upper read bound; decoded values still use the normal pager.
-            case((case((children.c.type == "text", func.length(sql_cast(children.c.value, LargeBinary)) > self.budget),
-                       else_=func.length(children.c.value) > self.budget * 6), None), else_=children.c.value).label("value"), maintain_column_froms=True,
+            case((case((children.c.type == "text", func.length(sql_cast(children.c.value, LargeBinary)) > PAGE_BYTES),
+                       else_=func.length(children.c.value) > PAGE_BYTES * 6), None), else_=children.c.value).label("value"), maintain_column_froms=True,
         ).join(children, true()).order_by(None).offset(cursor.row)
         with closing(self.ledger.scan(query)) as rows:
             for row in rows:
-                page = TextPage(self.ledger, self.cursor.model_copy(update={"text": None, "character": 0, "clipped": False}), numeric=self.numeric, budget=self.budget)
+                page = TextPage(self.ledger, self.cursor.model_copy(update={"text": None, "character": 0, "clipped": False}), numeric=self.numeric)
                 # json_each preserves JSON null's type; other NULLs were clipped.
                 if row["value"] is None and row["type"] != "null":
                     target = reference.model_copy(update={"path": row["fullkey"], "container": row["type"] in {"object", "array"}})
@@ -215,17 +203,17 @@ class TextPage:
             reduced = {key: self.shrink(item, field, (*keys, key), cast(Item, original).get(key) if isinstance(original, dict) else None)
                        for key, item in cast(Item, value).items()}
             pieces = lambda _: ({"object": {key: self.replace(item)}} for key, item in reduced.items())
-            if "next" not in record_page(pieces, RecordCursor(), empty={"object": {}}, budget=self.budget):
+            if "next" not in record_page(pieces, RecordCursor(), empty={"object": {}}):
                 return reduced
             value = reduced
         elif isinstance(value, list):
             items = [self.shrink(item, field, (*keys, index), cast(list[Any], original)[index] if isinstance(original, list) and index < len(cast(list[Any], original)) else None)
                      for index, item in enumerate(cast(list[Any], value))]
             pieces = lambda _: ({"items": [self.replace(item)]} for item in items)
-            if "next" not in record_page(pieces, RecordCursor(), empty={"items": []}, budget=self.budget):
+            if "next" not in record_page(pieces, RecordCursor(), empty={"items": []}):
                 return items
             value = items
-        elif not isinstance(value, str) or fit_text(value, 0, self.budget) == len(value):
+        elif not isinstance(value, str) or fit_text(value, 0, PAGE_BYTES) == len(value):
             return cast(Any, value)
         if not complete:
             return value
@@ -259,7 +247,7 @@ class TextPage:
         if changed:
             self.full.clear()
             prepared = page_row(self.replace(value), clipped=True)
-        if prepared[2] <= self.budget:
+        if prepared[2] <= PAGE_BYTES:
             return prepared
         # Each field is now bounded. If their combination still cannot fit,
         # defer only the largest necessary fields, not every sibling.
@@ -268,7 +256,7 @@ class TextPage:
             del field["value"]
             self.full.clear()
             prepared = page_row(self.replace(value), clipped=True)
-            if prepared[2] <= self.budget:
+            if prepared[2] <= PAGE_BYTES:
                 break
         return prepared
 
@@ -278,7 +266,7 @@ class TextPage:
         result = self.replace(value)
         if self.cursor.text is None:
             prepared = page_row(result, clipped=True)
-            return self.compact(value, prepared) if self.full and prepared[2] > self.budget else prepared
+            return self.compact(value, prepared) if self.full and prepared[2] > PAGE_BYTES else prepared
         reference = self.cursor.text
         self.source = self.dossier_source if reference.dossier else self.source
         if reference not in self.allowed or self.source is None:
@@ -299,7 +287,7 @@ class TextPage:
                 maintain_column_froms=True,
             ))[0]
             result = record_page(partial(self.container, metadata), RecordCursor(row=self.cursor.item, character=self.cursor.character),
-                                 empty={"object": {}} if metadata["container"] == "object" else {"items": []}, budget=self.budget)
+                                 empty={"object": {}} if metadata["container"] == "object" else {"items": []})
             if "next" in result:
                 after = result["next"]
                 result["next"] = self.cursor.model_copy(update={"item": after["row"], "character": after["character"]}).model_dump(exclude={"text"})
@@ -308,7 +296,7 @@ class TextPage:
             func.substr(text, self.cursor.character + 1, MAX_BYTES).label("text"), func.length(text).label("length"),
             maintain_column_froms=True,
         )
-        return record_page(lambda _: self.ledger.scan(query), self.cursor, raw=True, budget=self.budget)
+        return record_page(lambda _: self.ledger.scan(query), self.cursor, raw=True)
 
 
 def fit_text(text: str, start: int, budget: int) -> int:
@@ -326,18 +314,17 @@ def page_row(row: Item, *, raw: bool = False, clipped: bool = False) -> tuple[It
 
 def record_page(
     rows: Callable[[RecordCursor], Generator[PageRow]], cursor: RecordCursor,
-    *, empty: Item | None = None, raw: bool = False, budget: int,
+    *, empty: Item | None = None, raw: bool = False,
 ) -> Item:
     """Validate positions and combine bounded pieces (or a raw field substring).
 
     Only after an empty read, check the preceding row to distinguish EOF from
     an invalid offset. JSON fragments are valid only for a row that cannot fit
-    whole, unlike raw field substrings. budget is the page content ceiling;
-    callers that wrap the page deduct their envelope first.
+    whole, unlike raw field substrings.
     """
     result: Item = {}
     empty = empty or {"catalogue": []}
-    remaining = budget - 2
+    remaining = PAGE_BYTES - 2
     empty_sizes: dict[tuple[tuple[str, bool], ...], int] = {}
     with closing(rows(cursor)) as pieces:
         for index, piece in enumerate(pieces, start=cursor.row):
