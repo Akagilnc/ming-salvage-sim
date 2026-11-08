@@ -25,7 +25,6 @@ from ming.middle.declaration import NightDeclaration
 from ming.middle.invoke import TextUpdate, invoke, stream_text
 from ming.middle.night import NightHeader, NightView
 from ming.middle.opening import CONTENT
-from ming.middle.scene import HallResult
 from ming.middle.records import read_records
 from ming.middle.view import Officials
 
@@ -166,12 +165,15 @@ async def get_hall(ctx: RunContext[Audience]) -> tuple[str, ...]:
 
 async def set_hall(
     ctx: RunContext[Audience], add: list[str], remove: list[str]
-) -> HallResult:
-    """有人入殿或退下时先改名单；不在京师的人加不进殿。"""
+) -> dict[str, object]:
+    """有人入殿或退下时先改名单；不在京师的人加不进殿。成功时对本次加入且在殿者附档案。"""
     result, changed = ctx.deps.court.set_hall(ctx.deps.night_id, add, remove)
     if changed:
         ctx.deps.on_hall(result.hall)
-    return result
+    payload = result.model_dump()
+    if result.ok and (admitted := [name for name in dict.fromkeys(add) if name in result.hall]):
+        payload.update(ctx.deps.court.read.query(ctx.deps.identity, "person", admitted))
+    return payload
 
 
 async def dismiss(ctx: RunContext[Audience]) -> None:
