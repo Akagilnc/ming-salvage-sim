@@ -207,6 +207,8 @@ class RecordQuery:
         self, kind: str | None, key: str | list[str] | None, date: Item | None,
         *, scope: RecordScope, cursor: RecordCursor,
     ) -> Item:
+        # PAGE_BYTES already reserves pagination keys; outer tool envelopes deduct via scope.wrap.
+        self.budget = max(0, PAGE_BYTES - (scope.wrap or 0))
         if (scope.department is not None and kind != "office" or
                 (scope.region is not None or scope.level is not None) and kind != "territory"):
             return {"status": "invalid_scope"}

@@ -3,7 +3,6 @@
 import asyncio
 import json
 from pathlib import Path
-from shutil import copyfile
 
 import pytest
 from pydantic_ai.exceptions import ModelHTTPError
@@ -16,7 +15,6 @@ from pydantic_ai.messages import (
 )
 from starlette.testclient import TestClient
 
-from ming.middle.calendar import CAPITAL
 from ming.middle.scene import HallResult
 from ming.middle.view import Officials
 from ming.web import create_app
@@ -240,19 +238,14 @@ def test_nights_are_persistent_and_translate_only_after_dismissal(
 
 
 def assert_crowded_set_hall_budget(client, steps, multi: list[str]) -> None:
-    """Full hall envelope + near-full first page must still deliver ≤20,000 UTF-8 bytes."""
+    """Large outer hall list + padded dossiers: whole set_hall result stays ≤20,000 UTF-8 bytes."""
+    client.post("/actions", json={"action": "open"}).raise_for_status()
     court = client.app.state.web.game.court
-    people = [e.key for e in court.read.entities("audit", kind="person") if e.key != "徐光启"]
-    for name in people:
-        court.record(("person", name), [("changed", {})], {"location": CAPITAL, "transit_to": None})
-    # Extra hall names enlarge the set_hall envelope past the default PAGE_BYTES reserve.
-    extra = [f"压测人物{i:03d}" for i in range(200)]
-    for name in extra:
-        court.record(("person", name), [("changed", {})], {"location": CAPITAL, "name": name})
     for name in multi:
         court.record(("dossier", name), [("changed", {})], {"pad": "字" * 5640})
     night = court.nights()[0]
-    crowded = ["王承恩", *[name for name in people if name != "王承恩"], *extra]
+    # Long hall strings alone grow the outer envelope; no person migration or creates.
+    crowded = ["王承恩", *multi, *[f"压测{i:04d}{'字' * 8}" for i in range(120)]]
     court.record(night.id, [("hall", {"add": crowded, "remove": []})], {"hall": crowded})
     received: list = []
     cont: dict[str, str] = {}
@@ -327,22 +320,18 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
     continuations: dict[str, str] = {}
     multi = ["杨嗣昌", "王绍徽"]
     translated: list = []
-    crowded = tmp_path / "crowded.sqlite"
-    copyfile(game_db, crowded)
-    with TestClient(create_app(tmp_path)) as client:
-        client.post("/actions", json={"action": "load", "save": crowded.name})
-        assert_crowded_set_hall_budget(client, steps, multi)
     events = asyncio.Queue()
-    steps["scene"] = replaying(scene_tool_script(case), received, continuations=continuations)
-    steps["NightDeclaration"] = replaying(case["replies"], translated)
     with TestClient(create_app(tmp_path)) as client:
         client.app.state.web.listeners.add(events)
         client.post("/actions", json={"action": "load", "save": game_db.name})
+        steps["scene"] = replaying(scene_tool_script(case), received, continuations=continuations)
+        steps["NightDeclaration"] = replaying(case["replies"], translated)
         court = run_scene_tools_night(client, case, received, translated, multi)
-    assert_scene_tool_returns(
-        received, events, court, continuations,
-        (multi, "toolu_01HpPBW2pUSsbkYWHzFR5vLd"),
-    )
+        assert_scene_tool_returns(
+            received, events, court, continuations,
+            (multi, "toolu_01HpPBW2pUSsbkYWHzFR5vLd"),
+        )
+        assert_crowded_set_hall_budget(client, steps, multi)
 
 
 @pytest.mark.parametrize("game_db", ["first_night"], indirect=True)

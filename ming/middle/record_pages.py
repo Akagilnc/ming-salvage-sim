@@ -9,6 +9,7 @@ from typing import Any, Literal, cast
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
+from pydantic.json_schema import SkipJsonSchema
 from sqlalchemy import JSON, LargeBinary, Select, case, cast as sql_cast, func, literal, select, true, type_coerce
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -42,6 +43,8 @@ class RecordScope(BaseModel):
     level: str | None = None
     read: RecordCursor | None = None
     after: RecordPosition | None = None
+    # Outer tool envelope bytes (e.g. set_hall ok/hall/kind/key); deducted from PAGE_BYTES. Not a model field.
+    wrap: SkipJsonSchema[int | None] = None
 
 
 MAX_BYTES = 20_000

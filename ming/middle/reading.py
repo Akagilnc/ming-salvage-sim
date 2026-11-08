@@ -121,15 +121,14 @@ class Records:
     def query(
         self, identity: Identity, kind: str | None = None,
         key: str | list[str] | None = None, date: Item | None = None,
-        *, options: tuple[RecordScope, bool] | tuple[RecordScope, bool, int] | None = None,
+        *, options: tuple[RecordScope, bool] | None = None,
     ) -> Item:
         """The model query contract, independent of Agent transport and deps."""
-        scope, numeric, *rest = options or (RecordScope(), False)
+        scope, numeric = options or (RecordScope(), False)
         cursor = (scope.read or RecordCursor()).model_copy(update=scope.after.model_dump(exclude_unset=True) if scope.after else {})
-        runner = RecordQuery(self, self._ledger, identity, self._sources(identity), numeric=numeric)
-        if rest:
-            runner.budget = rest[0]
-        return runner.run(kind, key, date, scope=scope, cursor=cursor)
+        return RecordQuery(self, self._ledger, identity, self._sources(identity), numeric=numeric).run(
+            kind, key, date, scope=scope, cursor=cursor,
+        )
 
     def read_records(
         self, identity: Identity, kind: str | None = None,
