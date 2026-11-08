@@ -410,8 +410,9 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
     ],
     indirect=["game_db"],
 )
+@pytest.mark.usefixtures("clock")
 def test_settings_survive_reopening_and_failed_scene_retries_in_place(
-    tmp_path: Path, game_db: Path, step: str, failure: type[Exception], steps, clock
+    tmp_path: Path, game_db: Path, step: str, failure: type[Exception], steps
 ) -> None:
     case = json.loads((RECORDED / "night_invalid.json").read_text())
     name = (
