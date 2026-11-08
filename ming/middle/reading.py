@@ -18,7 +18,7 @@ from ming.middle.calendar import calendar_row, journeys_due
 from ming.middle.declaration import LandingMode
 from ming.middle.night import known_people
 from ming.middle.rules import matching_names, matching_offices
-from ming.middle.record_pages import PAGE_BYTES, RecordCursor, RecordScope
+from ming.middle.record_pages import RecordCursor, RecordScope
 from ming.middle.record_queries import RecordQuery
 from ming.middle.view import (
     EntityView, FactView, Identity, VISIBLE_IDS, MONTH_OPEN_QUERY,
@@ -127,7 +127,8 @@ class Records:
         scope, numeric, *rest = options or (RecordScope(), False)
         cursor = (scope.read or RecordCursor()).model_copy(update=scope.after.model_dump(exclude_unset=True) if scope.after else {})
         runner = RecordQuery(self, self._ledger, identity, self._sources(identity), numeric=numeric)
-        runner.budget = rest[0] if rest else PAGE_BYTES
+        if rest:
+            runner.budget = rest[0]
         return runner.run(kind, key, date, scope=scope, cursor=cursor)
 
     def read_records(

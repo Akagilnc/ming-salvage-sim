@@ -49,14 +49,14 @@ PAGE_BYTES = MAX_BYTES - 1024
 PageRow = Item | tuple[Item, str, int, bool]
 
 
-def large_field(column: ColumnElement[Any], budget: int = PAGE_BYTES) -> ColumnElement[bool]:
+def large_field(column: ColumnElement[Any], budget: int) -> ColumnElement[bool]:
     return func.length(sql_cast(func.json_quote(column), LargeBinary)) > budget
 
 
 class TextPage:
     """Measure projected delivery first; bound rereads and expose only surviving references."""
 
-    def __init__(self, ledger: Ledger, cursor: RecordCursor, *, numeric: bool = False, budget: int = PAGE_BYTES) -> None:
+    def __init__(self, ledger: Ledger, cursor: RecordCursor, *, numeric: bool = False, budget: int) -> None:
         self.ledger = ledger
         self.cursor = cursor
         self.numeric = numeric
@@ -315,14 +315,14 @@ def page_row(row: Item, *, raw: bool = False, clipped: bool = False) -> tuple[It
 
 def record_page(
     rows: Callable[[RecordCursor], Generator[PageRow]], cursor: RecordCursor,
-    *, empty: Item | None = None, raw: bool = False, budget: int = PAGE_BYTES,
+    *, empty: Item | None = None, raw: bool = False, budget: int,
 ) -> Item:
     """Validate positions and combine bounded pieces (or a raw field substring).
 
     Only after an empty read, check the preceding row to distinguish EOF from
     an invalid offset. JSON fragments are valid only for a row that cannot fit
-    whole, unlike raw field substrings. budget is the page content ceiling
-    (default PAGE_BYTES); callers that wrap the page deduct their envelope first.
+    whole, unlike raw field substrings. budget is the page content ceiling;
+    callers that wrap the page deduct their envelope first.
     """
     result: Item = {}
     empty = empty or {"catalogue": []}

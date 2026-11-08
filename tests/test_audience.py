@@ -276,7 +276,6 @@ def assert_crowded_set_hall_budget(client, steps, multi: list[str]) -> None:
     assembled = record_results(queries, {i: p.model_response_object() for i, p in parts.items()}, cont)["crowd"]
     complete = court.read.read_records(Officials(people=assembled["hall"]), "person", multi)
     assert {e["key"]: e for e in assembled["entities"]} == {e["key"]: e for e in complete["entities"]}
-    court.record(night.id, [("hall", {"add": [], "remove": crowded})], {"hall": ["王承恩"]})
 
 
 def run_scene_tools_night(client, case, received, translated, multi):
