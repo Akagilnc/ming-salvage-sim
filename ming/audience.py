@@ -135,7 +135,6 @@ class Audience:
         night: NightView,
     ) -> str:
         assert self._system is not None
-        self.turn_setting = None
         history: list[ModelMessage] = [self._system]
         for turn in night.turns:
             history.extend([
@@ -170,10 +169,7 @@ class Audience:
 
 async def declare_setting(ctx: RunContext[Audience], setting: NightSetting) -> NightSetting:
     """首轮回话前声明本夜实际时辰、地点；随成功回话落账。已定的本夜时地保持不变。"""
-    booked = ctx.deps.court.night(ctx.deps.night_id, complete=False).setting
-    if booked is not None:
-        return booked
-    # Last declaration in this agent.run wins; failed attempts stay out of the books via run_id.
+    # Last declaration in this agent.run wins; booking keeps night.setting and matches run_id.
     assert ctx.run_id is not None
     ctx.deps.turn_setting = (ctx.run_id, setting)
     return setting
