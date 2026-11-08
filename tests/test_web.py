@@ -411,7 +411,7 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
     indirect=["game_db"],
 )
 def test_settings_survive_reopening_and_failed_scene_retries_in_place(
-    tmp_path: Path, game_db: Path, step: str, failure: type[Exception], steps
+    tmp_path: Path, game_db: Path, step: str, failure: type[Exception], steps, clock
 ) -> None:
     case = json.loads((RECORDED / "night_invalid.json").read_text())
     name = (
@@ -422,9 +422,14 @@ def test_settings_survive_reopening_and_failed_scene_retries_in_place(
         else "simulation"
     )
     working = steps[name]
-    setting = {"time_of_day": "亥时", "location": "便殿"}
+    setting = {"time_of_day": "子时", "location": "文华殿"}
     if step == "say":
+        # Transient failure keeps the failed attempt's declaration out of the books;
+        # only the successful run's declare_setting lands on the night.
+        stale = {"time_of_day": "亥时", "location": "便殿"}
         working = replaying([
+            ModelResponse(parts=[ToolCallPart("declare_setting", {"setting": stale})]),
+            ModelHTTPError(503, "recording"),
             ModelResponse(parts=[ToolCallPart("declare_setting", {"setting": setting})]),
             case["cases"]["missing_fields"]["scene"],
         ])

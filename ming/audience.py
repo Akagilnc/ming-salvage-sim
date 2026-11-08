@@ -44,7 +44,8 @@ class Audience:
         self._night_id: UUID | None = None
         self._system: ModelRequest | None = None
         self._turn: asyncio.Task[str] | None = None
-        self.turn_setting: NightSetting | None = None
+        # (run_id, setting) from the in-flight agent.run; only that run's success may book it.
+        self.turn_setting: tuple[str, NightSetting] | None = None
         self._dismiss_requested: UUID | None = None
 
     @property
@@ -134,7 +135,7 @@ class Audience:
         night: NightView,
     ) -> str:
         assert self._system is not None
-        self.turn_setting = night.setting
+        self.turn_setting = None
         history: list[ModelMessage] = [self._system]
         for turn in night.turns:
             history.extend([
@@ -151,10 +152,15 @@ class Audience:
                 if on_delta
                 else None,
             )
+            declared = (
+                self.turn_setting[1]
+                if self.turn_setting is not None and self.turn_setting[0] == result.run_id
+                else None
+            )
             self.court.record(
                 self.night_id,
                 [("turn", {"id": turn_id, "scene": result.output})],
-                {"setting": self.turn_setting.model_dump()} if night.setting is None and self.turn_setting is not None else None,
+                {"setting": declared.model_dump()} if night.setting is None and declared is not None else None,
                 words=words,
             )
             return result.output
@@ -164,9 +170,13 @@ class Audience:
 
 async def declare_setting(ctx: RunContext[Audience], setting: NightSetting) -> NightSetting:
     """首轮回话前声明本夜实际时辰、地点；随成功回话落账。已定的本夜时地保持不变。"""
-    if ctx.deps.turn_setting is None:
-        ctx.deps.turn_setting = setting
-    return ctx.deps.turn_setting
+    booked = ctx.deps.court.night(ctx.deps.night_id, complete=False).setting
+    if booked is not None:
+        return booked
+    # Last declaration in this agent.run wins; failed attempts stay out of the books via run_id.
+    assert ctx.run_id is not None
+    ctx.deps.turn_setting = (ctx.run_id, setting)
+    return setting
 
 
 async def get_hall(ctx: RunContext[Audience]) -> tuple[str, ...]:
