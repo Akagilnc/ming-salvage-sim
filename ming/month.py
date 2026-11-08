@@ -24,7 +24,7 @@ class Month:
     def __init__(
         self, court: Court,
         on_delta: Callable[[TextUpdate], None] | None = None,
-        *, on_state: Callable[[], None] | None = None,
+        *, on_state: Callable[[], None],
     ) -> None:
         self.court = court
         self.on_state = on_state
@@ -129,8 +129,7 @@ class Month:
     async def _gazette_public(self, calendar: EntityView) -> None:
         await self.gazette.run(calendar)
         # Book is refreshed from state; push once so month face drops streaming remend.
-        if self.on_state is not None:
-            self.on_state()
+        self.on_state()
 
     async def advance(self, calendar: EntityView) -> None:
         self.open(calendar)

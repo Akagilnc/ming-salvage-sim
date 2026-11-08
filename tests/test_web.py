@@ -40,45 +40,44 @@ def state_updates(events: asyncio.Queue) -> list[dict]:
     ]
 
 
-def assert_run_then_done(states: list, running: object, done: object) -> None:
-    assert states[0] == running and states[-1] == done
-    assert all(item == running for item in states[:-1])
+class GazetteLandingQueue(asyncio.Queue):
+    """SSE listener that notes when a running state arrives with this month's gazette on the books."""
 
+    def __init__(self, db: Path, audit) -> None:
+        super().__init__()
+        self.db, self.audit, self.landed = db, audit, []
 
-def watch_month_gazette(game, db, audit) -> list[dict[str, object]]:
-    """Record whether gazette is on the books while month is still running."""
-    landed: list[dict[str, object]] = []
-    push = game._month_state
-
-    def watch() -> None:
-        push()
-        presentation = game.presentation()
-        landed.append({
-            "running": presentation["running"],
-            "gazette": any(
+    def put_nowait(self, item):
+        if item.get("event") == "state":
+            game = (item.get("data") or {}).get("game") or {}
+            if game.get("running") and any(
                 f["kind"] == "gazette"
                 and f["detail"].get("date") == {"id": "world", "year": 1627, "month": 10}
-                for f in audit(db)["facts"]
-            ),
-        })
-
-    game._month_state = watch
-    game.month.on_state = watch
-    return landed
+                for f in self.audit(self.db)["facts"]
+            ):
+                self.landed.append({"running": True, "gazette": True})
+        super().put_nowait(item)
 
 
-def assert_choice_month_states(states: list, remaining: set, path: str) -> None:
-    assert states[0] == (True, "choose", 10, remaining)
+def month_action_states(path: str, month: int) -> list:
+    if path in {"multiple-petitions", "choice-error"}:
+        return [(True, 10, None), (False, 10, None)]
+    if path == "precompute-structure":
+        return [(True, 10, None), (False, 10, "month")]
+    return [(True, 10, None), (True, 10, None), (False, month, None)]
+
+
+def choice_action_states(path: str, remaining: set) -> list:
     if remaining:
-        assert states == [(True, "choose", 10, remaining), (False, None, 10, remaining)]
-        return
+        return [(True, "choose", 10, remaining), (False, None, 10, remaining)]
     if path == "choice-error":
-        assert states == [
+        return [
             (True, "choose", 10, set()), (True, "month", 10, set()), (False, None, 10, set()),
         ]
-        return
-    assert states[1] == (True, "month", 10, set()) and states[-1] == (False, None, 11, set())
-    assert all(item == (True, "month", 10, set()) for item in states[1:-1])
+    return [
+        (True, "choose", 10, set()), (True, "month", 10, set()),
+        (True, "month", 10, set()), (False, None, 11, set()),
+    ]
 
 
 def answer_month_petitions(client, game, audit, events, path: str) -> None:
@@ -101,16 +100,26 @@ def answer_month_petitions(client, game, audit, events, path: str) -> None:
         assert {
             p["id"] for p in client.get("/state").json()["game"]["petitions"]
         } == {p["id"] for p in game["petitions"]}
-        assert_choice_month_states(
-            [
-                (state["game"]["running"],
-                 state["game"]["pending"] and state["game"]["pending"]["action"],
-                 state["game"]["date"]["month"],
-                 {p["id"] for p in state["game"]["petitions"]})
-                for state in state_updates(events)
-            ],
-            {p["id"] for p in game["petitions"]}, path,
-        )
+        assert [
+            (state["game"]["running"],
+             state["game"]["pending"] and state["game"]["pending"]["action"],
+             state["game"]["date"]["month"],
+             {p["id"] for p in state["game"]["petitions"]})
+            for state in state_updates(events)
+        ] == choice_action_states(path, {p["id"] for p in game["petitions"]})
+
+
+def settings_retry_states(step: str, game: dict) -> list:
+    night_result = game["night"] and game["night"]["result"]
+    done = (False, None, game["date"]["month"], night_result)
+    if step == "month-translation":
+        return [
+            (True, None, 10, None), (True, None, 10, "unhandled"),
+            (True, None, 10, "unhandled"), done,
+        ]
+    if step == "month":
+        return [(True, None, 10, None), (True, None, 10, None), done]
+    return [(step != "translation", None, 10, None), done]
 
 
 def test_menu_creates_distinct_games_and_opens_only_existing_saves(
@@ -342,33 +351,28 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
                 for f in audit(db)["facts"]
                 if f["kind"] == "interaction" and f["detail"]["status"] == "failed"
             } == ({"translation"} if path == "translation-error" else set())
-        events = asyncio.Queue()
+        events = GazetteLandingQueue(db, audit) if path == "decree" else asyncio.Queue()
         app.state.web.listeners.add(events)
-        landed = watch_month_gazette(app.state.web.game, db, audit) if path == "decree" else []
         assert client.post("/actions", json={"action": "month"}).status_code == 204
         game = client.get("/state").json()["game"]
-        # Acceptance, optional mid-run gazette push, then completion.
-        assert_run_then_done(
-            [
-                (state["game"]["running"], state["game"]["date"]["month"],
-                 state["game"]["failure"] and state["game"]["failure"]["action"])
-                for state in state_updates(events)
-            ],
-            (True, 10, None),
-            (False, game["date"]["month"], "month" if path == "precompute-structure" else None),
-        )
+        # One acceptance, one mid-run gazette push when the month lands, one completion.
+        assert [
+            (state["game"]["running"], state["game"]["date"]["month"],
+             state["game"]["failure"] and state["game"]["failure"]["action"])
+            for state in state_updates(events)
+        ] == month_action_states(path, game["date"]["month"])
         if path == "decree":
-            assert landed == [{"running": True, "gazette": True}]
+            assert events.landed == [{"running": True, "gazette": True}]
         if path == "precompute-structure":
             assert game["date"]["month"] == 10
             assert game["failure"]["payload"]["type"] == "UnexpectedModelBehavior"
             assert not [f for f in audit(db)["facts"] if f["kind"] == "unhandled"]
             client.post("/actions", json={"action": "retry"})
             game = client.get("/state").json()["game"]
-            assert_run_then_done(
-                [(state["game"]["running"], state["game"]["failure"]) for state in state_updates(events)],
-                (True, None), (False, None),
-            )
+            assert [
+                (state["game"]["running"], state["game"]["failure"])
+                for state in state_updates(events)
+            ] == [(True, None), (True, None), (False, None)]
         if path in {"multiple-petitions", "choice-error"}:
             answer_month_petitions(client, game, audit, events, path)
         # Choice completion no longer waits for the shared month action.
@@ -382,13 +386,10 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
             client.post("/actions", json={"action": "load", "save": save}).raise_for_status()
             assert state_updates(events) == []  # Selecting the current save is a no-op.
             client.post("/actions", json={"action": "retry"}).raise_for_status()
-            assert_run_then_done(
-                [
-                    (state["game"]["running"], state["game"]["failure"], state["game"]["date"]["month"])
-                    for state in state_updates(events)
-                ],
-                (True, None, 10), (False, None, 11),
-            )
+            assert [
+                (state["game"]["running"], state["game"]["failure"], state["game"]["date"]["month"])
+                for state in state_updates(events)
+            ] == [(True, None, 10), (True, None, 10), (False, None, 11)]
             assert len([f for f in audit(db)["facts"] if f["kind"] == "month_draft"]) == 1
         game = client.get("/state").json()["game"]
         assert (
@@ -528,14 +529,14 @@ def test_settings_survive_reopening_and_failed_scene_retries_in_place(
             assert state["failure"] is None
             assert state["date"]["month"] == 11
             assert state["running"] is False
-            month_progress = [
+            assert [
                 (update["game"]["running"], update["game"]["failure"],
                  update["game"]["date"]["month"], update["game"]["night"]["result"])
                 for update in state_updates(events)
+            ] == [
+                (True, None, 10, None), (True, None, 10, "unhandled"),
+                (True, None, 10, "unhandled"), (False, None, 11, "unhandled"),
             ]
-            assert month_progress[0] == (True, None, 10, None)
-            assert month_progress[-1] == (False, None, 11, "unhandled")
-            assert (True, None, 10, "unhandled") in month_progress
             return
         assert game["failure"]["action"] == (
             "translation" if step.endswith("translation") else step
@@ -566,17 +567,11 @@ def test_settings_survive_reopening_and_failed_scene_retries_in_place(
             client.portal.call(client.app.state.web.game.drain)
         game = client.get("/state").json()["game"]
         assert game["failure"] is None
-        retry_progress = [
+        assert [
             (state["game"]["running"], state["game"]["failure"], state["game"]["date"]["month"],
              state["game"]["night"] and state["game"]["night"]["result"])
             for state in state_updates(events)
-        ]
-        assert retry_progress[0] == (step != "translation", None, 10, None)
-        assert retry_progress[-1] == (
-            False, None, game["date"]["month"], game["night"] and game["night"]["result"],
-        )
-        if step == "month-translation":
-            assert (True, None, 10, "unhandled") in retry_progress
+        ] == settings_retry_states(step, game)
         if step == "say":
             assert len(game["night"]["turns"]) == 1
             assert game["night"]["setting"] == setting
