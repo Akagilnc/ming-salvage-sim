@@ -18,7 +18,7 @@ from ming.middle.calendar import calendar_row, journeys_due
 from ming.middle.declaration import LandingMode
 from ming.middle.night import known_people
 from ming.middle.rules import matching_names, matching_offices
-from ming.middle.record_pages import QueryOptions, RecordCursor, RecordScope
+from ming.middle.record_pages import QueryOptions, RecordCursor
 from ming.middle.record_queries import RecordQuery
 from ming.middle.view import (
     EntityView, FactView, Identity, VISIBLE_IDS, MONTH_OPEN_QUERY,
