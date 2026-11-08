@@ -166,13 +166,20 @@ async def get_hall(ctx: RunContext[Audience]) -> tuple[str, ...]:
 async def set_hall(
     ctx: RunContext[Audience], add: list[str], remove: list[str]
 ) -> dict[str, object]:
-    """有人入殿或退下时先改名单；不在京师的人加不进殿。成功时对本次加入且在殿者附档案。"""
+    """有人入殿或退下时先改名单；不在京师的人加不进殿。成功时对本次加入且在殿者附档案。
+
+    附档与 read_records 同一查询：结果带 kind=person、key=本次加入且在殿者；超预算时 next 或字段 read
+    用 read_records 按同一 kind、key 续取（next 入 scope.after，read 入 scope.read）。
+    """
     result, changed = ctx.deps.court.set_hall(ctx.deps.night_id, add, remove)
     if changed:
         ctx.deps.on_hall(result.hall)
     payload = result.model_dump()
     if result.ok and (admitted := [name for name in add if name in result.hall]):
-        payload.update(ctx.deps.court.read.query(ctx.deps.identity, "person", admitted))
+        payload.update(
+            ctx.deps.court.read.query(ctx.deps.identity, "person", admitted),
+            kind="person", key=admitted,
+        )
     return payload
 
 
