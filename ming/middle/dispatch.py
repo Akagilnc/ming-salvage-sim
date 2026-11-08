@@ -59,7 +59,7 @@ def check_decrees(
                 if decree.handler not in names.get("person", {}):
                     fail(
                         f"decrees[{i}].handler", decree.handler,
-                        name_expected("person", decree.handler or "", names), names,
+                        name_expected(ledger, "person", decree.handler or "", names), names,
                         "密令须声明唯一承办人，用人物目录正名或所列别名；照整夜戏文记录领旨去办者，重交整份。",
                     )
             if decree.turn > len(turns):
@@ -99,7 +99,7 @@ def check_endorsements(
                 fail(
                     path + ".endorser",
                     endorsement.endorser,
-                    allowed if endorsement.form == "御笔手敕" else name_expected("person", endorsement.endorser, names),
+                    allowed if endorsement.form == "御笔手敕" else name_expected(ledger, "person", endorsement.endorser, names),
                     names,
                     "参照 expected 的正名清单或用 read_records 查 person 核对 endorser，重交整份。",
                 )

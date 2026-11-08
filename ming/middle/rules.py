@@ -4,11 +4,10 @@ import json
 import math
 from collections.abc import Callable
 from difflib import get_close_matches
-from itertools import islice
 from typing import Any, Never
 
 from pydantic_ai import ModelRetry
-from sqlalchemy import JSON, LargeBinary, Select, case, cast as sql_cast, func, literal, or_, select, true
+from sqlalchemy import JSON, LargeBinary, Select, case, cast as sql_cast, func, literal, or_, select, true, type_coerce
 
 from ming.ledger import ENTITY_COLUMNS as E, Entity, Item, Ledger
 from ming.middle.appointments import ALIASES, CATALOGUE_KINDS, cabinet_members, catalogue
@@ -20,67 +19,46 @@ Names = dict[str, dict[str, list[str]]]
 
 
 def matching_names(
-    names: Names | Select[Any], queries: list[str], *,
-    ledger: Ledger | None = None, prepare: Callable[[Select[Any]], Select[Any]] | None = None,
+    names: Select[Any], queries: list[str], *,
+    ledger: Ledger, prepare: Callable[[Select[Any]], Select[Any]] | None = None,
 ) -> Names:
     """A few candidates within the caller's already visible names; never auto-resolve."""
-    if isinstance(names, Select):
-        assert ledger is not None
-        aliases = func.json_each(ALIASES).table_valued("value")
-        requested = func.json_each(literal(queries, type_=JSON)).table_valued("value")
-        query = names.where(select(requested.c.value).where(requested.c.value != "", or_(
-            func.instr(E.key, requested.c.value) > 0,
-            select(aliases.c.value).where(func.instr(aliases.c.value, requested.c.value) > 0).correlate_except(aliases).exists(),
-        )).correlate_except(requested).exists()).limit(5)
-        return catalogue(ledger.read(prepare(query) if prepare else query))
-    matches: Names = {}
-    entries = ((kind, name, aliases) for kind, values in names.items() for name, aliases in values.items())
-    candidates = ((kind, name, aliases) for kind, name, aliases in entries
-                  if any(query and any(query in label for label in [name, *aliases]) for query in queries))
-    for kind, name, aliases in islice(candidates, 5):
-        matches.setdefault(kind, {})[name] = aliases
-    return matches
+    aliases = func.json_each(names.selected_columns.aliases).table_valued("value")
+    requested = func.json_each(literal(queries, type_=JSON)).table_valued("value")
+    query = names.where(select(requested.c.value).where(requested.c.value != "", or_(
+        func.instr(names.selected_columns.key, requested.c.value) > 0,
+        select(aliases.c.value).where(func.instr(aliases.c.value, requested.c.value) > 0).correlate_except(aliases).exists(),
+    )).correlate_except(requested).exists()).limit(5)
+    return catalogue(ledger.read(prepare(query) if prepare else query))
 
 
 def matching_offices(
-    names: Names | Select[Any], key: str, *,
-    ledger: Ledger | None = None, prepare: Callable[[Select[Any]], Select[Any]] | None = None,
-    office_keys: Callable[[], tuple[Item, ...]] | None = None,
+    names: Select[Any], key: str, *,
+    ledger: Ledger, prepare: Callable[[Select[Any]], Select[Any]] | None = None,
+    office_keys: tuple[Item, ...],
 ) -> Names:
-    candidates = matching_names(names.where(E.kind == "office") if isinstance(names, Select) else {"office": names.get("office", {})},
-                                [key], ledger=ledger, prepare=prepare)
-    if candidates:
-        return candidates
-    if isinstance(names, Select):
-        assert ledger is not None and office_keys is not None
-        aliases = func.json_each(ALIASES).table_valued("value")
-        prefix = ledger.read(names.where(E.kind == "territory").with_only_columns(func.max(func.max(*(
-            case((func.instr(literal(key), label) == 1, func.length(sql_cast(label, LargeBinary))), else_=0)
-            for label in (E.key, aliases.c.value)
-        ))).label("length"), maintain_column_froms=True).outerjoin(aliases, true()).order_by(None))[0]["length"] or 0
-        offices = (row["key"] for row in office_keys())
-        key = key.encode("utf-8")[prefix:].decode("utf-8")
-    else:
-        prefix = len(max((label for name, aliases in names.get("territory", {}).items()
-                          for label in [name, *aliases] if key.startswith(label)), key=len, default=""))
-        offices = names.get("office", {})
-        key = key[prefix:]
-    selected = get_close_matches(key, offices, n=5, cutoff=0.5)
-    if isinstance(names, Select):
-        assert ledger is not None
-        query = names.where(E.kind == "office", E.key.in_(selected))
-        values = catalogue(ledger.read(prepare(query) if prepare else query)).get("office", {}) if selected else {}
-    else:
-        values = names.get("office", {})
+    """Fuzzy fallback after the shared substring selector found no offices."""
+    aliases = func.json_each(ALIASES).table_valued("value")
+    prefix = ledger.read(names.where(E.kind == "territory").with_only_columns(func.max(func.max(*(
+        case((func.instr(literal(key), label) == 1, func.length(sql_cast(label, LargeBinary))), else_=0)
+        for label in (E.key, aliases.c.value)
+    ))).label("length"), maintain_column_froms=True).outerjoin(aliases, true()).order_by(None))[0]["length"] or 0
+    key = key.encode("utf-8")[prefix:].decode("utf-8")
+    selected = get_close_matches(key, (row["key"] for row in office_keys), n=5, cutoff=0.5)
+    query = names.where(E.kind == "office", E.key.in_(selected))
+    values = catalogue(ledger.read(prepare(query) if prepare else query)).get("office", {}) if selected else {}
     return {"office": {name: values[name] for name in selected}} if selected else {}
 
 
 def name_expected(
-    kind: str, value: str, names: Names,
+    ledger: Ledger, kind: str, value: str, names: Names,
 ) -> dict[str, Any]:
     if kind not in CATALOGUE_KINDS:
         return {"catalogue": kind}
-    return matching_names({kind: names.get(kind, {})}, [value]) or {"status": "not_found", "tool": "read_records"}
+    rows = func.json_each(literal(list(names.get(kind, {}).items()), type_=JSON)).table_valued("key", "value")
+    entry = type_coerce(rows.c.value, JSON)
+    query = select(literal(kind).label("kind"), entry[0].as_string().label("key"), entry[1].label("aliases")).order_by(rows.c.key)
+    return matching_names(query, [value], ledger=ledger) or {"status": "not_found", "tool": "read_records"}
 
 
 def fail(field: str, value: object, expected: object, names: Names, how: str) -> Never:
@@ -89,10 +67,10 @@ def fail(field: str, value: object, expected: object, names: Names, how: str) ->
     }, ensure_ascii=False))
 
 
-def check_rules(out: Declaration, names: Names) -> None:
+def check_rules(ledger: Ledger, out: Declaration, names: Names) -> None:
     for i, fact in enumerate(out.facts):
         if fact.affair is not None and fact.affair not in names.get("affair", {}):
-            fail(f"facts[{i}].affair", fact.affair, name_expected("affair", fact.affair, names), names,
+            fail(f"facts[{i}].affair", fact.affair, name_expected(ledger, "affair", fact.affair, names), names,
                  "事务正名用 read_records 查 affair，或在本份先 create 该事务，重交整份。")
         seen = [change.field for change in fact.changes
                 if (fact.entity_type, change.field) != ("account", "taels")]
@@ -106,7 +84,7 @@ def check_rules(out: Declaration, names: Names) -> None:
                      "把这个字段改成有限数字，重交整份。")
             if (fact.entity_type, change.field) == ("person", "departure_day") and type(change.value) is not int:
                 fail(f"facts[{i}].changes[{j}].value", change.value, "整数", names, "启程日交整数，重交整份。")
-        check_money(fact, names, i)
+        check_money(ledger, fact, names, i)
 
 
 def check_journey(distances: dict[str, Item], fact: Fact, path: str, names: Names, person: Entity) -> tuple[str, float] | None:
@@ -136,7 +114,7 @@ def check_chief(fact: Fact, index: int, existing: dict[tuple[str, str], Item], n
     return eligible
 
 
-def check_money(fact: Fact, names: Names, index: int) -> None:
+def check_money(ledger: Ledger, fact: Fact, names: Names, index: int) -> None:
     for j, change in enumerate(fact.changes):
         path = f"facts[{index}].changes[{j}]"
         if (fact.entity_type, change.field) != ("account", "taels"):
@@ -153,7 +131,7 @@ def check_money(fact: Fact, names: Names, index: int) -> None:
         if kind not in names:
             fail(path + ".counterpart.entity_type", kind, list(names), names, "收方类型改成 expected，重交整份。")
         if change.counterpart.entity not in names[kind]:
-            fail(path + ".counterpart.entity", change.counterpart.entity, name_expected(kind, change.counterpart.entity, names), names,
+            fail(path + ".counterpart.entity", change.counterpart.entity, name_expected(ledger, kind, change.counterpart.entity, names), names,
                  "按 expected 类别用 read_records 查正名或参考候选填写收方正名，重交整份；不必另交收方 fact。")
         if kind in {"army", "fiscal"} and change.purpose is None:
             fail(path + ".purpose", None, ["补欠", "当月饷", "犒赏", "专项"], names,

@@ -2,7 +2,7 @@
 
 from collections import defaultdict
 from collections.abc import Callable, Generator, Iterable, Sequence
-from functools import cache, partial
+from functools import partial
 from typing import Any
 from uuid import UUID
 
@@ -17,7 +17,7 @@ from ming.middle.appointments import ALIASES, catalogue as names_and_aliases, of
 from ming.middle.calendar import calendar_row, journeys_due
 from ming.middle.declaration import LandingMode
 from ming.middle.night import known_people
-from ming.middle.rules import matching_offices
+from ming.middle.rules import matching_names, matching_offices
 from ming.middle.record_pages import RecordCursor, RecordScope
 from ming.middle.record_queries import RecordQuery
 from ming.middle.view import (
@@ -81,16 +81,19 @@ class Records:
         resolved: dict[tuple[str, str], Item] = {}
         offices: dict[str, list[Item]] = {}
         names = self.office_names(identity)
-        office_keys = partial(cache(self._ledger.read), names.where(E.kind == "office").with_only_columns(E.key))
+        office_keys = None
         for name in keys:
             if name not in results:
                 pairs, resolution = office_pairs(self._ledger, name, partial(visible_appointments, self._ledger, identity))
                 if resolution["status"] == "territory_required":
                     results[name] = resolution
                 elif resolution["status"] == "office_not_found":
-                    results[name] = {"status": "office_not_found", "names_and_aliases": matching_offices(
-                        names, name, ledger=self._ledger, prepare=prepare, office_keys=office_keys,
-                    )}
+                    candidates = matching_names(names.where(E.kind == "office"), [name], ledger=self._ledger, prepare=prepare)
+                    if not candidates:
+                        if office_keys is None:
+                            office_keys = self._ledger.read(names.where(E.kind == "office").with_only_columns(E.key))
+                        candidates = matching_offices(names, name, ledger=self._ledger, prepare=prepare, office_keys=office_keys)
+                    results[name] = {"status": "office_not_found", "names_and_aliases": candidates}
                 elif pairs[0] in resolved:
                     results[name] = resolved[pairs[0]]
                 else:

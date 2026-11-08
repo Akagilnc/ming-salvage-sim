@@ -99,7 +99,7 @@ def check(ledger: Ledger, out: Declaration, records: dict[tuple[str, str], Item]
             fail(
                 path + ".create",
                 True,
-                {"create": False, **name_expected(fact.entity_type, fact.entity, names)},
+                {"create": False, **name_expected(ledger, fact.entity_type, fact.entity, names)},
                 names,
                 "这类实体不能新建。create 改 false，按 expected 类别用 read_records 查正名或参考候选核对 entity，重交整份。",
             )
@@ -109,7 +109,7 @@ def check(ledger: Ledger, out: Declaration, records: dict[tuple[str, str], Item]
             fail(
                 path + ".entity",
                 fact.entity,
-                {"create": fact.entity not in known, **name_expected(fact.entity_type, fact.entity, names)},
+                {"create": fact.entity not in known, **name_expected(ledger, fact.entity_type, fact.entity, names)},
                 names,
                 "按 expected 类别用 read_records 查正名或参考候选核对 entity 与 create；确无该实体不得换成另一实体，重交整份。",
             )
@@ -128,7 +128,7 @@ def check(ledger: Ledger, out: Declaration, records: dict[tuple[str, str], Item]
                 )
     check_fiscal(ledger, out, names)
     check_references(ledger, out, names)
-    check_rules(out, names)
+    check_rules(ledger, out, names)
 
 
 def check_funding(ledger: Ledger, out: Declaration, names: Names) -> dict[str, Item]:
@@ -145,7 +145,7 @@ def check_funding(ledger: Ledger, out: Declaration, names: Names) -> dict[str, I
                 continue
             account = change.value["account"]
             if account not in names["account"]:
-                fail(f"facts[{i}].changes[{j}].value.account", account, name_expected("account", account, names), names, "出款库用账本正名，重交整份。")
+                fail(f"facts[{i}].changes[{j}].value.account", account, name_expected(ledger, "account", account, names), names, "出款库用账本正名，重交整份。")
             funding[fact.entity] = change.value
     return funding
 
@@ -275,7 +275,7 @@ def check_appointment(
             fail(field, holders, {"maxItems": 1}, names, "一员只能任一人，重交整份。")
         for k, person in enumerate(holders):
             if person not in names.get("person", {}):
-                fail(f"{field}[{k}]", person, name_expected("person", person, names), names, "在任者用 read_records 查 person 正名，重交整份。")
+                fail(f"{field}[{k}]", person, name_expected(ledger, "person", person, names), names, "在任者用 read_records 查 person 正名，重交整份。")
 
 
 def check_references(ledger: Ledger, out: Declaration, names: Names) -> None:
@@ -292,7 +292,7 @@ def check_references(ledger: Ledger, out: Declaration, names: Names) -> None:
                     fail(
                         f"facts[{i}].changes[{j}].value",
                         change.value,
-                        name_expected(kind, str(change.value), names),
+                        name_expected(ledger, kind, str(change.value), names),
                         names,
                         "按 expected 类别用 read_records 查正名或参考候选填写 value，重交整份。确无该实体不得换成另一实体。",
                     )
@@ -304,7 +304,7 @@ def check_references(ledger: Ledger, out: Declaration, names: Names) -> None:
             fail(
                 f"reports[{i}].entity",
                 report.entity,
-                name_expected(report.entity_type, report.entity, names),
+                name_expected(ledger, report.entity_type, report.entity, names),
                 names,
                 "按 expected 类别用 read_records 查正名或参考候选填写 entity，重交整份。确无该实体不得换成另一实体。",
             )
@@ -315,7 +315,7 @@ def check_references(ledger: Ledger, out: Declaration, names: Names) -> None:
             fail(
                 path,
                 value,
-                name_expected("person", "", names),
+                name_expected(ledger, "person", "", names),
                 names,
                 "people 改成名单，用 read_records 查 person 正名填入成员，重交整份。",
             )
@@ -323,7 +323,7 @@ def check_references(ledger: Ledger, out: Declaration, names: Names) -> None:
         for i, person in enumerate(members):
             members[i] = person = reference_key(ledger, "person", person, names) if isinstance(person, str) else person
             if not isinstance(person, str) or person not in names.get("person", {}):
-                fail(f"{path}[{i}]", person, name_expected("person", str(person), names), names,
+                fail(f"{path}[{i}]", person, name_expected(ledger, "person", str(person), names), names,
                      "people 里的名字用 read_records 查 person 正名，重交整份。确无此人不得换成另一人。")
 
 
