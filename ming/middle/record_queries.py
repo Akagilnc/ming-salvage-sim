@@ -22,13 +22,14 @@ if TYPE_CHECKING:
 
 
 class RecordQuery:
-    def __init__(self, reader: "Records", ledger: Ledger, identity: "Identity", sources: tuple[Select[Any], Item | None], *, numeric: bool = False) -> None:
+    def __init__(self, reader: "Records", ledger: Ledger, identity: "Identity", sources: tuple[Select[Any], Item | None], *, page: tuple[bool, int] = (False, 0)) -> None:
         self.reader = reader
         self.ledger = ledger
         self.identity: Identity = identity
         self.facts, opening = sources
-        self.numeric = numeric
-        self.budget = PAGE_BYTES
+        self.numeric, wrap = page
+        # Sole budget default: PAGE_BYTES minus outer envelope; pagination keys stay in the 1024 reserve.
+        self.budget = max(0, PAGE_BYTES - wrap)
         self.snapshot: Select[Any] | None = None
         if opening is not None:
             items = func.json_each(F.detail, "$.entities").table_valued("key", "value")
@@ -207,8 +208,6 @@ class RecordQuery:
         self, kind: str | None, key: str | list[str] | None, date: Item | None,
         *, scope: RecordScope, cursor: RecordCursor,
     ) -> Item:
-        # PAGE_BYTES already reserves pagination keys; outer tool envelopes deduct via scope.wrap.
-        self.budget = max(0, PAGE_BYTES - (scope.wrap or 0))
         if (scope.department is not None and kind != "office" or
                 (scope.region is not None or scope.level is not None) and kind != "territory"):
             return {"status": "invalid_scope"}

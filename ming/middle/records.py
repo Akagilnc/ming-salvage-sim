@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from pydantic_ai import RunContext
 
 from ming.middle.view import Identity
-from ming.middle.record_pages import RecordScope
+from ming.middle.record_pages import QueryOptions, RecordScope
 
 if TYPE_CHECKING:
     from ming.middle.court import Court
@@ -52,5 +52,7 @@ async def read_records(
     """
     return ctx.deps.court.read.query(
         ctx.deps.identity, kind, key, date.model_dump() if date is not None else None,
-        options=(scope or RecordScope(), isinstance(ctx.deps, TranslationMaterials)),
+        options=QueryOptions(
+            scope=scope or RecordScope(), numeric=isinstance(ctx.deps, TranslationMaterials),
+        ),
     )

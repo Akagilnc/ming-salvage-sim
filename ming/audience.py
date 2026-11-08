@@ -25,7 +25,7 @@ from ming.middle.declaration import NightDeclaration
 from ming.middle.invoke import TextUpdate, invoke, stream_text
 from ming.middle.night import NightHeader, NightView
 from ming.middle.opening import CONTENT
-from ming.middle.record_pages import RecordScope
+from ming.middle.record_pages import QueryOptions
 from ming.middle.records import read_records
 from ming.middle.view import Officials
 
@@ -183,7 +183,7 @@ async def set_hall(
         payload.update(
             ctx.deps.court.read.query(
                 ctx.deps.identity, "person", admitted,
-                options=(RecordScope(wrap=wrap), False),
+                options=QueryOptions(wrap=wrap),
             ),
             kind="person", key=admitted,
         )
