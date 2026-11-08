@@ -171,7 +171,7 @@ async def set_hall(
     if changed:
         ctx.deps.on_hall(result.hall)
     payload = result.model_dump()
-    if result.ok and (admitted := [name for name in dict.fromkeys(add) if name in result.hall]):
+    if result.ok and (admitted := [name for name in add if name in result.hall]):
         payload.update(ctx.deps.court.read.query(ctx.deps.identity, "person", admitted))
     return payload
 

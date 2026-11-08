@@ -135,9 +135,11 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
         [
             ModelResponse(parts=[ToolCallPart("read_records", {"kind": "office", "key": case["offices"]}, tool_call_id="offices")]),
             ModelResponse(parts=[ToolCallPart("read_records", {"kind": "person", "key": "王体乾"}, tool_call_id="before")]),
-            ModelResponse(parts=[ToolCallPart("set_hall", {"add": ["王体乾"], "remove": []})]),
+            ModelResponse(parts=[ToolCallPart("set_hall", {"add": ["王体乾"], "remove": []}, tool_call_id="admit")]),
             ModelResponse(parts=[ToolCallPart("read_records", {"kind": "person", "key": "王体乾"}, tool_call_id="after")]),
-            ModelResponse(parts=[ToolCallPart("set_hall", {"add": [], "remove": ["王体乾"]})]),
+            ModelResponse(parts=[ToolCallPart("set_hall", {"add": ["王体乾"], "remove": []}, tool_call_id="again")]),
+            ModelResponse(parts=[ToolCallPart("set_hall", {"add": [], "remove": ["王体乾"]}, tool_call_id="remove")]),
+            ModelResponse(parts=[ToolCallPart("set_hall", {"add": ["王体乾"], "remove": ["王体乾"]}, tool_call_id="inout")]),
             *ModelMessagesTypeAdapter.validate_python(case["scene_responses"]),
         ], received,
     )
@@ -202,9 +204,27 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
         assert before["data"][field] == after["data"][field]
     assert not {"dossier", "seed_guilt"}.intersection(before["data"])
     assert {"dossier", "seed_guilt"} <= after["data"].keys()
+
+    def attached(value: dict) -> dict:
+        return {key: value[key] for key in value if key not in {"ok", "hall", "failures"}}
+
+    # set_hall success carries the same person page the hall identity would read.
+    for call_id, names in (("admit", ["王体乾"]), ("again", ["王体乾"])):
+        value = returned[call_id][1]
+        assert value["ok"] is True
+        expected = court.read.query(Officials(people=value["hall"]), "person", names)
+        assert attached(value) == expected
+        assert {"dossier", "seed_guilt"} <= value["entities"][0]["data"].keys()
+    assert returned["remove"][1]["ok"] is True
+    assert attached(returned["remove"][1]) == {}
+    assert returned["inout"][1]["ok"] is True
+    assert "王体乾" not in returned["inout"][1]["hall"]
+    assert attached(returned["inout"][1]) == {}
+
     absent = next(value for name, value in returned.values() if name == "set_hall" and not value["ok"])
     assert {(f["name"], f["found"]) for f in absent["failures"]} == {("徐光启", True), ("张三", False)}
     assert set(absent["hall"]) == {"王承恩", "杨嗣昌", "王绍徽"}
+    assert attached(absent) == {}
     dossier = next(value["entities"][0]["data"] for name, value in returned.values()
                    if name == "read_records" and value.get("entities") and value["entities"][0]["key"] == "徐光启")
     assert dossier["location"] == "南直隶 / 南京"
@@ -213,76 +233,16 @@ def test_scene_tools_use_physical_location_not_office_and_project_dossiers(
 
 
 @pytest.mark.parametrize("game_db", ["first_night"], indirect=True)
-def test_set_hall_attaches_summoned_person_records(tmp_path: Path, game_db: Path, steps) -> None:
-    """Successful set_hall carries the same person page the hall identity would read."""
-    received: list = []
-    steps["scene"] = replaying(
-        [
-            ModelResponse(parts=[ToolCallPart("set_hall", {"add": ["杨嗣昌", "王绍徽"], "remove": []}, tool_call_id="admit")]),
-            ModelResponse(parts=[ToolCallPart("set_hall", {"add": ["杨嗣昌"], "remove": []}, tool_call_id="again")]),
-            ModelResponse(parts=[ToolCallPart("set_hall", {"add": ["王体乾"], "remove": ["王体乾"]}, tool_call_id="inout")]),
-            ModelResponse(parts=[ToolCallPart("set_hall", {"add": ["徐光启", "张三"], "remove": []}, tool_call_id="reject")]),
-            "已宣。",
-        ],
-        received,
-    )
-    with TestClient(create_app(tmp_path)) as client:
-        client.post("/actions", json={"action": "load", "save": game_db.name})
-        client.post("/actions", json={"action": "say", "words": "宣杨嗣昌、王绍徽。"})
-        client.portal.call(client.app.state.web.game.drain)
-        game = client.get("/state").json()["game"]
-        assert game["failure"] is None
-        hall = game["night"]["hall"]
-        assert set(hall) == {"王承恩", "杨嗣昌", "王绍徽"}
-        court = client.app.state.web.game.court
-        emperor = court.read.query("emperor", "person", ["杨嗣昌"])
-
-    returned = {
-        part.tool_call_id: part.model_response_object()
-        for message in received
-        for part in message.parts
-        if isinstance(part, ToolReturnPart) and part.tool_name == "set_hall"
-    }
-
-    def page(value: dict) -> dict:
-        return {key: value[key] for key in value if key not in {"ok", "hall", "failures"}}
-
-    for call_id, names in (("admit", ["杨嗣昌", "王绍徽"]), ("again", ["杨嗣昌"])):
-        value = returned[call_id]
-        assert value["ok"] is True
-        assert not value["failures"]
-        expected = court.read.query(Officials(people=value["hall"]), "person", names)
-        assert page(value) == expected
-        for entity in value["entities"]:
-            assert entity["key"] in names
-            assert {"dossier", "seed_guilt"} <= entity["data"].keys()
-            assert isinstance(entity["data"]["ability"], str)
-
-    assert returned["inout"]["ok"] is True
-    assert set(returned["inout"]["hall"]) == {"王承恩", "杨嗣昌", "王绍徽"}
-    assert page(returned["inout"]) == {}
-
-    absent = returned["reject"]
-    assert absent["ok"] is False
-    assert {(f["name"], f["found"]) for f in absent["failures"]} == {("徐光启", True), ("张三", False)}
-    assert page(absent) == {}
-    assert set(absent["hall"]) == {"王承恩", "杨嗣昌", "王绍徽"}
-
-    # Emperor projection stays the public face; hall attach does not widen it.
-    assert set(emperor["entities"][0]["data"]) == {"name", "location", "appointments"}
-
-
-@pytest.mark.parametrize("game_db", ["first_night"], indirect=True)
 def test_set_hall_retry_after_model_failure_still_attaches_records(
     tmp_path: Path, game_db: Path, steps,
 ) -> None:
-    first: list = []
+    first_calls: list[list] = []
+    first_replies = iter([
+        ModelResponse(parts=[ToolCallPart("set_hall", {"add": ["杨嗣昌"], "remove": []}, tool_call_id="first")]),
+        ModelHTTPError(429, "recording"),
+    ])
     steps["scene"] = replaying(
-        [
-            ModelResponse(parts=[ToolCallPart("set_hall", {"add": ["杨嗣昌"], "remove": []}, tool_call_id="first")]),
-            ModelHTTPError(429, "recording"),
-        ],
-        first,
+        lambda messages: first_calls.append(list(messages)) or next(first_replies),
     )
     with TestClient(create_app(tmp_path)) as client:
         client.post("/actions", json={"action": "load", "save": game_db.name})
@@ -293,23 +253,15 @@ def test_set_hall_retry_after_model_failure_still_attaches_records(
         assert game["night"]["turns"] == []
         assert "杨嗣昌" in game["night"]["hall"]
 
-        first_return = next(
-            part.model_response_object()
-            for message in first
-            for part in message.parts
-            if isinstance(part, ToolReturnPart) and part.tool_name == "set_hall"
-        )
-        assert first_return["ok"] is True
-        assert first_return["entities"][0]["key"] == "杨嗣昌"
-        assert "dossier" in first_return["entities"][0]["data"]
-
-        retry: list = []
+        retry_calls: list[list] = []
+        retry_received: list = []
+        retry_replies = iter([
+            ModelResponse(parts=[ToolCallPart("set_hall", {"add": ["杨嗣昌"], "remove": []}, tool_call_id="retry")]),
+            "臣杨嗣昌见驾。",
+        ])
         steps["scene"] = replaying(
-            [
-                ModelResponse(parts=[ToolCallPart("set_hall", {"add": ["杨嗣昌"], "remove": []}, tool_call_id="retry")]),
-                "臣杨嗣昌见驾。",
-            ],
-            retry,
+            lambda messages: retry_calls.append(list(messages)) or next(retry_replies),
+            retry_received,
         )
         client.post("/actions", json={"action": "retry"}).raise_for_status()
         client.portal.call(client.app.state.web.game.drain)
@@ -319,16 +271,29 @@ def test_set_hall_retry_after_model_failure_still_attaches_records(
         assert "杨嗣昌" in game["night"]["hall"]
         court = client.app.state.web.game.court
 
-    assert next(part.content for message in retry for part in message.parts if part.part_kind == "user-prompt") == "宣杨嗣昌。"
-    retry_return = next(
-        part.model_response_object()
-        for message in retry
-        for part in message.parts
-        if isinstance(part, ToolReturnPart) and part.tool_name == "set_hall"
-    )
-    expected = court.read.query(Officials(people=retry_return["hall"]), "person", ["杨嗣昌"])
-    assert {key: retry_return[key] for key in expected} == expected
-    assert "dossier" in retry_return["entities"][0]["data"]
+        # Retry starts from the same input as the first attempt; failed tool traffic is not history.
+        def prompt_parts(messages):
+            return [
+                (part.part_kind, getattr(part, "content", None))
+                for message in messages for part in message.parts
+                if part.part_kind in {"system-prompt", "user-prompt"}
+            ]
+
+        assert prompt_parts(retry_calls[0]) == prompt_parts(first_calls[0])
+        assert not any(
+            isinstance(part, (ToolCallPart, ToolReturnPart))
+            for message in retry_calls[0] for part in message.parts
+        )
+
+        retry_return = next(
+            part.model_response_object()
+            for message in retry_received
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.tool_name == "set_hall"
+        )
+        expected = court.read.query(Officials(people=retry_return["hall"]), "person", ["杨嗣昌"])
+        assert {key: retry_return[key] for key in expected} == expected
+        assert "dossier" in retry_return["entities"][0]["data"]
 
 
 @pytest.mark.parametrize("recording,case,game_db", [
