@@ -129,7 +129,7 @@ class Records:
             update=opts.scope.after.model_dump(exclude_unset=True) if opts.scope.after else {},
         )
         return RecordQuery(
-            self, self._ledger, identity, self._sources(identity), page=(opts.numeric, opts.wrap),
+            self, self._ledger, identity, self._sources(identity), options=opts,
         ).run(kind, key, date, scope=opts.scope, cursor=cursor)
 
     def read_records(

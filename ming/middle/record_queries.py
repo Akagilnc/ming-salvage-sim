@@ -12,7 +12,7 @@ from sqlalchemy import Select, case, func, literal, or_, select, true, type_coer
 from ming.ledger import ENTITY_COLUMNS as E, FACT_COLUMNS as F, ENTITY_ROWS, ENTITY_ORDER, FACT_ROWS, Item, Ledger, facts_in_month
 from ming.middle.appointments import ALIASES, incumbency_record, named, office_pairs
 from ming.middle.night import TURN_ROWS, turn_view
-from ming.middle.record_pages import PAGE_BYTES, PageRow, RecordCursor, RecordScope, TextPage, record_page
+from ming.middle.record_pages import PAGE_BYTES, PageRow, QueryOptions, RecordCursor, RecordScope, TextPage, record_page
 from ming.middle.rules import matching_names
 from ming.middle.view import ENTITY_EXPOSURE, ENTITY_SOURCES, VISIBLE_IDS, character_input, entities, identity_key, project, view_parameters, visible_appointments
 
@@ -22,14 +22,14 @@ if TYPE_CHECKING:
 
 
 class RecordQuery:
-    def __init__(self, reader: "Records", ledger: Ledger, identity: "Identity", sources: tuple[Select[Any], Item | None], *, page: tuple[bool, int] = (False, 0)) -> None:
+    def __init__(self, reader: "Records", ledger: Ledger, identity: "Identity", sources: tuple[Select[Any], Item | None], *, options: QueryOptions) -> None:
         self.reader = reader
         self.ledger = ledger
         self.identity: Identity = identity
         self.facts, opening = sources
-        self.numeric, wrap = page
-        # Sole budget default: PAGE_BYTES minus outer envelope; pagination keys stay in the 1024 reserve.
-        self.budget = max(0, PAGE_BYTES - wrap)
+        self.numeric = options.numeric
+        # Defaults for numeric/wrap live only on QueryOptions; budget is derived once here.
+        self.budget = max(0, PAGE_BYTES - options.wrap)
         self.snapshot: Select[Any] | None = None
         if opening is not None:
             items = func.json_each(F.detail, "$.entities").table_valued("key", "value")
