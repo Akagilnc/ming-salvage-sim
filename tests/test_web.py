@@ -40,6 +40,79 @@ def state_updates(events: asyncio.Queue) -> list[dict]:
     ]
 
 
+def assert_run_then_done(states: list, running: object, done: object) -> None:
+    assert states[0] == running and states[-1] == done
+    assert all(item == running for item in states[:-1])
+
+
+def watch_month_gazette(game, db, audit) -> list[dict[str, object]]:
+    """Record whether gazette is on the books while month is still running."""
+    landed: list[dict[str, object]] = []
+    push = game._month_state
+
+    def watch() -> None:
+        push()
+        presentation = game.presentation()
+        landed.append({
+            "running": presentation["running"],
+            "gazette": any(
+                f["kind"] == "gazette"
+                and f["detail"].get("date") == {"id": "world", "year": 1627, "month": 10}
+                for f in audit(db)["facts"]
+            ),
+        })
+
+    game._month_state = watch
+    game.month.on_state = watch
+    return landed
+
+
+def assert_choice_month_states(states: list, remaining: set, path: str) -> None:
+    assert states[0] == (True, "choose", 10, remaining)
+    if remaining:
+        assert states == [(True, "choose", 10, remaining), (False, None, 10, remaining)]
+        return
+    if path == "choice-error":
+        assert states == [
+            (True, "choose", 10, set()), (True, "month", 10, set()), (False, None, 10, set()),
+        ]
+        return
+    assert states[1] == (True, "month", 10, set()) and states[-1] == (False, None, 11, set())
+    assert all(item == (True, "month", 10, set()) for item in states[1:-1])
+
+
+def answer_month_petitions(client, game, audit, events, path: str) -> None:
+    host = client.app.state.web.game
+    db = host.court.db_path
+    client.portal.call(host.drain)
+    assert (game["date"]["month"], game["face"], game["running"]) == (10, "month", False)
+    before = audit(db)
+    client.get("/state")
+    assert not [f for f in client.get("/records").json()["facts"] if f["kind"] in {"month_draft", "month_final", "forecast"}]
+    assert not [f for f in before["facts"] if f["kind"] in {"month_final", "forecast"}]
+    assert audit(db) == before
+    for petition in game["petitions"][:]:
+        choice = {"action": "choose", "petition": petition["id"], "option": 0}
+        assert client.post("/actions", json=choice).status_code == 204
+        game["petitions"].remove(petition)
+        if game["petitions"]:
+            assert not [f for f in audit(db)["facts"] if f["kind"] == "month_final"]
+        client.portal.call(host.drain)
+        assert {
+            p["id"] for p in client.get("/state").json()["game"]["petitions"]
+        } == {p["id"] for p in game["petitions"]}
+        assert_choice_month_states(
+            [
+                (state["game"]["running"],
+                 state["game"]["pending"] and state["game"]["pending"]["action"],
+                 state["game"]["date"]["month"],
+                 {p["id"] for p in state["game"]["petitions"]})
+                for state in state_updates(events)
+            ],
+            {p["id"] for p in game["petitions"]}, path,
+        )
+
+
 def test_menu_creates_distinct_games_and_opens_only_existing_saves(
     tmp_path: Path,
 ) -> None:
@@ -271,65 +344,33 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
             } == ({"translation"} if path == "translation-error" else set())
         events = asyncio.Queue()
         app.state.web.listeners.add(events)
+        landed = watch_month_gazette(app.state.web.game, db, audit) if path == "decree" else []
         assert client.post("/actions", json={"action": "month"}).status_code == 204
         game = client.get("/state").json()["game"]
-        # One acceptance and one completion, regardless of monthly writes.
-        assert [
-            (state["game"]["running"], state["game"]["date"]["month"],
-             state["game"]["failure"] and state["game"]["failure"]["action"])
-            for state in state_updates(events)
-        ] == [
+        # Acceptance, optional mid-run gazette push, then completion.
+        assert_run_then_done(
+            [
+                (state["game"]["running"], state["game"]["date"]["month"],
+                 state["game"]["failure"] and state["game"]["failure"]["action"])
+                for state in state_updates(events)
+            ],
             (True, 10, None),
-            (False, game["date"]["month"],
-             "month" if path == "precompute-structure" else None),
-        ]
+            (False, game["date"]["month"], "month" if path == "precompute-structure" else None),
+        )
+        if path == "decree":
+            assert landed == [{"running": True, "gazette": True}]
         if path == "precompute-structure":
             assert game["date"]["month"] == 10
             assert game["failure"]["payload"]["type"] == "UnexpectedModelBehavior"
             assert not [f for f in audit(db)["facts"] if f["kind"] == "unhandled"]
             client.post("/actions", json={"action": "retry"})
             game = client.get("/state").json()["game"]
-            assert [
-                (state["game"]["running"], state["game"]["failure"])
-                for state in state_updates(events)
-            ] == [(True, None), (False, None)]
-        if path in {"multiple-petitions", "choice-error"}:
-            client.portal.call(app.state.web.game.drain)
-            assert (game["date"]["month"], game["face"], game["running"]) == (
-                10,
-                "month",
-                False,
+            assert_run_then_done(
+                [(state["game"]["running"], state["game"]["failure"]) for state in state_updates(events)],
+                (True, None), (False, None),
             )
-            before = audit(db)
-            client.get("/state")
-            assert not [f for f in client.get("/records").json()["facts"] if f["kind"] in {"month_draft", "month_final", "forecast"}]
-            assert not [f for f in before["facts"] if f["kind"] in {"month_final", "forecast"}]
-            assert audit(db) == before
-            for petition in game["petitions"][:]:
-                choice = {"action": "choose", "petition": petition["id"], "option": 0}
-                assert client.post("/actions", json=choice).status_code == 204
-                game["petitions"].remove(petition)
-                if game["petitions"]:
-                    assert not [f for f in audit(db)["facts"] if f["kind"] == "month_final"]
-                client.portal.call(app.state.web.game.drain)
-                assert {
-                    p["id"] for p in client.get("/state").json()["game"]["petitions"]
-                } == {p["id"] for p in game["petitions"]}
-                # The last choice completes and starts the month in ONE frame;
-                # monthly commits add none.
-                assert [
-                    (state["game"]["running"],
-                     state["game"]["pending"] and state["game"]["pending"]["action"],
-                     state["game"]["date"]["month"],
-                     {p["id"] for p in state["game"]["petitions"]})
-                    for state in state_updates(events)
-                ] == [
-                    (True, "choose", 10, {p["id"] for p in game["petitions"]}),
-                    (not game["petitions"], "month" if not game["petitions"] else None,
-                     10, {p["id"] for p in game["petitions"]}),
-                    *([(False, None, 10 if path == "choice-error" else 11, set())]
-                      if not game["petitions"] else []),
-                ]
+        if path in {"multiple-petitions", "choice-error"}:
+            answer_month_petitions(client, game, audit, events, path)
         # Choice completion no longer waits for the shared month action.
         client.portal.call(app.state.web.game.drain)
         if path == "choice-error":
@@ -341,10 +382,13 @@ def test_http_month_dispatches_choices_and_retries_missing_step(
             client.post("/actions", json={"action": "load", "save": save}).raise_for_status()
             assert state_updates(events) == []  # Selecting the current save is a no-op.
             client.post("/actions", json={"action": "retry"}).raise_for_status()
-            assert [
-                (state["game"]["running"], state["game"]["failure"], state["game"]["date"]["month"])
-                for state in state_updates(events)
-            ] == [(True, None, 10), (False, None, 11)]
+            assert_run_then_done(
+                [
+                    (state["game"]["running"], state["game"]["failure"], state["game"]["date"]["month"])
+                    for state in state_updates(events)
+                ],
+                (True, None, 10), (False, None, 11),
+            )
             assert len([f for f in audit(db)["facts"] if f["kind"] == "month_draft"]) == 1
         game = client.get("/state").json()["game"]
         assert (
@@ -425,17 +469,17 @@ def test_settings_survive_reopening_and_failed_scene_retries_in_place(
     working = steps[name]
     setting = {"time_of_day": "子时", "location": "文华殿"}
     if step == "say":
-        # Transient failure keeps the failed attempt's declaration out of the books;
-        # only the successful run's declare_setting lands on the night.
+        # Failed attempt declares; successful attempt does not — setting must stay unset
+        # (run_id match is what keeps the failed declaration off the books).
         stale = {"time_of_day": "亥时", "location": "便殿"}
         working = replaying([
             ModelResponse(parts=[ToolCallPart("declare_setting", {"setting": stale})]),
             ModelHTTPError(503, "recording"),
-            ModelResponse(parts=[ToolCallPart("declare_setting", {"setting": setting})]),
             case["cases"]["missing_fields"]["scene"],
         ])
+        setting = None
     steps[name] = replaying([
-        *([ModelResponse(parts=[ToolCallPart("declare_setting", {"setting": setting})])] if step == "say" else []),
+        *([ModelResponse(parts=[ToolCallPart("declare_setting", {"setting": {"time_of_day": "子时", "location": "文华殿"}})])] if step == "say" else []),
         *[failure("external backend unavailable")] * 2,
     ])
     settings = Configuration(backend="claude-cli")
@@ -484,12 +528,14 @@ def test_settings_survive_reopening_and_failed_scene_retries_in_place(
             assert state["failure"] is None
             assert state["date"]["month"] == 11
             assert state["running"] is False
-            assert [
+            month_progress = [
                 (update["game"]["running"], update["game"]["failure"],
                  update["game"]["date"]["month"], update["game"]["night"]["result"])
                 for update in state_updates(events)
-            ] == [(True, None, 10, None), (True, None, 10, "unhandled"),
-                  (False, None, 11, "unhandled")]
+            ]
+            assert month_progress[0] == (True, None, 10, None)
+            assert month_progress[-1] == (False, None, 11, "unhandled")
+            assert (True, None, 10, "unhandled") in month_progress
             return
         assert game["failure"]["action"] == (
             "translation" if step.endswith("translation") else step
@@ -520,15 +566,17 @@ def test_settings_survive_reopening_and_failed_scene_retries_in_place(
             client.portal.call(client.app.state.web.game.drain)
         game = client.get("/state").json()["game"]
         assert game["failure"] is None
-        assert [
+        retry_progress = [
             (state["game"]["running"], state["game"]["failure"], state["game"]["date"]["month"],
              state["game"]["night"] and state["game"]["night"]["result"])
             for state in state_updates(events)
-        ] == [
-            (step != "translation", None, 10, None),
-            *([(True, None, 10, "unhandled")] if step == "month-translation" else []),
-            (False, None, game["date"]["month"], game["night"] and game["night"]["result"]),
         ]
+        assert retry_progress[0] == (step != "translation", None, 10, None)
+        assert retry_progress[-1] == (
+            False, None, game["date"]["month"], game["night"] and game["night"]["result"],
+        )
+        if step == "month-translation":
+            assert (True, None, 10, "unhandled") in retry_progress
         if step == "say":
             assert len(game["night"]["turns"]) == 1
             assert game["night"]["setting"] == setting
@@ -589,6 +637,7 @@ def committed(db, product, action, snapshots, session):
     (("month", "month_draft", False), "opening_db"),
     (("choose", "advanced", False), "rejected_month"),
 ], indirect=["game_db"])
+@pytest.mark.usefixtures("clock")
 def test_http_reopens_committed_action_gaps(game_db, case, audit, steps):
     """Freeze real commits, not a normally drained save or hand-written events."""
     action, product, dismiss = case
@@ -600,10 +649,15 @@ def test_http_reopens_committed_action_gaps(game_db, case, audit, steps):
         )
     setting = {"time_of_day": "子时", "location": "文华殿"}
     if action == "say":
+        # Two declares across a transient failure: books keep the successful run's setting.
+        stale = {"time_of_day": "亥时", "location": "便殿"}
+        scene = json.loads((RECORDED / "night_invalid.json").read_text())["cases"]["missing_fields"]["scene"]
         steps["scene"] = replaying([
+            ModelResponse(parts=[ToolCallPart("declare_setting", {"setting": stale})]),
+            ModelHTTPError(503, "recording"),
             ModelResponse(parts=[ToolCallPart("declare_setting", {"setting": setting}),
                                  *([ToolCallPart("dismiss", {})] if dismiss else [])]),
-            json.loads((RECORDED / "night_invalid.json").read_text())["cases"]["missing_fields"]["scene"],
+            scene,
         ] * 2)
     snapshots = {stage: game_db.parent / stage / game_db.name for stage in ("accepted", "product")}
     for path in snapshots.values():

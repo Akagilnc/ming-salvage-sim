@@ -24,8 +24,10 @@ class Month:
     def __init__(
         self, court: Court,
         on_delta: Callable[[TextUpdate], None] | None = None,
+        *, on_state: Callable[[], None] | None = None,
     ) -> None:
         self.court = court
+        self.on_state = on_state
         self.model: Model
         model = lambda: self.model
         self.deliberations = Deliberations(court, model)
@@ -119,10 +121,16 @@ class Month:
             self.court.settle_accounts(calendar)
             self.court.settle_journeys(calendar.data)
             await gather_or_raise(
-                self.gazette.run(calendar), self.sources.run(calendar),
+                self._gazette_public(calendar), self.sources.run(calendar),
                 self.secrets.report(self.court.read.without_events("decree", {"secret": True}, "completed", calendar.data), calendar.data),
             )
             self.court.record(calendar.id, [("advanced", {"date": calendar.data})], next_month(calendar.data))
+
+    async def _gazette_public(self, calendar: EntityView) -> None:
+        await self.gazette.run(calendar)
+        # Book is refreshed from state; push once so month face drops streaming remend.
+        if self.on_state is not None:
+            self.on_state()
 
     async def advance(self, calendar: EntityView) -> None:
         self.open(calendar)
